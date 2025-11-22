@@ -1,0 +1,30 @@
+# Hexagonal lattice with eps_bg=13, r/a=0.3 for TE polarization
+
+polarization = "TE"
+
+[geometry]
+eps_bg = 13.0
+
+[geometry.lattice]
+a1 = [1.0, 0.0]
+a2 = [0.5, 0.8660254037844386]
+
+[[geometry.atoms]]
+pos = [0.0, 0.0]
+radius = 0.3
+eps_inside = 1.0
+
+[grid]
+nx = 32
+ny = 32
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "hexagonal"
+segments_per_leg = 12
+
+[eigensolver]
+n_bands = 10
+max_iter = 200
+tol = 1e-8

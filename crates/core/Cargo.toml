@@ -12,3 +12,12 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 faer.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+mpb2d-backend-cpu = { path = "../backend-cpu" }
+toml.workspace = true
+
+[[bench]]
+name = "eigensolver"
+harness = false

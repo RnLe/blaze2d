@@ -523,10 +523,10 @@ pub fn run_bandstructure<B: SpectralBackend>(
             kx, ky,
         };
 
-        let eig = solve_lowest_eigenpairs(&op, &job.eigen_opts);
-        bands_for_all_k.push(eig.omegas);
-    }
-
+        * Emit MPB-like logs describing backend, lattice, polarization, and solver knobs so users can see what the CLI is doing before the heavy work begins.
+        * Surface dielectric/FFT preparation milestones with elapsed timings.
+        * Log a compact line per k-point with iteration counts and runtimes, plus a closing summary (k-count + total iterations + elapsed time) for long sweeps.
+        * Wire a `--quiet` CLI flag (defaulting to verbose) so automation can suppress the progress stream without losing human-friendly defaults.
     BandStructureResult {
         k_path: job.k_path.clone(),
         bands: bands_for_all_k,
@@ -645,6 +645,8 @@ A realistic plan that yields working artifacts at each stage:
 * Validate by:
 
   * Reproducing a known 2D band diagram (e.g. square lattice rods) from MPB paper / user guide.
+  * Using the Python `generate_square_tm_bands.py` helper to capture MPB/Meep TM bands (`python/reference-data/square_tm_uniform_mpb.json`) and comparing the Rust TM operator against those values inside `tm_operator_tracks_uniform_reference_data`.
+  * Mirroring the same workflow for TE polarization by implementing the TE branch of `ThetaOperator`, generating `python/reference-data/square_te_uniform_mpb.json`, and adding the `te_operator_tracks_uniform_reference_data` regression test.
 
 ### Phase 3 – Full band-structure pipeline
 
@@ -653,6 +655,37 @@ A realistic plan that yields working artifacts at each stage:
 * CLI:
 
   * `mpb2d-lite run --config config.toml --output bands.csv`.
+
+> **Current status:** The codebase now includes a working `BandStructureJob` runner, MPB-style CLI output, and preset-based k-path generation (square/hex) that can be invoked via config or `--path`. Remaining work in this phase is primarily richer CLI ergonomics (alternate backends, automatic labeling, summary stats).
+
+### Phase 3.5 – Pipeline observability
+
+* Emit MPB-like logs describing backend, lattice, polarization, and solver knobs so users can see what the CLI is doing before the heavy work begins.
+* Surface dielectric/FFT preparation milestones with elapsed timings.
+* Log a compact line per k-point with iteration counts and runtimes, plus a closing summary (k-count + total iterations + elapsed time) for long sweeps.
+* Wire a `--quiet` CLI flag (defaulting to verbose) so automation can suppress the progress stream without losing human-friendly defaults.
+
+### Phase 3.9 – Testing & optimization
+
+* Stand up dedicated `_tests_*.rs` companions next to every major module (eigensolver, operator, backend FFT plumbing, lattice/geometry, etc.) and migrate existing inline tests there.
+* Expand eigensolver coverage with deterministic fixtures that validate convergence on simple Hermitian operators, noisy inputs, and edge conditions (degenerate spectra, zero/negative shifts).
+* Add FFT/back-end regression tests that round-trip random fields, stress Bloch phase factors, and verify parallel execution matches serial results.
+* Introduce lightweight benchmarks or profiled smoke tests to track per k-point iteration counts and spot regressions when tweaking precision/parallelism knobs.
+
+> **Current status:** Every module-specific companion now exists, including fresh suites for `io`, `reference`, and `symmetry` that exercise config serde fallbacks, reference JSON loading, and k-path densification. The remaining open work in this phase is the broader regression/benchmarking bullets above.
+
+### Phase 3.99 – Instrumentation & benchmarks
+
+The current solver spends most of its wall time inside FFT prep and the Lanczos loop, and we lack structured metrics to understand why. This phase adds two complementary guardrails:
+
+1. **Opt-in metrics stream.** A new config block enables JSONL metrics that mirror the existing human-friendly logs but capture richer context (backend type, grid, k-index, elapsed seconds, iteration counts, etc.) for every heavyweight stage: setup, dielectric sampling, FFT workspace allocation, and each k-point solve. Metrics default to fully disabled and short-circuit at compile time so there is effectively zero runtime overhead unless an output file is requested.
+2. **Targeted micro-benchmarks.** Lightweight benchmarks (criterion or `cargo bench`) will cover the spectral backend/FFT helpers and the eigensolver loop separately from the full pipeline, making it easy to bisect regressions or compare serial vs. parallel backends without running full band diagrams.
+
+Together these tools let us spot misconfigurations (e.g., non-converging eigensolver) quickly and focus optimization work where it matters.
+
+> **Current status:** Metrics logging is landed and can be toggled per config to stream JSONL events for setup, dielectric sampling, FFT prep, each k-point solve, and pipeline completion. Criterion benches now cover both hotspots: the FFT suite stresses serial vs. parallel plans, and the eigensolver suite instantiates real hex TM/TE workloads (Gamma/M/K) so we can time the actual Lanczos solves without running a full band sweep.
+
+> **FFT benchmark decision:** Criterion runs up to 256×256 grids show the "parallel" FFT path never outruns the serial path—the Rayon + transpose overhead dominates until well beyond 1024² points. To avoid wasting milliseconds per matvec, we now force the CPU backend to stay on the serial plan for production workloads and retain the benchmark purely as a regression guardrail. Re-enable/retune the parallel variant only if we add much larger grids or a GPU backend that can actually amortize the extra orchestration.
 
 ### Phase 4 – 2-atomic basis & oblique lattice
 
@@ -680,3 +713,19 @@ A realistic plan that yields working artifacts at each stage:
 
   * Check correctness (ω differences).
   * Measure speedup for large grids and many k-points.
+
+---
+
+### Living module documentation
+
+This repository keeps per-module development notes under `doc/`. Each file (for example `doc/geometry.md`) describes the code that exists **today**: key types, available APIs, and known gaps. When you modify a module, update its companion document so the snapshots remain accurate. Treat these notes as short-form dev logs; broader intent still lives in this implementation guide.
+
+### Testing conventions
+
+All Rust unit and integration tests live in standalone files prefixed with `_tests_` within each crate (for example `crates/core/src/_tests_eigensolver.rs`). Each test file mirrors a production module and re-exports only the public APIs it exercises. When you add or modify a module:
+
+1. Create/extend the matching `_tests_*.rs` file instead of sprinkling `#[cfg(test)]` blocks inside the implementation.
+2. Keep fixtures small and deterministic—use analytic fields, MPB reference JSON, or hand-rolled operators that complete in milliseconds.
+3. Document tricky invariants at the top of the test file so future contributors understand what “correct” means (e.g., normalization, Hermitian symmetry, FFT round-trip tolerances).
+
+This layout keeps production modules free of test-only imports, simplifies feature gating (especially for WASM), and makes it obvious where to add new coverage.

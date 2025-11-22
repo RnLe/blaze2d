@@ -1,8 +1,30 @@
 # Example configuration for a square lattice of air holes
-lattice = { kind = "square", a = 1.0 }
-background_eps = 12.0
-atoms = [
-    { pos = [0.0, 0.0], radius = 0.2, eps_inside = 1.0 }
-]
-grid = { nx = 32, ny = 32 }
-pol = "TM"
+
+[geometry]
+eps_bg = 12.0
+
+[geometry.lattice]
+a1 = [1.0, 0.0]
+a2 = [0.0, 1.0]
+
+[[geometry.atoms]]
+pos = [0.0, 0.0]
+radius = 0.2
+eps_inside = 1.0
+
+[grid]
+nx = 32
+ny = 32
+lx = 1.0
+ly = 1.0
+
+polarization = "TM"
+
+[path]
+preset = "square"
+segments_per_leg = 8
+
+[eigensolver]
+n_bands = 5
+max_iter = 160
+tol = 1e-8
