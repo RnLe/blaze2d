@@ -655,22 +655,22 @@ A dev reading this should be able to sketch the full pipeline:
 * [x] **Step 0 — Enforce the generalized eigenproblem.** `ThetaOperator` now separates A vs. B (TE keeps ε in `apply_mass`) and the Lanczos/power iterations use B-normalization, B-inner products, and B-orthogonal reorthogonalization so Rayleigh quotients/residuals match MPB’s generalized Hermitian structure.
 * [x] **Step 1 — Γ-point detection.** `EigenOptions.gamma` now exposes an `enabled + tolerance` pair, `bandstructure::run` computes `||bloch||` for each k-point, and every solver call receives a `GammaContext` so Γ awareness is automatic and configurable.
 * [x] **Step 4 — Γ constant-mode deflation.** `solve_lowest_eigenpairs` constructs the B-normalized constant vector when `GammaContext::is_gamma`, reorthogonalizes every search/residual vector against it, and marks the metadata flag so logging/tests can tell the trivial λ=0 band was removed.
-* [ ] **Step 5 — General B-orthogonal deflation.** Maintain a block `Y` of converged eigenvectors, keep `Y^T B X = 0` via projection, and optionally recycle bands from neighbouring k-points. Nothing in `crates/core/src/eigensolver.rs` stores or reuses converged vectors yet.
-* [ ] **Step 6 — Parity / symmetry projectors.** Implement the MPB-style `(I ± S)/2` projectors for mirror symmetries and gate them with config toggles so benchmarking stays modular; search-space symmetry is currently unchecked.
-* [ ] **Step 7 — Block LOBPCG with Rayleigh–Ritz.** Replace the single-vector Lanczos chain with a block solver that forms residuals, applies the preconditioner, and solves the dense subspace problem in the B-inner product. This is the prerequisite for meaningful deflation and preconditioning.
-* [ ] **Step 8 — Operator validation.** The FFT-based Θₖ implementations exist (`crates/core/src/operator.rs`), but we still need analytic tests (e.g., compare against the toy Laplacian, MPB references, and Hermitian symmetry checks) to ensure TM gradients/divergence and TE mass matrices are correct for all lattices.
-* [ ] **Step 9 — Fourier-diagonal preconditioner.** Implement MPB’s |k+G|²/ε_eff diagonal preconditioner (with small σ shift) and expose it as another `PreconditionerKind`, alongside the existing real-space Jacobi scaler. This should finally help TM convergence.
-* [ ] **Step 10 — Eigenpair cleanup & reporting.** Expand the current per-k logging to include residual norms, Rayleigh quotients, and explicit sorting/normalization diagnostics so we can trust the reported ω even when convergence is shaky.
+* [x] **Step 5 — General B-orthogonal deflation.** `crates/core/src/eigensolver.rs` now captures every converged mode (when `EigenOptions.deflation.enabled`) and `DeflationWorkspace::project` keeps the Lanczos chain B-orthogonal to any supplied subspace, including the Γ constant mode. `bandstructure::run` stores the latest `Field2D` modes, rebuilds a workspace for the next k-point, and trims it to `deflation.max_vectors`, while benches (`crates/core/benches/eigensolver.rs`) explicitly time both deflation-on and deflation-off variants so we can quantify the impact. Focused unit tests (`_tests_eigensolver.rs`) cover zero-norm edge cases and confirm that a deflated mode is not rediscovered.
+* [x] **Step 6 — Parity / symmetry projectors.** `EigenOptions.symmetry` now accepts a list of reflection constraints (`axis` = x/y, `parity` = even/odd). The solver builds a `SymmetryProjector`, applies it to every seed/residual vector, then re-runs the Γ/deflation projector so the Krylov space stays inside the desired irreducible representation while remaining B-orthogonal. Automatic lattice-driven inference (`auto = { parity = "even" }`) is enabled by default so supported lattices immediately benefit, but benchmarking can still opt out via `auto = null` or explicit `reflections`. Dedicated symmetry + eigensolver tests cover the behavior and `doc/symmetry.md` documents the TOML/Rust usage.
+* [x] **Step 7 — Block LOBPCG with Rayleigh–Ritz.** `EigenOptions` now exposes a `block_size` (defaulting to the band count), `solve_lowest_eigenpairs` was rewritten around block entries (`BlockEntry`, `SubspaceEntry`) that retain the Θ·x and B·x companions, and every iteration assembles the `[X | P | W]` subspace before calling a dense generalized eigensolver. The Rayleigh–Ritz stage uses an explicit Cholesky + Jacobi path, converts the winning Ritz vectors back into normalized grid fields, and filters duplicate ω within the configured tolerance so degenerate bands collapse cleanly. Residuals are fully B-orthogonalized against parity/deflation spaces before preconditioning, and new unit tests (`_tests_eigensolver.rs` + `generalized_eigen_matches_diagonal_inputs`) cover diagonal, degenerate, deflated, and symmetry-projected cases to keep the block machinery honest.
+* [x] **Step 8 — Operator validation.** `_tests_operator.rs` now covers Bloch-shifted plane waves on rectangular grids (verifying |k+G|² scaling for TE and TM), Hermitian symmetry in patterned dielectrics, and TE/TM mass-operator behavior, so the Θₖ gradients/divergence and TE mass matrices are exercised analytically.
+* [x] **Step 9 — Fourier-diagonal preconditioner.** `ThetaOperator::build_fourier_diagonal_preconditioner` now assembles the |k+G|² spectrum once per k-point, uses ε_eff = 1/⟨ε⁻¹⟩ for TM, adds a fixed stabilizing σ shift, and exposes it through `PreconditionerKind::FourierDiagonal`; `_tests_operator.rs` verifies the TE/TM scaling factors and bandstructure/bench harnesses can switch between preconditioned and unpreconditioned runs.
+* [x] **Step 10 — Eigenpair cleanup & reporting.** `EigenResult` now carries an `EigenDiagnostics` payload (per-mode λ, ω, residual norms, B-normalization checks, and iteration histories), `bandstructure::run` prints a compact `diag{...}` summary plus truncated iteration history alongside each frequency list, and the metrics stream emits both `k_point_solve` and per-iteration `eigen_iteration` events—so per-k trustworthiness is auditable even when convergence wobbles.
 * [x] **Step 2 — Workspace reset.** `ThetaOperator::new` allocates fresh scratch/gradient buffers per k-point, and the Lanczos loop zeroes/normalizes working vectors before use.
-* [ ] **Step 3 — k+G bookkeeping (partial).** `build_k_vector` precomputes the FFT frequencies, but (k+G) magnitudes and reciprocals are reassembled inside tight loops every iteration. Cache `k_plus_G` and `|k+G|²` once per k so the operator and preconditioner share the data.
+* [x] **Step 3 — k+G bookkeeping.** `ThetaOperator` now caches the flattened `|k+G|²` spectrum plus the Bloch-shifted `kx_shifted/ky_shifted` axes when the k-point workspace is created, so TE matvecs, TM gradients/divergences, and the Fourier-diagonal preconditioner all reuse the same data instead of rebuilding it inside every apply.
 * [x] **Step 8 foundation — FFT-based Θₖ apply.** The TM pseudo-spectral gradient/divergence cycle and TE Laplacian path already mirror MPB’s pattern and reuse backend FFT plans.
-* [ ] **Step 9 foundation — Toggleable Jacobi preconditioner (partial).** The config-driven `PreconditionerKind` switch exists, but it only scales by ε in real space; keep it as a baseline once Fourier-diagonal variants land.
+* [x] **Step 9 foundation — Toggleable preconditioners.** `PreconditionerKind` (None, FourierDiagonal) stays TOML-configurable so benchmarks can compare Fourier-diagonal solves against an unpreconditioned baseline; the deprecated `real_space_jacobi` string now aliases to `fourier_diagonal` for backward compatibility.
 
 ### Search-space control & toggles
 
-* [ ] **Warm-start / subspace recycling.** Use converged bands from kᵢ as the initial block for kᵢ₊₁ (after parity/deflation), controlled via config so we can benchmark warm vs cold starts. Today every solve seeds with `seed_vector`.
-* [ ] **Feature toggle registry.** Extend `EigenOptions` (and the CLI TOML schema) with switches for Γ handling, deflation, parity, and warm-starts so each optimization can be toggled independently like the preconditioner.
-* [ ] **Residual monitoring.** Surface per-iteration residual norms and stagnation detection (maybe through metrics) to explain non-convergence; current logs only state the final iteration count per k-point.
+* [x] **Warm-start / subspace recycling.** `EigenOptions.warm_start` now controls how many of the previous k-point’s converged modes seed the next solve; `bandstructure::run_with_metrics` keeps a rolling cache of the last k’s `Field2D` vectors (trimmed to the configured limit) and passes them into `solve_lowest_eigenpairs`, which projects them through symmetry/deflation before filling any remaining slots with random seeds. Verbose logs now include a `warm=N` tag so it’s obvious when subspace recycling is active, and `_tests_eigensolver.rs` contains a dedicated warm-start regression test.
+* [ ] **Feature toggle registry.** Γ, deflation, symmetry, warm-start, and preconditioner toggles now live in `EigenOptions`, but we still want a first-class “optimization” section in the CLI that can flip these (and future GPU-specific tricks) en masse for benchmarking.
+* [x] **Residual monitoring.** Every solver iteration now records `(max_residual, avg_residual, block_size, new_directions)`, `bandstructure::run` prints a compact history (`iters=[0:+1e-02/2 …]`), and the metrics recorder emits `eigen_iteration` events so stagnation and solver health can be inspected post-run.
 
 ### Validation & reference tracking
 
@@ -697,3 +697,31 @@ A dev reading this should be able to sketch the full pipeline:
 * [x] **Spectral backend abstraction.** `SpectralBackend` / `Field2D` encapsulate FFT + BLAS-lite routines, paving the way for future CUDA/WebGPU ports.
 * [x] **CLI + config plumbing.** The `mpb2d-lite` CLI parses TOML configs, supports preset k-path overrides, toggles verbosity, and writes CSV/metrics streams.
 * [x] **Metrics + logging.** `bandstructure::run_with_metrics` emits setup/dielectric/FFT/k-point timing events, and the CLI exposes a `--quiet` mode for automation.
+
+---
+
+## Improvement Checklist (Convergence & Performance)
+
+### Checklist (Convergence & Performance)
+
+- [ ] **Tighten Solver Configuration Defaults**
+  - Promote Fourier-diagonal preconditioning to the default (`PreconditionerKind::FourierDiagonal`) so every run uses the only effective preconditioner we ship.
+  - Increase the block size beyond `n_bands` (e.g., `block_size = n_bands + 2`) to give Rayleigh–Ritz enough search directions, especially when symmetry/deflation trims the space.
+  - Relax `tol` for exploratory runs (1e-7 → 1e-6) and allow `max_iter` bumps (200 → 400) only for diagnostics so we see plateau behaviour instead of hard caps.
+- [ ] **Audit Projection Pipelines**
+  - Verify `GammaHandling.tolerance` by logging how often `GammaContext::new(true)` triggers; raise tolerance to ~1e-6 if near-Γ points shouldn’t be deflated.
+  - Add metrics for deflation workspace length and warm-start seed count per k; zero-length workspaces mean we pay projection costs without benefit.
+  - Add a debug toggle that disables symmetry projectors to demonstrate their iteration impact; if symmetry doubles iterations, parity inference is misclassified.
+- [ ] **Warm Start & Deflation Hygiene**
+  - Ensure `warm_start.max_vectors` and `deflation.max_vectors` default to `n_bands` instead of zero so we always cache useful modes between k-points.
+  - Store modes sorted by frequency before trimming so higher bands don’t replace the lowest ones in the warm cache.
+  - Export metrics counters (`warm_start_hits`, `deflation_len`) so field runs prove the features activate.
+- [ ] **Preconditioner Health Checks**
+  - Log per-iteration `accepted` direction counts from `compute_preconditioned_residuals`; a stream of zeros signals preconditioner breakdown or overly strict rejection.
+  - Track residual norms before and after preconditioning to ensure the Fourier diagonal actually lowers them; add unit tests on toy operators checking ≥ one order-of-magnitude drop.
+- [ ] **Benchmark & Metrics Enhancements**
+  - Extend criterion benches with a “converged” scenario (tiny grid + known spectrum) to validate iteration counts for each preconditioner/warm-start toggle.
+  - Parse metrics JSONL in CI to flag when any k-point hits `max_iter` or when `max_residual` stagnates over multiple iterations.
+- [ ] **User-Facing Diagnostics**
+  - Teach the CLI a `--inspect-metrics` or `--dump-iterations` mode that prints per-k iteration stats, so users can see whether convergence or raw iteration cost dominates their run time.
+  - Document recommended knob presets (e.g., “fast exploratory”, “accurate MPB parity”) so users understand the iteration/speed trade-offs without digging through source.

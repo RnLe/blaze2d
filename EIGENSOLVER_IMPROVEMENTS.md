@@ -20,13 +20,12 @@ Living notes on the Lanczos/LOBPCG plumbing in `mpb2d-core`—what exists today,
      - Batch multiple k-points or multiple Lanczos vectors when building Krylov subspaces (requires API changes).
 
 2. **Preconditioning**
-
    - *Goal*: reduce iteration count by approximating Θ⁻¹ or diagonal dominance, similar to MPB's preconditioned LOBPCG.
-   - *Today*: Configurable real-space Jacobi preconditioner that scales residuals by ε(r) (toggle via `EigenOptions.preconditioner`). Still rudimentary—doesn't tap G-space structure yet.
+   - *Today*: Fourier-diagonal preconditioner (|k+G|² for TE, |k+G|²/ε_eff for TM plus σ shift) ships as the default, replacing the earlier real-space Jacobi experiment.
    - *Ideas*:
-     - Diagonal (G-space) preconditioner akin to inverse |k+G|² / ε_avg.
-     - Multigrid-inspired smoothing (cheap real-space Jacobi on inverse ε).
-     - Use existing dielectric / grid metadata to build per-mode scaling factors.
+     - Extend the diagonal model with polarization-aware damping or k-dependent scaling (e.g., MPB’s |k+G|⁻² heuristics).
+     - Reintroduce a more principled real-space smoother (multigrid-inspired Jacobi on inverse ε) if profiling shows value.
+     - Use existing dielectric/grid metadata to adapt σ and ε_eff automatically per k-point.
 
 3. **Conditioning After Eigenpairs**
    - *Goal*: deflate converged eigenpairs to keep remaining spectrum well-conditioned.
@@ -39,7 +38,7 @@ Living notes on the Lanczos/LOBPCG plumbing in `mpb2d-core`—what exists today,
 ## Next Steps
 
 - [ ] Identify quick wins for **parallel vector ops** inside `SpectralBackend` (Rayon-enabled dot/axpy/scale) without reintroducing slow FFTs.
-- [ ] Upgrade the preconditioner to a **G-space diagonal** variant that leverages `|k+G|²` factors and ε contrast instead of pure real-space scaling.
+- [ ] Instrument the Fourier-diagonal preconditioner (log iteration deltas, residual drops) so we can tune σ/ε_eff heuristics per workload.
 - [ ] Add instrumentation to eigensolver benchmark output (iterations, residuals) so we can see convergence behavior alongside wall-clock time.
 - [ ] Survey MPB papers/code for specific deflation/conditioning techniques worth porting (notes + tasks TBD).
 

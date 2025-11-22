@@ -1,26 +1,49 @@
 # eigensolver
 
-**Status:** Provides a lightweight Lanczos/Krylov routine for Θₖ plus the shared power-iteration helper.
+**Status:** Implements a block LOBPCG solver for Θₖ operators (with Rayleigh–Ritz subspace solves, deflation, and symmetry projection) plus the legacy power-iteration helper.
 
 ## Responsibilities
 
-- `EigenOptions` captures solver settings (band count, iteration cap, tolerance) plus Γ handling knobs (enable/disable + tolerance).
-- `EigenResult` stores computed eigenfrequencies, the number of Lanczos steps executed, and whether the Γ constant mode was deflated.
-- `solve_lowest_eigenpairs` performs a Lanczos sweep, diagonalizes the tridiagonal proxy, and reports the lowest bands while optionally projecting out the Γ constant mode.
-- `power_iteration` offers a simple validation utility on top of any `LinearOperator` implementation.
+- `EigenOptions` captures band counts, iteration limits, tolerances, warm-start controls, and block-related knobs (e.g. `block_size`, preconditioner kind, Γ handling, deflation limits, symmetry constraints).
+- `EigenResult` reports converged ω values, iteration counts, whether the Γ constant mode was deflated, and the associated `Field2D` modes for downstream analysis.
+- `EigenDiagnostics` (carried inside `EigenResult`) records the Rayleigh quotient λ, ω, residual norm, and B-normalization for every returned band plus aggregate stats (max/avg residual, duplicate skips, sorting tolerance) and a full `IterationDiagnostics` history so downstream logs/metrics can replay solver health across iterations.
+- `solve_lowest_eigenpairs` seeds a block of search directions, applies Θₖ and B repeatedly, enforces symmetry/deflation constraints, preconditions the residuals, and performs Rayleigh–Ritz on the `[X | P | W]` subspace before deduplicating nearly-equal ω and returning normalized modes.
+- Preconditioning is configurable: `PreconditionerKind` toggles between none and the Fourier-diagonal option (|k+G|² for TE, |k+G|²/ε_eff for TM with a stabilizing σ shift) so Krylov residuals shrink faster on stiff TM cases; legacy configs that still specify `real_space_jacobi` transparently map to the Fourier setting.
+- `build_deflation_workspace` and `DeflationWorkspace::project` keep subsequent solves B-orthogonal to previously converged bands (including the analytic Γ mode).
+- `WarmStartOptions` controls whether the solver seeds its initial block from previously converged `Field2D` modes, matching MPB’s subspace recycling so consecutive k-point solves converge faster.
+- `power_iteration` remains available for quick validation of toy operators.
 
 ## Usage
 
 ```rust
-use mpb2d_core::eigensolver::{EigenOptions, GammaContext, solve_lowest_eigenpairs};
+use mpb2d_core::eigensolver::{
+    build_deflation_workspace,
+    EigenOptions,
+    GammaContext,
+    solve_lowest_eigenpairs,
+};
 
-let opts = EigenOptions::default();
+let mut opts = EigenOptions::default();
+opts.block_size = 4; // request a 4-vector block regardless of n_bands
+
 let bloch = [0.0, 0.0];
-let gamma = GammaContext::new(opts.gamma.should_deflate((bloch[0].powi(2) + bloch[1].powi(2)).sqrt()));
-let result = solve_lowest_eigenpairs(&mut operator, &opts, None, gamma);
+let gamma = GammaContext::new(opts.gamma.should_deflate(
+    (bloch[0].powi(2) + bloch[1].powi(2)).sqrt(),
+));
+
+let mut operator = make_theta_operator();
+let deflation = build_deflation_workspace::<_, _>(&mut operator, []);
+let result = solve_lowest_eigenpairs(
+    &mut operator,
+    &opts,
+    None,
+    gamma,
+    None,
+    Some(&deflation),
+);
 ```
 
 ## Gaps / Next Steps
 
-- Add block-LOBPCG support to converge larger band bundles faster and to emit mode shapes.
-- Return mode shapes when requested to enable field post-processing.
+- Add explicit stagnation alarms (e.g., WARN when residuals plateau above tolerance for N iterations) now that iteration histories are recorded.
+- Finish the Step 10 cleanup story by emitting per-band residual norms and normalization diagnostics so the pipeline’s reporting guarantees are testable.

@@ -2,11 +2,13 @@
 
 use super::backend::SpectralBackend;
 use super::eigensolver::{
-    EigenOptions, GammaContext, PowerIterationOptions, power_iteration, solve_lowest_eigenpairs,
+    EigenOptions, GammaContext, PowerIterationOptions, PreconditionerKind,
+    build_deflation_workspace, power_iteration, solve_lowest_eigenpairs,
 };
 use super::field::Field2D;
 use super::grid::Grid2D;
 use super::operator::LinearOperator;
+use super::symmetry::{Parity, ReflectionAxis, ReflectionConstraint};
 use num_complex::Complex64;
 
 #[derive(Clone, Copy, Default)]
@@ -143,7 +145,7 @@ fn diagonal_operator_recovers_sorted_bands() {
         tol: 1e-12,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default());
+    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
     approx_eq(&result.omegas, &[0.5, 1.0, 2.0], 1e-9);
     assert!(result.iterations <= opts.max_iter);
 }
@@ -158,7 +160,7 @@ fn degenerate_spectrum_preserves_duplicates() {
         tol: 1e-12,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default());
+    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
     assert_eq!(
         result.omegas.len(),
         2,
@@ -177,7 +179,7 @@ fn negative_modes_are_filtered_out() {
         tol: 1e-10,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default());
+    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
     approx_eq(&result.omegas, &[1.0, 2.0], 1e-9);
 }
 
@@ -191,7 +193,7 @@ fn krylov_limit_caps_iterations_and_band_count() {
         tol: 1e-9,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default());
+    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
     assert!(result.iterations <= opts.max_iter);
     assert_eq!(result.omegas.len(), 4);
 }
@@ -206,7 +208,7 @@ fn off_diagonal_coupling_matches_expected_modes() {
         tol: 1e-12,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default());
+    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
     approx_eq(&result.omegas, &[1.17628, 1.90211], 1e-3);
 }
 
@@ -233,4 +235,129 @@ fn power_iteration_converges_to_dominant_eigenvalue() {
         (eig - 9.0).abs() < 1e-6,
         "expected dominant eigenvalue near 9, got {eig}"
     );
+}
+
+#[test]
+fn deflation_workspace_ignores_zero_norm_modes() {
+    let mut op = DenseHermitianOp::from_diagonal(&[1.0]);
+    let zero = Field2D::zeros(op.grid());
+    let workspace = build_deflation_workspace::<_, _>(&mut op, [&zero]);
+    assert_eq!(workspace.len(), 0, "zero vector should not enter workspace");
+}
+
+#[test]
+fn deflation_prevents_refinding_lowest_mode() {
+    let diag = [0.25, 1.0, 4.0];
+    let mut op = DenseHermitianOp::from_diagonal(&diag);
+    let opts = EigenOptions {
+        n_bands: 1,
+        max_iter: 64,
+        tol: 1e-12,
+        ..Default::default()
+    };
+    let initial =
+        solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    assert_eq!(initial.omegas.len(), 1);
+    let refs: Vec<&Field2D> = initial.modes.iter().collect();
+    let workspace = build_deflation_workspace(&mut op, refs);
+    assert!(
+        workspace.len() >= 1,
+        "deflation workspace should capture mode"
+    );
+
+    let mut second_opts = EigenOptions {
+        n_bands: 2,
+        max_iter: 64,
+        tol: 1e-12,
+        ..Default::default()
+    };
+    second_opts.deflation.enabled = true;
+    let second = solve_lowest_eigenpairs(
+        &mut op,
+        &second_opts,
+        None,
+        GammaContext::default(),
+        None,
+        Some(&workspace),
+    );
+    assert_eq!(second.omegas.len(), 2);
+    approx_eq(&second.omegas, &[1.0, 2.0], 1e-9);
+}
+
+#[test]
+fn symmetry_constraints_enforce_odd_parity() {
+    let diag = [0.25, 1.0, 4.0, 9.0];
+    let mut op = DenseHermitianOp::from_diagonal(&diag);
+    let mut opts = EigenOptions {
+        n_bands: 2,
+        max_iter: 64,
+        tol: 1e-12,
+        ..Default::default()
+    };
+    opts.deflation.enabled = true;
+    opts.symmetry.reflections = vec![ReflectionConstraint {
+        axis: ReflectionAxis::X,
+        parity: Parity::Odd,
+    }];
+    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    assert!(
+        result.modes.len() >= 1,
+        "captured modes should be available"
+    );
+    let mode = &result.modes[0];
+    let grid = mode.grid();
+    for ix in 0..grid.nx {
+        let idx = grid.idx(ix, 0);
+        let mirror_idx = grid.idx((grid.nx - ix) % grid.nx, 0);
+        let value = mode.as_slice()[idx] + mode.as_slice()[mirror_idx];
+        assert!(
+            value.norm() < 1e-9,
+            "odd parity should enforce antisymmetry for column {ix}"
+        );
+    }
+}
+
+#[test]
+fn preconditioner_defaults_to_fourier_diagonal() {
+    assert_eq!(
+        PreconditionerKind::default(),
+        PreconditionerKind::FourierDiagonal,
+        "runs should precondition by default"
+    );
+}
+
+#[test]
+fn warm_start_reuses_previous_modes() {
+    let diag = [0.25, 1.0, 4.0];
+    let mut op = DenseHermitianOp::from_diagonal(&diag);
+    let base_opts = EigenOptions {
+        n_bands: 3,
+        max_iter: 32,
+        tol: 1e-10,
+        ..Default::default()
+    };
+    let initial = solve_lowest_eigenpairs(
+        &mut op,
+        &base_opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+    );
+    assert_eq!(initial.omegas.len(), 3);
+    let seeds = initial.modes.clone();
+
+    let mut reuse_op = DenseHermitianOp::from_diagonal(&diag);
+    let mut reuse_opts = base_opts.clone();
+    reuse_opts.max_iter = 0;
+    let reuse = solve_lowest_eigenpairs(
+        &mut reuse_op,
+        &reuse_opts,
+        None,
+        GammaContext::default(),
+        Some(seeds.as_slice()),
+        None,
+    );
+    approx_eq(&reuse.omegas, &[0.5, 1.0, 2.0], 1e-9);
+    assert_eq!(reuse.iterations, 0, "warm starts should bypass iterations");
 }

@@ -1,12 +1,15 @@
-use std::f64::consts::PI;
-use std::hint::black_box;
+use std::{f64::consts::PI, hint::black_box, sync::Arc};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use mpb2d_backend_cpu::CpuBackend;
 use mpb2d_core::{
     bandstructure::BandStructureJob,
     dielectric::Dielectric2D,
-    eigensolver::{EigenOptions, GammaContext, PreconditionerKind, solve_lowest_eigenpairs},
+    eigensolver::{
+        DeflationWorkspace, EigenOptions, GammaContext, PreconditionerKind,
+        build_deflation_workspace, solve_lowest_eigenpairs,
+    },
+    field::Field2D,
     io::JobConfig,
     operator::ThetaOperator,
     polarization::Polarization,
@@ -77,52 +80,147 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
     ];
     let backend = CpuBackend::new();
     let mut group = c.benchmark_group("cpu_eigensolver_real_data");
-    group.sample_size(20);
+    group.sample_size(10);
     for scenario in &scenarios {
         let base_opts = scenario.eigensolver.clone();
-        let jacobi_opts = EigenOptions {
-            preconditioner: PreconditionerKind::RealSpaceJacobi,
+        let fourier_opts = EigenOptions {
+            preconditioner: PreconditionerKind::FourierDiagonal,
             ..base_opts.clone()
         };
-        let variants = [("baseline", base_opts), ("jacobi", jacobi_opts)];
+        let none_opts = EigenOptions {
+            preconditioner: PreconditionerKind::None,
+            ..base_opts.clone()
+        };
+        let deflation_variants = [("nodefl", false), ("defl", true)];
         for sample in &scenario.k_points {
             let bloch = bloch_from_fraction(sample.coords);
-            for (variant, eigen_opts) in variants.clone() {
-                let bench_id =
-                    BenchmarkId::new(format!("{}-{}", scenario.name, variant), sample.label);
-                group.bench_function(bench_id, |b| {
-                    b.iter(|| {
-                        let mut theta = ThetaOperator::new(
-                            backend.clone(),
-                            scenario.dielectric.clone(),
-                            scenario.polarization,
-                            bloch,
-                        );
-                        let bloch_norm = (bloch[0] * bloch[0] + bloch[1] * bloch[1]).sqrt();
+            let bloch_norm = (bloch[0] * bloch[0] + bloch[1] * bloch[1]).sqrt();
+            for &(defl_label, defl_enabled) in &deflation_variants {
+                let variants = [
+                    ("fourier", fourier_opts.clone()),
+                    ("none", none_opts.clone()),
+                ];
+                for (variant, mut eigen_opts) in variants {
+                    eigen_opts.deflation.enabled = defl_enabled;
+                    let bench_id = BenchmarkId::new(
+                        format!("{}-{}-{}", scenario.name, variant, defl_label),
+                        sample.label,
+                    );
+                    group.bench_function(bench_id, |b| {
                         let gamma_context =
                             GammaContext::new(eigen_opts.gamma.should_deflate(bloch_norm));
-                        let result = match eigen_opts.preconditioner {
-                            PreconditionerKind::None => solve_lowest_eigenpairs(
-                                &mut theta,
-                                &eigen_opts,
-                                None,
-                                gamma_context,
-                            ),
-                            PreconditionerKind::RealSpaceJacobi => {
-                                let mut preconditioner =
-                                    theta.build_real_space_jacobi_preconditioner();
-                                solve_lowest_eigenpairs(
+                        b.iter(|| {
+                            let mut theta = ThetaOperator::new(
+                                backend.clone(),
+                                scenario.dielectric.clone(),
+                                scenario.polarization,
+                                bloch,
+                            );
+                            let result = match eigen_opts.preconditioner {
+                                PreconditionerKind::None => solve_lowest_eigenpairs(
                                     &mut theta,
                                     &eigen_opts,
-                                    Some(&mut preconditioner),
+                                    None,
                                     gamma_context,
-                                )
-                            }
-                        };
-                        black_box(result.iterations);
+                                    None,
+                                    None,
+                                ),
+                                PreconditionerKind::FourierDiagonal => {
+                                    let mut preconditioner =
+                                        theta.build_fourier_diagonal_preconditioner();
+                                    solve_lowest_eigenpairs(
+                                        &mut theta,
+                                        &eigen_opts,
+                                        Some(&mut preconditioner),
+                                        gamma_context,
+                                        None,
+                                        None,
+                                    )
+                                }
+                            };
+                            black_box(result.iterations);
+                        });
                     });
-                });
+                }
             }
+
+            let mut everything_opts = scenario.eigensolver.clone();
+            everything_opts.preconditioner = PreconditionerKind::FourierDiagonal;
+            everything_opts.deflation.enabled = true;
+            everything_opts.deflation.max_vectors = everything_opts.n_bands;
+            everything_opts.warm_start.enabled = true;
+            everything_opts.warm_start.max_vectors = everything_opts.n_bands;
+            let everything_gamma =
+                GammaContext::new(everything_opts.gamma.should_deflate(bloch_norm));
+            let warm_limit = everything_opts
+                .warm_start
+                .effective_limit(everything_opts.n_bands);
+            let warm_modes: Arc<Vec<Field2D>> = {
+                let mut theta = ThetaOperator::new(
+                    backend.clone(),
+                    scenario.dielectric.clone(),
+                    scenario.polarization,
+                    bloch,
+                );
+                let mut preconditioner = theta.build_fourier_diagonal_preconditioner();
+                let primer = solve_lowest_eigenpairs(
+                    &mut theta,
+                    &everything_opts,
+                    Some(&mut preconditioner),
+                    everything_gamma,
+                    None,
+                    None,
+                );
+                Arc::new(primer.modes.into_iter().take(warm_limit).collect())
+            };
+
+            let bench_id = BenchmarkId::new(format!("{}-everything", scenario.name), sample.label);
+            let dielectric = scenario.dielectric.clone();
+            let polarization = scenario.polarization;
+            let backend_clone = backend.clone();
+            let opts = everything_opts.clone();
+            let warm_modes_clone = warm_modes.clone();
+            group.bench_function(bench_id, move |b| {
+                let warm_modes = warm_modes_clone.clone();
+                b.iter(|| {
+                    let mut theta = ThetaOperator::new(
+                        backend_clone.clone(),
+                        dielectric.clone(),
+                        polarization,
+                        bloch,
+                    );
+                    let warm_slice: &[Field2D] = warm_modes.as_slice();
+                    let deflation_workspace: Option<DeflationWorkspace<CpuBackend>> = {
+                        let limit = opts.deflation.effective_limit(opts.n_bands);
+                        if limit == 0 {
+                            None
+                        } else {
+                            let refs: Vec<&Field2D> = warm_slice.iter().take(limit).collect();
+                            if refs.is_empty() {
+                                None
+                            } else {
+                                let workspace = build_deflation_workspace(&mut theta, refs);
+                                if workspace.is_empty() {
+                                    None
+                                } else {
+                                    Some(workspace)
+                                }
+                            }
+                        }
+                    };
+                    let workspace_ref = deflation_workspace.as_ref();
+                    let mut preconditioner = theta.build_fourier_diagonal_preconditioner();
+                    let result = solve_lowest_eigenpairs(
+                        &mut theta,
+                        &opts,
+                        Some(&mut preconditioner),
+                        everything_gamma,
+                        Some(warm_slice),
+                        workspace_ref,
+                    );
+                    black_box((result.iterations, result.gamma_deflated));
+                });
+            });
         }
     }
     group.finish();

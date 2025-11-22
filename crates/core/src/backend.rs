@@ -30,7 +30,7 @@ impl SpectralBuffer for Field2D {
 }
 
 pub trait SpectralBackend {
-    type Buffer: SpectralBuffer;
+    type Buffer: SpectralBuffer + Clone;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer;
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer);

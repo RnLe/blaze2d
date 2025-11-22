@@ -26,6 +26,7 @@ impl CudaBackend {
     }
 }
 
+#[derive(Clone)]
 pub struct CudaField {
     grid: Grid2D,
     data: Vec<Complex64>,

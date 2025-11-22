@@ -10,6 +10,7 @@ use wasm_bindgen::prelude::*;
 #[cfg_attr(feature = "bindings", wasm_bindgen)]
 pub struct WasmBackend;
 
+#[derive(Clone)]
 pub struct WasmField {
     grid: Grid2D,
     data: Vec<Complex64>,

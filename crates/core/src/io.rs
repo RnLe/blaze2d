@@ -70,12 +70,16 @@ impl From<JobConfig> for BandStructureJob {
             !k_path.is_empty(),
             "JobConfig requires either an explicit k_path or a path preset"
         );
+        let mut eigensolver = value.eigensolver;
+        eigensolver
+            .symmetry
+            .resolve_with_lattice(&value.geometry.lattice);
         BandStructureJob {
             geom: value.geometry,
             grid: value.grid,
             pol: value.polarization,
             k_path,
-            eigensolver: value.eigensolver,
+            eigensolver,
         }
     }
 }
