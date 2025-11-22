@@ -1,0 +1,18 @@
+[package]
+name = "mpb2d-python"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+bindings = ["dep:pyo3"]
+
+[dependencies]
+mpb2d-core = { path = "../core" }
+pyo3 = { version = "0.27", features = ["extension-module"], optional = true }

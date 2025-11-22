@@ -1,0 +1,9 @@
+# Oblique lattice with a two-atom basis
+lattice = { kind = "oblique", a1 = [1.0, 0.0], a2 = [0.5, 0.8660254] }
+background_eps = 10.5
+atoms = [
+    { pos = [0.0, 0.0], radius = 0.18, eps_inside = 1.0 },
+    { pos = [0.5, 0.5], radius = 0.12, eps_inside = 1.0 }
+]
+grid = { nx = 64, ny = 64 }
+pol = "TM"

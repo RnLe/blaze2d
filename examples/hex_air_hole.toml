@@ -1,0 +1,8 @@
+# Hexagonal lattice example
+lattice = { kind = "hexagonal", a = 1.0 }
+background_eps = 12.0
+atoms = [
+    { pos = [0.0, 0.0], radius = 0.3, eps_inside = 1.0 }
+]
+grid = { nx = 48, ny = 48 }
+pol = "TE"
