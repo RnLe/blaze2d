@@ -22,9 +22,13 @@ ly = 1.0
 
 [path]
 preset = "hexagonal"
-segments_per_leg = 12
+segments_per_leg = 8
 
 [eigensolver]
 n_bands = 8
-max_iter = 200
-tol = 1e-8
+max_iter = 100
+tol = 1e-6
+
+[metrics]
+enabled = true
+output = "reference-data/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d_metrics.jsonl"

@@ -2,9 +2,10 @@
 # Loaded by python/evaluation/Makefile to orchestrate MPB + mpb2d runs.
 
 EVAL_NAME := compare_hex_lowres
+SMOOTHING_ARGS := --mesh-size 4
 
 MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py \
-	--output reference-data/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
+	--output $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
 	--resolution 24 \
 	--num-bands 8 \
 	--k-density 6 \
@@ -14,7 +15,7 @@ MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py 
 	--polarization te \
 	--lattice hexagonal \
 	&& mamba run -n mpb-reference python ../generate_square_tm_bands.py \
-	--output reference-data/hex_tm_eps13_r0p3_res24_k6_b8_mpb.json \
+	--output $(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb.json \
 	--resolution 24 \
 	--num-bands 8 \
 	--k-density 6 \
@@ -24,13 +25,20 @@ MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py 
 	--polarization tm \
 	--lattice hexagonal
 
+
 MPB2D_COMMAND := cargo run -p mpb2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_te_res24.toml \
-	--output reference-data/hex_te_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	--output $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	--dump-pipeline $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_pipeline \
+	$(SMOOTHING_ARGS) \
+	--preconditioner structured_diagonal \
 	--path hexagonal \
-	--segments-per-leg 6 \
+	--segments-per-leg 4 \
 	&& cargo run -p mpb2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_tm_res24.toml \
-	--output reference-data/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	--output $(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	--dump-pipeline $(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_pipeline \
+	$(SMOOTHING_ARGS) \
+	--preconditioner structured_diagonal \
 	--path hexagonal \
-	--segments-per-leg 6
+	--segments-per-leg 4

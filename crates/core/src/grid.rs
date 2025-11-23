@@ -25,6 +25,21 @@ impl Grid2D {
     pub fn len(&self) -> usize {
         self.nx * self.ny
     }
+
+    #[inline]
+    pub fn cartesian_coords(&self, ix: usize, iy: usize) -> [f64; 2] {
+        let x = if self.nx > 0 {
+            (ix as f64 / self.nx as f64) * self.lx
+        } else {
+            0.0
+        };
+        let y = if self.ny > 0 {
+            (iy as f64 / self.ny as f64) * self.ly
+        } else {
+            0.0
+        };
+        [x, y]
+    }
 }
 
 fn default_length() -> f64 {

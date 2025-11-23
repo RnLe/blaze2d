@@ -6,6 +6,7 @@ use clap::{Parser, ValueEnum};
 use mpb2d_backend_cpu::CpuBackend;
 use mpb2d_core::{
     bandstructure::{self, BandStructureResult, Verbosity},
+    eigensolver::PreconditionerKind,
     io::{JobConfig, PathPreset},
     symmetry,
 };
@@ -28,6 +29,21 @@ struct Cli {
     /// Suppress progress logs (stderr)
     #[arg(long)]
     quiet: bool,
+    /// Disable automatic symmetry reflections inferred from the lattice
+    #[arg(long)]
+    no_auto_symmetry: bool,
+    /// Write optional pipeline inspection artifacts to the provided directory
+    #[arg(long = "dump-pipeline")]
+    dump_pipeline: Option<PathBuf>,
+    /// Override dielectric smoothing mesh size (1 disables smoothing)
+    #[arg(long)]
+    mesh_size: Option<usize>,
+    /// Disable dielectric smoothing (shorthand for --mesh-size=1)
+    #[arg(long)]
+    no_smoothing: bool,
+    /// Override the eigensolver preconditioner kind
+    #[arg(long, value_enum)]
+    preconditioner: Option<PreconditionerArg>,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -41,6 +57,25 @@ impl From<PathArg> for PathPreset {
         match value {
             PathArg::Square => PathPreset::Square,
             PathArg::Hexagonal => PathPreset::Hexagonal,
+        }
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum PreconditionerArg {
+    None,
+    #[value(alias = "homogeneous_jacobi")]
+    HomogeneousJacobi,
+    #[value(alias = "structured_diagonal")]
+    StructuredDiagonal,
+}
+
+impl From<PreconditionerArg> for PreconditionerKind {
+    fn from(value: PreconditionerArg) -> Self {
+        match value {
+            PreconditionerArg::None => PreconditionerKind::None,
+            PreconditionerArg::HomogeneousJacobi => PreconditionerKind::HomogeneousJacobi,
+            PreconditionerArg::StructuredDiagonal => PreconditionerKind::StructuredDiagonal,
         }
     }
 }
@@ -66,6 +101,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "[cli] overriding k-path via preset {:?} (segments_per_leg={})",
                 preset, cli.segments_per_leg
             );
+        }
+    }
+    if let Some(mesh_size) = cli.mesh_size {
+        let clamped = mesh_size.max(1);
+        config.dielectric.smoothing.mesh_size = clamped;
+        if !cli.quiet {
+            eprintln!(
+                "[cli] overriding dielectric mesh_size -> {}{}",
+                clamped,
+                if clamped == 1 {
+                    " (smoothing disabled)"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+    if cli.no_smoothing {
+        config.dielectric.smoothing.mesh_size = 1;
+        if !cli.quiet {
+            eprintln!("[cli] disabling dielectric smoothing (mesh_size=1)");
+        }
+    }
+    if let Some(kind) = cli.preconditioner.clone() {
+        config.eigensolver.preconditioner = kind.into();
+        if !cli.quiet {
+            eprintln!(
+                "[cli] overriding preconditioner -> {:?}",
+                config.eigensolver.preconditioner
+            );
+        }
+    }
+    if cli.no_auto_symmetry {
+        config.eigensolver.symmetry.disable_auto();
+        if !cli.quiet {
+            eprintln!("[cli] disabling automatic symmetry reflections");
+        }
+    }
+    if let Some(dir) = cli.dump_pipeline.clone() {
+        config.inspection.enable_with_dir(dir.clone());
+        if !cli.quiet {
+            eprintln!("[cli] pipeline inspection dumps -> {}", dir.display());
         }
     }
     let metrics_cfg = config.metrics.clone();

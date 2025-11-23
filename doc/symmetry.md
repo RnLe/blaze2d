@@ -1,6 +1,6 @@
 # symmetry
 
-**Status:** Provides square/hex presets plus a densifier for high-symmetry paths, and mirror-parity projectors that are now enabled by default (with automatic lattice-driven inference).
+**Status:** Provides square/hex presets plus a densifier for high-symmetry paths, and mirror-parity projectors that can be opt-in (automatic lattice-driven inference is available but disabled by default while we debug the solver).
 
 ## Responsibilities
 
@@ -51,7 +51,7 @@ let projector = SymmetryProjector::from_options(&options).unwrap();
 
 ### Auto-selecting mirror axes from the lattice
 
-`SymmetryOptions::default()` now enables automatic selection based on the lattice class (square, rectangular, triangular, oblique). Provide the desired parity (defaults to even) and the solver will populate the appropriate axes during job construction:
+`SymmetryOptions::default()` starts with **no** automatic reflections so fresh jobs explore the full eigenspace (matching the current debugging posture). If you want MPB-style parity projections, explicitly supply the `auto` block:
 
 ```toml
 [eigensolver.symmetry]
@@ -62,7 +62,9 @@ auto = { parity = "even" }
 - Triangular lattices ⇒ mirrors across `x` and `y` (aligned with the default basis).
 - Oblique lattices ⇒ no mirrors (options stay empty).
 
-Manual `reflections` always take precedence; `auto` only fires when the list is empty. To opt out entirely set `auto = null` (or `symmetry.auto = null` in TOML).
+Manual `reflections` always take precedence; `auto` only fires when the list is empty. At solve time, auto reflections are **gated per Bloch point** via `SymmetryOptions::selection_for_bloch`: a mirror is enabled only when the corresponding Bloch component is within `auto.bloch_tolerance` (default `1e-6`) relative to the orthogonal component. Off-axis `k` points therefore skip parity projectors automatically, and the pipeline records both the applied and skipped counts in `MetricsEvent::KPointSolve` (`symmetry_reflections` / `symmetry_reflections_skipped`).
+
+To disable the auto inference without editing the TOML, pass `--no-auto-symmetry` to the CLI (still useful when a config explicitly enables `auto`).
 
 ## Gaps / Next Steps
 

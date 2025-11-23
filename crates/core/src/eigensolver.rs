@@ -14,6 +14,8 @@ use crate::{
 };
 
 const MIN_RR_TOL: f64 = 1e-12;
+const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
+const BLOCK_SIZE_SLACK: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -39,7 +41,7 @@ impl Default for EigenOptions {
         Self {
             n_bands: 8,
             max_iter: 200,
-            tol: 1e-8,
+            tol: 1e-6,
             block_size: 0,
             preconditioner: PreconditionerKind::default(),
             gamma: GammaHandling::default(),
@@ -53,10 +55,27 @@ impl Default for EigenOptions {
 impl EigenOptions {
     fn effective_block_size(&self) -> usize {
         let required = self.n_bands.max(1);
-        if self.block_size == 0 {
-            required
+        let target = if self.block_size == 0 {
+            required.saturating_add(BLOCK_SIZE_SLACK)
         } else {
-            self.block_size.max(required)
+            self.block_size
+        };
+        target.max(required)
+    }
+
+    pub(crate) fn enforce_recommended_defaults(&mut self) {
+        let recommended_block = self.n_bands.max(1).saturating_add(BLOCK_SIZE_SLACK);
+        if self.block_size == 0 || self.block_size < recommended_block {
+            self.block_size = recommended_block;
+        }
+        if !matches!(
+            self.preconditioner,
+            PreconditionerKind::StructuredDiagonal | PreconditionerKind::HomogeneousJacobi
+        ) {
+            self.preconditioner = PreconditionerKind::StructuredDiagonal;
+        }
+        if self.warm_start.enabled && self.warm_start.max_vectors == 0 {
+            self.warm_start.max_vectors = self.n_bands.max(1);
         }
     }
 }
@@ -156,13 +175,19 @@ impl GammaContext {
 #[serde(rename_all = "snake_case")]
 pub enum PreconditionerKind {
     None,
-    #[serde(alias = "real_space_jacobi")]
-    FourierDiagonal,
+    #[serde(
+        alias = "fourier_diagonal",
+        alias = "real_space_jacobi",
+        alias = "homogeneous"
+    )]
+    HomogeneousJacobi,
+    #[serde(alias = "structured", alias = "epsilon_aware")]
+    StructuredDiagonal,
 }
 
 impl Default for PreconditionerKind {
     fn default() -> Self {
-        PreconditionerKind::FourierDiagonal
+        PreconditionerKind::StructuredDiagonal
     }
 }
 
@@ -173,6 +198,7 @@ pub struct EigenResult {
     pub gamma_deflated: bool,
     pub modes: Vec<Field2D>,
     pub diagnostics: EigenDiagnostics,
+    pub warm_start_hits: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +207,7 @@ pub struct EigenDiagnostics {
     pub duplicate_modes_skipped: usize,
     pub negative_modes_skipped: usize,
     pub max_residual: f64,
+    pub max_relative_residual: f64,
     pub modes: Vec<ModeDiagnostics>,
     pub iterations: Vec<IterationDiagnostics>,
 }
@@ -192,6 +219,7 @@ impl EigenDiagnostics {
             duplicate_modes_skipped: 0,
             negative_modes_skipped: 0,
             max_residual: 0.0,
+            max_relative_residual: 0.0,
             modes: Vec::new(),
             iterations: Vec::new(),
         }
@@ -202,6 +230,14 @@ impl EigenDiagnostics {
             return 0.0;
         }
         let sum: f64 = self.modes.iter().map(|m| m.residual_norm).sum();
+        sum / self.modes.len() as f64
+    }
+
+    pub fn avg_relative_residual(&self) -> f64 {
+        if self.modes.is_empty() {
+            return 0.0;
+        }
+        let sum: f64 = self.modes.iter().map(|m| m.relative_residual).sum();
         sum / self.modes.len() as f64
     }
 
@@ -225,6 +261,7 @@ pub struct ModeDiagnostics {
     pub lambda: f64,
     pub residual_norm: f64,
     pub mass_norm: f64,
+    pub relative_residual: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -232,8 +269,13 @@ pub struct IterationDiagnostics {
     pub iteration: usize,
     pub max_residual: f64,
     pub avg_residual: f64,
+    pub max_relative_residual: f64,
+    pub avg_relative_residual: f64,
     pub block_size: usize,
     pub new_directions: usize,
+    pub preconditioner_trials: usize,
+    pub preconditioner_avg_before: f64,
+    pub preconditioner_avg_after: f64,
 }
 
 pub struct DeflationWorkspace<B: SpectralBackend> {
@@ -307,6 +349,7 @@ pub fn solve_lowest_eigenpairs<O, B>(
     gamma: GammaContext,
     warm_start: Option<&[Field2D]>,
     deflation: Option<&DeflationWorkspace<B>>,
+    symmetry_override: Option<&SymmetryProjector>,
 ) -> EigenResult
 where
     O: LinearOperator<B>,
@@ -320,14 +363,20 @@ where
         None
     };
     let gamma_deflated = gamma_mode.is_some();
-    let symmetry_projector = SymmetryProjector::from_options(&opts.symmetry);
+    let mut fallback_symmetry = None;
+    let symmetry_projector = if let Some(custom) = symmetry_override {
+        Some(custom)
+    } else {
+        fallback_symmetry = SymmetryProjector::from_options(&opts.symmetry);
+        fallback_symmetry.as_ref()
+    };
 
-    let mut x_entries = initialize_block(
+    let (mut x_entries, warm_start_hits) = initialize_block(
         operator,
         block_size,
         gamma_mode.as_ref(),
         deflation,
-        symmetry_projector.as_ref(),
+        symmetry_projector,
         warm_start,
     );
     if x_entries.is_empty() {
@@ -337,6 +386,7 @@ where
             gamma_deflated,
             modes: Vec::new(),
             diagnostics: EigenDiagnostics::default(),
+            warm_start_hits,
         };
     }
 
@@ -365,7 +415,7 @@ where
             &w_entries,
             gamma_mode.as_ref(),
             deflation,
-            symmetry_projector.as_ref(),
+            symmetry_projector,
             &mut preconditioner,
             opts.tol,
         );
@@ -373,10 +423,15 @@ where
             iteration: iterations,
             max_residual: residual_stats.max_residual,
             avg_residual: residual_stats.avg_residual,
+            max_relative_residual: residual_stats.max_relative_residual,
+            avg_relative_residual: residual_stats.avg_relative_residual,
             block_size: x_entries.len(),
             new_directions: residual_stats.accepted,
+            preconditioner_trials: residual_stats.preconditioner_trials,
+            preconditioner_avg_before: residual_stats.preconditioner_avg_before,
+            preconditioner_avg_after: residual_stats.preconditioner_avg_after,
         });
-        if residual_stats.max_residual <= opts.tol
+        if residual_stats.max_relative_residual <= opts.tol
             || p_entries.is_empty()
             || iterations >= opts.max_iter
         {
@@ -420,6 +475,7 @@ where
         gamma_deflated,
         modes,
         diagnostics,
+        warm_start_hits,
     }
 }
 
@@ -537,7 +593,43 @@ struct SubspaceEntry<'a, B: SpectralBackend> {
 struct ResidualComputation {
     max_residual: f64,
     avg_residual: f64,
+    max_relative_residual: f64,
+    avg_relative_residual: f64,
     accepted: usize,
+    preconditioner_trials: usize,
+    preconditioner_avg_before: f64,
+    preconditioner_avg_after: f64,
+}
+
+fn residual_relative_scale<B: SpectralBackend>(
+    backend: &B,
+    entry: &BlockEntry<B>,
+    lambda: f64,
+) -> f64 {
+    let vector_norm = mass_norm(backend, &entry.vector, &entry.mass);
+    let rayleigh_scale = lambda.abs() * vector_norm.max(1e-12);
+    if rayleigh_scale > 1e-12 {
+        return rayleigh_scale;
+    }
+    let op_norm_sq = backend.dot(&entry.applied, &entry.applied).re.max(0.0);
+    if op_norm_sq > 0.0 {
+        return op_norm_sq.sqrt();
+    }
+    0.0
+}
+
+fn compute_relative_residual<B: SpectralBackend>(
+    backend: &B,
+    entry: &BlockEntry<B>,
+    lambda: f64,
+    residual_norm: f64,
+) -> f64 {
+    let scale = residual_relative_scale(backend, entry, lambda);
+    if scale > 0.0 {
+        residual_norm / scale
+    } else {
+        residual_norm
+    }
 }
 
 fn build_gamma_mode<O, B>(operator: &mut O) -> Option<GammaMode<B>>
@@ -684,18 +776,20 @@ fn initialize_block<O, B>(
     deflation: Option<&DeflationWorkspace<B>>,
     symmetry: Option<&SymmetryProjector>,
     warm_start: Option<&[Field2D]>,
-) -> Vec<BlockEntry<B>>
+) -> (Vec<BlockEntry<B>>, usize)
 where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
     let mut entries = Vec::with_capacity(count);
+    let mut warm_hits = 0usize;
     if let Some(seeds) = warm_start {
         for field in seeds.iter().take(count) {
             if let Some(entry) =
                 build_entry_from_field(operator, field, gamma_mode, deflation, symmetry, &entries)
             {
                 entries.push(entry);
+                warm_hits += 1;
             }
             if entries.len() == count {
                 break;
@@ -716,7 +810,7 @@ where
             }
         }
     }
-    entries
+    (entries, warm_hits)
 }
 
 fn build_entry_from_field<O, B>(
@@ -930,8 +1024,13 @@ where
 {
     let mut max_residual: f64 = 0.0;
     let mut sum_residual: f64 = 0.0;
+    let mut max_relative: f64 = 0.0;
+    let mut sum_relative: f64 = 0.0;
     let mut evaluated: usize = 0;
     let mut accepted: usize = 0;
+    let mut preconditioner_trials = 0usize;
+    let mut preconditioner_sum_before = 0.0;
+    let mut preconditioner_sum_after = 0.0;
     let mut p_entries = Vec::new();
     for (idx, entry) in x_entries.iter().enumerate() {
         let lambda = *eigenvalues.get(idx).unwrap_or(&0.0);
@@ -957,12 +1056,19 @@ where
         project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
         let mut norm = mass_norm(operator.backend(), &vector, &mass);
         max_residual = max_residual.max(norm);
+        let mut relative = compute_relative_residual(operator.backend(), entry, lambda, norm);
+        max_relative = max_relative.max(relative);
         sum_residual += norm;
+        sum_relative += relative;
         evaluated += 1;
-        if norm <= tol {
+        if relative <= tol || norm <= ABSOLUTE_RESIDUAL_GUARD {
             continue;
         }
+        let mut preconditioned = false;
         if let Some(precond) = preconditioner.as_mut() {
+            preconditioned = true;
+            preconditioner_trials += 1;
+            preconditioner_sum_before += norm;
             let backend = operator.backend();
             (**precond).apply(backend, &mut vector);
         }
@@ -979,7 +1085,14 @@ where
         project_against_entries(operator.backend(), &mut vector, &mut mass, &p_entries);
         project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
         norm = mass_norm(operator.backend(), &vector, &mass);
+        if preconditioned {
+            preconditioner_sum_after += norm;
+        }
+        relative = compute_relative_residual(operator.backend(), entry, lambda, norm);
         if norm <= 1e-12 {
+            continue;
+        }
+        if relative <= tol {
             continue;
         }
         accepted += 1;
@@ -999,11 +1112,29 @@ where
     } else {
         0.0
     };
+    let avg_relative = if evaluated > 0 {
+        sum_relative / evaluated as f64
+    } else {
+        0.0
+    };
     (
         ResidualComputation {
             max_residual,
             avg_residual,
+            max_relative_residual: max_relative,
+            avg_relative_residual: avg_relative,
             accepted,
+            preconditioner_trials,
+            preconditioner_avg_before: if preconditioner_trials > 0 {
+                preconditioner_sum_before / preconditioner_trials as f64
+            } else {
+                0.0
+            },
+            preconditioner_avg_after: if preconditioner_trials > 0 {
+                preconditioner_sum_after / preconditioner_trials as f64
+            } else {
+                0.0
+            },
         },
         p_entries,
     )
@@ -1076,12 +1207,17 @@ where
         }
         let mass_norm = mass_norm(operator.backend(), &entry.vector, &entry.mass);
         let residual_norm = compute_residual_norm(operator, entry, lambda);
+        let relative_residual =
+            compute_relative_residual(operator.backend(), entry, lambda, residual_norm);
         diagnostics.max_residual = diagnostics.max_residual.max(residual_norm);
+        diagnostics.max_relative_residual =
+            diagnostics.max_relative_residual.max(relative_residual);
         diagnostics.modes.push(ModeDiagnostics {
             omega,
             lambda,
             residual_norm,
             mass_norm,
+            relative_residual,
         });
 
         let data = entry.vector.as_slice().to_vec();
@@ -1209,7 +1345,7 @@ fn solve_upper_triangular_right(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<
 
 #[cfg(test)]
 mod eigensolver_internal_tests {
-    use super::generalized_eigen;
+    use super::{EigenOptions, generalized_eigen};
 
     #[test]
     fn generalized_eigen_matches_diagonal_inputs() {
@@ -1230,5 +1366,14 @@ mod eigensolver_internal_tests {
                 want
             );
         }
+    }
+
+    #[test]
+    fn default_block_size_adds_slack() {
+        let mut opts = EigenOptions::default();
+        opts.n_bands = 5;
+        assert_eq!(opts.effective_block_size(), 7);
+        opts.block_size = 10;
+        assert_eq!(opts.effective_block_size(), 10);
     }
 }

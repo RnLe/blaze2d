@@ -145,7 +145,15 @@ fn diagonal_operator_recovers_sorted_bands() {
         tol: 1e-12,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    let result = solve_lowest_eigenpairs(
+        &mut op,
+        &opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+        None,
+    );
     approx_eq(&result.omegas, &[0.5, 1.0, 2.0], 1e-9);
     assert!(result.iterations <= opts.max_iter);
 }
@@ -160,7 +168,15 @@ fn degenerate_spectrum_preserves_duplicates() {
         tol: 1e-12,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    let result = solve_lowest_eigenpairs(
+        &mut op,
+        &opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+        None,
+    );
     assert_eq!(
         result.omegas.len(),
         2,
@@ -179,7 +195,15 @@ fn negative_modes_are_filtered_out() {
         tol: 1e-10,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    let result = solve_lowest_eigenpairs(
+        &mut op,
+        &opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+        None,
+    );
     approx_eq(&result.omegas, &[1.0, 2.0], 1e-9);
 }
 
@@ -193,7 +217,15 @@ fn krylov_limit_caps_iterations_and_band_count() {
         tol: 1e-9,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    let result = solve_lowest_eigenpairs(
+        &mut op,
+        &opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+        None,
+    );
     assert!(result.iterations <= opts.max_iter);
     assert_eq!(result.omegas.len(), 4);
 }
@@ -208,7 +240,15 @@ fn off_diagonal_coupling_matches_expected_modes() {
         tol: 1e-12,
         ..Default::default()
     };
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    let result = solve_lowest_eigenpairs(
+        &mut op,
+        &opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+        None,
+    );
     approx_eq(&result.omegas, &[1.17628, 1.90211], 1e-3);
 }
 
@@ -255,8 +295,15 @@ fn deflation_prevents_refinding_lowest_mode() {
         tol: 1e-12,
         ..Default::default()
     };
-    let initial =
-        solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    let initial = solve_lowest_eigenpairs(
+        &mut op,
+        &opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+        None,
+    );
     assert_eq!(initial.omegas.len(), 1);
     let refs: Vec<&Field2D> = initial.modes.iter().collect();
     let workspace = build_deflation_workspace(&mut op, refs);
@@ -279,6 +326,7 @@ fn deflation_prevents_refinding_lowest_mode() {
         GammaContext::default(),
         None,
         Some(&workspace),
+        None,
     );
     assert_eq!(second.omegas.len(), 2);
     approx_eq(&second.omegas, &[1.0, 2.0], 1e-9);
@@ -299,7 +347,15 @@ fn symmetry_constraints_enforce_odd_parity() {
         axis: ReflectionAxis::X,
         parity: Parity::Odd,
     }];
-    let result = solve_lowest_eigenpairs(&mut op, &opts, None, GammaContext::default(), None, None);
+    let result = solve_lowest_eigenpairs(
+        &mut op,
+        &opts,
+        None,
+        GammaContext::default(),
+        None,
+        None,
+        None,
+    );
     assert!(
         result.modes.len() >= 1,
         "captured modes should be available"
@@ -318,11 +374,11 @@ fn symmetry_constraints_enforce_odd_parity() {
 }
 
 #[test]
-fn preconditioner_defaults_to_fourier_diagonal() {
+fn preconditioner_defaults_to_structured() {
     assert_eq!(
         PreconditionerKind::default(),
-        PreconditionerKind::FourierDiagonal,
-        "runs should precondition by default"
+        PreconditionerKind::StructuredDiagonal,
+        "runs should use the structured preconditioner by default"
     );
 }
 
@@ -343,6 +399,7 @@ fn warm_start_reuses_previous_modes() {
         GammaContext::default(),
         None,
         None,
+        None,
     );
     assert_eq!(initial.omegas.len(), 3);
     let seeds = initial.modes.clone();
@@ -356,6 +413,7 @@ fn warm_start_reuses_previous_modes() {
         None,
         GammaContext::default(),
         Some(seeds.as_slice()),
+        None,
         None,
     );
     approx_eq(&reuse.omegas, &[0.5, 1.0, 2.0], 1e-9);
