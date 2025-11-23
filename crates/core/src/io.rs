@@ -92,6 +92,8 @@ pub struct OperatorInspectionConfig {
     pub dump_iteration_traces: bool,
     pub snapshot_k_limit: usize,
     pub snapshot_mode_limit: usize,
+    pub dump_residual_snapshots: bool,
+    pub residual_snapshot_limit: usize,
 }
 
 impl Default for OperatorInspectionConfig {
@@ -101,6 +103,8 @@ impl Default for OperatorInspectionConfig {
             dump_iteration_traces: false,
             snapshot_k_limit: 1,
             snapshot_mode_limit: 2,
+            dump_residual_snapshots: false,
+            residual_snapshot_limit: 4,
         }
     }
 }
@@ -125,6 +129,9 @@ impl InspectionConfig {
         }
         if !self.operator.dump_iteration_traces {
             self.operator.dump_iteration_traces = true;
+        }
+        if !self.operator.dump_residual_snapshots {
+            self.operator.dump_residual_snapshots = true;
         }
     }
 }
@@ -182,6 +189,8 @@ impl From<OperatorInspectionConfig> for crate::bandstructure::OperatorInspection
             dump_iteration_traces: value.dump_iteration_traces,
             snapshot_k_limit: value.snapshot_k_limit,
             snapshot_mode_limit: value.snapshot_mode_limit,
+            dump_residual_snapshots: value.dump_residual_snapshots,
+            residual_snapshot_limit: value.residual_snapshot_limit,
         }
     }
 }

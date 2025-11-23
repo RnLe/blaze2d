@@ -130,6 +130,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                                     None,
                                     None,
                                     None,
+                                    None,
                                 ),
                                 PreconditionerKind::HomogeneousJacobi => {
                                     let mut preconditioner =
@@ -139,6 +140,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                                         &eigen_opts,
                                         Some(&mut preconditioner),
                                         gamma_context,
+                                        None,
                                         None,
                                         None,
                                         None,
@@ -152,6 +154,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                                         &eigen_opts,
                                         Some(&mut preconditioner),
                                         gamma_context,
+                                        None,
                                         None,
                                         None,
                                         None,
@@ -188,6 +191,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                     &everything_opts,
                     Some(&mut preconditioner),
                     everything_gamma,
+                    None,
                     None,
                     None,
                     None,
@@ -238,6 +242,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                         everything_gamma,
                         Some(warm_slice),
                         workspace_ref,
+                        None,
                         None,
                     );
                     black_box((result.iterations, result.gamma_deflated));

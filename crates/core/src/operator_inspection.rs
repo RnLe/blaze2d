@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::bandstructure::InspectionOptions;
-use crate::eigensolver::IterationDiagnostics;
+use crate::eigensolver::{IterationDiagnostics, ResidualSnapshot};
 use crate::field::Field2D;
 use crate::operator::{OperatorSnapshotData, ThetaOperator};
 use crate::polarization::Polarization;
@@ -34,16 +34,18 @@ pub(crate) fn dump_iteration_trace(
     let mut writer = BufWriter::new(File::create(&path)?);
     writeln!(
         writer,
-        "k_index,kx,ky,iteration,max_residual,avg_residual,max_relative_residual,avg_relative_residual,block_size,new_directions,preconditioner_trials,preconditioner_avg_before,preconditioner_avg_after"
+        "k_index,kx,ky,iteration,max_residual,avg_residual,max_relative_residual,avg_relative_residual,max_relative_scale,avg_relative_scale,block_size,new_directions,preconditioner_trials,preconditioner_avg_before,preconditioner_avg_after"
     )?;
     for info in iterations {
         writeln!(
             writer,
-            "{k_index},{kx},{ky},{iter},{:.6e},{:.6e},{:.6e},{:.6e},{},{},{},{:.6e},{:.6e}",
+            "{k_index},{kx},{ky},{iter},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{},{},{},{:.6e},{:.6e}",
             info.max_residual,
             info.avg_residual,
             info.max_relative_residual,
             info.avg_relative_residual,
+            info.max_relative_scale,
+            info.avg_relative_scale,
             info.block_size,
             info.new_directions,
             info.preconditioner_trials,
@@ -98,6 +100,72 @@ pub(crate) fn dump_operator_snapshots<B: SpectralBackend>(
         paths.push(spectrum_path);
     }
     Ok(paths)
+}
+
+pub(crate) fn dump_residual_snapshots(
+    opts: &InspectionOptions,
+    pol: Polarization,
+    k_index: usize,
+    k_frac: [f64; 2],
+    snapshots: &[ResidualSnapshot],
+) -> io::Result<Vec<PathBuf>> {
+    if snapshots.is_empty() || !opts.operator.dump_residual_snapshots {
+        return Ok(Vec::new());
+    }
+    let Some(dir) = opts.output_dir.as_ref() else {
+        return Ok(Vec::new());
+    };
+    fs::create_dir_all(dir)?;
+    let mut paths = Vec::new();
+    for (seq, snapshot) in snapshots.iter().enumerate() {
+        let filename = format!(
+            "residual_snapshot_{}_k{index:03}_iter{iter:03}_mode{mode:02}_{}_{seq:02}.csv",
+            pol_label(pol),
+            snapshot.stage.as_str(),
+            index = k_index,
+            iter = snapshot.iteration,
+            mode = snapshot.band_index + 1,
+            seq = seq + 1,
+        );
+        let path = dir.join(filename);
+        write_residual_snapshot_csv(&path, k_index, k_frac, snapshot)?;
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
+fn write_residual_snapshot_csv(
+    path: &Path,
+    k_index: usize,
+    k_frac: [f64; 2],
+    snapshot: &ResidualSnapshot,
+) -> io::Result<()> {
+    let mut writer = BufWriter::new(File::create(path)?);
+    let grid = snapshot.field.grid();
+    writeln!(
+        writer,
+        "k_index,kx,ky,iteration,band_index,stage,ix,iy,x,y,re_field,im_field"
+    )?;
+    for iy in 0..grid.ny {
+        for ix in 0..grid.nx {
+            let idx = grid.idx(ix, iy);
+            let [x, y] = grid.cartesian_coords(ix, iy);
+            let value = snapshot.field.as_slice()[idx];
+            writeln!(
+                writer,
+                "{k_index},{kx},{ky},{iteration},{band},{stage},{ix},{iy},{x},{y},{:.6e},{:.6e}",
+                value.re,
+                value.im,
+                k_index = k_index,
+                kx = k_frac[0],
+                ky = k_frac[1],
+                iteration = snapshot.iteration,
+                band = snapshot.band_index,
+                stage = snapshot.stage,
+            )?;
+        }
+    }
+    writer.flush()
 }
 
 fn write_snapshot_csv(

@@ -481,6 +481,21 @@ This is the **core performance hotspot**: in a GPU version this is where most of
 
 ---
 
+## Current LOBPCG Findings (Nov 2025)
+
+* Pipeline diagnostics (ε snapshots, |k+G|² tables, FFT workspaces) now look healthy for the square lattice configs; the failure is isolated to the eigensolver loop.
+* Iteration traces show every k-point hitting `max_iter=100` with residual norms stalled between 10¹ and 10³ despite the structured preconditioner reducing raw norms from ~2.5×10³ to single digits.
+* Root cause: `compute_relative_residual` scales by `|λ|·‖x‖`, so for low-frequency bands (λ≈0.05–0.3) the solver effectively demands absolute residuals below 1e-7, which we never reach; convergence is impossible even when the physics is correct.
+* Preconditioner effectiveness is fine (trial averages collapse by ~3 orders of magnitude) and there is no evidence of data corruption or constraint bugs—only the residual gating is overly strict.
+
+### Checklist (active)
+
+* [ ] Rescale the relative residual denominator (`residual_relative_scale`) so that it never drops below a spectral norm proxy (e.g. `max(|λ|·‖x‖, ‖Θx‖)`), keeping the tolerance truly relative.
+* [ ] Plumb the updated residual metrics into the iteration trace CSV/diagnostics so we can compare old vs. new scaling (store both absolute and scaled values).
+* [ ] Re-run the square TE/TM evaluation notebook after the fix and confirm iteration counts fall below 20 with complete band CSVs.
+
+---
+
 ### Step 9 — Preconditioning (spectral, diagonal in Fourier space)
 
 > “Preconditioning: solves (ε/μ) diagonal in Fourier space to speed convergence.”

@@ -83,8 +83,17 @@ prepare_reference_data:
 	@if [ "$(SKIP_REFERENCE_WIPE)" = "1" ]; then \
 		echo "[evaluation] reference-data already prepared; skipping wipe"; \
 	else \
-		echo "[evaluation] wiping reference-data outputs in $(REFERENCE_DIR)"; \
+		echo "[evaluation] preparing reference-data under $(REFERENCE_DIR)"; \
 		mkdir -p $(REFERENCE_DIR); \
-		rm -f $(REFERENCE_DIR)/*.json $(REFERENCE_DIR)/*.csv; \
-		rm -rf $(REFERENCE_DIR)/*_pipeline; \
+		if [ -n "$(strip $(REFERENCE_TARGETS))" ]; then \
+			echo "[evaluation] removing config-scoped artifacts:"; \
+			for target in $(REFERENCE_TARGETS); do \
+				printf '  - %s\n' "$$target"; \
+				rm -rf "$$target"; \
+			done; \
+		else \
+			echo "[evaluation] REFERENCE_TARGETS unset; wiping entire reference-data directory"; \
+			rm -f $(REFERENCE_DIR)/*.json $(REFERENCE_DIR)/*.csv; \
+			rm -rf $(REFERENCE_DIR)/*_pipeline; \
+		fi; \
 	fi

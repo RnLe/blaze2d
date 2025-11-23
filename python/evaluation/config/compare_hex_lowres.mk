@@ -4,6 +4,14 @@
 EVAL_NAME := compare_hex_lowres
 SMOOTHING_ARGS := --mesh-size 4
 
+REFERENCE_TARGETS := \
+	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
+	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb.json \
+	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_pipeline \
+	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_pipeline
+
 MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py \
 	--output $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
 	--resolution 24 \
