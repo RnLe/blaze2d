@@ -17,7 +17,7 @@ const MIN_RR_TOL: f64 = 1e-12;
 const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
 const BLOCK_SIZE_SLACK: usize = 2;
 const W_HISTORY_FACTOR: usize = 2;
-const PROJECTION_CONDITION_LIMIT: f64 = 1e8;
+const PROJECTION_CONDITION_LIMIT: f64 = 1e12;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -2174,6 +2174,7 @@ fn log_eigen_failure(_stage: &str, _dim: usize) {}
 
 fn cholesky_decompose_hermitian(matrix: &[Complex64], dim: usize) -> Option<Vec<Complex64>> {
     let mut l = vec![Complex64::default(); dim * dim];
+    const NEG_TOL: f64 = 1e-10;
     for i in 0..dim {
         for j in 0..=i {
             let mut sum = matrix[i * dim + j];
@@ -2183,6 +2184,10 @@ fn cholesky_decompose_hermitian(matrix: &[Complex64], dim: usize) -> Option<Vec<
             if i == j {
                 let diag = sum.re;
                 if diag <= 0.0 {
+                    if diag > -NEG_TOL {
+                        l[i * dim + j] = Complex64::new(NEG_TOL.sqrt(), 0.0);
+                        continue;
+                    }
                     log_cholesky_diag(diag, i);
                     return None;
                 }
