@@ -74,6 +74,10 @@ impl Default for Parity {
     }
 }
 
+fn default_symmetry_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReflectionConstraint {
     pub axis: ReflectionAxis,
@@ -83,6 +87,8 @@ pub struct ReflectionConstraint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SymmetryOptions {
+    #[serde(default = "default_symmetry_enabled")]
+    pub enabled: bool,
     pub reflections: Vec<ReflectionConstraint>,
     pub auto: Option<AutoSymmetry>,
     #[serde(skip)]
@@ -92,6 +98,7 @@ pub struct SymmetryOptions {
 impl Default for SymmetryOptions {
     fn default() -> Self {
         Self {
+            enabled: default_symmetry_enabled(),
             reflections: Vec::new(),
             auto: None,
             auto_reflections: Vec::new(),
@@ -154,6 +161,9 @@ impl SymmetryProjector {
     }
 
     pub fn from_options(opts: &SymmetryOptions) -> Option<Self> {
+        if !opts.enabled {
+            return None;
+        }
         let resolved = opts.all_reflections();
         Self::from_reflections(&resolved)
     }
@@ -202,6 +212,13 @@ fn mirror_index(len: usize, idx: usize) -> usize {
 }
 
 impl SymmetryOptions {
+    pub fn disable_all(&mut self) {
+        self.enabled = false;
+        self.reflections.clear();
+        self.auto = None;
+        self.auto_reflections.clear();
+    }
+
     pub fn disable_auto(&mut self) {
         self.auto = None;
         self.auto_reflections.clear();
@@ -209,6 +226,9 @@ impl SymmetryOptions {
 
     pub fn resolve_with_lattice(&mut self, lattice: &Lattice2D) {
         self.auto_reflections.clear();
+        if !self.enabled {
+            return;
+        }
         if !self.reflections.is_empty() {
             return;
         }
@@ -218,12 +238,21 @@ impl SymmetryOptions {
     }
 
     pub fn all_reflections(&self) -> Vec<ReflectionConstraint> {
+        if !self.enabled {
+            return Vec::new();
+        }
         let mut refs = self.reflections.clone();
         refs.extend(self.auto_reflections.iter().cloned());
         refs
     }
 
     pub fn selection_for_bloch(&self, bloch: [f64; 2]) -> SymmetrySelection {
+        if !self.enabled {
+            return SymmetrySelection {
+                reflections: Vec::new(),
+                skipped_auto: self.auto_reflections.len(),
+            };
+        }
         let mut refs = self.reflections.clone();
         let mut skipped_auto = 0usize;
         if let Some(auto) = &self.auto {
