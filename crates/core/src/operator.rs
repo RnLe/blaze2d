@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub(crate) const K_PLUS_G_NEAR_ZERO_FLOOR: f64 = 1e-9;
+pub(crate) const TE_PRECONDITIONER_MASS_FRACTION: f64 = 1e-2;
 pub(crate) const STRUCTURED_WEIGHT_MIN: f64 = 1e-3;
 pub(crate) const STRUCTURED_WEIGHT_MAX: f64 = 1e3;
 
@@ -129,11 +130,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let inverse_diagonal = match self.polarization {
             Polarization::TE => {
                 let eps_eff = self.effective_te_epsilon();
-                build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff)
+                let mass_floor = te_preconditioner_mass_floor(eps_eff);
+                build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff, mass_floor)
             }
             Polarization::TM => {
                 let eps_eff = self.effective_tm_epsilon();
-                build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff)
+                build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff, 0.0)
             }
         };
         FourierDiagonalPreconditioner::new(inverse_diagonal)
@@ -144,13 +146,16 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         match self.polarization {
             Polarization::TE => {
                 let eps_eff = self.effective_te_epsilon();
-                let inverse_diagonal = build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff);
+                let mass_floor = te_preconditioner_mass_floor(eps_eff);
+                let inverse_diagonal =
+                    build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff, mass_floor);
                 let weights = build_structured_weights_te(&self.dielectric, eps_eff);
                 FourierDiagonalPreconditioner::with_weights(inverse_diagonal, weights)
             }
             Polarization::TM => {
                 let eps_eff = self.effective_tm_epsilon();
-                let inverse_diagonal = build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff);
+                let inverse_diagonal =
+                    build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff, 0.0);
                 let weights = build_structured_weights_tm(&self.dielectric);
                 FourierDiagonalPreconditioner::with_weights(inverse_diagonal, weights)
             }
@@ -558,14 +563,26 @@ fn build_k_plus_g_tables(
     )
 }
 
-fn inverse_scale(k_sq: f64, shift: f64, eps_eff: f64) -> f64 {
+fn te_preconditioner_mass_floor(eps_eff: f64) -> f64 {
+    if !eps_eff.is_finite() || eps_eff <= 0.0 {
+        return 0.0;
+    }
+    eps_eff * TE_PRECONDITIONER_MASS_FRACTION
+}
+
+fn inverse_scale(k_sq: f64, shift: f64, eps_eff: f64, mass_floor: f64) -> f64 {
     if !k_sq.is_finite() || !eps_eff.is_finite() || eps_eff <= 0.0 {
         return 0.0;
     }
 
+    let safe_mass = if mass_floor.is_finite() && mass_floor > 0.0 {
+        mass_floor
+    } else {
+        0.0
+    };
     let safe_k_sq = k_sq.max(K_PLUS_G_NEAR_ZERO_FLOOR);
     let shift_scaled = shift * eps_eff.max(1e-12);
-    eps_eff / (safe_k_sq + shift_scaled)
+    eps_eff / (safe_k_sq + safe_mass + shift_scaled)
 }
 
 fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
@@ -642,7 +659,10 @@ fn assemble_divergence(
 
 #[cfg(test)]
 mod tests {
-    use super::{K_PLUS_G_NEAR_ZERO_FLOOR, clamp_gradient_components, inverse_scale};
+    use super::{
+        K_PLUS_G_NEAR_ZERO_FLOOR, clamp_gradient_components, inverse_scale,
+        te_preconditioner_mass_floor,
+    };
 
     #[test]
     fn clamp_gradient_handles_zero_and_nan() {
@@ -658,13 +678,24 @@ mod tests {
 
     #[test]
     fn inverse_scale_sanitizes_non_finite_and_underflow() {
-        assert_eq!(inverse_scale(f64::NAN, 1e-3, 1.0), 0.0);
-        assert_eq!(inverse_scale(1.0, 1e-3, f64::NAN), 0.0);
+        assert_eq!(inverse_scale(f64::NAN, 1e-3, 1.0, 0.0), 0.0);
+        assert_eq!(inverse_scale(1.0, 1e-3, f64::NAN, 0.0), 0.0);
 
         let tiny = K_PLUS_G_NEAR_ZERO_FLOOR / 10.0;
         let expected = 1.0 / (K_PLUS_G_NEAR_ZERO_FLOOR + 1e-3);
-        let actual = inverse_scale(tiny, 1e-3, 1.0);
+        let actual = inverse_scale(tiny, 1e-3, 1.0, 0.0);
         assert!((actual - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn te_mass_floor_enters_denominator() {
+        let eps_eff = 12.0;
+        let mass_floor = te_preconditioner_mass_floor(eps_eff);
+        let tiny = K_PLUS_G_NEAR_ZERO_FLOOR / 10.0;
+        let baseline = inverse_scale(tiny, 1e-3, eps_eff, 0.0);
+        let mass_adjusted = inverse_scale(tiny, 1e-3, eps_eff, mass_floor);
+        assert!(mass_floor > 0.0);
+        assert!(mass_adjusted < baseline);
     }
 }
 
@@ -690,11 +721,11 @@ fn clamp_gradient_components(kx: f64, ky: f64) -> (f64, f64) {
     }
 }
 
-fn build_inverse_diagonal(values: &[f64], shift: f64, eps_eff: f64) -> Vec<f64> {
+fn build_inverse_diagonal(values: &[f64], shift: f64, eps_eff: f64, mass_floor: f64) -> Vec<f64> {
     values
         .iter()
         .copied()
-        .map(|k| inverse_scale(k, shift, eps_eff))
+        .map(|k| inverse_scale(k, shift, eps_eff, mass_floor))
         .collect()
 }
 
