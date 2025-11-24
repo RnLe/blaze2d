@@ -540,13 +540,12 @@ where
     } else {
         deflation
     };
-    let mut fallback_symmetry = None;
-    let symmetry_projector = if let Some(custom) = symmetry_override {
-        Some(custom)
+    let fallback_symmetry = if symmetry_override.is_none() {
+        SymmetryProjector::from_options(&opts.symmetry)
     } else {
-        fallback_symmetry = SymmetryProjector::from_options(&opts.symmetry);
-        fallback_symmetry.as_ref()
+        None
     };
+    let symmetry_projector = symmetry_override.or(fallback_symmetry.as_ref());
     let mut residual_snapshots = Vec::new();
     let mut snapshot_manager = residual_request.map(ResidualSnapshotManager::new);
 
