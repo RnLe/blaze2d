@@ -17,6 +17,7 @@ const MIN_RR_TOL: f64 = 1e-12;
 const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
 const BLOCK_SIZE_SLACK: usize = 2;
 const W_HISTORY_FACTOR: usize = 2;
+const PROJECTION_CONDITION_LIMIT: f64 = 1e8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -312,6 +313,19 @@ pub struct IterationDiagnostics {
     pub preconditioner_trials: usize,
     pub preconditioner_avg_before: f64,
     pub preconditioner_avg_after: f64,
+    pub projection: ProjectionDiagnostics,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProjectionDiagnostics {
+    pub original_dim: usize,
+    pub reduced_dim: usize,
+    pub requested_dim: usize,
+    pub history_dim: usize,
+    pub min_mass_eigenvalue: f64,
+    pub max_mass_eigenvalue: f64,
+    pub condition_estimate: f64,
+    pub fallback_used: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -455,7 +469,7 @@ impl<B: SpectralBackend> DeflationWorkspace<B> {
 
     pub fn project(&self, backend: &B, vector: &mut B::Buffer, mass_vector: &mut B::Buffer) {
         for entry in &self.entries {
-            let coeff = backend.dot(&entry.mass_vector, vector);
+            let coeff = backend.dot(vector, &entry.mass_vector).conj();
             backend.axpy(-coeff, &entry.vector, vector);
             backend.axpy(-coeff, &entry.mass_vector, mass_vector);
         }
@@ -633,8 +647,14 @@ where
         iterations += 1;
     }
 
-    let (omegas, modes, mut diagnostics) =
-        finalize_modes(operator, &x_entries, &eigenvalues, target_bands, opts.tol);
+    let (omegas, modes, mut diagnostics) = finalize_modes(
+        operator,
+        &x_entries,
+        &eigenvalues,
+        target_bands,
+        opts.tol,
+        gamma_deflated,
+    );
     diagnostics.iterations = iteration_stats;
     diagnostics.residual_snapshots = residual_snapshots;
     diagnostics.deflation_vectors = deflation_vectors;
@@ -755,7 +775,7 @@ fn reorthogonalize_with_mass<B: SpectralBackend>(
     basis: &B::Buffer,
     mass_basis: &B::Buffer,
 ) {
-    let coeff = backend.dot(mass_basis, target);
+    let coeff = backend.dot(target, mass_basis).conj();
     backend.axpy(-coeff, basis, target);
 }
 
@@ -1077,7 +1097,7 @@ fn project_against_entries<B: SpectralBackend>(
     basis: &[BlockEntry<B>],
 ) {
     for entry in basis {
-        let coeff = backend.dot(&entry.mass, vector);
+        let coeff = backend.dot(vector, &entry.mass).conj();
         backend.axpy(-coeff, &entry.vector, vector);
         backend.axpy(-coeff, &entry.mass, mass);
     }
@@ -1124,56 +1144,362 @@ where
     B: SpectralBackend,
 {
     let dim = subspace.len();
+    if dim == 0 {
+        return (Vec::new(), Vec::new());
+    }
     let (op_proj, mass_proj) = build_projected_matrices(operator.backend(), subspace);
-    let (values, eigenvectors) = generalized_eigen(op_proj, mass_proj, dim, tol)
+    let prepared = match stabilize_projected_system(&op_proj, &mass_proj, dim, want, tol) {
+        Some(system) => system,
+        None => {
+            log_projected_dimension(dim, 0, want);
+            return (Vec::new(), Vec::new());
+        }
+    };
+    if prepared.reduced_dim == 0 {
+        log_projected_dimension(dim, 0, want);
+        return (Vec::new(), Vec::new());
+    }
+    let (values, eigenvectors) = generalized_eigen(
+        prepared.op_matrix,
+        prepared.mass_matrix,
+        prepared.reduced_dim,
+        tol,
+    )
         .expect("generalized eigen solve failed in block solver");
     let mut order: Vec<usize> = (0..values.len()).collect();
     order.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap_or(Ordering::Equal));
     let mut new_entries = Vec::with_capacity(want.min(dim));
     let mut selected_values = Vec::with_capacity(want.min(dim));
+    let eigen_cols = if prepared.reduced_dim == 0 {
+        0
+    } else {
+        eigenvectors.len() / prepared.reduced_dim
+    };
+    let lifted_vectors = lift_projected_eigenvectors(
+        &prepared.transform,
+        dim,
+        prepared.reduced_dim,
+        &eigenvectors,
+        eigen_cols,
+    );
     for idx in order {
-        if new_entries.len() == want {
+        if idx >= eigen_cols {
+            continue;
+        }
+        if want > 0 && new_entries.len() >= want {
             break;
         }
         selected_values.push(values[idx]);
-        let coeffs = extract_column(&eigenvectors, dim, idx);
+        let coeffs = extract_complex_column(&lifted_vectors, dim, eigen_cols, idx);
         let entry = combine_entries(operator, subspace, &coeffs);
         new_entries.push(entry);
     }
+    log_projected_dimension(dim, prepared.reduced_dim, want);
+    log_rayleigh_ritz_counts(values.len(), new_entries.len(), want, dim);
     (selected_values, new_entries)
 }
 
-fn extract_column(matrix: &[f64], dim: usize, col: usize) -> Vec<f64> {
-    (0..dim).map(|row| matrix[row * dim + col]).collect()
+#[cfg(debug_assertions)]
+fn log_rayleigh_ritz_counts(total_values: usize, produced: usize, want: usize, dim: usize) {
+    eprintln!(
+        "[rayleigh-ritz] values={} produced={} want={} dim={}",
+        total_values, produced, want, dim
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_rayleigh_ritz_counts(_total_values: usize, _produced: usize, _want: usize, _dim: usize) {}
+
+fn extract_complex_column(matrix: &[Complex64], rows: usize, cols: usize, col: usize) -> Vec<Complex64> {
+    (0..rows)
+        .map(|row| matrix[row * cols + col])
+        .collect()
 }
 
 fn build_projected_matrices<B: SpectralBackend>(
     backend: &B,
     subspace: &[SubspaceEntry<'_, B>],
-) -> (Vec<f64>, Vec<f64>) {
+) -> (Vec<Complex64>, Vec<Complex64>) {
     let dim = subspace.len();
-    let mut op_proj = vec![0.0; dim * dim];
-    let mut mass_proj = vec![0.0; dim * dim];
+    let mut op_proj = vec![Complex64::default(); dim * dim];
+    let mut mass_proj = vec![Complex64::default(); dim * dim];
     for i in 0..dim {
         for j in i..dim {
-            let mass_val = backend.dot(subspace[i].vector, subspace[j].mass).re;
-            let op_val = backend.dot(subspace[i].vector, subspace[j].applied).re;
+            let mass_val = backend.dot(subspace[i].vector, subspace[j].mass);
+            let op_val = backend.dot(subspace[i].vector, subspace[j].applied);
             let idx = i * dim + j;
             mass_proj[idx] = mass_val;
             op_proj[idx] = op_val;
             if i != j {
-                mass_proj[j * dim + i] = mass_val;
-                op_proj[j * dim + i] = op_val;
+                mass_proj[j * dim + i] = mass_val.conj();
+                op_proj[j * dim + i] = op_val.conj();
             }
         }
     }
     (op_proj, mass_proj)
 }
 
+struct StabilizedProjection {
+    op_matrix: Vec<Complex64>,
+    mass_matrix: Vec<Complex64>,
+    transform: Vec<Complex64>,
+    reduced_dim: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ProjectionStats {
+    original_dim: usize,
+    reduced_dim: usize,
+    requested_dim: usize,
+    min_mass_eigenvalue: f64,
+    max_mass_eigenvalue: f64,
+}
+
+impl ProjectionStats {
+    fn ratio(&self) -> f64 {
+        if self.min_mass_eigenvalue <= 0.0 {
+            f64::INFINITY
+        } else {
+            self.max_mass_eigenvalue / self.min_mass_eigenvalue
+        }
+    }
+
+    fn satisfies_rank(&self) -> bool {
+        if self.original_dim == 0 {
+            return false;
+        }
+        let min_required = self.requested_dim.min(self.original_dim).max(1);
+        self.reduced_dim >= min_required
+    }
+
+    fn to_public(self, history_dim: usize, fallback_used: bool) -> ProjectionDiagnostics {
+        ProjectionDiagnostics {
+            original_dim: self.original_dim,
+            reduced_dim: self.reduced_dim,
+            requested_dim: self.requested_dim,
+            history_dim,
+            min_mass_eigenvalue: self.min_mass_eigenvalue,
+            max_mass_eigenvalue: self.max_mass_eigenvalue,
+            condition_estimate: self.ratio(),
+            fallback_used,
+        }
+    }
+}
+
+fn stabilize_projected_system(
+    op_proj: &[Complex64],
+    mass_proj: &[Complex64],
+    dim: usize,
+    want: usize,
+    tol: f64,
+) -> Option<StabilizedProjection> {
+    if dim == 0 {
+        return None;
+    }
+    let block_dim = dim * 2;
+    let mass_block = expand_complex_hermitian(mass_proj, dim);
+    let (mass_vals, mass_vecs) = jacobi_eigendecomposition(mass_block, block_dim, tol);
+    let max_val = mass_vals
+        .iter()
+        .cloned()
+        .fold(0.0_f64, f64::max);
+    if max_val <= 0.0 {
+        return None;
+    }
+    const REL_TOL: f64 = 1e-10;
+    const ABS_TOL: f64 = 1e-12;
+    let cutoff = (max_val * REL_TOL).max(ABS_TOL);
+    let mut selected: Vec<(usize, f64)> = mass_vals
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, val)| if *val > cutoff { Some((idx, *val)) } else { None })
+        .collect();
+    if selected.is_empty() {
+        return None;
+    }
+    selected.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+    let target = want.max(1);
+    const MULTIPLIER: usize = 3;
+    const ABS_MAX_DIM: usize = 96;
+    let mut limit = target * MULTIPLIER;
+    if limit < target + 2 {
+        limit = target + 2;
+    }
+    limit = limit.min(dim).min(ABS_MAX_DIM);
+    if selected.len() > limit {
+        selected.truncate(limit);
+    }
+    selected.sort_by_key(|&(idx, _)| idx);
+    let complex_vecs = convert_block_vectors(&mass_vecs, dim, block_dim);
+    let mut columns: Vec<Vec<Complex64>> = Vec::new();
+    let mut raw_columns: Vec<Vec<Complex64>> = Vec::new();
+    let mut raw_norms: Vec<f64> = Vec::new();
+    const DUP_THRESHOLD: f64 = 1.0 - 1e-6;
+    const VEC_NORM_TOL: f64 = 1e-14;
+    for &(eig_idx, value) in selected.iter() {
+        if columns.len() >= dim {
+            break;
+        }
+        let mut raw = vec![Complex64::default(); dim];
+        for row in 0..dim {
+            raw[row] = complex_vecs[row * block_dim + eig_idx];
+        }
+        let norm_sq = raw.iter().map(|c| c.norm_sqr()).sum::<f64>();
+        if norm_sq < VEC_NORM_TOL {
+            continue;
+        }
+        let mut duplicate = false;
+        for (existing, &existing_norm_sq) in raw_columns.iter().zip(raw_norms.iter()) {
+            let overlap = complex_dot(existing, &raw);
+            let ratio = overlap.norm_sqr() / (norm_sq * existing_norm_sq);
+            if ratio >= DUP_THRESHOLD {
+                duplicate = true;
+                break;
+            }
+        }
+        if duplicate {
+            continue;
+        }
+        let scale = 1.0 / value.sqrt();
+        let mut candidate = raw.clone();
+        for val in candidate.iter_mut() {
+            *val *= scale;
+        }
+        raw_columns.push(raw);
+        raw_norms.push(norm_sq);
+        columns.push(candidate);
+    }
+    if columns.is_empty() {
+        return None;
+    }
+    let reduced_dim = columns.len();
+    let mut transform = vec![Complex64::default(); dim * reduced_dim];
+    for (col_idx, data) in columns.iter().enumerate() {
+        for row in 0..dim {
+            transform[row * reduced_dim + col_idx] = data[row];
+        }
+    }
+    let temp_op = complex_matmul(dim, dim, reduced_dim, op_proj, &transform);
+    let op_reduced =
+        complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
+    let temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
+    let mass_reduced = complex_matmul_conj_transpose_left(
+        dim,
+        reduced_dim,
+        reduced_dim,
+        &transform,
+        &temp_mass,
+    );
+    Some(StabilizedProjection {
+        op_matrix: op_reduced,
+        mass_matrix: mass_reduced,
+        transform,
+        reduced_dim,
+    })
+}
+
+fn lift_projected_eigenvectors(
+    transform: &[Complex64],
+    rows: usize,
+    reduced_dim: usize,
+    eigenvectors: &[Complex64],
+    cols: usize,
+) -> Vec<Complex64> {
+    if rows == 0 || reduced_dim == 0 || cols == 0 {
+        return Vec::new();
+    }
+    complex_matmul(rows, reduced_dim, cols, transform, eigenvectors)
+}
+
+#[cfg(debug_assertions)]
+fn log_projected_dimension(original: usize, reduced: usize, want: usize) {
+    eprintln!(
+        "[rayleigh-ritz] projected dimension {} -> {} (want={})",
+        original, reduced, want
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_projected_dimension(_original: usize, _reduced: usize, _want: usize) {}
+
+fn expand_complex_hermitian(matrix: &[Complex64], dim: usize) -> Vec<f64> {
+    let block_dim = dim * 2;
+    let mut block = vec![0.0; block_dim * block_dim];
+    for row in 0..dim {
+        for col in 0..dim {
+            let val = matrix[row * dim + col];
+            let re = val.re;
+            let im = val.im;
+            block[row * block_dim + col] = re;
+            block[row * block_dim + (col + dim)] = -im;
+            block[(row + dim) * block_dim + col] = im;
+            block[(row + dim) * block_dim + (col + dim)] = re;
+        }
+    }
+    block
+}
+
+fn complex_matmul(
+    rows: usize,
+    mid: usize,
+    cols: usize,
+    a: &[Complex64],
+    b: &[Complex64],
+) -> Vec<Complex64> {
+    debug_assert_eq!(a.len(), rows * mid);
+    debug_assert_eq!(b.len(), mid * cols);
+    let mut out = vec![Complex64::default(); rows * cols];
+    for i in 0..rows {
+        for k in 0..mid {
+            let aik = a[i * mid + k];
+            if aik == Complex64::default() {
+                continue;
+            }
+            for j in 0..cols {
+                out[i * cols + j] += aik * b[k * cols + j];
+            }
+        }
+    }
+    out
+}
+
+fn complex_matmul_conj_transpose_left(
+    rows: usize,
+    cols_left: usize,
+    cols_right: usize,
+    a: &[Complex64],
+    b: &[Complex64],
+) -> Vec<Complex64> {
+    debug_assert_eq!(a.len(), rows * cols_left);
+    debug_assert_eq!(b.len(), rows * cols_right);
+    let mut out = vec![Complex64::default(); cols_left * cols_right];
+    for i in 0..cols_left {
+        for j in 0..cols_right {
+            let mut sum = Complex64::default();
+            for row in 0..rows {
+                let aval = a[row * cols_left + i].conj();
+                let bval = b[row * cols_right + j];
+                sum += aval * bval;
+            }
+            out[i * cols_right + j] = sum;
+        }
+    }
+    out
+}
+
+fn complex_dot(a: &[Complex64], b: &[Complex64]) -> Complex64 {
+    debug_assert_eq!(a.len(), b.len());
+    let mut sum = Complex64::default();
+    for (ai, bi) in a.iter().zip(b.iter()) {
+        sum += ai.conj() * bi;
+    }
+    sum
+}
+
 fn combine_entries<O, B>(
     operator: &mut O,
     subspace: &[SubspaceEntry<'_, B>],
-    coeffs: &[f64],
+    coeffs: &[Complex64],
 ) -> BlockEntry<B>
 where
     O: LinearOperator<B>,
@@ -1186,13 +1512,12 @@ where
     let mut applied = operator.alloc_field();
     zero_buffer(applied.as_mut_slice());
     for (entry, &coeff) in subspace.iter().zip(coeffs.iter()) {
-        if coeff.abs() < 1e-12 {
+        if coeff.norm_sqr() < 1e-24 {
             continue;
         }
-        let c = Complex64::new(coeff, 0.0);
-        operator.backend().axpy(c, entry.vector, &mut vector);
-        operator.backend().axpy(c, entry.mass, &mut mass);
-        operator.backend().axpy(c, entry.applied, &mut applied);
+        operator.backend().axpy(coeff, entry.vector, &mut vector);
+        operator.backend().axpy(coeff, entry.mass, &mut mass);
+        operator.backend().axpy(coeff, entry.applied, &mut applied);
     }
     let norm = mass_norm(operator.backend(), &vector, &mass);
     if norm > 0.0 {
@@ -1239,6 +1564,7 @@ where
     let mut preconditioner_sum_before = 0.0;
     let mut preconditioner_sum_after = 0.0;
     let mut p_entries = Vec::new();
+    let direction_limit = x_entries.len().max(1);
     for (idx, entry) in x_entries.iter().enumerate() {
         let lambda = *eigenvalues.get(idx).unwrap_or(&0.0);
         let mut vector = operator.alloc_field();
@@ -1352,6 +1678,9 @@ where
             mass,
             applied,
         });
+        if p_entries.len() >= direction_limit {
+            break;
+        }
     }
     let avg_residual = if evaluated > 0 {
         sum_residual / evaluated as f64
@@ -1435,6 +1764,7 @@ fn finalize_modes<O, B>(
     eigenvalues: &[f64],
     target: usize,
     tol: f64,
+    gamma_deflated: bool,
 ) -> (Vec<f64>, Vec<Field2D>, EigenDiagnostics)
 where
     O: LinearOperator<B>,
@@ -1446,14 +1776,26 @@ where
     let grid = operator.grid();
     let freq_tol = diagnostics.freq_tolerance;
     let mut last_kept: Option<f64> = None;
+    log_finalize_context(gamma_deflated, target, eigenvalues.len());
     for (entry, &lambda) in entries.iter().zip(eigenvalues.iter()) {
+        log_finalize_candidate(lambda);
         if lambda < 0.0 {
+            log_finalize_skip("negative", lambda);
             diagnostics.negative_modes_skipped += 1;
             continue;
         }
         let omega = lambda.sqrt();
+        if gamma_deflated {
+            let zero_floor = freq_tol.max(1e-4);
+            if omega <= zero_floor {
+                log_finalize_skip("gamma_zero", lambda);
+                diagnostics.duplicate_modes_skipped += 1;
+                continue;
+            }
+        }
         if let Some(prev) = last_kept {
             if (omega - prev).abs() <= freq_tol {
+                log_finalize_skip("duplicate", lambda);
                 diagnostics.duplicate_modes_skipped += 1;
                 continue;
             }
@@ -1484,6 +1826,36 @@ where
     (omegas, modes, diagnostics)
 }
 
+#[cfg(debug_assertions)]
+fn log_finalize_context(gamma_deflated: bool, target: usize, eig_count: usize) {
+    eprintln!(
+        "[rayleigh-ritz] finalize context gamma_deflated={} target={} eigenvalues={}",
+        gamma_deflated, target, eig_count
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_finalize_context(_gamma_deflated: bool, _target: usize, _eig_count: usize) {}
+
+#[cfg(debug_assertions)]
+fn log_finalize_candidate(lambda: f64) {
+    eprintln!("[rayleigh-ritz] finalize lambda={}", lambda);
+}
+
+#[cfg(debug_assertions)]
+fn log_finalize_skip(reason: &str, lambda: f64) {
+    eprintln!(
+        "[rayleigh-ritz] finalize skipped {} candidate lambda={}",
+        reason, lambda
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_finalize_candidate(_lambda: f64) {}
+
+#[cfg(not(debug_assertions))]
+fn log_finalize_skip(_reason: &str, _lambda: f64) {}
+
 fn compute_residual_norm<O, B>(operator: &mut O, entry: &BlockEntry<B>, lambda: f64) -> f64
 where
     O: LinearOperator<B>,
@@ -1502,92 +1874,134 @@ where
 }
 
 fn generalized_eigen(
-    op_matrix: Vec<f64>,
-    mass_matrix: Vec<f64>,
+    op_matrix: Vec<Complex64>,
+    mass_matrix: Vec<Complex64>,
     dim: usize,
     tol: f64,
-) -> Option<(Vec<f64>, Vec<f64>)> {
-    let l = cholesky_decompose(&mass_matrix, dim)?;
-    let temp = solve_lower_triangular(&l, &op_matrix, dim)?;
-    let c = solve_upper_triangular_right(&l, &temp, dim)?;
-    let (values, eigenvectors) = jacobi_eigendecomposition(c, dim, tol);
-    let coeffs = solve_upper_triangular(&l, &eigenvectors, dim)?;
+) -> Option<(Vec<f64>, Vec<Complex64>)> {
+    let l = match cholesky_decompose_hermitian(&mass_matrix, dim) {
+        Some(factor) => factor,
+        None => {
+            log_eigen_failure("cholesky", dim);
+            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
+        }
+    };
+    let temp = match solve_lower_triangular_complex(&l, &op_matrix, dim, dim) {
+        Some(val) => val,
+        None => {
+            log_eigen_failure("solve_lower", dim);
+            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
+        }
+    };
+    let c = match solve_upper_triangular_right_conj(&l, &temp, dim) {
+        Some(val) => val,
+        None => {
+            log_eigen_failure("solve_right", dim);
+            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
+        }
+    };
+    let block = expand_complex_hermitian(&c, dim);
+    let block_dim = dim * 2;
+    let (values, eigenvectors) = jacobi_eigendecomposition(block, block_dim, tol);
+    let complex_eigenvectors = convert_block_vectors(&eigenvectors, dim, block_dim);
+    let coeffs = match solve_upper_triangular_conj(&l, &complex_eigenvectors, dim, block_dim) {
+        Some(val) => val,
+        None => {
+            log_eigen_failure("solve_upper", dim);
+            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
+        }
+    };
     Some((values, coeffs))
 }
 
-fn cholesky_decompose(matrix: &[f64], dim: usize) -> Option<Vec<f64>> {
-    let mut l = vec![0.0; dim * dim];
+#[cfg(debug_assertions)]
+fn log_eigen_failure(stage: &str, dim: usize) {
+    eprintln!(
+        "[rayleigh-ritz] generalized eigen failed at {} (dim={})",
+        stage, dim
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_eigen_failure(_stage: &str, _dim: usize) {}
+
+fn cholesky_decompose_hermitian(matrix: &[Complex64], dim: usize) -> Option<Vec<Complex64>> {
+    let mut l = vec![Complex64::default(); dim * dim];
     for i in 0..dim {
         for j in 0..=i {
             let mut sum = matrix[i * dim + j];
             for k in 0..j {
-                sum -= l[i * dim + k] * l[j * dim + k];
+                sum -= l[i * dim + k] * l[j * dim + k].conj();
             }
             if i == j {
-                if sum <= 0.0 {
+                let diag = sum.re;
+                if diag <= 0.0 {
+                    log_cholesky_diag(diag, i);
                     return None;
                 }
-                l[i * dim + j] = sum.sqrt();
+                l[i * dim + j] = Complex64::new(diag.sqrt(), 0.0);
             } else {
-                let diag = l[j * dim + j];
-                if diag.abs() < 1e-12 {
+                let denom = l[j * dim + j];
+                if denom.norm_sqr() < 1e-24 {
+                    log_cholesky_diag(0.0, j);
                     return None;
                 }
-                l[i * dim + j] = sum / diag;
+                l[i * dim + j] = sum / denom;
             }
         }
     }
     Some(l)
 }
 
-fn solve_lower_triangular(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<f64>> {
-    let mut x = vec![0.0; dim * dim];
-    for col in 0..dim {
+#[cfg(debug_assertions)]
+fn log_cholesky_diag(value: f64, index: usize) {
+    eprintln!(
+        "[rayleigh-ritz] cholesky diag failure at row {} (value={})",
+        index, value
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_cholesky_diag(_value: f64, _index: usize) {}
+
+fn solve_lower_triangular_complex(
+    l: &[Complex64],
+    b: &[Complex64],
+    dim: usize,
+    cols: usize,
+) -> Option<Vec<Complex64>> {
+    let mut x = vec![Complex64::default(); dim * cols];
+    for col in 0..cols {
         for row in 0..dim {
-            let mut sum = b[row * dim + col];
+            let mut sum = b[row * cols + col];
             for k in 0..row {
-                sum -= l[row * dim + k] * x[k * dim + col];
+                sum -= l[row * dim + k] * x[k * cols + col];
             }
             let diag = l[row * dim + row];
-            if diag.abs() < 1e-12 {
+            if diag.norm_sqr() < 1e-24 {
                 return None;
             }
-            x[row * dim + col] = sum / diag;
+            x[row * cols + col] = sum / diag;
         }
     }
     Some(x)
 }
 
-fn solve_upper_triangular(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<f64>> {
-    let mut x = vec![0.0; dim * dim];
-    for col in 0..dim {
-        for rev_row in 0..dim {
-            let row = dim - 1 - rev_row;
-            let mut sum = b[row * dim + col];
-            for k in (row + 1)..dim {
-                sum -= l[k * dim + row] * x[k * dim + col];
-            }
-            let diag = l[row * dim + row];
-            if diag.abs() < 1e-12 {
-                return None;
-            }
-            x[row * dim + col] = sum / diag;
-        }
-    }
-    Some(x)
-}
-
-fn solve_upper_triangular_right(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<f64>> {
-    let mut x = vec![0.0; dim * dim];
+fn solve_upper_triangular_right_conj(
+    l: &[Complex64],
+    b: &[Complex64],
+    dim: usize,
+) -> Option<Vec<Complex64>> {
+    let mut x = vec![Complex64::default(); dim * dim];
     for row in 0..dim {
         for rev_col in 0..dim {
             let col = dim - 1 - rev_col;
             let mut sum = b[row * dim + col];
             for k in (col + 1)..dim {
-                sum -= x[row * dim + k] * l[k * dim + col];
+                sum -= x[row * dim + k] * l[k * dim + col].conj();
             }
-            let diag = l[col * dim + col];
-            if diag.abs() < 1e-12 {
+            let diag = l[col * dim + col].conj();
+            if diag.norm_sqr() < 1e-24 {
                 return None;
             }
             x[row * dim + col] = sum / diag;
@@ -1596,19 +2010,158 @@ fn solve_upper_triangular_right(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<
     Some(x)
 }
 
+fn solve_upper_triangular_conj(
+    l: &[Complex64],
+    b: &[Complex64],
+    dim: usize,
+    cols: usize,
+) -> Option<Vec<Complex64>> {
+    let mut x = vec![Complex64::default(); dim * cols];
+    for col in 0..cols {
+        for rev_row in 0..dim {
+            let row = dim - 1 - rev_row;
+            let mut sum = b[row * cols + col];
+            for k in (row + 1)..dim {
+                sum -= l[k * dim + row].conj() * x[k * cols + col];
+            }
+            let diag = l[row * dim + row].conj();
+            if diag.norm_sqr() < 1e-24 {
+                return None;
+            }
+            x[row * cols + col] = sum / diag;
+        }
+    }
+    Some(x)
+}
+
+fn convert_block_vectors(data: &[f64], dim: usize, cols: usize) -> Vec<Complex64> {
+    let mut complex = vec![Complex64::default(); dim * cols];
+    for col in 0..cols {
+        for row in 0..dim {
+            let real = data[row * cols + col];
+            let imag = data[(row + dim) * cols + col];
+            complex[row * cols + col] = Complex64::new(real, imag);
+        }
+    }
+    complex
+}
+
+fn generalized_eigen_with_whitening(
+    op_matrix: Vec<Complex64>,
+    mass_matrix: Vec<Complex64>,
+    dim: usize,
+    tol: f64,
+) -> Option<(Vec<f64>, Vec<Complex64>)> {
+    let block_dim = dim * 2;
+    let op_block = expand_complex_hermitian(&op_matrix, dim);
+    let mass_block = expand_complex_hermitian(&mass_matrix, dim);
+    let (mass_vals, mass_vecs) = jacobi_eigendecomposition(mass_block, block_dim, tol);
+    const MASS_TOL: f64 = 1e-10;
+    let mut keep = Vec::new();
+    for (idx, &value) in mass_vals.iter().enumerate() {
+        if value > MASS_TOL {
+            keep.push(idx);
+        }
+    }
+    if keep.is_empty() {
+        log_whitening_rank(0, block_dim);
+        return generalized_eigen_identity(op_matrix, dim, tol);
+    }
+    let k = keep.len();
+    log_whitening_rank(k, block_dim);
+    let mut whitening = vec![0.0; block_dim * k];
+    for (col_idx, &eig_idx) in keep.iter().enumerate() {
+        let scale = 1.0 / mass_vals[eig_idx].sqrt();
+        for row in 0..block_dim {
+            whitening[row * k + col_idx] = mass_vecs[row * block_dim + eig_idx] * scale;
+        }
+    }
+    let temp = matmul(block_dim, block_dim, k, &op_block, &whitening);
+    let reduced = matmul_transpose_left(block_dim, k, k, &whitening, &temp);
+    let (values, reduced_vecs) = jacobi_eigendecomposition(reduced, k, tol);
+    let block_coeffs = matmul(block_dim, k, k, &whitening, &reduced_vecs);
+    let complex_eigenvectors = convert_block_vectors(&block_coeffs, dim, k);
+    Some((values, complex_eigenvectors))
+}
+
+#[cfg(debug_assertions)]
+fn log_whitening_rank(rank: usize, total: usize) {
+    eprintln!(
+        "[rayleigh-ritz] whitening fallback rank {} of {}",
+        rank, total
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_whitening_rank(_rank: usize, _total: usize) {}
+
+fn matmul(rows: usize, mid: usize, cols: usize, a: &[f64], b: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; rows * cols];
+    for i in 0..rows {
+        for k in 0..mid {
+            let aik = a[i * mid + k];
+            if aik == 0.0 {
+                continue;
+            }
+            for j in 0..cols {
+                out[i * cols + j] += aik * b[k * cols + j];
+            }
+        }
+    }
+    out
+}
+
+fn matmul_transpose_left(
+    rows: usize,
+    cols_left: usize,
+    cols_right: usize,
+    a: &[f64],
+    b: &[f64],
+) -> Vec<f64> {
+    let mut out = vec![0.0; cols_left * cols_right];
+    for i in 0..cols_left {
+        for row in 0..rows {
+            let ari = a[row * cols_left + i];
+            if ari == 0.0 {
+                continue;
+            }
+            for col in 0..cols_right {
+                out[i * cols_right + col] += ari * b[row * cols_right + col];
+            }
+        }
+    }
+    out
+}
+
+fn generalized_eigen_identity(
+    op_matrix: Vec<Complex64>,
+    dim: usize,
+    tol: f64,
+) -> Option<(Vec<f64>, Vec<Complex64>)> {
+    if dim == 0 {
+        return Some((Vec::new(), Vec::new()));
+    }
+    let block = expand_complex_hermitian(&op_matrix, dim);
+    let block_dim = dim * 2;
+    let (values, eigenvectors) = jacobi_eigendecomposition(block, block_dim, tol);
+    let complex = convert_block_vectors(&eigenvectors, dim, block_dim);
+    Some((values, complex))
+}
+
 #[cfg(test)]
 mod eigensolver_internal_tests {
-    use super::{EigenOptions, generalized_eigen};
+    use super::{generalized_eigen, EigenOptions};
+    use num_complex::Complex64;
 
     #[test]
     fn generalized_eigen_matches_diagonal_inputs() {
         let diag = [0.25, 1.0, 4.0];
         let dim = diag.len();
-        let mut op = vec![0.0; dim * dim];
-        let mut mass = vec![0.0; dim * dim];
+        let mut op = vec![Complex64::default(); dim * dim];
+        let mut mass = vec![Complex64::default(); dim * dim];
         for i in 0..dim {
-            op[i * dim + i] = diag[i];
-            mass[i * dim + i] = 1.0;
+            op[i * dim + i] = Complex64::new(diag[i], 0.0);
+            mass[i * dim + i] = Complex64::new(1.0, 0.0);
         }
         let (vals, _) = generalized_eigen(op, mass, dim, 1e-12).expect("generalized eigen solve");
         for (i, want) in diag.iter().enumerate() {
