@@ -4,6 +4,10 @@ use std::cmp::Ordering;
 
 use num_complex::Complex64;
 use serde::{Deserialize, Serialize};
+#[cfg(debug_assertions)]
+use std::cell::RefCell;
+#[cfg(debug_assertions)]
+use std::collections::VecDeque;
 
 use crate::{
     backend::{SpectralBackend, SpectralBuffer},
@@ -17,7 +21,8 @@ const MIN_RR_TOL: f64 = 1e-12;
 const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
 const BLOCK_SIZE_SLACK: usize = 2;
 const W_HISTORY_FACTOR: usize = 1;
-const PROJECTION_CONDITION_LIMIT: f64 = 1e12;
+const PROJECTION_CONDITION_LIMIT: f64 = 1e9;
+const RAYLEIGH_RITZ_VALUE_LIMIT: f64 = 1e8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -148,7 +153,7 @@ impl Default for SolverDebugOptions {
 
 impl SolverDebugOptions {
     pub fn history_factor(&self) -> usize {
-        self.history_multiplier.unwrap_or(W_HISTORY_FACTOR).max(1)
+        self.history_multiplier.unwrap_or(W_HISTORY_FACTOR)
     }
 }
 
@@ -176,6 +181,18 @@ impl GammaHandling {
     pub fn should_deflate(self, bloch_norm: f64) -> bool {
         self.enabled && bloch_norm <= self.tolerance
     }
+
+    pub fn context_for_bloch(self, bloch_norm: f64) -> GammaContext {
+        let is_gamma = bloch_norm <= self.tolerance;
+        if !is_gamma {
+            return GammaContext::default();
+        }
+        if self.enabled {
+            GammaContext::new(true)
+        } else {
+            GammaContext::with_deflation(true, false)
+        }
+    }
 }
 
 impl Default for GammaHandling {
@@ -190,11 +207,29 @@ impl Default for GammaHandling {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GammaContext {
     pub is_gamma: bool,
+    pub deflate_zero_mode: bool,
 }
 
 impl GammaContext {
     pub const fn new(is_gamma: bool) -> Self {
-        Self { is_gamma }
+        Self {
+            is_gamma,
+            deflate_zero_mode: is_gamma,
+        }
+    }
+
+    pub const fn with_deflation(is_gamma: bool, deflate_zero_mode: bool) -> Self {
+        Self {
+            is_gamma,
+            deflate_zero_mode: is_gamma && deflate_zero_mode,
+        }
+    }
+
+    pub const fn gamma_without_deflation() -> Self {
+        Self {
+            is_gamma: true,
+            deflate_zero_mode: false,
+        }
     }
 }
 
@@ -526,6 +561,9 @@ where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
+    #[cfg(debug_assertions)]
+    let _rayleigh_ritz_log_scope = RayleighRitzLogScope::new();
+
     let target_bands = opts.n_bands.max(1);
     let block_size = if opts.max_iter == 0 {
         warm_start
@@ -535,11 +573,25 @@ where
         opts.effective_block_size()
     };
     let gamma_mode = if gamma.is_gamma {
-        build_gamma_mode(operator)
+        let mode = build_gamma_mode(operator);
+        #[cfg(debug_assertions)]
+        {
+            eprintln!(
+                "[gamma-debug] gamma_mode_present={} deflate={}",
+                mode.is_some(),
+                gamma.deflate_zero_mode
+            );
+        }
+        mode
     } else {
         None
     };
-    let gamma_deflated = gamma_mode.is_some();
+    let gamma_deflated = gamma_mode.is_some() && gamma.deflate_zero_mode;
+    let gamma_constraint = if gamma_deflated {
+        gamma_mode.as_ref()
+    } else {
+        None
+    };
     let deflation_vectors = deflation.map_or(0, |space| space.len());
     let deflation_active = if opts.debug.disable_deflation {
         None
@@ -558,11 +610,26 @@ where
     let (mut x_entries, warm_start_hits) = initialize_block(
         operator,
         block_size,
-        gamma_mode.as_ref(),
+        gamma_constraint,
         deflation_active,
         symmetry_projector,
         warm_start,
     );
+    #[cfg(test)]
+    eprintln!(
+        "[eigensolver-debug] initial block size={} requested={}", 
+        x_entries.len(), block_size
+    );
+    #[cfg(test)]
+    if operator.grid().len() <= 4 {
+        for (idx, entry) in x_entries.iter().enumerate() {
+            eprintln!(
+                "[eigensolver-debug] init vec {} = {:?}",
+                idx,
+                entry.vector.as_slice()
+            );
+        }
+    }
     if x_entries.is_empty() {
         return EigenResult {
             omegas: Vec::new(),
@@ -572,6 +639,10 @@ where
             diagnostics: EigenDiagnostics::default(),
             warm_start_hits,
         };
+    }
+
+    if let (Some(mode), false) = (gamma_mode.as_ref(), gamma_deflated) {
+        inject_gamma_seed(operator, &mut x_entries, None, mode, block_size);
     }
 
     if opts.max_iter == 0 && warm_start.is_some() {
@@ -617,12 +688,40 @@ where
     let mut iteration_stats: Vec<IterationDiagnostics> = Vec::new();
 
     loop {
+        if let (Some(mode), false) = (gamma_mode.as_ref(), gamma_deflated) {
+            if !x_entries.is_empty() {
+                inject_gamma_seed(
+                    operator,
+                    &mut x_entries,
+                    Some(&mut eigenvalues),
+                    mode,
+                    block_size,
+                );
+            }
+        }
+        let history_factor = opts.debug.history_factor();
+        let history_enabled = history_factor > 0 && !x_entries.is_empty();
+        if history_enabled {
+            let history_limit = history_factor
+                .saturating_mul(x_entries.len())
+                .max(history_factor);
+            while w_entries.len() > history_limit {
+                w_entries.pop();
+            }
+        } else if !w_entries.is_empty() {
+            w_entries.clear();
+        }
+
         let (residual_stats, mut p_entries) = compute_preconditioned_residuals(
             operator,
             &eigenvalues,
             &x_entries,
-            &w_entries,
-            gamma_mode.as_ref(),
+            if history_enabled {
+                w_entries.as_slice()
+            } else {
+                &[] as &[BlockEntry<B>]
+            },
+            gamma_constraint,
             deflation_active,
             symmetry_projector,
             &mut preconditioner,
@@ -654,19 +753,21 @@ where
         }
 
         reorthogonalize_block(operator, &mut p_entries, &x_entries);
-        reorthogonalize_block(operator, &mut p_entries, &w_entries);
-        reorthogonalize_block(operator, &mut w_entries, &x_entries);
-        let history_limit = opts
-            .debug
-            .history_factor()
-            .saturating_mul(x_entries.len())
-            .max(1);
-        while w_entries.len() > history_limit {
-            w_entries.pop();
+        if history_enabled && !w_entries.is_empty() {
+            let history_slice = w_entries.as_slice();
+            reorthogonalize_block(operator, &mut p_entries, history_slice);
+        }
+        if history_enabled {
+            reorthogonalize_block(operator, &mut w_entries, &x_entries);
         }
 
-        let subspace = build_subspace_entries(&x_entries, &p_entries, &w_entries);
-        let history_dim = w_entries.len();
+        let w_slice: &[BlockEntry<B>] = if history_enabled {
+            w_entries.as_slice()
+        } else {
+            &[]
+        };
+        let subspace = build_subspace_entries(&x_entries, &p_entries, w_slice);
+        let history_dim = w_slice.len();
         let (vals, new_entries, projection_diag) = rayleigh_ritz(
             operator,
             &subspace,
@@ -679,7 +780,9 @@ where
         }
         eigenvalues = vals;
         x_entries = new_entries;
-        w_entries = p_entries;
+        if history_enabled {
+            w_entries = p_entries;
+        }
         iterations += 1;
     }
 
@@ -1070,6 +1173,48 @@ where
     (entries, warm_hits)
 }
 
+fn inject_gamma_seed<O, B>(
+    operator: &mut O,
+    entries: &mut Vec<BlockEntry<B>>,
+    eigenvalues: Option<&mut Vec<f64>>,
+    gamma_mode: &GammaMode<B>,
+    block_limit: usize,
+) where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    if block_limit == 0 {
+        return;
+    }
+    let mut applied = operator.alloc_field();
+    operator.apply(&gamma_mode.vector, &mut applied);
+    let gamma_entry = BlockEntry {
+        vector: gamma_mode.vector.clone(),
+        mass: gamma_mode.mass_vector.clone(),
+        applied,
+    };
+    let mut rest = std::mem::take(entries);
+    reorthogonalize_block(operator, &mut rest, std::slice::from_ref(&gamma_entry));
+    let mut combined = vec![gamma_entry];
+    combined.append(&mut rest);
+    if combined.len() > block_limit {
+        combined.truncate(block_limit);
+    }
+    *entries = combined;
+    if let Some(values) = eigenvalues {
+        if entries.is_empty() {
+            values.clear();
+            return;
+        }
+        values.insert(0, 0.0);
+        if values.len() > entries.len() {
+            values.truncate(entries.len());
+        } else if values.len() < entries.len() {
+            values.resize(entries.len(), 0.0);
+        }
+    }
+}
+
 fn build_entry_from_field<O, B>(
     operator: &mut O,
     field: &Field2D,
@@ -1203,6 +1348,17 @@ where
     let mut require_fallback;
     if let Some((values, entries, stats)) = attempt_projection(operator, subspace, want, tol) {
         require_fallback = projection_guard_triggered(&stats);
+        #[cfg(debug_assertions)]
+        {
+            rayleigh_ritz_debug_log(format!(
+                "[rayleigh-ritz-debug] attempt stats: reduced={} cond={} min_mass={} max_mass={} fallback_guard={}",
+                stats.reduced_dim,
+                stats.ratio(),
+                stats.min_mass_eigenvalue,
+                stats.max_mass_eigenvalue,
+                require_fallback
+            ));
+        }
         final_values = values;
         final_entries = entries;
         final_stats = stats;
@@ -1230,6 +1386,13 @@ where
             let (raw_values, raw_entries) =
                 solve_raw_projected_system(operator, subspace, want, tol);
             if !raw_values.is_empty() && raw_entries.len() == raw_values.len() {
+                #[cfg(debug_assertions)]
+                {
+                    rayleigh_ritz_debug_log(format!(
+                        "[rayleigh-ritz-debug] raw solve values={:?}",
+                        raw_values
+                    ));
+                }
                 fallback_used = true;
                 final_values = raw_values;
                 final_entries = raw_entries;
@@ -1290,6 +1453,15 @@ where
         }
     }
     let diagnostics = final_stats.to_public(history_dim, fallback_used);
+    #[cfg(test)]
+    {
+        if dim <= 4 {
+            eprintln!(
+                "[rayleigh-ritz-debug] dim={} values={:?} reduced={} requested={} fallback={}",
+                dim, final_values, final_stats.reduced_dim, final_stats.requested_dim, fallback_used
+            );
+        }
+    }
     log_projected_dimension(final_stats.original_dim, final_stats.reduced_dim, want);
     log_rayleigh_ritz_counts(
         final_values.len(),
@@ -1297,6 +1469,16 @@ where
         want,
         final_stats.original_dim,
     );
+    #[cfg(debug_assertions)]
+    {
+        if operator.grid().len() <= 64 {
+            rayleigh_ritz_debug_log(format!(
+                "[rayleigh-ritz-debug] grid={} eigenvalues={:?}",
+                operator.grid().len(),
+                final_values
+            ));
+        }
+    }
     (final_values, final_entries, diagnostics)
 }
 
@@ -1352,10 +1534,18 @@ where
         tol,
     )
     .expect("generalized eigen solve failed in block solver");
+    #[cfg(test)]
+    if prepared.reduced_dim <= 4 {
+        eprintln!(
+            "[rayleigh-ritz-debug] raw generalized eigen values={:?}",
+            values
+        );
+    }
     let mut order: Vec<usize> = (0..values.len()).collect();
     order.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap_or(Ordering::Equal));
     let mut new_entries = Vec::with_capacity(want.min(dim));
-    let mut selected_values = Vec::with_capacity(want.min(dim));
+    let mut selected_values: Vec<f64> = Vec::with_capacity(want.min(dim));
+    let lambda_tol = tol.max(MIN_RR_TOL);
     let eigen_cols = if prepared.reduced_dim == 0 {
         0
     } else {
@@ -1375,10 +1565,33 @@ where
         if want > 0 && new_entries.len() >= want {
             break;
         }
-        selected_values.push(values[idx]);
+        let value = values[idx];
+        if !value.is_finite() {
+            continue;
+        }
+        if value < -tol.abs().max(MIN_RR_TOL) {
+            continue;
+        }
+        if value > RAYLEIGH_RITZ_VALUE_LIMIT {
+            continue;
+        }
+        if selected_values
+            .iter()
+            .any(|existing| (*existing - value).abs() <= lambda_tol)
+        {
+            continue;
+        }
+        selected_values.push(value);
         let coeffs = extract_complex_column(&lifted_vectors, dim, eigen_cols, idx);
         let entry = combine_entries(operator, subspace, &coeffs);
         new_entries.push(entry);
+    }
+    #[cfg(test)]
+    if prepared.reduced_dim <= 4 {
+        eprintln!(
+            "[rayleigh-ritz-debug] selected eigenvalues={:?}",
+            selected_values
+        );
     }
     (selected_values, new_entries)
 }
@@ -1386,7 +1599,7 @@ where
 fn solve_raw_projected_system<O, B>(
     operator: &mut O,
     subspace: &[SubspaceEntry<'_, B>],
-    _want: usize,
+    want: usize,
     tol: f64,
 ) -> (Vec<f64>, Vec<BlockEntry<B>>)
 where
@@ -1412,13 +1625,38 @@ where
     if eigen_cols == 0 {
         return (Vec::new(), Vec::new());
     }
-    let mut new_entries = Vec::with_capacity(eigen_cols);
-    let mut selected_values = Vec::with_capacity(eigen_cols);
+    let limit = if want == 0 {
+        eigen_cols
+    } else {
+        want.min(eigen_cols)
+    };
+    let mut new_entries = Vec::with_capacity(limit);
+    let mut selected_values: Vec<f64> = Vec::with_capacity(limit);
+    let lambda_tol = tol.max(MIN_RR_TOL);
     for idx in order {
         if idx >= eigen_cols {
             continue;
         }
-        selected_values.push(values[idx]);
+        if selected_values.len() >= limit {
+            break;
+        }
+        let value = values[idx];
+        if !value.is_finite() {
+            continue;
+        }
+        if value < -tol.abs().max(MIN_RR_TOL) {
+            continue;
+        }
+        if value > RAYLEIGH_RITZ_VALUE_LIMIT {
+            continue;
+        }
+        if selected_values
+            .iter()
+            .any(|existing| (*existing - value).abs() <= lambda_tol)
+        {
+            continue;
+        }
+        selected_values.push(value);
         let coeffs = extract_complex_column(&eigenvectors, dim, eigen_cols, idx);
         let entry = combine_entries(operator, subspace, &coeffs);
         new_entries.push(entry);
@@ -1428,14 +1666,159 @@ where
 
 #[cfg(debug_assertions)]
 fn log_rayleigh_ritz_counts(total_values: usize, produced: usize, want: usize, dim: usize) {
-    eprintln!(
+    rayleigh_ritz_debug_log(format!(
         "[rayleigh-ritz] values={} produced={} want={} dim={}",
         total_values, produced, want, dim
-    );
+    ));
 }
 
 #[cfg(not(debug_assertions))]
 fn log_rayleigh_ritz_counts(_total_values: usize, _produced: usize, _want: usize, _dim: usize) {}
+
+#[cfg(debug_assertions)]
+struct AttemptLogBuffer {
+    front_limit: usize,
+    tail_limit: usize,
+    total: usize,
+    tail: VecDeque<String>,
+    flushed: bool,
+}
+
+#[cfg(debug_assertions)]
+impl AttemptLogBuffer {
+    fn new(front_limit: usize, tail_limit: usize) -> Self {
+        Self {
+            front_limit,
+            tail_limit,
+            total: 0,
+            tail: VecDeque::with_capacity(tail_limit.max(1)),
+            flushed: false,
+        }
+    }
+
+    fn log(&mut self, message: String) {
+        self.total += 1;
+        if self.total <= self.front_limit {
+            eprintln!("{}", message);
+            return;
+        }
+        self.tail.push_back(message);
+        if self.tail.len() > self.tail_limit {
+            self.tail.pop_front();
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.flushed {
+            return;
+        }
+        if self.total > self.front_limit {
+            let suppressed = self
+                .total
+                .saturating_sub(self.front_limit + self.tail.len());
+            if suppressed > 0 {
+                eprintln!(
+                    "[rayleigh-ritz-debug] ... suppressed {} intermediate attempt logs ...",
+                    suppressed
+                );
+            }
+            for entry in self.tail.iter() {
+                eprintln!("{}", entry);
+            }
+        }
+        self.flushed = true;
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for AttemptLogBuffer {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
+#[cfg(debug_assertions)]
+const RAYLEIGH_RITZ_LOG_FRONT: usize = 5;
+#[cfg(debug_assertions)]
+const RAYLEIGH_RITZ_LOG_TAIL: usize = 5;
+
+#[cfg(debug_assertions)]
+thread_local! {
+    static RAYLEIGH_RITZ_LOG_STATE: RefCell<RayleighRitzLogState> =
+        RefCell::new(RayleighRitzLogState::new());
+}
+
+#[cfg(debug_assertions)]
+struct RayleighRitzLogState {
+    depth: usize,
+    buffer: Option<AttemptLogBuffer>,
+}
+
+#[cfg(debug_assertions)]
+impl RayleighRitzLogState {
+    fn new() -> Self {
+        Self {
+            depth: 0,
+            buffer: None,
+        }
+    }
+
+    fn enter(&mut self) {
+        if self.depth == 0 {
+            self.buffer = Some(AttemptLogBuffer::new(
+                RAYLEIGH_RITZ_LOG_FRONT,
+                RAYLEIGH_RITZ_LOG_TAIL,
+            ));
+        }
+        self.depth = self.depth.saturating_add(1);
+    }
+
+    fn exit(&mut self) {
+        if self.depth == 0 {
+            return;
+        }
+        self.depth -= 1;
+        if self.depth == 0 {
+            if let Some(mut buffer) = self.buffer.take() {
+                buffer.flush();
+            }
+        }
+    }
+
+    fn log(&mut self, message: String) {
+        if let Some(buffer) = self.buffer.as_mut() {
+            buffer.log(message);
+        } else {
+            eprintln!("{}", message);
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+struct RayleighRitzLogScope;
+
+#[cfg(debug_assertions)]
+impl RayleighRitzLogScope {
+    fn new() -> Self {
+        RAYLEIGH_RITZ_LOG_STATE.with(|state| state.borrow_mut().enter());
+        Self
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for RayleighRitzLogScope {
+    fn drop(&mut self) {
+        RAYLEIGH_RITZ_LOG_STATE.with(|state| state.borrow_mut().exit());
+    }
+}
+
+#[cfg(debug_assertions)]
+fn rayleigh_ritz_debug_log(message: String) {
+    RAYLEIGH_RITZ_LOG_STATE.with(|state| state.borrow_mut().log(message));
+}
+
+#[cfg(not(debug_assertions))]
+fn rayleigh_ritz_debug_log(_message: String) {}
 
 fn extract_complex_column(
     matrix: &[Complex64],
@@ -1465,6 +1848,11 @@ fn build_projected_matrices<B: SpectralBackend>(
                 op_proj[j * dim + i] = op_val.conj();
             }
         }
+    }
+    #[cfg(test)]
+    if dim <= 4 {
+        eprintln!("[rayleigh-ritz-debug] op_proj={:?}", op_proj);
+        eprintln!("[rayleigh-ritz-debug] mass_proj={:?}", mass_proj);
     }
     (op_proj, mass_proj)
 }
@@ -1534,13 +1922,48 @@ fn stabilize_projected_system(
         max_mass_eigenvalue: 0.0,
     };
     let block_dim = dim * 2;
+    let min_required = want.min(dim).max(1);
     let mass_block = expand_complex_hermitian(mass_proj, dim);
     let (mass_vals, mass_vecs) = jacobi_eigendecomposition(mass_block, block_dim, tol);
+    let mut min_mass_eval = f64::INFINITY;
+    let mut max_mass_eval = 0.0_f64;
+    for &val in &mass_vals {
+        if val > 0.0 {
+            if val < min_mass_eval {
+                min_mass_eval = val;
+            }
+            if val > max_mass_eval {
+                max_mass_eval = val;
+            }
+        }
+    }
+    if dim <= want.max(1) {
+        stats.reduced_dim = dim;
+        stats.min_mass_eigenvalue = if min_mass_eval.is_finite() {
+            min_mass_eval
+        } else {
+            0.0
+        };
+        stats.max_mass_eigenvalue = max_mass_eval;
+        let mut transform = vec![Complex64::default(); dim * dim];
+        for i in 0..dim {
+            transform[i * dim + i] = Complex64::new(1.0, 0.0);
+        }
+        return Some((
+            StabilizedProjection {
+                op_matrix: op_proj.to_vec(),
+                mass_matrix: mass_proj.to_vec(),
+                transform,
+                reduced_dim: dim,
+            },
+            stats,
+        ));
+    }
     let max_val = mass_vals.iter().cloned().fold(0.0_f64, f64::max);
     if max_val <= 0.0 {
         return None;
     }
-    const REL_TOL: f64 = 1e-10;
+    const REL_TOL: f64 = 1e-8;
     const ABS_TOL: f64 = 1e-12;
     let cutoff = (max_val * REL_TOL).max(ABS_TOL);
     let mut selected: Vec<(usize, f64)> = mass_vals
@@ -1560,7 +1983,7 @@ fn stabilize_projected_system(
     selected.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
     let target = want.max(1);
     const MULTIPLIER: usize = 3;
-    const ABS_MAX_DIM: usize = 96;
+    const ABS_MAX_DIM: usize = 64;
     let mut limit = target * MULTIPLIER;
     if limit < target + 2 {
         limit = target + 2;
@@ -1597,7 +2020,7 @@ fn stabilize_projected_system(
                 break;
             }
         }
-        if duplicate {
+        if duplicate && columns.len() >= min_required {
             continue;
         }
         let scale = 1.0 / value.sqrt();
@@ -1657,10 +2080,10 @@ fn lift_projected_eigenvectors(
 
 #[cfg(debug_assertions)]
 fn log_projected_dimension(original: usize, reduced: usize, want: usize) {
-    eprintln!(
+    rayleigh_ritz_debug_log(format!(
         "[rayleigh-ritz] projected dimension {} -> {} (want={})",
         original, reduced, want
-    );
+    ));
 }
 
 #[cfg(not(debug_assertions))]
@@ -1861,7 +2284,10 @@ where
         sum_relative += relative;
         sum_scale += scale;
         evaluated += 1;
-        if relative <= tol || norm <= ABSOLUTE_RESIDUAL_GUARD {
+        if relative <= tol {
+            continue;
+        }
+        if norm <= ABSOLUTE_RESIDUAL_GUARD && relative <= tol * 10.0 {
             continue;
         }
         let mut preconditioned = false;
@@ -2019,7 +2445,13 @@ where
     let freq_tol = diagnostics.freq_tolerance;
     let mut last_kept: Option<f64> = None;
     log_finalize_context(gamma_deflated, target, eigenvalues.len());
-    for (entry, &lambda) in entries.iter().zip(eigenvalues.iter()) {
+    let total_candidates = entries.len().min(eigenvalues.len());
+    for (idx, (entry, &lambda)) in entries
+        .iter()
+        .zip(eigenvalues.iter())
+        .take(total_candidates)
+        .enumerate()
+    {
         log_finalize_candidate(lambda);
         if lambda < 0.0 {
             log_finalize_skip("negative", lambda);
@@ -2036,7 +2468,9 @@ where
             }
         }
         if let Some(prev) = last_kept {
-            if (omega - prev).abs() <= freq_tol {
+            let remaining_candidates = total_candidates.saturating_sub(idx + 1);
+            let can_skip_duplicate = omegas.len() + remaining_candidates >= target;
+            if (omega - prev).abs() <= freq_tol && can_skip_duplicate {
                 log_finalize_skip("duplicate", lambda);
                 diagnostics.duplicate_modes_skipped += 1;
                 continue;
