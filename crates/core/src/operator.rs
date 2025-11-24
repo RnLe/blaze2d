@@ -526,7 +526,9 @@ fn build_k_plus_g_tables(
             let idx = iy * nx + ix;
             let raw_kx = kx_shifted[ix];
             let raw_sq = raw_kx * raw_kx + raw_ky * raw_ky;
-            raw_min = raw_min.min(raw_sq);
+            if raw_sq.is_finite() {
+                raw_min = raw_min.min(raw_sq);
+            }
             let (clamped_kx, clamped_ky) = clamp_gradient_components(raw_kx, raw_ky);
             let clamped_sq = clamped_kx * clamped_kx + clamped_ky * clamped_ky;
             clamped_min = clamped_min.min(clamped_sq);
@@ -557,12 +559,13 @@ fn build_k_plus_g_tables(
 }
 
 fn inverse_scale(k_sq: f64, shift: f64, eps_eff: f64) -> f64 {
-    if k_sq <= K_PLUS_G_NEAR_ZERO_FLOOR || eps_eff <= 0.0 {
-        0.0
-    } else {
-        let shift_scaled = shift * eps_eff.max(1e-12);
-        eps_eff / (k_sq + shift_scaled)
+    if !k_sq.is_finite() || !eps_eff.is_finite() || eps_eff <= 0.0 {
+        return 0.0;
     }
+
+    let safe_k_sq = k_sq.max(K_PLUS_G_NEAR_ZERO_FLOOR);
+    let shift_scaled = shift * eps_eff.max(1e-12);
+    eps_eff / (safe_k_sq + shift_scaled)
 }
 
 fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
@@ -637,11 +640,44 @@ fn assemble_divergence(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{clamp_gradient_components, inverse_scale, K_PLUS_G_NEAR_ZERO_FLOOR};
+
+    #[test]
+    fn clamp_gradient_handles_zero_and_nan() {
+        let magnitude = K_PLUS_G_NEAR_ZERO_FLOOR.sqrt();
+        let (x_zero, y_zero) = clamp_gradient_components(0.0, 0.0);
+        assert_eq!(x_zero, magnitude);
+        assert_eq!(y_zero, 0.0);
+
+        let (x_nan, y_nan) = clamp_gradient_components(f64::NAN, f64::NAN);
+        assert_eq!(x_nan, magnitude);
+        assert_eq!(y_nan, 0.0);
+    }
+
+    #[test]
+    fn inverse_scale_sanitizes_non_finite_and_underflow() {
+        assert_eq!(inverse_scale(f64::NAN, 1e-3, 1.0), 0.0);
+        assert_eq!(inverse_scale(1.0, 1e-3, f64::NAN), 0.0);
+
+        let tiny = K_PLUS_G_NEAR_ZERO_FLOOR / 10.0;
+        let expected = 1.0 / (K_PLUS_G_NEAR_ZERO_FLOOR + 1e-3);
+        let actual = inverse_scale(tiny, 1e-3, 1.0);
+        assert!((actual - expected).abs() < 1e-12);
+    }
+}
+
 fn shift_k_vector(base: &[f64], shift: f64) -> Vec<f64> {
     base.iter().map(|&k| k + shift).collect()
 }
 
 fn clamp_gradient_components(kx: f64, ky: f64) -> (f64, f64) {
+    if !kx.is_finite() || !ky.is_finite() {
+        let magnitude = K_PLUS_G_NEAR_ZERO_FLOOR.sqrt();
+        return (magnitude, 0.0);
+    }
+
     let norm_sq = kx * kx + ky * ky;
     if norm_sq >= K_PLUS_G_NEAR_ZERO_FLOOR {
         (kx, ky)
