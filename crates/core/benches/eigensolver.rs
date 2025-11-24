@@ -112,8 +112,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                         sample.label,
                     );
                     group.bench_function(bench_id, |b| {
-                        let gamma_context =
-                            eigen_opts.gamma.context_for_bloch(bloch_norm);
+                        let gamma_context = eigen_opts.gamma.context_for_bloch(bloch_norm);
                         b.iter(|| {
                             let mut theta = ThetaOperator::new(
                                 backend.clone(),
@@ -173,8 +172,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
             everything_opts.deflation.max_vectors = everything_opts.n_bands;
             everything_opts.warm_start.enabled = true;
             everything_opts.warm_start.max_vectors = everything_opts.n_bands;
-            let everything_gamma =
-                everything_opts.gamma.context_for_bloch(bloch_norm);
+            let everything_gamma = everything_opts.gamma.context_for_bloch(bloch_norm);
             let warm_limit = everything_opts
                 .warm_start
                 .effective_limit(everything_opts.n_bands);
