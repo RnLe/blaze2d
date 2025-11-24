@@ -316,7 +316,7 @@ pub struct IterationDiagnostics {
     pub projection: ProjectionDiagnostics,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ProjectionDiagnostics {
     pub original_dim: usize,
     pub reduced_dim: usize,
@@ -572,10 +572,11 @@ where
     let mut eigenvalues;
     {
         let subspace = build_subspace_entries(&x_entries, &[], &[]);
-        let (vals, new_entries) = rayleigh_ritz(
+        let (vals, new_entries, _) = rayleigh_ritz(
             operator,
             &subspace,
             x_entries.len(),
+            0,
             opts.tol.max(MIN_RR_TOL),
         );
         eigenvalues = vals;
@@ -614,6 +615,7 @@ where
             preconditioner_trials: residual_stats.preconditioner_trials,
             preconditioner_avg_before: residual_stats.preconditioner_avg_before,
             preconditioner_avg_after: residual_stats.preconditioner_avg_after,
+            projection: ProjectionDiagnostics::default(),
         });
         if residual_stats.max_relative_residual <= opts.tol
             || p_entries.is_empty()
@@ -635,12 +637,17 @@ where
         }
 
         let subspace = build_subspace_entries(&x_entries, &p_entries, &w_entries);
-        let (vals, new_entries) = rayleigh_ritz(
+        let history_dim = w_entries.len();
+        let (vals, new_entries, projection_diag) = rayleigh_ritz(
             operator,
             &subspace,
             x_entries.len(),
+            history_dim,
             opts.tol.max(MIN_RR_TOL),
         );
+        if let Some(latest) = iteration_stats.last_mut() {
+            latest.projection = projection_diag;
+        }
         eigenvalues = vals;
         x_entries = new_entries;
         w_entries = p_entries;
@@ -1137,26 +1144,159 @@ fn rayleigh_ritz<O, B>(
     operator: &mut O,
     subspace: &[SubspaceEntry<'_, B>],
     want: usize,
+    history_dim: usize,
     tol: f64,
-) -> (Vec<f64>, Vec<BlockEntry<B>>)
+) -> (Vec<f64>, Vec<BlockEntry<B>>, ProjectionDiagnostics)
 where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
     let dim = subspace.len();
     if dim == 0 {
-        return (Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            Vec::new(),
+            ProjectionDiagnostics {
+                history_dim,
+                ..ProjectionDiagnostics::default()
+            },
+        );
     }
-    let (op_proj, mass_proj) = build_projected_matrices(operator.backend(), subspace);
-    let prepared = match stabilize_projected_system(&op_proj, &mass_proj, dim, want, tol) {
-        Some(system) => system,
-        None => {
-            log_projected_dimension(dim, 0, want);
-            return (Vec::new(), Vec::new());
-        }
+    let history_dim = history_dim.min(dim);
+    let mut fallback_used = false;
+    let mut final_values = Vec::new();
+    let mut final_entries = Vec::new();
+    let mut final_stats = ProjectionStats {
+        original_dim: dim,
+        requested_dim: want,
+        ..ProjectionStats::default()
     };
-    if prepared.reduced_dim == 0 {
+    let mut require_fallback = false;
+    if let Some((values, entries, stats)) = attempt_projection(operator, subspace, want, tol) {
+        require_fallback = projection_guard_triggered(&stats);
+        final_values = values;
+        final_entries = entries;
+        final_stats = stats;
+    } else if history_dim > 0 {
+        require_fallback = true;
+    }
+    if require_fallback && history_dim > 0 {
+        let trimmed_len = dim.saturating_sub(history_dim);
+        if trimmed_len > 0 {
+            if let Some((values, entries, stats)) =
+                attempt_projection(operator, &subspace[..trimmed_len], want, tol)
+            {
+                fallback_used = true;
+                final_values = values;
+                final_entries = entries;
+                final_stats = stats;
+            }
+        }
+    }
+    if final_stats.reduced_dim == 0 && final_values.is_empty() && final_entries.is_empty() {
         log_projected_dimension(dim, 0, want);
+        log_rayleigh_ritz_counts(0, 0, want, dim);
+        return (
+            Vec::new(),
+            Vec::new(),
+            ProjectionDiagnostics {
+                original_dim: dim,
+                requested_dim: want,
+                history_dim,
+                fallback_used,
+                reduced_dim: 0,
+                min_mass_eigenvalue: 0.0,
+                max_mass_eigenvalue: 0.0,
+                condition_estimate: f64::INFINITY,
+                ..ProjectionDiagnostics::default()
+            },
+        );
+    }
+    if final_entries.len() < want && dim >= want {
+        let (raw_values, raw_entries) = solve_raw_projected_system(operator, subspace, want, tol);
+        if !raw_values.is_empty() && raw_entries.len() == raw_values.len() {
+            let lambda_tol = tol.max(MIN_RR_TOL);
+            let mut added = 0usize;
+            for (raw_value, raw_entry) in raw_values.into_iter().zip(raw_entries.into_iter()) {
+                if want > 0 && final_entries.len() >= want {
+                    break;
+                }
+                if final_values
+                    .iter()
+                    .any(|&existing| (existing - raw_value).abs() <= lambda_tol)
+                {
+                    continue;
+                }
+                let insert_pos = final_values
+                    .iter()
+                    .position(|&existing| raw_value < existing)
+                    .unwrap_or(final_values.len());
+                final_values.insert(insert_pos, raw_value);
+                final_entries.insert(insert_pos, raw_entry);
+                added += 1;
+                fallback_used = true;
+            }
+            if added > 0 {
+                final_stats.reduced_dim = final_entries.len();
+                final_stats.min_mass_eigenvalue = 0.0;
+                final_stats.max_mass_eigenvalue = 0.0;
+            }
+        }
+    }
+    let diagnostics = final_stats.to_public(history_dim, fallback_used);
+    log_projected_dimension(final_stats.original_dim, final_stats.reduced_dim, want);
+    log_rayleigh_ritz_counts(
+        final_values.len(),
+        final_entries.len(),
+        want,
+        final_stats.original_dim,
+    );
+    (final_values, final_entries, diagnostics)
+}
+
+fn attempt_projection<O, B>(
+    operator: &mut O,
+    subspace: &[SubspaceEntry<'_, B>],
+    want: usize,
+    tol: f64,
+) -> Option<(Vec<f64>, Vec<BlockEntry<B>>, ProjectionStats)>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    if subspace.is_empty() {
+        return None;
+    }
+    let dim = subspace.len();
+    let (op_proj, mass_proj) = build_projected_matrices(operator.backend(), subspace);
+    let (prepared, mut stats) = stabilize_projected_system(&op_proj, &mass_proj, dim, want, tol)?;
+    let (values, entries) =
+        solve_projected_eigensystem(operator, subspace, want, tol, dim, prepared);
+    stats.original_dim = dim;
+    Some((values, entries, stats))
+}
+
+fn projection_guard_triggered(stats: &ProjectionStats) -> bool {
+    if stats.reduced_dim == 0 {
+        return true;
+    }
+    let cond = stats.ratio();
+    !cond.is_finite() || cond > PROJECTION_CONDITION_LIMIT || !stats.satisfies_rank()
+}
+
+fn solve_projected_eigensystem<O, B>(
+    operator: &mut O,
+    subspace: &[SubspaceEntry<'_, B>],
+    want: usize,
+    tol: f64,
+    dim: usize,
+    prepared: StabilizedProjection,
+) -> (Vec<f64>, Vec<BlockEntry<B>>)
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    if prepared.reduced_dim == 0 {
         return (Vec::new(), Vec::new());
     }
     let (values, eigenvectors) = generalized_eigen(
@@ -1165,7 +1305,7 @@ where
         prepared.reduced_dim,
         tol,
     )
-        .expect("generalized eigen solve failed in block solver");
+    .expect("generalized eigen solve failed in block solver");
     let mut order: Vec<usize> = (0..values.len()).collect();
     order.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap_or(Ordering::Equal));
     let mut new_entries = Vec::with_capacity(want.min(dim));
@@ -1194,8 +1334,49 @@ where
         let entry = combine_entries(operator, subspace, &coeffs);
         new_entries.push(entry);
     }
-    log_projected_dimension(dim, prepared.reduced_dim, want);
-    log_rayleigh_ritz_counts(values.len(), new_entries.len(), want, dim);
+    (selected_values, new_entries)
+}
+
+fn solve_raw_projected_system<O, B>(
+    operator: &mut O,
+    subspace: &[SubspaceEntry<'_, B>],
+    _want: usize,
+    tol: f64,
+) -> (Vec<f64>, Vec<BlockEntry<B>>)
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let dim = subspace.len();
+    if dim == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let (op_proj, mass_proj) = build_projected_matrices(operator.backend(), subspace);
+    let (values, eigenvectors) = match generalized_eigen(op_proj, mass_proj, dim, tol) {
+        Some(res) => res,
+        None => return (Vec::new(), Vec::new()),
+    };
+    let mut order: Vec<usize> = (0..values.len()).collect();
+    order.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap_or(Ordering::Equal));
+    let eigen_cols = if dim == 0 {
+        0
+    } else {
+        eigenvectors.len() / dim
+    };
+    if eigen_cols == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let mut new_entries = Vec::with_capacity(eigen_cols);
+    let mut selected_values = Vec::with_capacity(eigen_cols);
+    for idx in order {
+        if idx >= eigen_cols {
+            continue;
+        }
+        selected_values.push(values[idx]);
+        let coeffs = extract_complex_column(&eigenvectors, dim, eigen_cols, idx);
+        let entry = combine_entries(operator, subspace, &coeffs);
+        new_entries.push(entry);
+    }
     (selected_values, new_entries)
 }
 
@@ -1210,10 +1391,13 @@ fn log_rayleigh_ritz_counts(total_values: usize, produced: usize, want: usize, d
 #[cfg(not(debug_assertions))]
 fn log_rayleigh_ritz_counts(_total_values: usize, _produced: usize, _want: usize, _dim: usize) {}
 
-fn extract_complex_column(matrix: &[Complex64], rows: usize, cols: usize, col: usize) -> Vec<Complex64> {
-    (0..rows)
-        .map(|row| matrix[row * cols + col])
-        .collect()
+fn extract_complex_column(
+    matrix: &[Complex64],
+    rows: usize,
+    cols: usize,
+    col: usize,
+) -> Vec<Complex64> {
+    (0..rows).map(|row| matrix[row * cols + col]).collect()
 }
 
 fn build_projected_matrices<B: SpectralBackend>(
@@ -1292,17 +1476,21 @@ fn stabilize_projected_system(
     dim: usize,
     want: usize,
     tol: f64,
-) -> Option<StabilizedProjection> {
+) -> Option<(StabilizedProjection, ProjectionStats)> {
     if dim == 0 {
         return None;
     }
+    let mut stats = ProjectionStats {
+        original_dim: dim,
+        requested_dim: want,
+        reduced_dim: 0,
+        min_mass_eigenvalue: f64::INFINITY,
+        max_mass_eigenvalue: 0.0,
+    };
     let block_dim = dim * 2;
     let mass_block = expand_complex_hermitian(mass_proj, dim);
     let (mass_vals, mass_vecs) = jacobi_eigendecomposition(mass_block, block_dim, tol);
-    let max_val = mass_vals
-        .iter()
-        .cloned()
-        .fold(0.0_f64, f64::max);
+    let max_val = mass_vals.iter().cloned().fold(0.0_f64, f64::max);
     if max_val <= 0.0 {
         return None;
     }
@@ -1312,7 +1500,13 @@ fn stabilize_projected_system(
     let mut selected: Vec<(usize, f64)> = mass_vals
         .iter()
         .enumerate()
-        .filter_map(|(idx, val)| if *val > cutoff { Some((idx, *val)) } else { None })
+        .filter_map(|(idx, val)| {
+            if *val > cutoff {
+                Some((idx, *val))
+            } else {
+                None
+            }
+        })
         .collect();
     if selected.is_empty() {
         return None;
@@ -1368,9 +1562,15 @@ fn stabilize_projected_system(
         raw_columns.push(raw);
         raw_norms.push(norm_sq);
         columns.push(candidate);
+        stats.reduced_dim += 1;
+        stats.min_mass_eigenvalue = stats.min_mass_eigenvalue.min(value);
+        stats.max_mass_eigenvalue = stats.max_mass_eigenvalue.max(value);
     }
     if columns.is_empty() {
         return None;
+    }
+    if !stats.min_mass_eigenvalue.is_finite() {
+        stats.min_mass_eigenvalue = 0.0;
     }
     let reduced_dim = columns.len();
     let mut transform = vec![Complex64::default(); dim * reduced_dim];
@@ -1383,19 +1583,17 @@ fn stabilize_projected_system(
     let op_reduced =
         complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
     let temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
-    let mass_reduced = complex_matmul_conj_transpose_left(
-        dim,
-        reduced_dim,
-        reduced_dim,
-        &transform,
-        &temp_mass,
-    );
-    Some(StabilizedProjection {
-        op_matrix: op_reduced,
-        mass_matrix: mass_reduced,
-        transform,
-        reduced_dim,
-    })
+    let mass_reduced =
+        complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_mass);
+    Some((
+        StabilizedProjection {
+            op_matrix: op_reduced,
+            mass_matrix: mass_reduced,
+            transform,
+            reduced_dim,
+        },
+        stats,
+    ))
 }
 
 fn lift_projected_eigenvectors(
@@ -2150,7 +2348,7 @@ fn generalized_eigen_identity(
 
 #[cfg(test)]
 mod eigensolver_internal_tests {
-    use super::{generalized_eigen, EigenOptions};
+    use super::{EigenOptions, generalized_eigen};
     use num_complex::Complex64;
 
     #[test]
