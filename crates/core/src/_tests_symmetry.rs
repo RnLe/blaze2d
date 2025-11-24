@@ -160,6 +160,26 @@ fn symmetry_defaults_disable_auto_inference() {
 }
 
 #[test]
+fn symmetry_can_be_disabled_globally() {
+    let lattice = Lattice2D::square(1.0);
+    let mut opts = SymmetryOptions::default();
+    opts.auto = Some(AutoSymmetry::default());
+    opts.reflections.push(ReflectionConstraint {
+        axis: ReflectionAxis::X,
+        parity: Parity::Even,
+    });
+    opts.disable_all();
+    opts.resolve_with_lattice(&lattice);
+
+    let selection = opts.selection_for_bloch([0.0, 0.0]);
+    assert_eq!(selection.applied_count(), 0);
+    assert!(
+        SymmetryProjector::from_options(&opts).is_none(),
+        "disabled symmetry should not build a projector",
+    );
+}
+
+#[test]
 fn default_auto_populates_supported_lattice_reflections() {
     let lattice = Lattice2D::square(1.0);
     let mut opts = SymmetryOptions {
