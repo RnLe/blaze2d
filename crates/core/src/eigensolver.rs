@@ -2504,10 +2504,10 @@ where
 
 #[cfg(debug_assertions)]
 fn log_finalize_context(gamma_deflated: bool, target: usize, eig_count: usize) {
-    eprintln!(
+    rayleigh_ritz_debug_log(format!(
         "[rayleigh-ritz] finalize context gamma_deflated={} target={} eigenvalues={}",
         gamma_deflated, target, eig_count
-    );
+    ));
 }
 
 #[cfg(not(debug_assertions))]
@@ -2515,15 +2515,15 @@ fn log_finalize_context(_gamma_deflated: bool, _target: usize, _eig_count: usize
 
 #[cfg(debug_assertions)]
 fn log_finalize_candidate(lambda: f64) {
-    eprintln!("[rayleigh-ritz] finalize lambda={}", lambda);
+    rayleigh_ritz_debug_log(format!("[rayleigh-ritz] finalize lambda={}", lambda));
 }
 
 #[cfg(debug_assertions)]
 fn log_finalize_skip(reason: &str, lambda: f64) {
-    eprintln!(
+    rayleigh_ritz_debug_log(format!(
         "[rayleigh-ritz] finalize skipped {} candidate lambda={}",
         reason, lambda
-    );
+    ));
 }
 
 #[cfg(not(debug_assertions))]
@@ -2592,10 +2592,10 @@ fn generalized_eigen(
 
 #[cfg(debug_assertions)]
 fn log_eigen_failure(stage: &str, dim: usize) {
-    eprintln!(
+    rayleigh_ritz_debug_log(format!(
         "[rayleigh-ritz] generalized eigen failed at {} (dim={})",
         stage, dim
-    );
+    ));
 }
 
 #[cfg(not(debug_assertions))]
@@ -2636,10 +2636,10 @@ fn cholesky_decompose_hermitian(matrix: &[Complex64], dim: usize) -> Option<Vec<
 
 #[cfg(debug_assertions)]
 fn log_cholesky_diag(value: f64, index: usize) {
-    eprintln!(
+    rayleigh_ritz_debug_log(format!(
         "[rayleigh-ritz] cholesky diag failure at row {} (value={})",
         index, value
-    );
+    ));
 }
 
 #[cfg(not(debug_assertions))]
@@ -2767,10 +2767,10 @@ fn generalized_eigen_with_whitening(
 
 #[cfg(debug_assertions)]
 fn log_whitening_rank(rank: usize, total: usize) {
-    eprintln!(
+    rayleigh_ritz_debug_log(format!(
         "[rayleigh-ritz] whitening fallback rank {} of {}",
         rank, total
-    );
+    ));
 }
 
 #[cfg(not(debug_assertions))]
