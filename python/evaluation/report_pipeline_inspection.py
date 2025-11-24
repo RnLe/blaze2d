@@ -308,6 +308,9 @@ class IterationReport:
     zig_zag_ratio: float
     threshold_hits: Dict[float, Optional[int]]
     preconditioner_trials: int
+    projection_dims: Optional[Dict[str, Dict[str, float]]] = None
+    projection_condition: Optional[Dict[str, float]] = None
+    projection_fallbacks: int = 0
 
 
 @dataclass
@@ -331,6 +334,10 @@ def analyze_iteration_trace(path: Path) -> IterationReport:
     max_relative: List[float] = []
     avg_relative: List[float] = []
     relative_scales: List[float] = []
+    projection_orig = Summary()
+    projection_reduced = Summary()
+    projection_condition = Summary()
+    projection_fallbacks = 0
     preconditioner_trials = 0
     for row in load_csv(path):
         iterations.append(int(row["iteration"]))
@@ -340,6 +347,11 @@ def analyze_iteration_trace(path: Path) -> IterationReport:
         avg_relative.append(abs(safe_float(row.get("avg_relative_residual", "nan"))))
         relative_scales.append(abs(safe_float(row.get("max_relative_scale", "nan"))))
         preconditioner_trials += int(row.get("preconditioner_trials", 0))
+        projection_orig.add(safe_float(row.get("projection_original_dim")))
+        projection_reduced.add(safe_float(row.get("projection_reduced_dim")))
+        projection_condition.add(safe_float(row.get("projection_condition_estimate")))
+        if row.get("projection_fallback_used") not in {None, "", "0", "False", "false"}:
+            projection_fallbacks += 1
     zig_zag = 0
     for prev, curr in zip(max_residuals, max_residuals[1:]):
         if curr > prev * 1.02:  # 2% uptick counts as zig-zag
@@ -356,6 +368,12 @@ def analyze_iteration_trace(path: Path) -> IterationReport:
         zig_zag_ratio=zig_zag / max(1, len(max_residuals) - 1),
         threshold_hits=thresholds,
         preconditioner_trials=preconditioner_trials,
+        projection_dims={
+            "original": projection_orig.describe() or {},
+            "reduced": projection_reduced.describe() or {},
+        },
+        projection_condition=projection_condition.describe(),
+        projection_fallbacks=projection_fallbacks,
     )
 
 
@@ -473,6 +491,22 @@ class PipelineReport:
         for trace in ziggy:
             self.warnings.append(
                 f"Residual zig-zag ratio {trace.zig_zag_ratio:.2f} ({Path(trace.path).name})"
+            )
+        noisy_projection = [
+            trace
+            for trace in self.iterations
+            if trace.projection_condition
+            and trace.projection_condition.get("max", math.inf) > 1e10
+        ]
+        for trace in noisy_projection:
+            cond = trace.projection_condition.get("max", math.nan)
+            self.warnings.append(
+                f"Ill-conditioned Rayleigh–Ritz mass matrix (cond≈{cond:.2e}) in {Path(trace.path).name}"
+            )
+        fallback_traces = [trace for trace in self.iterations if trace.projection_fallbacks > 0]
+        for trace in fallback_traces:
+            self.warnings.append(
+                f"Rayleigh–Ritz fallback used {trace.projection_fallbacks}× in {Path(trace.path).name}"
             )
         if self.fft_raw:
             raw_min = (self.fft_raw.raw or {}).get("min") if self.fft_raw.raw else None
@@ -613,6 +647,21 @@ def render_report(report: PipelineReport) -> str:
                 f"zig-zag={zig:.2f}{rel_suffix}"
             )
             lines.append(f"      thresholds: {hit_str}")
+            if trace.projection_condition:
+                cond = trace.projection_condition
+                lines.append(
+                    f"      projection cond: min={cond['min']:.2e}, max={cond['max']:.2e}"
+                )
+            if trace.projection_dims:
+                orig = trace.projection_dims.get("original", {})
+                reduced = trace.projection_dims.get("reduced", {})
+                if orig and reduced:
+                    lines.append(
+                        f"      projection dims: orig~{orig.get('median', orig.get('mean', math.nan)):.1f} "
+                        f"→ reduced~{reduced.get('median', reduced.get('mean', math.nan)):.1f}"
+                    )
+            if trace.projection_fallbacks:
+                lines.append(f"      projection fallbacks: {trace.projection_fallbacks}")
     lines.append("")
     return "\n".join(lines)
 
