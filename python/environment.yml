@@ -13,3 +13,6 @@ dependencies:
   - mpb
   - click
   - ipykernel
+  - jinja2
+  - python-dotenv
+  - plotly

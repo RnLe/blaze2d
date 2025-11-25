@@ -1,6 +1,6 @@
 //! CPU spectral backend built on rustfft.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use mpb2d_core::backend::SpectralBackend;
 use mpb2d_core::field::Field2D;
@@ -16,6 +16,7 @@ pub struct CpuBackend {
     parallel_fft: bool,
     parallel_min_points: usize,
     parallel_pool: Option<Arc<ThreadPool>>,
+    plan_cache: Arc<Mutex<FftPlanner<f64>>>,
 }
 
 impl CpuBackend {
@@ -24,6 +25,7 @@ impl CpuBackend {
             parallel_fft: false,
             parallel_min_points: DEFAULT_PARALLEL_THRESHOLD,
             parallel_pool: None,
+            plan_cache: Arc::new(Mutex::new(FftPlanner::new())),
         }
     }
 
@@ -63,14 +65,20 @@ impl CpuBackend {
         let ny = grid.ny;
         assert!(nx > 0 && ny > 0, "grid must be non-zero length");
 
-        let mut planner = FftPlanner::<f64>::new();
-        let row_fft = match direction {
-            FftDirection::Forward => planner.plan_fft_forward(nx),
-            FftDirection::Inverse => planner.plan_fft_inverse(nx),
-        };
-        let col_fft = match direction {
-            FftDirection::Forward => planner.plan_fft_forward(ny),
-            FftDirection::Inverse => planner.plan_fft_inverse(ny),
+        let (row_fft, col_fft) = {
+            let mut planner = self
+                .plan_cache
+                .lock()
+                .expect("fft plan cache mutex poisoned");
+            let row = match direction {
+                FftDirection::Forward => planner.plan_fft_forward(nx),
+                FftDirection::Inverse => planner.plan_fft_inverse(nx),
+            };
+            let col = match direction {
+                FftDirection::Forward => planner.plan_fft_forward(ny),
+                FftDirection::Inverse => planner.plan_fft_inverse(ny),
+            };
+            (row, col)
         };
 
         let data = buffer.as_mut_slice();

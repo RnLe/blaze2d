@@ -2,7 +2,11 @@
 
 use num_complex::Complex64;
 
-use std::f64::consts::PI;
+use std::{
+    collections::HashMap,
+    f64::consts::PI,
+    sync::{Arc, Mutex, OnceLock},
+};
 
 use crate::{
     backend::{SpectralBackend, SpectralBuffer},
@@ -76,10 +80,9 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         bloch_k: [f64; 2],
     ) -> Self {
         let grid = dielectric.grid;
-        let kx = build_k_vector(grid.nx, grid.lx);
-        let ky = build_k_vector(grid.ny, grid.ly);
-        let kx_shifted = shift_k_vector(&kx, bloch_k[0]);
-        let ky_shifted = shift_k_vector(&ky, bloch_k[1]);
+        let wave_tables = cached_wave_tables(grid);
+        let kx_shifted = shift_k_vector(wave_tables.kx(), bloch_k[0]);
+        let ky_shifted = shift_k_vector(wave_tables.ky(), bloch_k[1]);
         let (
             k_plus_g_x,
             k_plus_g_y,
@@ -88,7 +91,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             k_plus_g_sq_min,
             k_plus_g_floor_count,
             k_plus_g_was_clamped,
-        ) = build_k_plus_g_tables(&kx_shifted, &ky_shifted, grid);
+        ) = build_shifted_k_plus_g_tables(&wave_tables, bloch_k);
         let scratch = backend.alloc_field(grid);
         let grad_x = backend.alloc_field(grid);
         let grad_y = backend.alloc_field(grid);
@@ -367,11 +370,11 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
 impl<B: SpectralBackend> ThetaOperator<B> {
     fn effective_te_epsilon(&self) -> f64 {
-        harmonic_mean(self.dielectric.inv_eps()).unwrap_or(1.0)
+        arithmetic_mean(self.dielectric.eps()).unwrap_or(1.0)
     }
 
     fn effective_tm_epsilon(&self) -> f64 {
-        arithmetic_mean(self.dielectric.eps()).unwrap_or(1.0)
+        harmonic_mean(self.dielectric.inv_eps()).unwrap_or(1.0)
     }
 }
 
@@ -510,14 +513,13 @@ fn build_k_vector(n: usize, length: f64) -> Vec<f64> {
         .collect()
 }
 
-fn build_k_plus_g_tables(
-    kx_shifted: &[f64],
-    ky_shifted: &[f64],
-    grid: Grid2D,
+fn build_shifted_k_plus_g_tables(
+    base: &GridWaveTables,
+    bloch: [f64; 2],
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, usize, Vec<bool>) {
-    let nx = grid.nx;
-    let ny = grid.ny;
-    let len = grid.len();
+    let len = base.grid.len();
+    let gx_base = base.gx();
+    let gy_base = base.gy();
     let mut k_plus_g_x = vec![0.0; len];
     let mut k_plus_g_y = vec![0.0; len];
     let mut squares = vec![0.0; len];
@@ -525,26 +527,23 @@ fn build_k_plus_g_tables(
     let mut raw_min = f64::INFINITY;
     let mut clamped_min = f64::INFINITY;
     let mut floor_count = 0usize;
-    for iy in 0..ny {
-        let raw_ky = ky_shifted[iy];
-        for ix in 0..nx {
-            let idx = iy * nx + ix;
-            let raw_kx = kx_shifted[ix];
-            let raw_sq = raw_kx * raw_kx + raw_ky * raw_ky;
-            if raw_sq.is_finite() {
-                raw_min = raw_min.min(raw_sq);
-            }
-            let (clamped_kx, clamped_ky) = clamp_gradient_components(raw_kx, raw_ky);
-            let clamped_sq = clamped_kx * clamped_kx + clamped_ky * clamped_ky;
-            clamped_min = clamped_min.min(clamped_sq);
-            if raw_sq <= K_PLUS_G_NEAR_ZERO_FLOOR {
-                floor_count += 1;
-                clamp_mask[idx] = true;
-            }
-            k_plus_g_x[idx] = clamped_kx;
-            k_plus_g_y[idx] = clamped_ky;
-            squares[idx] = clamped_sq;
+    for idx in 0..len {
+        let raw_kx = gx_base[idx] + bloch[0];
+        let raw_ky = gy_base[idx] + bloch[1];
+        let raw_sq = raw_kx * raw_kx + raw_ky * raw_ky;
+        if raw_sq.is_finite() {
+            raw_min = raw_min.min(raw_sq);
         }
+        let (clamped_kx, clamped_ky) = clamp_gradient_components(raw_kx, raw_ky);
+        let clamped_sq = clamped_kx * clamped_kx + clamped_ky * clamped_ky;
+        clamped_min = clamped_min.min(clamped_sq);
+        if raw_sq <= K_PLUS_G_NEAR_ZERO_FLOOR {
+            floor_count += 1;
+            clamp_mask[idx] = true;
+        }
+        k_plus_g_x[idx] = clamped_kx;
+        k_plus_g_y[idx] = clamped_ky;
+        squares[idx] = clamped_sq;
     }
     if raw_min == f64::INFINITY {
         raw_min = 0.0;
@@ -727,6 +726,100 @@ fn build_inverse_diagonal(values: &[f64], shift: f64, eps_eff: f64, mass_floor: 
         .copied()
         .map(|k| inverse_scale(k, shift, eps_eff, mass_floor))
         .collect()
+}
+
+#[derive(Debug)]
+struct GridWaveTables {
+    grid: Grid2D,
+    kx: Vec<f64>,
+    ky: Vec<f64>,
+    gx: Vec<f64>,
+    gy: Vec<f64>,
+    g_sq: Vec<f64>,
+}
+
+impl GridWaveTables {
+    fn new(grid: Grid2D) -> Self {
+        let kx = build_k_vector(grid.nx, grid.lx);
+        let ky = build_k_vector(grid.ny, grid.ly);
+        let len = grid.len();
+        let mut gx = vec![0.0; len];
+        let mut gy = vec![0.0; len];
+        for iy in 0..grid.ny {
+            for ix in 0..grid.nx {
+                let idx = grid.idx(ix, iy);
+                gx[idx] = kx[ix];
+                gy[idx] = ky[iy];
+            }
+        }
+        let g_sq = gx
+            .iter()
+            .zip(gy.iter())
+            .map(|(&gx_val, &gy_val)| gx_val * gx_val + gy_val * gy_val)
+            .collect();
+        Self {
+            grid,
+            kx,
+            ky,
+            gx,
+            gy,
+            g_sq,
+        }
+    }
+
+    fn kx(&self) -> &[f64] {
+        &self.kx
+    }
+
+    fn ky(&self) -> &[f64] {
+        &self.ky
+    }
+
+    fn gx(&self) -> &[f64] {
+        &self.gx
+    }
+
+    fn gy(&self) -> &[f64] {
+        &self.gy
+    }
+
+    #[allow(dead_code)]
+    fn g_sq(&self) -> &[f64] {
+        &self.g_sq
+    }
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+struct GridKey {
+    nx: usize,
+    ny: usize,
+    lx_bits: u64,
+    ly_bits: u64,
+}
+
+impl From<Grid2D> for GridKey {
+    fn from(grid: Grid2D) -> Self {
+        Self {
+            nx: grid.nx,
+            ny: grid.ny,
+            lx_bits: grid.lx.to_bits(),
+            ly_bits: grid.ly.to_bits(),
+        }
+    }
+}
+
+static GRID_WAVE_CACHE: OnceLock<Mutex<HashMap<GridKey, Arc<GridWaveTables>>>> = OnceLock::new();
+
+fn cached_wave_tables(grid: Grid2D) -> Arc<GridWaveTables> {
+    let key = GridKey::from(grid);
+    let cache = GRID_WAVE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap();
+    if let Some(existing) = guard.get(&key) {
+        return existing.clone();
+    }
+    let tables = Arc::new(GridWaveTables::new(grid));
+    guard.insert(key, tables.clone());
+    tables
 }
 
 fn build_structured_weights_te(dielectric: &Dielectric2D, eps_eff: f64) -> Vec<f64> {

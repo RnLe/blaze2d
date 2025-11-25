@@ -38,7 +38,7 @@ impl Lattice2D {
         let h = (3.0f64).sqrt() * 0.5 * a;
         Self {
             a1: [a, 0.0],
-            a2: [half, h],
+            a2: [-half, h],
         }
     }
 
@@ -106,10 +106,14 @@ impl Lattice2D {
         if is_orthogonal {
             return LatticeClass::Rectangular;
         }
-        if len_diff <= tol && (cos - 0.5).abs() <= tol {
+        if len_diff <= tol && ((cos - 0.5).abs() <= tol || (cos + 0.5).abs() <= tol) {
             return LatticeClass::Triangular;
         }
         LatticeClass::Oblique
+    }
+
+    pub fn cell_area(&self) -> f64 {
+        self.determinant().abs()
     }
 
     fn determinant(&self) -> f64 {

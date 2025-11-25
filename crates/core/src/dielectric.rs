@@ -139,9 +139,12 @@ fn sample_raw_eps(geom: &Geometry2D, grid: Grid2D) -> Vec<f64> {
     let mut eps_r = vec![geom.eps_bg; grid.len()];
     for iy in 0..grid.ny {
         for ix in 0..grid.nx {
-            let cart = grid.cartesian_coords(ix, iy);
+            let frac = [
+                fractional_cell_center(ix, grid.nx),
+                fractional_cell_center(iy, grid.ny),
+            ];
             let idx = grid.idx(ix, iy);
-            eps_r[idx] = geom.relative_permittivity_at_cartesian(cart);
+            eps_r[idx] = geom.relative_permittivity_at_fractional(frac);
         }
     }
     eps_r
@@ -158,21 +161,25 @@ fn build_smoothed_dielectric(
     let mut inv_avg = vec![0.0; len];
     let mut tensors = vec![[0.0; 4]; len];
 
-    let dx = grid.lx / grid.nx as f64;
-    let dy = grid.ly / grid.ny as f64;
-    let sub_dx = dx / mesh as f64;
-    let sub_dy = dy / mesh as f64;
-    let cell_area = dx * dy;
-    let sub_area = sub_dx * sub_dy;
+    let unit_cell_area = geom.lattice.cell_area();
+    let cell_area = unit_cell_area / (grid.nx * grid.ny) as f64;
+    let sub_area = cell_area / (mesh * mesh) as f64;
+    let frac_dx = fractional_cell_size(grid.nx);
+    let frac_dy = fractional_cell_size(grid.ny);
+    let frac_sub_dx = frac_dx / mesh as f64;
+    let frac_sub_dy = frac_dy / mesh as f64;
+    let spacing_x = vector_norm(geom.lattice.a1) / grid.nx as f64;
+    let spacing_y = vector_norm(geom.lattice.a2) / grid.ny as f64;
+    let length_scale = spacing_x.max(spacing_y).max(1e-12);
     let tol = smoothing.tolerance();
 
     for iy in 0..grid.ny {
         for ix in 0..grid.nx {
             let idx = grid.idx(ix, iy);
-            let origin_x = (ix as f64 / grid.nx as f64) * grid.lx;
-            let origin_y = (iy as f64 / grid.ny as f64) * grid.ly;
-            let center_x = origin_x + 0.5 * dx;
-            let center_y = origin_y + 0.5 * dy;
+            let frac_origin_x = fractional_cell_origin(ix, grid.nx);
+            let frac_origin_y = fractional_cell_origin(iy, grid.ny);
+            let center_frac = [frac_origin_x + 0.5 * frac_dx, frac_origin_y + 0.5 * frac_dy];
+            let center_cart = geom.lattice.fractional_to_cartesian(center_frac);
 
             let mut eps_sum = 0.0;
             let mut inv_sum = 0.0;
@@ -182,16 +189,19 @@ fn build_smoothed_dielectric(
 
             for sub_y in 0..mesh {
                 for sub_x in 0..mesh {
-                    let sample_x = origin_x + (sub_x as f64 + 0.5) * sub_dx;
-                    let sample_y = origin_y + (sub_y as f64 + 0.5) * sub_dy;
-                    let eps = geom.relative_permittivity_at_cartesian([sample_x, sample_y]);
+                    let sample_frac = [
+                        frac_origin_x + (sub_x as f64 + 0.5) * frac_sub_dx,
+                        frac_origin_y + (sub_y as f64 + 0.5) * frac_sub_dy,
+                    ];
+                    let eps = geom.relative_permittivity_at_fractional(sample_frac);
                     assert!(eps > 0.0, "permittivity must be positive");
                     eps_sum += eps * sub_area;
                     inv_sum += (1.0 / eps) * sub_area;
                     eps_min = eps_min.min(eps);
                     eps_max = eps_max.max(eps);
-                    let rel_x = sample_x - center_x;
-                    let rel_y = sample_y - center_y;
+                    let sample_cart = geom.lattice.fractional_to_cartesian(sample_frac);
+                    let rel_x = sample_cart[0] - center_cart[0];
+                    let rel_y = sample_cart[1] - center_cart[1];
                     dipole[0] += eps * rel_x * sub_area;
                     dipole[1] += eps * rel_y * sub_area;
                 }
@@ -204,7 +214,7 @@ fn build_smoothed_dielectric(
 
             let contrast = (eps_max - eps_min).abs();
             let dip_norm = (dipole[0] * dipole[0] + dipole[1] * dipole[1]).sqrt();
-            let dip_scale = avg_eps.abs() * cell_area * (dx.max(dy));
+            let dip_scale = avg_eps.abs() * cell_area * length_scale;
             let normalized_dip = if dip_scale > 0.0 {
                 dip_norm / dip_scale
             } else {
@@ -248,4 +258,20 @@ fn build_anisotropic_inv_tensor(normal: [f64; 2], avg_eps: f64, avg_inv: f64) ->
 
 fn isotropic_tensor(value: f64) -> [f64; 4] {
     [value, 0.0, 0.0, value]
+}
+
+fn fractional_cell_center(index: usize, count: usize) -> f64 {
+    (index as f64 + 0.5) / count as f64
+}
+
+fn fractional_cell_origin(index: usize, count: usize) -> f64 {
+    index as f64 / count as f64
+}
+
+fn fractional_cell_size(count: usize) -> f64 {
+    1.0 / count as f64
+}
+
+fn vector_norm(v: [f64; 2]) -> f64 {
+    (v[0] * v[0] + v[1] * v[1]).sqrt()
 }
