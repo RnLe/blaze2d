@@ -93,7 +93,7 @@ impl MetricsRecorder {
     /// Emit a metrics event.
     pub fn emit(&self, event: MetricsEvent) {
         if let Err(err) = self.write_event(event) {
-            eprintln!("[metrics] failed to write event: {err}");
+            log::warn!("[metrics] failed to write event: {err}");
         }
     }
 

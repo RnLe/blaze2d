@@ -42,11 +42,9 @@ MPB2D_COMMAND := cargo run --release -p mpb2d-cli -- \
 	$(SMOOTHING_ARGS) \
 	--path square \
 	--segments-per-leg 10 \
-	--round-trip \
 	&& cargo run --release -p mpb2d-cli -- \
 	--config ../../examples/square_eps6_r0p3_tm_res64.toml \
 	--output $(SQUARE_TM_PREFIX)_mpb2d.csv \
 	$(SMOOTHING_ARGS) \
 	--path square \
-	--segments-per-leg 10 \
-	--round-trip
+	--segments-per-leg 10

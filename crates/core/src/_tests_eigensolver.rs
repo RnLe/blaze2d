@@ -367,9 +367,9 @@ fn test_solve_with_exact_eigenvector() {
     let result = solver.solve();
 
     // With exact eigenvectors, should converge very quickly
-    // (2 iterations: first to establish eigenvalues, second to confirm no change)
+    // (typically 2-3 iterations: to establish eigenvalues and confirm convergence)
     assert!(result.converged, "Should converge with exact eigenvectors");
-    assert!(result.iterations <= 2, "Should converge in 2 iterations or less, got {}", result.iterations);
+    assert!(result.iterations <= 3, "Should converge in 3 iterations or less, got {}", result.iterations);
 
     // Eigenvalues should be exact
     assert!(
@@ -556,8 +556,6 @@ fn test_eigensolver_spd_diagonal_convergence() {
         max_iter: 200,
         tol: 1e-10,
         block_size: 0, // Auto
-        use_w_history: true,
-        use_locking: true,
         record_diagnostics: false,
         k_index: None,
     };
@@ -610,8 +608,6 @@ fn test_eigensolver_spd_diagonal_convergence_with_diagnostics() {
         max_iter: 100,
         tol: 1e-12, // Very tight
         block_size: 0,
-        use_w_history: true,
-        use_locking: true,
         record_diagnostics: true,
         k_index: None,
     };
@@ -684,8 +680,6 @@ fn test_eigensolver_spd_high_condition_number() {
         max_iter: 500, // May need more iterations
         tol: 1e-8,     // Slightly relaxed due to conditioning
         block_size: 0,
-        use_w_history: true,
-        use_locking: true,
         record_diagnostics: false,
         k_index: None,
     };

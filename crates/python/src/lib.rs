@@ -13,5 +13,5 @@ mod py {
 
 #[cfg(not(feature = "bindings"))]
 pub fn bindings_disabled() {
-    eprintln!("mpb2d-python compiled without the \"bindings\" feature");
+    log::warn!("mpb2d-python compiled without the \"bindings\" feature");
 }

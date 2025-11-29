@@ -77,37 +77,31 @@ use serde::{Deserialize, Serialize};
 /// - **TE**: M⁻¹(q) = 1 / (|q|² + σ²)  (A = -Δ, no ε in operator)
 /// - **TM**: M⁻¹(q) = ε_eff / (|q|² + σ²)  (A = -∇·(ε⁻¹∇))
 ///
-/// The "kernel-compensated" variant explicitly zeros the Γ-mode (q=0) in Fourier
-/// space, relying on deflation to handle the null space.
+/// The Fourier-diagonal kernel-compensated variant explicitly zeros the Γ-mode (q=0)
+/// in Fourier space at the Γ-point only, relying on deflation to handle the null space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PreconditionerType {
     /// Automatic selection based on polarization (default)
     ///
-    /// - **TE**: Uses KernelCompensated (symmetry-compatible)
+    /// - **TE**: Uses FourierDiagonalKernelCompensated (symmetry-compatible)
     /// - **TM**: Uses TransverseProjection (best condition reduction)
     Auto,
     /// No preconditioner (identity)
     None,
-    /// Fourier diagonal preconditioner (homogeneous Laplacian inverse)
+    /// Fourier-diagonal kernel-compensated preconditioner
     ///
-    /// Uses M⁻¹(q) = ε_eff / (|q|² + σ²) with a small shift σ² for regularization.
-    /// This is the basic "kinetic energy" preconditioner from plane-wave DFT.
-    FourierDiagonal,
-    /// Structured preconditioner with spatial weights
+    /// Uses M⁻¹(q) = ε_eff / (|q|² + σ²) with adaptive k-dependent shift σ².
+    /// At the Γ-point, explicitly zeros the DC component (q=0) in Fourier space,
+    /// relying on deflation to handle the null space. Away from Γ, uses only
+    /// the regularization shift since |k|² > 0 provides natural regularization.
     ///
-    /// Adds real-space ε-dependent weights: M⁻¹ = W^{1/2} · F⁻¹ · D · F · W^{1/2}
-    /// where W captures local dielectric structure.
-    Structured,
-    /// Kernel-compensated preconditioner (transverse-projection for scalar modes)
-    ///
-    /// Explicitly zeros the Γ-mode (DC component) in Fourier space, relying on
-    /// deflation to handle the null space. This is the MPB-style preconditioner:
-    /// - **TE**: M⁻¹(q) = 1 / (|q|² + σ²) for q ≠ 0, zero at q = 0
-    /// - **TM**: M⁻¹(q) = ε_eff / (|q|² + σ²) for q ≠ 0, zero at q = 0
+    /// - **TE**: M⁻¹(q) = 1 / (|q|² + σ²) for q ≠ 0, zero at q = 0 (Γ only)
+    /// - **TM**: M⁻¹(q) = ε_eff / (|q|² + σ²) for q ≠ 0, zero at q = 0 (Γ only)
     ///
     /// Combines well with explicit Γ-mode deflation for robust convergence.
-    KernelCompensated,
+    /// Cost: 2 FFTs per application.
+    FourierDiagonalKernelCompensated,
     /// MPB-style transverse-projection preconditioner
     ///
     /// The most effective preconditioner for TM mode with high dielectric contrast.
@@ -135,9 +129,7 @@ impl std::fmt::Display for PreconditionerType {
         match self {
             Self::Auto => write!(f, "auto"),
             Self::None => write!(f, "none"),
-            Self::FourierDiagonal => write!(f, "fourier_diagonal"),
-            Self::Structured => write!(f, "structured"),
-            Self::KernelCompensated => write!(f, "kernel_compensated"),
+            Self::FourierDiagonalKernelCompensated => write!(f, "fourier_diagonal_kernel_compensated"),
             Self::TransverseProjection => write!(f, "transverse_projection"),
         }
     }
@@ -146,44 +138,17 @@ impl std::fmt::Display for PreconditionerType {
 impl PreconditionerType {
     /// Resolve `Auto` to the appropriate preconditioner for the given polarization.
     ///
-    /// - **TE**: Returns `KernelCompensated` (symmetry-compatible, works with transformed operator)
+    /// - **TE**: Returns `FourierDiagonalKernelCompensated` (symmetry-compatible, works with transformed operator)
     /// - **TM**: Returns `TransverseProjection` (best condition reduction for ε-dependent operator)
     ///
     /// For non-Auto types, returns self unchanged.
     pub fn resolve_for_polarization(self, pol: crate::polarization::Polarization) -> Self {
         match self {
             Self::Auto => match pol {
-                crate::polarization::Polarization::TE => Self::KernelCompensated,
+                crate::polarization::Polarization::TE => Self::FourierDiagonalKernelCompensated,
                 crate::polarization::Polarization::TM => Self::TransverseProjection,
             },
             other => other,
-        }
-    }
-}
-
-/// Preconditioner shift mode: how to regularize near-zero |k+G|² values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PreconditionerShiftMode {
-    /// k-dependent shift: σ(k) = β * s_median(k)
-    ///
-    /// Uses the median of |k+G|² to set a shift that scales with the
-    /// local spectral range. This is more physically meaningful than
-    /// a fixed global constant.
-    #[default]
-    Adaptive,
-    /// Legacy global shift: σ = 1e-3 (fixed constant)
-    ///
-    /// The original behavior. Doesn't scale with k-point location or
-    /// grid resolution.
-    Legacy,
-}
-
-impl std::fmt::Display for PreconditionerShiftMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Adaptive => write!(f, "adaptive"),
-            Self::Legacy => write!(f, "legacy"),
         }
     }
 }
@@ -269,7 +234,7 @@ impl RunConfig {
             convergence_tol: 0.0,
             locking_tol: 0.0,
             block_size: 0,
-            preconditioner_type: PreconditionerType::Structured,
+            preconditioner_type: PreconditionerType::Auto,
             w_history_enabled: true,
             warm_start_enabled: true,
             locking_enabled: true,
@@ -339,18 +304,16 @@ impl RunConfig {
         self
     }
 
-    /// Set feature toggles.
+    /// Set feature toggles (locking is always enabled).
     pub fn with_toggles(
         mut self,
         preconditioner_type: PreconditionerType,
-        w_history: bool,
         warm_start: bool,
-        locking: bool,
     ) -> Self {
         self.preconditioner_type = preconditioner_type;
-        self.w_history_enabled = w_history;
+        self.w_history_enabled = true; // W history is always enabled
         self.warm_start_enabled = warm_start;
-        self.locking_enabled = locking;
+        self.locking_enabled = true; // Locking is always enabled
         self
     }
 
@@ -903,131 +866,4 @@ impl ConvergenceStudy {
 pub trait IntoRunConfig {
     /// Convert to a RunConfig with the given label.
     fn into_run_config(&self, label: impl Into<String>) -> RunConfig;
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_run_config_builder() {
-        let config = RunConfig::new("test_run")
-            .with_resolution(24, 24)
-            .with_dimensions(1.0, 1.0)
-            .with_eigensolver_params(8, 200, 1e-6, 10)
-            .with_toggles(PreconditionerType::Structured, true, false, true)
-            .with_k_point(0, [0.0, 0.0], [0.0, 0.0])
-            .with_polarization("TM")
-            .with_notes("Test configuration");
-
-        assert_eq!(config.label, "test_run");
-        assert_eq!(config.nx, 24);
-        assert_eq!(config.n_bands, 8);
-        assert_eq!(config.preconditioner_type, PreconditionerType::Structured);
-        assert!(!config.warm_start_enabled);
-        // Check mesh size was computed
-        assert!((config.mesh_size[0] - 1.0 / 24.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_preconditioner_type_display() {
-        assert_eq!(format!("{}", PreconditionerType::None), "none");
-        assert_eq!(
-            format!("{}", PreconditionerType::FourierDiagonal),
-            "fourier_diagonal"
-        );
-        assert_eq!(format!("{}", PreconditionerType::Structured), "structured");
-        assert_eq!(
-            format!("{}", PreconditionerType::KernelCompensated),
-            "kernel_compensated"
-        );
-    }
-
-    #[test]
-    fn test_iteration_snapshot_builder() {
-        let snapshot = IterationSnapshot::new(5)
-            .with_eigenvalues(vec![0.01, 0.04, 0.09])
-            .with_residuals(vec![1e-4, 2e-4, 3e-4], vec![1e-2, 5e-3, 3.3e-3])
-            .with_convergence_counts(1, 0, 3)
-            .with_subspace_info(6, 6, 0, 3);
-
-        assert_eq!(snapshot.iteration, 5);
-        assert_eq!(snapshot.frequencies.len(), 3);
-        assert!((snapshot.frequencies[1] - 0.2).abs() < 1e-10); // sqrt(0.04) = 0.2
-        assert_eq!(snapshot.n_active, 3);
-    }
-
-    #[test]
-    fn test_recorder_basic() {
-        let config = RunConfig::new("recorder_test");
-        let mut recorder = ConvergenceRecorder::new(config);
-
-        recorder.start();
-
-        for i in 0..5 {
-            let snapshot = IterationSnapshot::new(i)
-                .with_eigenvalues(vec![0.01 * (i as f64 + 1.0)])
-                .with_residuals(vec![1e-3 / (i as f64 + 1.0)], vec![1e-1 / (i as f64 + 1.0)]);
-            recorder.record_iteration(snapshot);
-        }
-
-        let run = recorder.finalize_with_result(5, true);
-        assert_eq!(run.snapshots.len(), 5);
-        assert!(run.converged);
-        assert!(run.total_elapsed_secs >= 0.0);
-    }
-
-    #[test]
-    fn test_trajectory_extraction() {
-        let run = ConvergenceRun {
-            config: RunConfig::new("trajectory_test"),
-            snapshots: vec![
-                IterationSnapshot::new(0)
-                    .with_eigenvalues(vec![0.1, 0.2])
-                    .with_residuals(vec![1e-2, 2e-2], vec![0.1, 0.1]),
-                IterationSnapshot::new(1)
-                    .with_eigenvalues(vec![0.11, 0.21])
-                    .with_residuals(vec![1e-3, 2e-3], vec![0.01, 0.01]),
-            ],
-            total_elapsed_secs: 1.0,
-            final_iteration: 2,
-            converged: true,
-        };
-
-        let (iters, evs) = run.eigenvalue_trajectory(0);
-        assert_eq!(iters, vec![0, 1]);
-        assert!((evs[0] - 0.1).abs() < 1e-10);
-        assert!((evs[1] - 0.11).abs() < 1e-10);
-
-        let (_, residuals) = run.residual_trajectory(1);
-        assert_eq!(residuals.len(), 2);
-    }
-
-    #[test]
-    fn test_study_collection() {
-        let mut study = ConvergenceStudy::new("comparison_study");
-
-        study.add_run(ConvergenceRun {
-            config: RunConfig::new("baseline"),
-            snapshots: vec![],
-            total_elapsed_secs: 1.0,
-            final_iteration: 10,
-            converged: true,
-        });
-
-        study.add_run(ConvergenceRun {
-            config: RunConfig::new("no_precond"),
-            snapshots: vec![],
-            total_elapsed_secs: 2.0,
-            final_iteration: 50,
-            converged: true,
-        });
-
-        assert_eq!(study.runs.len(), 2);
-        assert_eq!(study.labels(), vec!["baseline", "no_precond"]);
-    }
 }

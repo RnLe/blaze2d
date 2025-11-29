@@ -994,6 +994,7 @@ dependencies = [
 name = "mpb2d-python"
 version = "0.1.0"
 dependencies = [
+ "log",
  "mpb2d-core",
  "pyo3",
 ]
