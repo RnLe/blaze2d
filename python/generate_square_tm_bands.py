@@ -83,6 +83,12 @@ def parse_args() -> argparse.Namespace:
         default="square",
         help="Which Bravais lattice / high-symmetry path to sample.",
     )
+    parser.add_argument(
+        "--export-epsilon",
+        type=Path,
+        default=None,
+        help="Export epsilon(r) grid to CSV file.",
+    )
     return parser.parse_args()
 
 
@@ -137,7 +143,8 @@ def select_path(kind: str) -> Sequence[KPoint]:
     raise ValueError(f"unsupported lattice kind: {kind}")
 
 
-def run_solver(args: argparse.Namespace) -> dict:
+def run_solver(args: argparse.Namespace) -> Tuple[dict, Any]:
+    """Run the MPB solver and return (result_dict, solver) for optional epsilon export."""
     nodes = select_path(args.lattice)
     k_pts, node_indices, k_samples = build_k_path(nodes, args.k_density)
     geometry = build_geometry(args.radius, args.eps_hole)
@@ -165,7 +172,7 @@ def run_solver(args: argparse.Namespace) -> dict:
         for i in range(len(nodes))
     ]
 
-    return {
+    result = {
         "metadata": {
             "num_bands": args.num_bands,
             "resolution": args.resolution,
@@ -180,17 +187,57 @@ def run_solver(args: argparse.Namespace) -> dict:
         "k_nodes": nodes,
         "bands": freqs.tolist(),
     }
+    return result, solver
+
+
+def export_epsilon_csv(solver: Any, output_path: Path, resolution: int) -> None:
+    """Export MPB's epsilon grid to CSV format matching mpb2d output."""
+    # Get epsilon array from MPB (this is the smoothed/effective epsilon)
+    eps_data = solver.get_epsilon()
+    
+    # eps_data is a 2D array for 2D simulations
+    # Shape should be (resolution, resolution) for square lattice
+    eps_array = np.array(eps_data)
+    
+    # Handle potential 3D array (squeeze z dimension if present)
+    if eps_array.ndim == 3:
+        eps_array = eps_array[:, :, 0]
+    
+    ny, nx = eps_array.shape
+    
+    # NOTE: mpb2d samples at cell centers while MPB reports epsilon on a grid that
+    # behaves as if it were offset by half a pixel. We continue to export the data
+    # using center-based coordinates (i + 0.5) / n so downstream tooling can treat
+    # both files consistently, and apply the necessary shift during analysis.
+    with open(output_path, 'w') as f:
+        f.write("ix,iy,frac_x,frac_y,eps_mpb\n")
+        for iy in range(ny):
+            for ix in range(nx):
+                frac_x = (ix + 0.5) / nx
+                frac_y = (iy + 0.5) / ny
+                eps_val = eps_array[iy, ix]
+                f.write(f"{ix},{iy},{frac_x},{frac_y},{eps_val}\n")
+    
+    print(f"Wrote epsilon grid ({nx}x{ny}) to {output_path}")
 
 
 def main() -> None:
     args = parse_args()
-    payload = run_solver(args)
+    payload, solver = run_solver(args)
     output = args.output
     if not output.is_absolute():
         output = Path(__file__).parent.joinpath(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2))
     print(f"Wrote {output} with {len(payload['bands'])} k-points")
+    
+    # Export epsilon if requested
+    if args.export_epsilon is not None:
+        eps_output = args.export_epsilon
+        if not eps_output.is_absolute():
+            eps_output = Path(__file__).parent.joinpath(eps_output)
+        eps_output.parent.mkdir(parents=True, exist_ok=True)
+        export_epsilon_csv(solver, eps_output, args.resolution)
 
 
 if __name__ == "__main__":

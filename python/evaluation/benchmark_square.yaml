@@ -1,0 +1,140 @@
+# Benchmark tracking for mpb2d solver optimization
+# Square lattice, ε_bg=13.0, r=0.3, 8 bands, 31 k-points, 24x24 grid
+
+runs:
+  - timestamp: "2025-11-28T23:37:30+01:00"
+    polarization: "TE"
+    min_iter: 33
+    max_iter: 685
+    total_iterations: 2802
+    total_time_s: 4.31
+    time_per_iter_ms: 1.5
+    description: "Baseline run. Doesn't converge well at points close to Gamma. Values are also systematically higher than reference."
+  - timestamp: "2025-11-28T23:37:32+01:00"
+    polarization: "TM"
+    min_iter: 26
+    max_iter: 45
+    total_iterations: 927
+    total_time_s: 1.62
+    time_per_iter_ms: 1.7
+    description: "Baseline run. Converges well. Values match reference closely."
+
+  - timestamp: "2025-11-28T23:59:40+01:00"
+    polarization: "TE"
+    min_iter: 33
+    max_iter: 1000
+    total_iterations: 3106
+    total_time_s: 4.570
+    time_per_iter_ms: 1.500
+    description: "Removed redundant symmetry and deflation projections in LOBPCG iteration. Significantly worsened TE convergence at points near Gamma."
+  - timestamp: "2025-11-28T23:59:41+01:00"
+    polarization: "TM"
+    min_iter: 26
+    max_iter: 45
+    total_iterations: 927
+    total_time_s: 1.590
+    time_per_iter_ms: 1.700
+    description: "Removed redundant symmetry and deflation projections in LOBPCG iteration. Didn't affect convergence but improved time slightly (as expected)."
+
+  - timestamp: "2025-11-29T00:51:28+01:00"
+    polarization: "TE"
+    min_iter: 10
+    max_iter: 30
+    total_iterations: 378
+    total_time_s: 0.540
+    time_per_iter_ms: 1.400
+    description: "Not using similarity transform for TE operator (i.e. solving untransformed generalized eigenproblem). Dramatically improved TE convergence and accuracy. Also not using the kernel preconditioner, as it clamps away low-frequency modes that are important for TE convergence. Use the adaptive shift preconditioner instead."
+  - timestamp: "2025-11-29T00:51:30+01:00"
+    polarization: "TM"
+    min_iter: 26
+    max_iter: 45
+    total_iterations: 927
+    total_time_s: 1.590
+    time_per_iter_ms: 1.700
+    description: "Unchanged from previous run."
+
+  - timestamp: "2025-11-29T01:18:14+01:00"
+    polarization: "TE"
+    min_iter: 10
+    max_iter: 30
+    total_iterations: 378
+    total_time_s: 0.520
+    time_per_iter_ms: 1.400
+    description: "Removed self-adjoint test. Negligible effect on performance."
+  - timestamp: "2025-11-29T01:18:16+01:00"
+    polarization: "TM"
+    min_iter: 26
+    max_iter: 45
+    total_iterations: 927
+    total_time_s: 1.630
+    time_per_iter_ms: 1.800
+    description: "Removed self-adjoint test. Negligible effect on performance."
+
+  - timestamp: "2025-11-29T01:52:27+01:00"
+    polarization: "TE"
+    min_iter: 14
+    max_iter: 1000
+    total_iterations: 26252
+    total_time_s: 41.280
+    time_per_iter_ms: 1.600
+    description: "CATASPTROPHIC: Used W_k = P_{k-1} for the history block. Well, never again."
+  - timestamp: "2025-11-29T01:53:20+01:00"
+    polarization: "TM"
+    min_iter: 681
+    max_iter: 1000
+    total_iterations: 29681
+    total_time_s: 53.710
+    time_per_iter_ms: 1.800
+    description: "CATASPTROPHIC: Used W_k = P_{k-1} for the history block. Well, never again."
+
+  - timestamp: "2025-11-29T01:55:40+01:00"
+    polarization: "TE"
+    min_iter: 21
+    max_iter: 1000
+    total_iterations: 2829
+    total_time_s: 3.460
+    time_per_iter_ms: 1.200
+    description: "Used W_k = X_{k} - X_{k-1} for the history block. Not really great either. Huge problems at high-symmetry points (due to the direction change)."
+  - timestamp: "2025-11-29T01:55:42+01:00"
+    polarization: "TM"
+    min_iter: 34
+    max_iter: 58
+    total_iterations: 1277
+    total_time_s: 1.850
+    time_per_iter_ms: 1.400
+    description: "Used W_k = X_{k} - X_{k-1} for the history block. Not really great either. Huge problems at high-symmetry points (due to the direction change)."
+
+  - timestamp: "2025-11-29T02:12:29+01:00"
+    polarization: "TE"
+    min_iter: 9
+    max_iter: 27
+    total_iterations: 335
+    total_time_s: 0.710
+    time_per_iter_ms: 2.100
+    description: "Added constantly two more slack vectors to all blocks. Less iterations but significantly higher time per iteration."
+  - timestamp: "2025-11-29T02:12:31+01:00"
+    polarization: "TM"
+    min_iter: 24
+    max_iter: 40
+    total_iterations: 828
+    total_time_s: 2.140
+    time_per_iter_ms: 2.600
+    description: "Added constantly two more slack vectors to all blocks. Less iterations but significantly higher time per iteration."
+
+  - timestamp: "2025-11-29T02:59:12+01:00"
+    polarization: "TE"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 174
+    total_time_s: 0.230
+    time_per_iter_ms: 1.300
+    description: "Switched to relative eigenvalue convergence criterion (1-e6) instead of residual norm. Dramatically improved convergence."
+  - timestamp: "2025-11-29T02:59:13+01:00"
+    polarization: "TM"
+    min_iter: 7
+    max_iter: 21
+    total_iterations: 304
+    total_time_s: 0.480
+    time_per_iter_ms: 1.600
+    description: "Switched to relative eigenvalue convergence criterion (1-e6) instead of residual norm. Dramatically improved convergence."
+

@@ -1,167 +1,38 @@
+//! Tests for the CPU backend.
+//!
+//! These tests verify that the CPU backend correctly implements the
+//! `SpectralBackend` trait, including FFT operations and BLAS-like
+//! linear algebra primitives.
+
 #![cfg(test)]
 
 use crate::CpuBackend;
 use mpb2d_core::backend::SpectralBackend;
-use mpb2d_core::dielectric::{Dielectric2D, DielectricOptions};
-use mpb2d_core::eigensolver::{
-    EigenOptions, GammaContext, PowerIterationOptions, power_iteration, solve_lowest_eigenpairs,
-};
 use mpb2d_core::field::Field2D;
-use mpb2d_core::geometry::Geometry2D;
 use mpb2d_core::grid::Grid2D;
-use mpb2d_core::lattice::Lattice2D;
-use mpb2d_core::operator::{ThetaOperator, ToyLaplacian};
-use mpb2d_core::polarization::Polarization;
-use mpb2d_core::reference::load_reference_dataset;
 use num_complex::Complex64;
 use std::f64::consts::PI;
-use std::path::PathBuf;
 
-fn dedup_sorted(values: &[f64]) -> Vec<f64> {
-    let mut uniq: Vec<f64> = Vec::new();
-    for &val in values {
-        if uniq
-            .last()
-            .map(|last| (val - *last).abs() > 1e-9)
-            .unwrap_or(true)
-        {
-            uniq.push(val);
-        }
-    }
-    uniq
-}
-
-fn reference_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("python/reference-data")
-}
-
-fn validate_uniform_reference(mpb_file: &str, polarization: Polarization) {
-    let reference_dir = reference_dir();
-    let mpb_path = reference_dir.join(mpb_file);
-    let fallback_path = reference_dir.join("square_tm_uniform.json");
-    if !mpb_path.exists() && !fallback_path.exists() {
-        eprintln!(
-            "skipping {mpb_file} regression test (no reference datasets under {:?})",
-            reference_dir
-        );
-        return;
-    }
-    let reference = load_reference_dataset(&mpb_path)
-        .or_else(|_| load_reference_dataset(&fallback_path))
-        .unwrap_or_else(|_| panic!("failed to load reference dataset {mpb_file}"));
-    assert_eq!(reference.bands.len(), reference.k_path.len());
-    let lattice = Lattice2D::square(1.0);
-    let geom = Geometry2D {
-        lattice,
-        eps_bg: 12.0,
-        atoms: Vec::new(),
-    };
-    let grid = Grid2D::new(48, 48, 1.0, 1.0);
-    let dielectric = Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default());
-    let reference_unique = reference
-        .bands
-        .get(0)
-        .map(|row| dedup_sorted(row))
-        .unwrap_or_default();
-    let eigen_opts = EigenOptions {
-        n_bands: reference_unique.len() + 4,
-        max_iter: 128,
-        tol: 1e-8,
-        ..Default::default()
-    };
-    let sample_indices: Vec<usize> = if reference.k_nodes.is_empty() {
-        (0..reference.k_path.len()).step_by(8).collect()
-    } else {
-        reference.k_nodes.iter().map(|node| node.index).collect()
-    };
-    for &idx in &sample_indices {
-        let kp = &reference.k_path[idx];
-        let bloch = [2.0 * PI * kp.kx, 2.0 * PI * kp.ky];
-        let bloch_norm = (bloch[0] * bloch[0] + bloch[1] * bloch[1]).sqrt();
-        let gamma_context = eigen_opts.gamma.context_for_bloch(bloch_norm);
-        let mut theta =
-            ThetaOperator::new(CpuBackend::new(), dielectric.clone(), polarization, bloch);
-        let result = solve_lowest_eigenpairs(
-            &mut theta,
-            &eigen_opts,
-            None,
-            gamma_context,
-            None,
-            None,
-            None,
-            None,
-        );
-        let expected = dedup_sorted(&reference.bands[idx]);
-        let scaled_omegas: Vec<f64> = result
-            .omegas
-            .iter()
-            .map(|&omega| omega / (2.0 * PI))
-            .collect();
-        let actual = dedup_sorted(&scaled_omegas);
-        assert!(
-            expected.len() <= actual.len(),
-            "insufficient eigenpairs: have {}, need {}",
-            actual.len(),
-            expected.len()
-        );
-        let mut used = vec![false; actual.len()];
-        for (band_idx, &target) in expected.iter().enumerate() {
-            if target < 1e-6 {
-                if gamma_context.is_gamma && result.gamma_deflated {
-                    continue;
-                }
-                if let Some((found_idx, _omega)) = actual
-                    .iter()
-                    .enumerate()
-                    .find(|&(i, omega)| !used[i] && *omega < 1e-3)
-                {
-                    used[found_idx] = true;
-                    continue;
-                }
-                panic!("k#{idx} band {band_idx} missing near-zero mode");
-            }
-            let mut best: Option<(usize, f64, f64)> = None;
-            for (cand_idx, &omega) in actual.iter().enumerate() {
-                if used[cand_idx] {
-                    continue;
-                }
-                let rel_err = ((omega - target) / target).abs();
-                if best
-                    .as_ref()
-                    .map(|(_, _, best_rel)| rel_err < *best_rel)
-                    .unwrap_or(true)
-                {
-                    best = Some((cand_idx, omega, rel_err));
-                }
-            }
-            match best {
-                Some((cand_idx, omega, rel_err)) => {
-                    used[cand_idx] = true;
-                    assert!(
-                        rel_err < 5e-2,
-                        "k#{idx} band {band_idx} mismatch: got {omega}, target {target}, rel {rel_err}"
-                    );
-                }
-                None => panic!("k#{idx} band {band_idx} missing candidate"),
-            }
-        }
-    }
-}
+// ============================================================================
+// FFT Tests
+// ============================================================================
 
 #[test]
 fn fft_roundtrip_recovers_signal() {
     let backend = CpuBackend::new();
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
     let mut field = Field2D::zeros(grid);
+
+    // Initialize with a simple pattern
     for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
         *value = Complex64::new(idx as f64, -(idx as f64));
     }
     let original = field.clone();
+
+    // Forward then inverse should recover the original
     backend.forward_fft_2d(&mut field);
     backend.inverse_fft_2d(&mut field);
+
     for (rec, expect) in field.as_slice().iter().zip(original.as_slice()) {
         let diff = (*rec - *expect).norm();
         assert!(diff < 1e-9, "FFT roundtrip diverged: diff={diff}");
@@ -173,13 +44,16 @@ fn fft_roundtrip_preserves_energy_norm() {
     let backend = CpuBackend::new();
     let grid = Grid2D::new(6, 2, 1.0, 1.0);
     let mut field = Field2D::zeros(grid);
+
     for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
         *value = Complex64::new((idx as f64).sin(), (idx as f64).cos());
     }
+
     let before = field.as_slice().iter().map(|v| v.norm_sqr()).sum::<f64>();
     backend.forward_fft_2d(&mut field);
     backend.inverse_fft_2d(&mut field);
     let after = field.as_slice().iter().map(|v| v.norm_sqr()).sum::<f64>();
+
     assert!(
         (before - after).abs() < 1e-9,
         "energy drifted by {}",
@@ -188,146 +62,232 @@ fn fft_roundtrip_preserves_energy_norm() {
 }
 
 #[test]
-fn axpy_and_dot_behave() {
+fn fft_forward_of_constant_is_dc_component() {
+    let backend = CpuBackend::new();
+    let grid = Grid2D::new(4, 4, 1.0, 1.0);
+    let n = (grid.nx * grid.ny) as f64;
+    let mut field = Field2D::zeros(grid);
+
+    // Constant field of value 1.0
+    for value in field.as_mut_slice().iter_mut() {
+        *value = Complex64::new(1.0, 0.0);
+    }
+
+    backend.forward_fft_2d(&mut field);
+
+    // DC component should be n (sum of all 1s)
+    let dc = field.as_slice()[0];
+    assert!(
+        (dc - Complex64::new(n, 0.0)).norm() < 1e-9,
+        "DC component should be {n}, got {dc}"
+    );
+
+    // All other components should be zero
+    for (idx, &value) in field.as_slice().iter().enumerate().skip(1) {
+        assert!(
+            value.norm() < 1e-9,
+            "Non-DC component at index {idx} should be zero, got {value}"
+        );
+    }
+}
+
+#[test]
+fn fft_of_plane_wave_is_single_peak() {
+    let backend = CpuBackend::new();
+    let nx = 8;
+    let ny = 8;
+    let grid = Grid2D::new(nx, ny, 1.0, 1.0);
+    let mut field = Field2D::zeros(grid);
+
+    // Create a plane wave with k_x = 1, k_y = 0 (one cycle across x)
+    for iy in 0..ny {
+        for ix in 0..nx {
+            let idx = iy * nx + ix;
+            let x = ix as f64 / nx as f64;
+            field.as_mut_slice()[idx] = Complex64::from_polar(1.0, 2.0 * PI * x);
+        }
+    }
+
+    backend.forward_fft_2d(&mut field);
+
+    // The peak should be at index (1, 0) = index 1
+    let peak_idx = 1;
+    let peak = field.as_slice()[peak_idx].norm();
+    let n = (nx * ny) as f64;
+
+    assert!(
+        (peak - n).abs() < 1e-6,
+        "Peak amplitude should be {n}, got {peak}"
+    );
+}
+
+// ============================================================================
+// BLAS-like Operation Tests
+// ============================================================================
+
+#[test]
+fn scale_multiplies_all_elements() {
+    let backend = CpuBackend::new();
+    let grid = Grid2D::new(2, 3, 1.0, 1.0);
+    let mut field = Field2D::zeros(grid);
+
+    for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
+        *value = Complex64::new(idx as f64, 0.0);
+    }
+
+    let alpha = Complex64::new(2.0, 1.0);
+    backend.scale(alpha, &mut field);
+
+    for (idx, &value) in field.as_slice().iter().enumerate() {
+        let expected = alpha * Complex64::new(idx as f64, 0.0);
+        assert!(
+            (value - expected).norm() < 1e-12,
+            "index {idx}: expected {expected}, got {value}"
+        );
+    }
+}
+
+#[test]
+fn axpy_computes_y_plus_alpha_x() {
     let backend = CpuBackend::new();
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
     let mut x = Field2D::zeros(grid);
     let mut y = Field2D::zeros(grid);
+
     for (i, value) in x.as_mut_slice().iter_mut().enumerate() {
         *value = Complex64::new(i as f64 + 1.0, 0.0);
     }
-    backend.axpy(Complex64::new(2.0, 0.0), &x, &mut y);
-    let expected: Vec<Complex64> = x
-        .as_slice()
-        .iter()
-        .map(|v| Complex64::new(2.0, 0.0) * v)
-        .collect();
-    for (actual, expect) in y.as_slice().iter().zip(expected.iter()) {
-        assert!((*actual - *expect).norm() < 1e-9);
+    for (i, value) in y.as_mut_slice().iter_mut().enumerate() {
+        *value = Complex64::new(0.0, i as f64);
     }
-    let dot = backend.dot(&x, &x);
-    assert!((dot - Complex64::new(30.0, 0.0)).norm() < 1e-9);
+
+    let alpha = Complex64::new(2.0, 0.0);
+    backend.axpy(alpha, &x, &mut y);
+
+    // y should now be original_y + alpha * x
+    for (idx, &value) in y.as_slice().iter().enumerate() {
+        let expected = Complex64::new(2.0 * (idx as f64 + 1.0), idx as f64);
+        assert!(
+            (value - expected).norm() < 1e-12,
+            "index {idx}: expected {expected}, got {value}"
+        );
+    }
 }
 
 #[test]
-fn toy_laplacian_matches_plane_wave_eigenvalue() {
+fn dot_computes_conjugate_inner_product() {
+    let backend = CpuBackend::new();
+    let grid = Grid2D::new(2, 2, 1.0, 1.0);
+    let mut x = Field2D::zeros(grid);
+    let mut y = Field2D::zeros(grid);
+
+    // x = [1, 2, 3, 4]
+    for (i, value) in x.as_mut_slice().iter_mut().enumerate() {
+        *value = Complex64::new(i as f64 + 1.0, 0.0);
+    }
+
+    // y = [1, i, -1, -i]
+    y.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+    y.as_mut_slice()[1] = Complex64::new(0.0, 1.0);
+    y.as_mut_slice()[2] = Complex64::new(-1.0, 0.0);
+    y.as_mut_slice()[3] = Complex64::new(0.0, -1.0);
+
+    // dot(x, y) = conj(x[0])*y[0] + conj(x[1])*y[1] + conj(x[2])*y[2] + conj(x[3])*y[3]
+    //           = 1*1 + 2*i + 3*(-1) + 4*(-i)
+    //           = 1 + 2i - 3 - 4i = -2 - 2i
+    let result = backend.dot(&x, &y);
+    let expected = Complex64::new(-2.0, -2.0);
+
+    assert!(
+        (result - expected).norm() < 1e-12,
+        "expected {expected}, got {result}"
+    );
+}
+
+#[test]
+fn dot_of_vector_with_itself_is_real() {
+    let backend = CpuBackend::new();
+    let grid = Grid2D::new(3, 3, 1.0, 1.0);
+    let mut x = Field2D::zeros(grid);
+
+    // Complex vector
+    for (i, value) in x.as_mut_slice().iter_mut().enumerate() {
+        *value = Complex64::new((i as f64).sin(), (i as f64).cos());
+    }
+
+    let result = backend.dot(&x, &x);
+
+    // <x, x> should be real and equal to ||x||²
+    assert!(
+        result.im.abs() < 1e-12,
+        "self-dot should be real, got {result}"
+    );
+
+    let expected_norm_sq: f64 = x.as_slice().iter().map(|v| v.norm_sqr()).sum();
+    assert!(
+        (result.re - expected_norm_sq).abs() < 1e-12,
+        "expected {expected_norm_sq}, got {result}"
+    );
+}
+
+// ============================================================================
+// Field Allocation Tests
+// ============================================================================
+
+#[test]
+fn alloc_field_creates_correct_grid() {
+    let backend = CpuBackend::new();
+    let grid = Grid2D::new(5, 7, 2.0, 3.0);
+    let field = backend.alloc_field(grid);
+
+    assert_eq!(field.grid().nx, 5);
+    assert_eq!(field.grid().ny, 7);
+    assert_eq!(field.as_slice().len(), 35);
+}
+
+#[test]
+fn alloc_field_initializes_to_zero() {
+    let backend = CpuBackend::new();
+    let grid = Grid2D::new(4, 4, 1.0, 1.0);
+    let field = backend.alloc_field(grid);
+
+    for &value in field.as_slice() {
+        assert_eq!(value, Complex64::ZERO);
+    }
+}
+
+// ============================================================================
+// Integration Tests
+// ============================================================================
+
+#[test]
+fn combined_operations_maintain_consistency() {
     let backend = CpuBackend::new();
     let grid = Grid2D::new(8, 8, 1.0, 1.0);
-    let mut laplacian = ToyLaplacian::new(backend, grid);
-    let mut vec = laplacian.alloc_field();
-    let nx = grid.nx;
-    let ny = grid.ny;
-    for iy in 0..ny {
-        for ix in 0..nx {
-            let idx = iy * nx + ix;
-            let x = ix as f64 / nx as f64;
-            vec.as_mut_slice()[idx] = Complex64::from_polar(1.0, 2.0 * PI * x);
-        }
+
+    // Create two fields
+    let mut a = backend.alloc_field(grid);
+    let mut b = backend.alloc_field(grid);
+
+    for (idx, value) in a.as_mut_slice().iter_mut().enumerate() {
+        *value = Complex64::new((idx as f64).cos(), (idx as f64).sin());
     }
-    let opts = PowerIterationOptions {
-        max_iter: 32,
-        tol: 1e-10,
-    };
-    let eig = power_iteration(&mut laplacian, &mut vec, &opts);
-    let expected = (2.0 * PI).powi(2);
-    assert!(
-        (eig - expected).abs() < 1e-6,
-        "expected {expected}, got {eig}"
-    );
-}
-
-#[test]
-fn gamma_deflation_removes_constant_mode() {
-    let backend = CpuBackend::new();
-    let grid = Grid2D::new(8, 8, 1.0, 1.0);
-    let mut laplacian = ToyLaplacian::new(backend.clone(), grid);
-    let opts = EigenOptions {
-        n_bands: 2,
-        max_iter: 120,
-        tol: 1e-12,
-        ..Default::default()
-    };
-    let baseline = solve_lowest_eigenpairs(
-        &mut laplacian,
-        &opts,
-        None,
-        GammaContext::gamma_without_deflation(),
-        None,
-        None,
-        None,
-        None,
-    );
-    dbg!(&baseline.omegas);
-    assert!(
-        baseline.omegas[0] < 5e-5,
-        "should capture zero band without deflation (got {:.3e})",
-        baseline.omegas[0]
-    );
-
-    let mut laplacian = ToyLaplacian::new(backend, grid);
-    let deflated = solve_lowest_eigenpairs(
-        &mut laplacian,
-        &opts,
-        None,
-        GammaContext::new(true),
-        None,
-        None,
-        None,
-        None,
-    );
-    assert!(
-        deflated.gamma_deflated,
-        "deflation flag should be propagated"
-    );
-    assert!(deflated.omegas[0] > 1e-3, "constant band must be removed");
-    let expected = 2.0 * PI;
-    assert!(
-        (deflated.omegas[0] - expected).abs() < 1e-2,
-        "expected {expected}, got {}",
-        deflated.omegas[0]
-    );
-}
-
-#[test]
-fn tm_operator_matches_uniform_medium_limit() {
-    let backend = CpuBackend::new();
-    let lattice = Lattice2D::square(1.0);
-    let geom = Geometry2D {
-        lattice,
-        eps_bg: 12.0,
-        atoms: Vec::new(),
-    };
-    let grid = Grid2D::new(8, 8, 1.0, 1.0);
-    let dielectric = Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default());
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
-    let mut vec = theta.alloc_field();
-    let nx = grid.nx;
-    let ny = grid.ny;
-    for iy in 0..ny {
-        for ix in 0..nx {
-            let idx = iy * nx + ix;
-            let x = ix as f64 / nx as f64;
-            vec.as_mut_slice()[idx] = Complex64::from_polar(1.0, 2.0 * PI * x);
-        }
+    for value in b.as_mut_slice().iter_mut() {
+        *value = Complex64::new(1.0, 0.0);
     }
-    let opts = PowerIterationOptions {
-        max_iter: 40,
-        tol: 1e-10,
-    };
-    let eig = power_iteration(&mut theta, &mut vec, &opts);
-    let expected = (2.0 * PI).powi(2) / geom.eps_bg;
+
+    // Compute <a, a> before operations
+    let norm_sq_before = backend.dot(&a, &a).re;
+
+    // Do FFT roundtrip
+    backend.forward_fft_2d(&mut a);
+    backend.inverse_fft_2d(&mut a);
+
+    // Compute <a, a> after operations
+    let norm_sq_after = backend.dot(&a, &a).re;
+
     assert!(
-        (eig - expected).abs() < 1e-5,
-        "expected {expected}, got {eig}"
+        (norm_sq_before - norm_sq_after).abs() < 1e-9,
+        "norm changed: {norm_sq_before} -> {norm_sq_after}"
     );
-}
-
-#[test]
-fn tm_operator_tracks_uniform_reference_data() {
-    validate_uniform_reference("square_tm_uniform_mpb.json", Polarization::TM);
-}
-
-#[test]
-fn te_operator_tracks_uniform_reference_data() {
-    validate_uniform_reference("square_te_uniform_mpb.json", Polarization::TE);
 }

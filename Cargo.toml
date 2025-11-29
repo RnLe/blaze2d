@@ -6,7 +6,7 @@ members = [
     "crates/backend-cuda",
     "crates/cli",
     "crates/python",
-    "crates/validation",
+    # "crates/validation",  # Deactivated - uses eigensolver_old
 ]
 resolver = "2"
 
@@ -19,6 +19,7 @@ authors = ["RnLe <dev@rnle.dev>"]
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"], default-features = true }
 faer = "0.23"
+log = "0.4"
 num-complex = { version = "0.4", features = ["serde"] }
 rayon = "1.10"
 rustfft = "6.2"

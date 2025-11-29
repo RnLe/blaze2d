@@ -1,7 +1,10 @@
 //! Core math, physics, and APIs for the MPB-style 2D solver.
 
+pub mod analytic_geometry;
 pub mod backend;
+pub mod band_tracking;
 pub mod bandstructure;
+pub mod diagnostics;
 pub mod dielectric;
 pub mod eigensolver;
 pub mod field;
@@ -11,7 +14,6 @@ pub mod io;
 pub mod lattice;
 pub mod metrics;
 pub mod operator;
-pub mod operator_inspection;
 pub mod polarization;
 pub mod preconditioner;
 pub mod reference;

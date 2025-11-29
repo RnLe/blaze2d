@@ -1,7 +1,36 @@
 //! Real-space dielectric sampling utilities + MPB-style smoothing.
+//!
+//! This module provides two smoothing modes:
+//! - **Subgrid sampling**: Uses numerical integration over a sub-grid
+//! - **Analytic geometry** (default): Uses exact geometric formulas for known shapes (circles)
+//!
+//! The analytic mode provides more accurate results at material interfaces by
+//! computing exact filling fractions and interface normals, following the MPB/Meep
+//! approach described in Farjadpour et al., Optics Letters 31, 2972 (2006).
+//!
+//! # Grid Sampling Convention
+//!
+//! We sample epsilon at **grid nodes**: position `i/N` for index `i`.
+//! This matches MPB's convention for direct comparison.
 
-use crate::{geometry::Geometry2D, grid::Grid2D};
+use crate::{
+    analytic_geometry::{compute_smoothed_dielectric, AnalyticShape, Circle},
+    geometry::Geometry2D,
+    grid::Grid2D,
+};
 use serde::{Deserialize, Serialize};
+
+/// Smoothing method for material interfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SmoothingMethod {
+    /// Numerical subgrid sampling (original method)
+    Subgrid,
+    /// Analytic geometry-aware smoothing (MPB-style)
+    /// Uses exact filling fractions and interface normals for circles.
+    #[default]
+    Analytic,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -26,15 +55,20 @@ impl DielectricOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SmoothingOptions {
+    /// Subgrid mesh size for numerical integration (only used with Subgrid method)
     pub mesh_size: usize,
+    /// Tolerance for detecting material interfaces
     pub interface_tolerance: f64,
+    /// Smoothing method to use
+    pub method: SmoothingMethod,
 }
 
 impl Default for SmoothingOptions {
     fn default() -> Self {
         Self {
-            mesh_size: 4,
+            mesh_size: 3,
             interface_tolerance: 1e-6,
+            method: SmoothingMethod::default(),
         }
     }
 }
@@ -101,8 +135,10 @@ impl Dielectric2D {
             })
             .collect();
 
-        let (smoothed_eps, smoothed_inv, tensors) =
-            build_smoothed_dielectric(geom, grid, &opts.smoothing);
+        let (smoothed_eps, smoothed_inv, tensors) = match opts.smoothing.method {
+            SmoothingMethod::Subgrid => build_smoothed_dielectric_subgrid(geom, grid, &opts.smoothing),
+            SmoothingMethod::Analytic => build_smoothed_dielectric_analytic(geom, grid, &opts.smoothing),
+        };
 
         Self {
             eps_r: smoothed_eps,
@@ -133,6 +169,117 @@ impl Dielectric2D {
     pub fn unsmoothed_inv_eps(&self) -> Option<&[f64]> {
         self.unsmoothed_inv_eps.as_deref()
     }
+
+    /// Export epsilon data to CSV file.
+    ///
+    /// Format: `ix,iy,frac_x,frac_y,eps_smoothed,inv_eps_smoothed[,eps_raw,inv_eps_raw]`
+    ///
+    /// The raw (unsmoothed) columns are only present if smoothing was enabled.
+    pub fn save_csv(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+
+        let file = std::fs::File::create(path)?;
+        let mut writer = std::io::BufWriter::new(file);
+
+        let has_raw = self.unsmoothed_eps.is_some();
+
+        // Write header
+        if has_raw {
+            writeln!(
+                writer,
+                "ix,iy,frac_x,frac_y,eps_smoothed,inv_eps_smoothed,eps_raw,inv_eps_raw"
+            )?;
+        } else {
+            writeln!(writer, "ix,iy,frac_x,frac_y,eps,inv_eps")?;
+        }
+
+        // Write data rows
+        for iy in 0..self.grid.ny {
+            for ix in 0..self.grid.nx {
+                let idx = self.grid.idx(ix, iy);
+                let frac_x = (ix as f64 + 0.5) / self.grid.nx as f64;
+                let frac_y = (iy as f64 + 0.5) / self.grid.ny as f64;
+
+                if has_raw {
+                    let eps_raw = self
+                        .unsmoothed_eps
+                        .as_ref()
+                        .map(|v| v[idx])
+                        .unwrap_or(f64::NAN);
+                    let inv_eps_raw = self
+                        .unsmoothed_inv_eps
+                        .as_ref()
+                        .map(|v| v[idx])
+                        .unwrap_or(f64::NAN);
+                    writeln!(
+                        writer,
+                        "{},{},{:.12e},{:.12e},{:.12e},{:.12e},{:.12e},{:.12e}",
+                        ix,
+                        iy,
+                        frac_x,
+                        frac_y,
+                        self.eps_r[idx],
+                        self.inv_eps_r[idx],
+                        eps_raw,
+                        inv_eps_raw
+                    )?;
+                } else {
+                    writeln!(
+                        writer,
+                        "{},{},{:.12e},{:.12e},{:.12e},{:.12e}",
+                        ix, iy, frac_x, frac_y, self.eps_r[idx], self.inv_eps_r[idx]
+                    )?;
+                }
+            }
+        }
+
+        writer.flush()
+    }
+
+    /// Export epsilon tensor data to CSV file.
+    ///
+    /// Only meaningful when smoothing is enabled (tensors exist).
+    /// Format: `ix,iy,frac_x,frac_y,inv_eps_xx,inv_eps_xy,inv_eps_yx,inv_eps_yy`
+    pub fn save_tensor_csv(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+
+        let tensors = match &self.inv_eps_tensors {
+            Some(t) => t,
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No tensor data available (smoothing was disabled)",
+                ));
+            }
+        };
+
+        let file = std::fs::File::create(path)?;
+        let mut writer = std::io::BufWriter::new(file);
+
+        // Write header
+        writeln!(
+            writer,
+            "ix,iy,frac_x,frac_y,inv_eps_xx,inv_eps_xy,inv_eps_yx,inv_eps_yy"
+        )?;
+
+        // Write data rows
+        for iy in 0..self.grid.ny {
+            for ix in 0..self.grid.nx {
+                let idx = self.grid.idx(ix, iy);
+                let frac_x = (ix as f64 + 0.5) / self.grid.nx as f64;
+                let frac_y = (iy as f64 + 0.5) / self.grid.ny as f64;
+                let t = &tensors[idx];
+
+                writeln!(
+                    writer,
+                    "{},{},{:.12e},{:.12e},{:.12e},{:.12e},{:.12e},{:.12e}",
+                    ix, iy, frac_x, frac_y, t[0], t[1], t[2], t[3]
+                )?;
+            }
+        }
+
+        writer.flush()
+    }
 }
 
 fn sample_raw_eps(geom: &Geometry2D, grid: Grid2D) -> Vec<f64> {
@@ -140,8 +287,8 @@ fn sample_raw_eps(geom: &Geometry2D, grid: Grid2D) -> Vec<f64> {
     for iy in 0..grid.ny {
         for ix in 0..grid.nx {
             let frac = [
-                fractional_cell_center(ix, grid.nx),
-                fractional_cell_center(iy, grid.ny),
+                fractional_position(ix, grid.nx),
+                fractional_position(iy, grid.ny),
             ];
             let idx = grid.idx(ix, iy);
             eps_r[idx] = geom.relative_permittivity_at_fractional(frac);
@@ -150,7 +297,12 @@ fn sample_raw_eps(geom: &Geometry2D, grid: Grid2D) -> Vec<f64> {
     eps_r
 }
 
-fn build_smoothed_dielectric(
+/// Build smoothed dielectric using subgrid numerical integration.
+///
+/// This is the original method that uses a sub-grid mesh to sample the geometry
+/// and computes approximate filling fractions and interface normals from the
+/// dipole moment of the eps distribution.
+fn build_smoothed_dielectric_subgrid(
     geom: &Geometry2D,
     grid: Grid2D,
     smoothing: &SmoothingOptions,
@@ -176,9 +328,11 @@ fn build_smoothed_dielectric(
     for iy in 0..grid.ny {
         for ix in 0..grid.nx {
             let idx = grid.idx(ix, iy);
+            // The pixel origin is at i/n, and we integrate over the cell
             let frac_origin_x = fractional_cell_origin(ix, grid.nx);
             let frac_origin_y = fractional_cell_origin(iy, grid.ny);
-            let center_frac = [frac_origin_x + 0.5 * frac_dx, frac_origin_y + 0.5 * frac_dy];
+            // Node-based: the pixel "center" for dipole calculation is at the node itself
+            let center_frac = [frac_origin_x, frac_origin_y];
             let center_cart = geom.lattice.fractional_to_cartesian(center_frac);
 
             let mut eps_sum = 0.0;
@@ -235,6 +389,121 @@ fn build_smoothed_dielectric(
     (eps_avg, inv_avg, tensors)
 }
 
+/// Build smoothed dielectric using analytic geometry calculations.
+///
+/// This method computes exact filling fractions and interface normals for
+/// circles (BasisAtoms), providing more accurate results at material interfaces.
+///
+/// For each pixel, we:
+/// 1. Check if any atom (circle) intersects the pixel
+/// 2. Use exact circle-rectangle intersection formulas for filling fraction
+/// 3. Compute the exact interface normal from the geometry
+/// 4. Apply the MPB smoothing formula: ε̃⁻¹ = P⟨ε⁻¹⟩ + (1-P)⟨ε⟩⁻¹
+fn build_smoothed_dielectric_analytic(
+    geom: &Geometry2D,
+    grid: Grid2D,
+    smoothing: &SmoothingOptions,
+) -> (Vec<f64>, Vec<f64>, Vec<[f64; 4]>) {
+    let len = grid.len();
+    let mut eps_avg = vec![0.0; len];
+    let mut inv_avg = vec![0.0; len];
+    let mut tensors = vec![[0.0; 4]; len];
+
+    // Compute pixel size in Cartesian coordinates
+    // For general lattices, we approximate using axis-aligned bounding
+    let pixel_size_x = vector_norm(geom.lattice.a1) / grid.nx as f64;
+    let pixel_size_y = vector_norm(geom.lattice.a2) / grid.ny as f64;
+    let pixel_size = [pixel_size_x, pixel_size_y];
+
+    let tol = smoothing.tolerance();
+
+    // Pre-compute circles for all atoms (in Cartesian coordinates)
+    // Handle periodic images by including the 9 nearest copies
+    let mut circles: Vec<(Circle, f64)> = Vec::new(); // (circle, eps_inside)
+    for atom in &geom.atoms {
+        let radius_cart = atom.radius_cartesian(&geom.lattice);
+        // Add the atom and its periodic images
+        for di in -1i32..=1 {
+            for dj in -1i32..=1 {
+                let frac_pos = [
+                    atom.pos[0] + di as f64,
+                    atom.pos[1] + dj as f64,
+                ];
+                let center_cart = geom.lattice.fractional_to_cartesian(frac_pos);
+                circles.push((Circle::new(center_cart, radius_cart), atom.eps_inside));
+            }
+        }
+    }
+
+    for iy in 0..grid.ny {
+        for ix in 0..grid.nx {
+            let idx = grid.idx(ix, iy);
+
+            // Compute pixel center in Cartesian coordinates (node-based: i/N)
+            let frac_center = [
+                fractional_position(ix, grid.nx),
+                fractional_position(iy, grid.ny),
+            ];
+            let pixel_center = geom.lattice.fractional_to_cartesian(frac_center);
+
+            // Check all circles for intersection with this pixel
+            let mut best_intersection: Option<(f64, [f64; 2], f64)> = None; // (fill_frac, normal, eps_inside)
+            let mut total_fill = 0.0;
+
+            for (circle, eps_inside) in &circles {
+                let intersection = circle.intersect_pixel(pixel_center, pixel_size);
+
+                if intersection.filling_fraction > 1e-10 {
+                    total_fill += intersection.filling_fraction;
+
+                    // Keep track of the dominant intersection (largest filling fraction)
+                    let dominated = best_intersection
+                        .as_ref()
+                        .map(|(f, _, _)| intersection.filling_fraction > *f)
+                        .unwrap_or(true);
+
+                    if dominated {
+                        let normal = intersection.interface_normal.unwrap_or_else(|| {
+                            // For fully-inside pixels, compute normal from center
+                            circle.normal_at(pixel_center)
+                        });
+                        best_intersection = Some((intersection.filling_fraction, normal, *eps_inside));
+                    }
+                }
+            }
+
+            // Clamp total fill to [0, 1] (might exceed 1 due to overlapping circles)
+            total_fill = total_fill.clamp(0.0, 1.0);
+
+            if let Some((fill_frac, normal, eps_inside)) = best_intersection {
+                // Material interface: use analytic smoothing formula
+                let fill_frac = fill_frac.min(total_fill);
+                let (avg_eps, avg_inv, tensor) =
+                    compute_smoothed_dielectric(fill_frac, eps_inside, geom.eps_bg, normal);
+
+                eps_avg[idx] = avg_eps;
+                inv_avg[idx] = avg_inv;
+
+                // Check if this is actually at an interface (partial fill)
+                let is_interface = fill_frac > tol && fill_frac < 1.0 - tol;
+                if is_interface {
+                    tensors[idx] = tensor;
+                } else {
+                    // Uniform region: use isotropic tensor
+                    tensors[idx] = isotropic_tensor(avg_inv);
+                }
+            } else {
+                // No circle intersection: use background permittivity
+                eps_avg[idx] = geom.eps_bg;
+                inv_avg[idx] = 1.0 / geom.eps_bg;
+                tensors[idx] = isotropic_tensor(1.0 / geom.eps_bg);
+            }
+        }
+    }
+
+    (eps_avg, inv_avg, tensors)
+}
+
 fn build_anisotropic_inv_tensor(normal: [f64; 2], avg_eps: f64, avg_inv: f64) -> [f64; 4] {
     let inv_tangential = if avg_eps > 0.0 {
         1.0 / avg_eps
@@ -260,8 +529,11 @@ fn isotropic_tensor(value: f64) -> [f64; 4] {
     [value, 0.0, 0.0, value]
 }
 
-fn fractional_cell_center(index: usize, count: usize) -> f64 {
-    (index as f64 + 0.5) / count as f64
+/// Get the fractional position for a grid index.
+///
+/// Uses node-based sampling: position = index / count (MPB-compatible)
+fn fractional_position(index: usize, count: usize) -> f64 {
+    index as f64 / count as f64
 }
 
 fn fractional_cell_origin(index: usize, count: usize) -> f64 {

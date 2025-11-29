@@ -1,13 +1,13 @@
-# Hexagonal lattice eps_bg=13, r/a=0.3, low-res grid for TM
+# Square lattice eps_bg=6, r/a=0.3, high-res grid (64x64) for TM
 
 polarization = "TM"
 
 [geometry]
-eps_bg = 13.0
+eps_bg = 6.0
 
 [geometry.lattice]
 a1 = [1.0, 0.0]
-a2 = [0.5, 0.8660254037844386]
+a2 = [0.0, 1.0]
 
 [[geometry.atoms]]
 pos = [0.5, 0.5]
@@ -15,16 +15,16 @@ radius = 0.3
 eps_inside = 1.0
 
 [grid]
-nx = 24
-ny = 24
+nx = 64
+ny = 64
 lx = 1.0
 ly = 1.0
 
 [path]
-preset = "hexagonal"
-segments_per_leg = 8
+preset = "square"
+segments_per_leg = 10
 
 [eigensolver]
 n_bands = 8
-max_iter = 100
+max_iter = 1000
 tol = 1e-6

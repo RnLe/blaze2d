@@ -1,69 +1,139 @@
-//! Simple Lanczos-style eigensolver utilities for Θ operators.
+//! Eigensolver module for finding the lowest eigenpairs of the Maxwell operator Θ.
+//!
+//! This module implements a block LOBPCG (Locally Optimal Block Preconditioned Conjugate Gradient)
+//! algorithm for solving the generalized eigenvalue problem:
+//!
+//! ```text
+//! A x = λ B x
+//! ```
+//!
+//! where:
+//! - `A` is the Maxwell curl-curl operator (Θ operator)
+//! - `B` is the mass operator (identity for TM, ε-weighted for TE)
+//! - `λ` are the eigenvalues (ω² in physical units)
+//! - `x` are the eigenvectors (field modes)
+//!
+//! # Module Structure
+//!
+//! The eigensolver is split into semantic submodules:
+//! - [`initialization`]: Block initialization (X_0 creation)
+//! - [`normalization`]: B-orthonormalization routines (including SVQB)
+//! - [`deflation`]: Locking of converged eigenvectors
+//! - [`dense`]: Dense Hermitian eigensolver for Rayleigh-Ritz projection
 
-use std::cmp::Ordering;
+// Submodules
+pub mod deflation;
+pub mod dense;
+pub mod initialization;
+pub mod normalization;
 
-use num_complex::Complex64;
-use serde::{Deserialize, Serialize};
-#[cfg(debug_assertions)]
-use std::cell::RefCell;
-#[cfg(debug_assertions)]
-use std::collections::VecDeque;
+#[cfg(test)]
+mod _tests_deflation;
+#[cfg(test)]
+mod _tests_initialization;
+#[cfg(test)]
+mod _tests_normalization;
 
-use crate::{
-    backend::{SpectralBackend, SpectralBuffer},
-    field::Field2D,
-    operator::LinearOperator,
-    preconditioner::OperatorPreconditioner,
-    symmetry::{SymmetryOptions, SymmetryProjector},
+// Re-exports from submodules
+pub use deflation::{DeflationSubspace, LockingConfig, LockingResult, check_for_locking};
+pub use dense::{DenseEigenResult, solve_hermitian_eigen};
+pub use initialization::{
+    BlockEntry, GAMMA_TOLERANCE, InitializationConfig, InitializationResult, create_gamma_mode,
+    is_gamma_point,
+};
+pub use normalization::{
+    SvqbConfig, SvqbResult, b_inner_product, b_norm, normalize_to_unit_b_norm,
+    orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize,
 };
 
-const MIN_RR_TOL: f64 = 1e-12;
-const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
-const BLOCK_SIZE_SLACK: usize = 2;
-const W_HISTORY_FACTOR: usize = 1;
-const PROJECTION_CONDITION_LIMIT: f64 = 1e9;
-const RAYLEIGH_RITZ_VALUE_LIMIT: f64 = 1e8;
+// Re-export diagnostics types for convenience
+pub use crate::diagnostics::{
+    ConvergenceRecorder, ConvergenceRun, ConvergenceStudy, IterationSnapshot, PreconditionerType,
+    RunConfig,
+};
 
+use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
+use std::f64::consts::PI;
+use std::time::Instant;
+
+use crate::backend::{SpectralBackend, SpectralBuffer};
+use crate::field::Field2D;
+use crate::grid::Grid2D;
+use crate::operator::LinearOperator;
+use crate::preconditioner::OperatorPreconditioner;
+use crate::symmetry::SymmetryProjector;
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/// Main configuration for the eigensolver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct EigenOptions {
+pub struct EigensolverConfig {
+    /// Number of eigenvalues/eigenvectors to compute.
     pub n_bands: usize,
+    /// Maximum number of LOBPCG iterations.
     pub max_iter: usize,
+    /// Convergence tolerance for relative residuals.
     pub tol: f64,
+    /// Block size (0 = automatic based on n_bands).
     pub block_size: usize,
+
+    // === Feature Toggles (for diagnostics/ablation studies) ===
+    /// Enable/disable the W (history) directions in LOBPCG.
+    /// When false, reduces to preconditioned steepest descent.
+    #[serde(default = "default_true")]
+    pub use_w_history: bool,
+    /// Enable/disable locking (deflation) of converged bands.
+    #[serde(default = "default_true")]
+    pub use_locking: bool,
+    /// Enable/disable convergence diagnostics recording.
+    /// When true, per-iteration data is collected for analysis.
     #[serde(default)]
-    pub preconditioner: PreconditionerKind,
-    #[serde(default)]
-    pub gamma: GammaHandling,
-    #[serde(default)]
-    pub deflation: DeflationOptions,
-    #[serde(default)]
-    pub symmetry: SymmetryOptions,
-    #[serde(default)]
-    pub warm_start: WarmStartOptions,
-    #[serde(default)]
-    pub debug: SolverDebugOptions,
+    pub record_diagnostics: bool,
+    /// Optional k-point index for logging (set by bandstructure code).
+    #[serde(skip)]
+    pub k_index: Option<usize>,
 }
 
-impl Default for EigenOptions {
+/// Helper for serde default values.
+fn default_true() -> bool {
+    true
+}
+
+/// Slack to add to block size beyond n_bands for better convergence.
+const BLOCK_SIZE_SLACK: usize = 2;
+
+/// Toggle for Γ-point constant-mode deflation.
+///
+/// At the Γ point (k=0), the constant field is a spurious eigenvector with λ=0.
+/// We deflate it out to prevent convergence issues and free up a slot for a
+/// physical mode. This is safe when Γ is the **first** k-point in the path
+/// (no warm-start to poison), and the converged Γ eigenvectors then serve as
+/// valid warm-starts for subsequent k-points (even-even parity is compatible
+/// with single-mirror sectors).
+const ENABLE_GAMMA_DEFLATION: bool = true;
+
+impl Default for EigensolverConfig {
     fn default() -> Self {
         Self {
             n_bands: 8,
             max_iter: 200,
             tol: 1e-6,
             block_size: 0,
-            preconditioner: PreconditionerKind::default(),
-            gamma: GammaHandling::default(),
-            deflation: DeflationOptions::default(),
-            symmetry: SymmetryOptions::default(),
-            warm_start: WarmStartOptions::default(),
-            debug: SolverDebugOptions::default(),
+            use_w_history: true,
+            use_locking: true,
+            record_diagnostics: false,
+            k_index: None,
         }
     }
 }
 
-impl EigenOptions {
-    fn effective_block_size(&self) -> usize {
+impl EigensolverConfig {
+    /// Compute the effective block size (auto-sizing if block_size == 0).
+    pub fn effective_block_size(&self) -> usize {
         let required = self.n_bands.max(1);
         let target = if self.block_size == 0 {
             required.saturating_add(BLOCK_SIZE_SLACK)
@@ -73,3059 +143,2406 @@ impl EigenOptions {
         target.max(required)
     }
 
-    pub(crate) fn enforce_recommended_defaults(&mut self) {
-        let recommended_block = self.n_bands.max(1).saturating_add(BLOCK_SIZE_SLACK);
-        if self.block_size == 0 || self.block_size < recommended_block {
-            self.block_size = recommended_block;
-        }
-        if !matches!(
-            self.preconditioner,
-            PreconditionerKind::StructuredDiagonal | PreconditionerKind::HomogeneousJacobi
-        ) {
-            self.preconditioner = PreconditionerKind::StructuredDiagonal;
-        }
-        if self.warm_start.enabled && self.warm_start.max_vectors == 0 {
-            self.warm_start.max_vectors = self.n_bands.max(1);
-        }
+    /// Builder method: disable W history directions.
+    pub fn without_w_history(mut self) -> Self {
+        self.use_w_history = false;
+        self
+    }
+
+    /// Builder method: disable locking.
+    pub fn without_locking(mut self) -> Self {
+        self.use_locking = false;
+        self
+    }
+
+    /// Builder method: enable diagnostics recording.
+    pub fn with_diagnostics(mut self) -> Self {
+        self.record_diagnostics = true;
+        self
+    }
+
+    /// Builder method: set tolerance.
+    pub fn with_tolerance(mut self, tol: f64) -> Self {
+        self.tol = tol;
+        self
+    }
+
+    /// Builder method: set max iterations.
+    pub fn with_max_iter(mut self, max_iter: usize) -> Self {
+        self.max_iter = max_iter;
+        self
+    }
+
+    /// Builder method: set number of bands.
+    pub fn with_n_bands(mut self, n_bands: usize) -> Self {
+        self.n_bands = n_bands;
+        self
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct DeflationOptions {
-    pub enabled: bool,
-    pub max_vectors: usize,
-}
+// ============================================================================
+// Debug Logging Helpers
+// ============================================================================
 
-impl Default for DeflationOptions {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_vectors: 0,
-        }
+/// Determine if we should emit debug logs at this iteration.
+///
+/// Logging schedule: iterations 1, 2, 3, 4, 5, 10, 20, 50, 100, then every 50.
+fn should_log_iteration(iter: usize) -> bool {
+    let iter_1based = iter + 1; // Convert 0-based to 1-based
+    match iter_1based {
+        1..=5 => true,
+        10 | 20 | 50 | 100 => true,
+        n if n > 100 && n % 50 == 0 => true,
+        _ => false,
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WarmStartOptions {
-    pub enabled: bool,
-    pub max_vectors: usize,
-}
-
-impl Default for WarmStartOptions {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_vectors: 0,
-        }
+/// Format a slice of f64 values for debug output (shows first few and last).
+fn format_values(values: &[f64], max_show: usize) -> String {
+    if values.is_empty() {
+        return "[]".to_string();
     }
-}
-
-impl WarmStartOptions {
-    pub fn effective_limit(&self, fallback: usize) -> usize {
-        if !self.enabled {
-            return 0;
-        }
-        if self.max_vectors == 0 {
-            fallback.max(1)
-        } else {
-            self.max_vectors
-        }
+    if values.len() <= max_show {
+        let formatted: Vec<String> = values.iter().map(|v| format!("{:.4e}", v)).collect();
+        return format!("[{}]", formatted.join(", "));
     }
+    let half = max_show / 2;
+    let front: Vec<String> = values[..half]
+        .iter()
+        .map(|v| format!("{:.4e}", v))
+        .collect();
+    let back: Vec<String> = values[values.len() - half..]
+        .iter()
+        .map(|v| format!("{:.4e}", v))
+        .collect();
+    format!("[{}, ..., {}]", front.join(", "), back.join(", "))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SolverDebugOptions {
-    pub disable_deflation: bool,
-    pub history_multiplier: Option<usize>,
-}
-
-impl Default for SolverDebugOptions {
-    fn default() -> Self {
-        Self {
-            disable_deflation: false,
-            history_multiplier: None,
-        }
+/// Calculate frequency range from eigenvalues slice.
+/// Frequencies are ω = √λ (eigenvalues are ω²).
+fn frequency_range_from_slice(eigenvalues: &[f64]) -> (f64, f64) {
+    if eigenvalues.is_empty() {
+        return (0.0, 0.0);
     }
+    let freqs: Vec<f64> = eigenvalues
+        .iter()
+        .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
+        .collect();
+    let min = freqs.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = freqs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    (min, max)
 }
 
-impl SolverDebugOptions {
-    pub fn history_factor(&self) -> usize {
-        self.history_multiplier.unwrap_or(W_HISTORY_FACTOR)
-    }
+// ============================================================================
+// Convergence Tracking
+// ============================================================================
+
+/// Per-band convergence state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BandState {
+    /// Band is still converging.
+    Active,
+    /// Band has converged (relative residual below tolerance).
+    Converged,
+    /// Band was locked (removed from active iteration).
+    Locked,
 }
 
-impl DeflationOptions {
-    pub fn effective_limit(&self, fallback: usize) -> usize {
-        if !self.enabled {
-            return 0;
-        }
-        if self.max_vectors == 0 {
-            fallback.max(1)
-        } else {
-            self.max_vectors
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(default)]
-pub struct GammaHandling {
-    pub enabled: bool,
-    pub tolerance: f64,
-}
-
-impl GammaHandling {
-    pub fn should_deflate(self, bloch_norm: f64) -> bool {
-        self.enabled && bloch_norm <= self.tolerance
-    }
-
-    pub fn context_for_bloch(self, bloch_norm: f64) -> GammaContext {
-        let is_gamma = bloch_norm <= self.tolerance;
-        if !is_gamma {
-            return GammaContext::default();
-        }
-        if self.enabled {
-            GammaContext::new(true)
-        } else {
-            GammaContext::with_deflation(true, false)
-        }
-    }
-}
-
-impl Default for GammaHandling {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            tolerance: 1e-10,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GammaContext {
-    pub is_gamma: bool,
-    pub deflate_zero_mode: bool,
-}
-
-impl GammaContext {
-    pub const fn new(is_gamma: bool) -> Self {
-        Self {
-            is_gamma,
-            deflate_zero_mode: is_gamma,
-        }
-    }
-
-    pub const fn with_deflation(is_gamma: bool, deflate_zero_mode: bool) -> Self {
-        Self {
-            is_gamma,
-            deflate_zero_mode: is_gamma && deflate_zero_mode,
-        }
-    }
-
-    pub const fn gamma_without_deflation() -> Self {
-        Self {
-            is_gamma: true,
-            deflate_zero_mode: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PreconditionerKind {
-    None,
-    #[serde(
-        alias = "fourier_diagonal",
-        alias = "real_space_jacobi",
-        alias = "homogeneous"
-    )]
-    HomogeneousJacobi,
-    #[serde(alias = "structured", alias = "epsilon_aware")]
-    StructuredDiagonal,
-}
-
-impl Default for PreconditionerKind {
-    fn default() -> Self {
-        PreconditionerKind::StructuredDiagonal
-    }
-}
-
+/// Information about the convergence state of the solver.
 #[derive(Debug, Clone)]
-pub struct EigenResult {
-    pub omegas: Vec<f64>,
-    pub iterations: usize,
-    pub gamma_deflated: bool,
-    pub modes: Vec<Field2D>,
-    pub diagnostics: EigenDiagnostics,
-    pub warm_start_hits: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct EigenDiagnostics {
-    pub freq_tolerance: f64,
-    pub duplicate_modes_skipped: usize,
-    pub negative_modes_skipped: usize,
+pub struct ConvergenceInfo {
+    /// Per-band convergence state.
+    pub band_states: Vec<BandState>,
+    /// Per-band relative residual norms: ||r_i||_B / |λ_i|.
+    pub relative_residuals: Vec<f64>,
+    /// Per-band relative eigenvalue changes: |λ_new - λ_old| / |λ_old|.
+    pub relative_eigenvalue_changes: Vec<f64>,
+    /// Number of converged bands.
+    pub n_converged: usize,
+    /// Maximum relative residual among active bands.
     pub max_residual: f64,
-    pub max_relative_residual: f64,
-    pub max_relative_scale: f64,
-    pub modes: Vec<ModeDiagnostics>,
-    pub iterations: Vec<IterationDiagnostics>,
-    pub residual_snapshots: Vec<ResidualSnapshot>,
-    pub deflation_vectors: usize,
-    pub deflation_disabled: bool,
+    /// Maximum relative eigenvalue change among active bands.
+    pub max_eigenvalue_change: f64,
+    /// Whether all requested bands have converged.
+    pub all_converged: bool,
 }
 
-impl EigenDiagnostics {
-    pub fn new(freq_tolerance: f64) -> Self {
+impl ConvergenceInfo {
+    /// Create a new convergence info with all bands active.
+    pub fn new(n_bands: usize) -> Self {
         Self {
-            freq_tolerance,
-            duplicate_modes_skipped: 0,
-            negative_modes_skipped: 0,
-            max_residual: 0.0,
-            max_relative_residual: 0.0,
-            max_relative_scale: 0.0,
-            modes: Vec::new(),
-            iterations: Vec::new(),
-            residual_snapshots: Vec::new(),
-            deflation_vectors: 0,
-            deflation_disabled: false,
+            band_states: vec![BandState::Active; n_bands],
+            relative_residuals: vec![f64::INFINITY; n_bands],
+            relative_eigenvalue_changes: vec![f64::INFINITY; n_bands],
+            n_converged: 0,
+            max_residual: f64::INFINITY,
+            max_eigenvalue_change: f64::INFINITY,
+            all_converged: false,
         }
     }
 
-    pub fn avg_residual(&self) -> f64 {
-        if self.modes.is_empty() {
-            return 0.0;
-        }
-        let sum: f64 = self.modes.iter().map(|m| m.residual_norm).sum();
-        sum / self.modes.len() as f64
-    }
-
-    pub fn avg_relative_residual(&self) -> f64 {
-        if self.modes.is_empty() {
-            return 0.0;
-        }
-        let sum: f64 = self.modes.iter().map(|m| m.relative_residual).sum();
-        sum / self.modes.len() as f64
-    }
-
-    pub fn max_mass_error(&self) -> f64 {
-        self.modes
-            .iter()
-            .map(|m| (m.mass_norm - 1.0).abs())
-            .fold(0.0, f64::max)
-    }
-}
-
-impl Default for EigenDiagnostics {
-    fn default() -> Self {
-        Self::new(0.0)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ModeDiagnostics {
-    pub omega: f64,
-    pub lambda: f64,
-    pub residual_norm: f64,
-    pub mass_norm: f64,
-    pub relative_residual: f64,
-}
-
-#[derive(Debug, Clone)]
-pub struct IterationDiagnostics {
-    pub iteration: usize,
-    pub max_residual: f64,
-    pub avg_residual: f64,
-    pub max_relative_residual: f64,
-    pub avg_relative_residual: f64,
-    pub max_relative_scale: f64,
-    pub avg_relative_scale: f64,
-    pub block_size: usize,
-    pub new_directions: usize,
-    pub preconditioner_trials: usize,
-    pub preconditioner_avg_before: f64,
-    pub preconditioner_avg_after: f64,
-    pub projection: ProjectionDiagnostics,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ProjectionDiagnostics {
-    pub original_dim: usize,
-    pub reduced_dim: usize,
-    pub requested_dim: usize,
-    pub history_dim: usize,
-    pub min_mass_eigenvalue: f64,
-    pub max_mass_eigenvalue: f64,
-    pub condition_estimate: f64,
-    pub fallback_used: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResidualSnapshot {
-    pub iteration: usize,
-    pub band_index: usize,
-    pub stage: ResidualSnapshotStage,
-    pub field: Field2D,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResidualSnapshotStage {
-    Raw,
-    Projected,
-    Preconditioned,
-}
-
-impl ResidualSnapshotStage {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            ResidualSnapshotStage::Raw => "raw",
-            ResidualSnapshotStage::Projected => "projected",
-            ResidualSnapshotStage::Preconditioned => "preconditioned",
-        }
-    }
-}
-
-impl std::fmt::Display for ResidualSnapshotStage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ResidualSnapshotRequest {
-    max_snapshots: usize,
-    capture_raw: bool,
-    capture_projected: bool,
-    capture_preconditioned: bool,
-}
-
-impl ResidualSnapshotRequest {
-    pub fn new(max_snapshots: usize) -> Self {
-        Self {
-            max_snapshots,
-            capture_raw: true,
-            capture_projected: true,
-            capture_preconditioned: true,
-        }
-    }
-
-    pub fn with_stages(
-        max_snapshots: usize,
-        capture_raw: bool,
-        capture_projected: bool,
-        capture_preconditioned: bool,
-    ) -> Self {
-        Self {
-            max_snapshots,
-            capture_raw,
-            capture_projected,
-            capture_preconditioned,
-        }
-    }
-
-    pub fn allows_stage(&self, stage: ResidualSnapshotStage) -> bool {
-        match stage {
-            ResidualSnapshotStage::Raw => self.capture_raw,
-            ResidualSnapshotStage::Projected => self.capture_projected,
-            ResidualSnapshotStage::Preconditioned => self.capture_preconditioned,
-        }
-    }
-
-    pub fn max_snapshots(&self) -> usize {
-        self.max_snapshots
-    }
-}
-
-struct ResidualSnapshotManager {
-    request: ResidualSnapshotRequest,
-    captured: usize,
-}
-
-impl ResidualSnapshotManager {
-    fn new(request: ResidualSnapshotRequest) -> Self {
-        Self {
-            request,
-            captured: 0,
-        }
-    }
-
-    fn can_capture(&self) -> bool {
-        self.request.max_snapshots > 0 && self.captured < self.request.max_snapshots
-    }
-
-    fn capture<O, B>(
+    /// Update convergence info based on relative eigenvalue changes.
+    ///
+    /// Convergence is determined by relative eigenvalue change: |λ_new - λ_old| / |λ_old| < tol.
+    /// This is more reliable than residual-based convergence for photonic band structure
+    /// calculations where eigenvalues stabilize faster than residuals.
+    ///
+    /// # Arguments
+    /// - `relative_residuals`: Per-band relative residual norms (for diagnostics)
+    /// - `relative_eigenvalue_changes`: Per-band relative eigenvalue changes
+    /// - `tol`: Convergence tolerance for relative eigenvalue change
+    pub fn update_with_eigenvalue_changes(
         &mut self,
-        operator: &O,
-        iteration: usize,
-        band_index: usize,
-        stage: ResidualSnapshotStage,
-        buffer: &B::Buffer,
-        store: &mut Vec<ResidualSnapshot>,
-    ) where
-        O: LinearOperator<B>,
-        B: SpectralBackend,
-    {
-        if !self.can_capture() || !self.request.allows_stage(stage) {
+        relative_residuals: &[f64],
+        relative_eigenvalue_changes: &[f64],
+        tol: f64,
+    ) {
+        self.n_converged = 0;
+        self.max_residual = 0.0;
+        self.max_eigenvalue_change = 0.0;
+
+        for (i, (&res, &ev_change)) in relative_residuals
+            .iter()
+            .zip(relative_eigenvalue_changes.iter())
+            .enumerate()
+        {
+            if i >= self.band_states.len() {
+                break;
+            }
+            self.relative_residuals[i] = res;
+            self.relative_eigenvalue_changes[i] = ev_change;
+
+            // Skip locked bands
+            if self.band_states[i] == BandState::Locked {
+                continue;
+            }
+
+            // Convergence based on eigenvalue change (not residual)
+            if ev_change < tol {
+                self.band_states[i] = BandState::Converged;
+                self.n_converged += 1;
+            } else {
+                self.band_states[i] = BandState::Active;
+                self.max_residual = self.max_residual.max(res);
+                self.max_eigenvalue_change = self.max_eigenvalue_change.max(ev_change);
+            }
+        }
+
+        // Count previously converged bands
+        self.n_converged = self
+            .band_states
+            .iter()
+            .filter(|&&s| s == BandState::Converged || s == BandState::Locked)
+            .count();
+
+        self.all_converged = self.n_converged >= self.band_states.len();
+    }
+
+    /// Update convergence info based on new residual norms (legacy method).
+    #[allow(dead_code)]
+    pub fn update(&mut self, relative_residuals: &[f64], tol: f64) {
+        self.n_converged = 0;
+        self.max_residual = 0.0;
+
+        for (i, &res) in relative_residuals.iter().enumerate() {
+            if i >= self.band_states.len() {
+                break;
+            }
+            self.relative_residuals[i] = res;
+
+            // Skip locked bands
+            if self.band_states[i] == BandState::Locked {
+                continue;
+            }
+
+            if res < tol {
+                self.band_states[i] = BandState::Converged;
+                self.n_converged += 1;
+            } else {
+                self.band_states[i] = BandState::Active;
+                self.max_residual = self.max_residual.max(res);
+            }
+        }
+
+        // Count previously converged bands
+        self.n_converged = self
+            .band_states
+            .iter()
+            .filter(|&&s| s == BandState::Converged || s == BandState::Locked)
+            .count();
+
+        self.all_converged = self.n_converged >= self.band_states.len();
+    }
+}
+
+/// Result of the eigensolver.
+#[derive(Debug, Clone)]
+pub struct EigensolverResult {
+    /// Computed eigenvalues (ω²).
+    pub eigenvalues: Vec<f64>,
+    /// Number of iterations performed.
+    pub iterations: usize,
+    /// Final convergence info.
+    pub convergence: ConvergenceInfo,
+    /// Whether the solver converged within max_iter.
+    pub converged: bool,
+}
+
+/// Extended result including convergence diagnostics for analysis.
+///
+/// This is returned by [`Eigensolver::solve_with_diagnostics`] and includes
+/// per-iteration data for plotting convergence curves.
+#[derive(Debug, Clone)]
+pub struct DiagnosticResult {
+    /// Standard eigensolver result.
+    pub result: EigensolverResult,
+    /// Full convergence run data for analysis.
+    pub diagnostics: ConvergenceRun,
+}
+
+// ============================================================================
+// The Eigensolver
+// ============================================================================
+
+/// The LOBPCG eigensolver.
+///
+/// This struct holds all the state needed for the iterative solve:
+/// - The operator providing A (curl-curl) and B (mass) operations
+/// - The preconditioner M^{-1} (optional but recommended)
+/// - The current block of eigenvector approximations X
+/// - The deflation subspace Y for locked eigenvectors
+/// - Configuration parameters
+///
+/// # Type Parameters
+/// - `O`: The linear operator type (must implement `LinearOperator<B>`)
+/// - `B`: The spectral backend type
+pub struct Eigensolver<'a, O, B>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    /// The operator (provides A and B).
+    operator: &'a mut O,
+    /// Solver configuration.
+    config: EigensolverConfig,
+    /// Locking configuration.
+    locking_config: LockingConfig,
+    /// Optional preconditioner M^{-1}.
+    preconditioner: Option<&'a mut dyn OperatorPreconditioner<B>>,
+    /// Optional warm-start vectors from previous k-point.
+    warm_start: Option<&'a [Field2D]>,
+    /// Current block of eigenvector approximations (active bands).
+    x_block: Vec<BlockEntry<B>>,
+    /// Previous search directions (W_k from iteration k-1).
+    /// Empty on first iteration.
+    w_block: Vec<B::Buffer>,
+    /// Deflation subspace Y (locked eigenvectors).
+    deflation: DeflationSubspace<B>,
+    /// Current eigenvalue estimates for active bands (Rayleigh quotients).
+    eigenvalues: Vec<f64>,
+    /// Previous iteration's eigenvalues (for eigenvalue-based convergence check).
+    previous_eigenvalues: Vec<f64>,
+    /// Current iteration count.
+    iteration: usize,
+    /// Whether the solver has been initialized.
+    initialized: bool,
+    /// Optional symmetry projector for constraining to an irrep.
+    /// When set, the solver projects all vectors onto the symmetry subspace
+    /// to avoid mode mixing between different irreps.
+    symmetry_projector: Option<SymmetryProjector>,
+}
+
+impl<'a, O, B> Eigensolver<'a, O, B>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    /// Create a new eigensolver instance.
+    ///
+    /// # Arguments
+    /// - `operator`: The linear operator providing A and B
+    /// - `config`: Solver configuration
+    /// - `preconditioner`: Optional preconditioner M^{-1}
+    /// - `warm_start`: Optional warm-start vectors from previous k-point
+    pub fn new(
+        operator: &'a mut O,
+        config: EigensolverConfig,
+        preconditioner: Option<&'a mut dyn OperatorPreconditioner<B>>,
+        warm_start: Option<&'a [Field2D]>,
+    ) -> Self {
+        // Locking uses the same tolerance as convergence (config.tol)
+        let locking_config = LockingConfig {
+            min_iterations: 5,
+            enabled: true,
+        };
+
+        Self {
+            operator,
+            config,
+            locking_config,
+            preconditioner,
+            warm_start,
+            x_block: Vec::new(),
+            w_block: Vec::new(),
+            deflation: DeflationSubspace::new(),
+            eigenvalues: Vec::new(),
+            previous_eigenvalues: Vec::new(),
+            iteration: 0,
+            initialized: false,
+            symmetry_projector: None,
+        }
+    }
+
+    /// Create a new eigensolver with custom locking configuration.
+    pub fn with_locking_config(mut self, locking_config: LockingConfig) -> Self {
+        self.locking_config = locking_config;
+        self
+    }
+
+    /// Disable locking (deflation of converged bands).
+    pub fn without_locking(mut self) -> Self {
+        self.locking_config.enabled = false;
+        self
+    }
+
+    /// Set the symmetry projector for this solver.
+    ///
+    /// When a symmetry projector is set, all vectors are projected onto the
+    /// symmetry subspace at key points in the LOBPCG iteration:
+    /// - Initial guess vectors
+    /// - Residuals after computation
+    /// - Preconditioned residuals
+    /// - Updated Ritz vectors and history directions
+    ///
+    /// This constrains the solver to work within a single irrep, avoiding
+    /// mode mixing between different symmetry classes (e.g., even/odd modes).
+    pub fn with_symmetry_projector(mut self, projector: SymmetryProjector) -> Self {
+        self.symmetry_projector = Some(projector);
+        self
+    }
+
+    /// Set the symmetry projector (optional version).
+    pub fn with_symmetry(mut self, projector: Option<SymmetryProjector>) -> Self {
+        self.symmetry_projector = projector;
+        self
+    }
+
+    /// Check if a symmetry projector is active.
+    pub fn has_symmetry_projector(&self) -> bool {
+        self.symmetry_projector.is_some()
+    }
+
+    /// Apply symmetry projection to a single buffer (if projector is set).
+    fn apply_symmetry<Buf: SpectralBuffer>(&self, buffer: &mut Buf) {
+        if let Some(ref proj) = self.symmetry_projector {
+            proj.apply(buffer);
+        }
+    }
+
+    /// Apply symmetry projection to a block of buffers (if projector is set).
+    fn apply_symmetry_block(&self, buffers: &mut [B::Buffer]) {
+        if let Some(ref proj) = self.symmetry_projector {
+            proj.apply_block(buffers);
+        }
+    }
+
+    /// Initialize the solver (create initial block X_0).
+    ///
+    /// This must be called before any iteration steps.
+    ///
+    /// # Γ-Point Deflation
+    ///
+    /// At k=0 (the Γ point), the constant field is always an eigenvector with
+    /// eigenvalue λ=0. This spurious mode is automatically added to the deflation
+    /// subspace to prevent convergence issues. This is NOT optional because:
+    ///
+    /// 1. The constant mode has exactly λ=0, which can cause division issues
+    /// 2. It's always degenerate with other modes in the null space
+    /// 3. Including it in the active block would waste computational effort
+    pub fn initialize(&mut self) {
+        if self.initialized {
             return;
         }
-        let grid = operator.grid();
-        let data = buffer.as_slice().to_vec();
-        store.push(ResidualSnapshot {
-            iteration,
-            band_index,
-            stage,
-            field: Field2D::from_vec(grid, data),
-        });
-        self.captured += 1;
-    }
-}
 
-pub struct DeflationWorkspace<B: SpectralBackend> {
-    entries: Vec<DeflationVector<B>>,
-}
+        // Step 1: Check if we're at the Γ-point and add constant mode to deflation
+        let bloch = self.operator.bloch();
+        if initialization::is_gamma_point(bloch, initialization::GAMMA_TOLERANCE) {
+            if ENABLE_GAMMA_DEFLATION {
+                // Create B-normalized constant mode y₀
+                let (mut y0, mut by0, _norm) = initialization::create_gamma_mode(self.operator);
 
-impl<B: SpectralBackend> DeflationWorkspace<B> {
-    pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
+                // CRITICAL: Apply symmetry projection to Gamma mode if using symmetry.
+                // The constant mode is naturally even-parity, but we must ensure it lives
+                // in the same irrep as the solver's target. For odd parity, the constant
+                // mode will be zeroed out (which is correct - it's not in that irrep).
+                if let Some(ref proj) = self.symmetry_projector {
+                    // Check if using odd parity at Γ and warn user
+                    let has_odd_parity = proj
+                        .reflections()
+                        .iter()
+                        .any(|r| r.parity == crate::symmetry::Parity::Odd);
+                    if has_odd_parity {
+                        info!(
+                            "[eigensolver] Γ-point with ODD parity: the constant mode (ω=0) is EVEN and will be excluded. \
+                            The lowest eigenvalue in the odd irrep will be significantly higher. \
+                            Use EVEN parity for ground-state band structures."
+                        );
+                    }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
+                    proj.apply(&mut y0);
+                    // Recompute B*y0 after projection
+                    self.operator.apply_mass(&y0, &mut by0);
 
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
+                    // Re-normalize after symmetry projection
+                    let backend = self.operator.backend();
+                    let norm = normalization::b_norm(backend, &y0, &by0);
+                    if norm > 1e-12 {
+                        let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
+                        backend.scale(scale, &mut y0);
+                        backend.scale(scale, &mut by0);
+                    } else {
+                        // Gamma mode is not in target irrep (e.g., odd parity)
+                        // This is expected - the constant mode is even, so it's projected
+                        // to zero in the odd parity subspace. We should NOT deflate it.
+                        debug!(
+                            "[eigensolver] Γ-point: constant mode projected to zero by symmetry (parity={:?}), not deflating",
+                            proj.reflections().first().map(|r| &r.parity)
+                        );
+                        // Skip adding to deflation - the mode doesn't exist in our irrep
+                    }
+                }
 
-    pub fn project(&self, backend: &B, vector: &mut B::Buffer, mass_vector: &mut B::Buffer) {
-        for entry in &self.entries {
-            let coeff = backend.dot(vector, &entry.mass_vector);
-            backend.axpy(-coeff, &entry.vector, vector);
-            backend.axpy(-coeff, &entry.mass_vector, mass_vector);
-        }
-    }
+                // Only add to deflation if the mode survives symmetry projection
+                let norm = {
+                    let backend = self.operator.backend();
+                    normalization::b_norm(backend, &y0, &by0)
+                };
 
-    pub fn push(&mut self, vector: B::Buffer, mass_vector: B::Buffer) {
-        self.entries.push(DeflationVector {
-            vector,
-            mass_vector,
-        });
-    }
-}
+                if norm > 1e-12 {
+                    // Add to deflation subspace with eigenvalue 0 and band index 0
+                    // Band index 0 is used as a special marker for the Γ constant mode
+                    let backend = self.operator.backend();
+                    let added = self.deflation.add_vector(
+                        backend,
+                        &y0,
+                        &by0,
+                        0.0,        // eigenvalue λ = 0
+                        usize::MAX, // special band index for Γ mode (not a real band)
+                    );
 
-struct DeflationVector<B: SpectralBackend> {
-    vector: B::Buffer,
-    mass_vector: B::Buffer,
-}
-
-pub fn build_deflation_workspace<'a, O, B>(
-    operator: &mut O,
-    fields: impl IntoIterator<Item = &'a Field2D>,
-) -> DeflationWorkspace<B>
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut workspace = DeflationWorkspace::new();
-    for field in fields {
-        let mut vector = operator.alloc_field();
-        vector.as_mut_slice().copy_from_slice(field.as_slice());
-        let mut mass_vector = operator.alloc_field();
-        operator.apply_mass(&vector, &mut mass_vector);
-        let norm =
-            normalize_with_mass_precomputed(operator.backend(), &mut vector, &mut mass_vector);
-        if norm == 0.0 {
-            continue;
-        }
-        workspace.push(vector, mass_vector);
-    }
-    workspace
-}
-
-pub fn solve_lowest_eigenpairs<O, B>(
-    operator: &mut O,
-    opts: &EigenOptions,
-    mut preconditioner: Option<&mut dyn OperatorPreconditioner<B>>,
-    gamma: GammaContext,
-    warm_start: Option<&[Field2D]>,
-    deflation: Option<&DeflationWorkspace<B>>,
-    symmetry_override: Option<&SymmetryProjector>,
-    residual_request: Option<ResidualSnapshotRequest>,
-) -> EigenResult
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    #[cfg(debug_assertions)]
-    let _rayleigh_ritz_log_scope = RayleighRitzLogScope::new();
-
-    let target_bands = opts.n_bands.max(1);
-    let block_size = if opts.max_iter == 0 {
-        warm_start
-            .map(|seeds| seeds.len().max(target_bands))
-            .unwrap_or_else(|| opts.effective_block_size())
-    } else {
-        opts.effective_block_size()
-    };
-    let gamma_mode = if gamma.is_gamma {
-        let mode = build_gamma_mode(operator);
-        #[cfg(debug_assertions)]
-        {
-            eprintln!(
-                "[gamma-debug] gamma_mode_present={} deflate={}",
-                mode.is_some(),
-                gamma.deflate_zero_mode
-            );
-        }
-        mode
-    } else {
-        None
-    };
-    let gamma_deflated = gamma_mode.is_some() && gamma.deflate_zero_mode;
-    let gamma_constraint = if gamma_deflated {
-        gamma_mode.as_ref()
-    } else {
-        None
-    };
-    let deflation_vectors = deflation.map_or(0, |space| space.len());
-    let deflation_active = if opts.debug.disable_deflation {
-        None
-    } else {
-        deflation
-    };
-    let fallback_symmetry = if symmetry_override.is_none() {
-        SymmetryProjector::from_options(&opts.symmetry)
-    } else {
-        None
-    };
-    let symmetry_projector = symmetry_override.or(fallback_symmetry.as_ref());
-    let mut residual_snapshots = Vec::new();
-    let mut snapshot_manager = residual_request.map(ResidualSnapshotManager::new);
-
-    let (mut x_entries, warm_start_hits) = initialize_block(
-        operator,
-        block_size,
-        gamma_constraint,
-        deflation_active,
-        symmetry_projector,
-        warm_start,
-    );
-    #[cfg(test)]
-    eprintln!(
-        "[eigensolver-debug] initial block size={} requested={}",
-        x_entries.len(),
-        block_size
-    );
-    #[cfg(test)]
-    if operator.grid().len() <= 4 {
-        for (idx, entry) in x_entries.iter().enumerate() {
-            eprintln!(
-                "[eigensolver-debug] init vec {} = {:?}",
-                idx,
-                entry.vector.as_slice()
-            );
-        }
-    }
-    if x_entries.is_empty() {
-        return EigenResult {
-            omegas: Vec::new(),
-            iterations: 0,
-            gamma_deflated,
-            modes: Vec::new(),
-            diagnostics: EigenDiagnostics::default(),
-            warm_start_hits,
-        };
-    }
-
-    if let (Some(mode), false) = (gamma_mode.as_ref(), gamma_deflated) {
-        inject_gamma_seed(operator, &mut x_entries, None, mode, block_size);
-    }
-
-    if opts.max_iter == 0 && warm_start.is_some() {
-        let subspace = build_subspace_entries(&x_entries, &[], &[]);
-        let (eigenvalues, new_entries) =
-            solve_raw_projected_system(operator, &subspace, block_size, opts.tol.max(MIN_RR_TOL));
-        let (omegas, modes, mut diagnostics) = finalize_modes(
-            operator,
-            &new_entries,
-            &eigenvalues,
-            target_bands,
-            opts.tol,
-            gamma_deflated,
-        );
-        diagnostics.deflation_vectors = deflation_vectors;
-        diagnostics.deflation_disabled = deflation.is_some() && deflation_active.is_none();
-        return EigenResult {
-            omegas,
-            iterations: 0,
-            gamma_deflated,
-            modes,
-            diagnostics,
-            warm_start_hits,
-        };
-    }
-
-    let mut eigenvalues;
-    {
-        let subspace = build_subspace_entries(&x_entries, &[], &[]);
-        let (vals, new_entries, _) = rayleigh_ritz(
-            operator,
-            &subspace,
-            x_entries.len(),
-            0,
-            opts.tol.max(MIN_RR_TOL),
-        );
-        eigenvalues = vals;
-        x_entries = new_entries;
-    }
-
-    let mut w_entries: Vec<BlockEntry<B>> = Vec::new();
-    let mut iterations = 0usize;
-    let mut iteration_stats: Vec<IterationDiagnostics> = Vec::new();
-
-    loop {
-        if let (Some(mode), false) = (gamma_mode.as_ref(), gamma_deflated) {
-            if !x_entries.is_empty() {
-                inject_gamma_seed(
-                    operator,
-                    &mut x_entries,
-                    Some(&mut eigenvalues),
-                    mode,
-                    block_size,
+                    if added {
+                        debug!(
+                            "[eigensolver] Γ-point detected (k = [{:.6e}, {:.6e}]): added constant mode to deflation",
+                            bloch[0], bloch[1]
+                        );
+                    } else {
+                        warn!(
+                            "[eigensolver] Γ-point: failed to add constant mode to deflation (linear dependence?)"
+                        );
+                    }
+                }
+            } else {
+                // This branch only triggers if ENABLE_GAMMA_DEFLATION is manually set to false.
+                // In that case, warn the user that Γ handling is disabled.
+                info!("[eigensolver] Γ-point detected but constant-mode deflation is DISABLED.");
+                info!(
+                    "[eigensolver] Re-enable ENABLE_GAMMA_DEFLATION for correct Γ-point handling."
                 );
             }
         }
-        let history_factor = opts.debug.history_factor();
-        let history_enabled = history_factor > 0 && !x_entries.is_empty();
-        if history_enabled {
-            let history_limit = history_factor
-                .saturating_mul(x_entries.len())
-                .max(history_factor);
-            while w_entries.len() > history_limit {
-                w_entries.pop();
-            }
-        } else if !w_entries.is_empty() {
-            w_entries.clear();
-        }
 
-        let (residual_stats, mut p_entries) = compute_preconditioned_residuals(
-            operator,
-            &eigenvalues,
-            &x_entries,
-            if history_enabled {
-                w_entries.as_slice()
-            } else {
-                &[] as &[BlockEntry<B>]
-            },
-            gamma_constraint,
-            deflation_active,
-            symmetry_projector,
-            &mut preconditioner,
-            opts.tol,
-            iterations,
-            snapshot_manager.as_mut(),
-            &mut residual_snapshots,
-        );
-        iteration_stats.push(IterationDiagnostics {
-            iteration: iterations,
-            max_residual: residual_stats.max_residual,
-            avg_residual: residual_stats.avg_residual,
-            max_relative_residual: residual_stats.max_relative_residual,
-            avg_relative_residual: residual_stats.avg_relative_residual,
-            max_relative_scale: residual_stats.max_relative_scale,
-            avg_relative_scale: residual_stats.avg_relative_scale,
-            block_size: x_entries.len(),
-            new_directions: residual_stats.accepted,
-            preconditioner_trials: residual_stats.preconditioner_trials,
-            preconditioner_avg_before: residual_stats.preconditioner_avg_before,
-            preconditioner_avg_after: residual_stats.preconditioner_avg_after,
-            projection: ProjectionDiagnostics::default(),
-        });
-        if residual_stats.max_relative_residual <= opts.tol
-            || p_entries.is_empty()
-            || iterations >= opts.max_iter
-        {
-            break;
-        }
-
-        reorthogonalize_block(operator, &mut p_entries, &x_entries);
-        if history_enabled && !w_entries.is_empty() {
-            let history_slice = w_entries.as_slice();
-            reorthogonalize_block(operator, &mut p_entries, history_slice);
-        }
-        if history_enabled {
-            reorthogonalize_block(operator, &mut w_entries, &x_entries);
-        }
-
-        let w_slice: &[BlockEntry<B>] = if history_enabled {
-            w_entries.as_slice()
-        } else {
-            &[]
+        // Step 2: Create initial block X_0
+        let block_size = self.config.effective_block_size();
+        let init_config = InitializationConfig {
+            block_size,
+            max_random_attempts: block_size * 8,
+            zero_tolerance: 1e-12,
         };
-        let subspace = build_subspace_entries(&x_entries, &p_entries, w_slice);
-        let history_dim = w_slice.len();
-        let (vals, new_entries, projection_diag) = rayleigh_ritz(
-            operator,
-            &subspace,
-            x_entries.len(),
-            history_dim,
-            opts.tol.max(MIN_RR_TOL),
-        );
-        if let Some(latest) = iteration_stats.last_mut() {
-            latest.projection = projection_diag;
-        }
-        eigenvalues = vals;
-        x_entries = new_entries;
-        if history_enabled {
-            w_entries = p_entries;
-        }
-        iterations += 1;
-    }
 
-    let (omegas, modes, mut diagnostics) = finalize_modes(
-        operator,
-        &x_entries,
-        &eigenvalues,
-        target_bands,
-        opts.tol,
-        gamma_deflated,
-    );
-    diagnostics.iterations = iteration_stats;
-    diagnostics.residual_snapshots = residual_snapshots;
-    diagnostics.deflation_vectors = deflation_vectors;
-    diagnostics.deflation_disabled = opts.debug.disable_deflation;
-    if let Some(iter_max) = diagnostics
-        .iterations
-        .iter()
-        .map(|info| info.max_residual)
-        .reduce(f64::max)
-    {
-        diagnostics.max_residual = diagnostics.max_residual.max(iter_max);
-    }
-    if let Some(scale_max) = diagnostics
-        .iterations
-        .iter()
-        .map(|info| info.max_relative_scale)
-        .reduce(f64::max)
-    {
-        diagnostics.max_relative_scale = diagnostics.max_relative_scale.max(scale_max);
-    }
-    EigenResult {
-        omegas,
-        iterations,
-        gamma_deflated,
-        modes,
-        diagnostics,
-        warm_start_hits,
-    }
-}
+        let (mut x_block, _init_result) =
+            initialization::initialize_block(self.operator, &init_config, self.warm_start);
 
-pub struct PowerIterationOptions {
-    pub max_iter: usize,
-    pub tol: f64,
-}
+        // Step 3: Project initial block against Γ mode (if present)
+        // We must handle the projection and re-application carefully to avoid borrow conflicts
+        if !self.deflation.is_empty() {
+            // First pass: project and normalize using immutable backend
+            {
+                let backend = self.operator.backend();
+                for entry in &mut x_block {
+                    self.deflation
+                        .project_single(backend, &mut entry.vector, &mut entry.mass);
 
-impl Default for PowerIterationOptions {
-    fn default() -> Self {
-        Self {
-            max_iter: 128,
-            tol: 1e-9,
-        }
-    }
-}
-
-pub fn power_iteration<O, B>(
-    operator: &mut O,
-    vector: &mut B::Buffer,
-    opts: &PowerIterationOptions,
-) -> f64
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut eig = 0.0;
-    let mut applied = operator.alloc_field();
-    let mut mass_vec = operator.alloc_field();
-    normalize_with_mass(operator, vector, &mut mass_vec);
-    let mut mass_applied = operator.alloc_field();
-    for _ in 0..opts.max_iter {
-        operator.apply(vector, &mut applied);
-        operator.apply_mass(&applied, &mut mass_applied);
-        let numerator = operator.backend().dot(vector, &mass_applied).re;
-        let denom = operator
-            .backend()
-            .dot(vector, &mass_vec)
-            .re
-            .max(f64::EPSILON);
-        let new_eig = numerator / denom;
-        normalize_with_mass_precomputed(operator.backend(), &mut applied, &mut mass_applied);
-        vector.as_mut_slice().copy_from_slice(applied.as_slice());
-        mass_vec
-            .as_mut_slice()
-            .copy_from_slice(mass_applied.as_slice());
-        if (new_eig - eig).abs() < opts.tol {
-            eig = new_eig;
-            break;
-        }
-        eig = new_eig;
-    }
-    eig
-}
-
-fn normalize_with_mass<O, B>(
-    operator: &mut O,
-    vector: &mut B::Buffer,
-    mass_vec: &mut B::Buffer,
-) -> f64
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    operator.apply_mass(vector, mass_vec);
-    normalize_with_mass_precomputed(operator.backend(), vector, mass_vec)
-}
-
-fn normalize_with_mass_precomputed<B: SpectralBackend>(
-    backend: &B,
-    vector: &mut B::Buffer,
-    mass_vec: &mut B::Buffer,
-) -> f64 {
-    let norm_sq = backend.dot(vector, mass_vec).re.max(0.0);
-    let norm = norm_sq.sqrt();
-    if norm > 0.0 {
-        let scale = Complex64::new(1.0 / norm, 0.0);
-        backend.scale(scale, vector);
-        backend.scale(scale, mass_vec);
-    }
-    norm
-}
-
-fn mass_norm<B: SpectralBackend>(backend: &B, vector: &B::Buffer, mass_vec: &B::Buffer) -> f64 {
-    backend.dot(vector, mass_vec).re.max(0.0).sqrt()
-}
-
-fn reorthogonalize_with_mass<B: SpectralBackend>(
-    backend: &B,
-    target: &mut B::Buffer,
-    basis: &B::Buffer,
-    mass_basis: &B::Buffer,
-) {
-    let coeff = backend.dot(target, mass_basis);
-    backend.axpy(-coeff, basis, target);
-}
-
-struct GammaMode<B: SpectralBackend> {
-    vector: B::Buffer,
-    mass_vector: B::Buffer,
-}
-
-struct BlockEntry<B: SpectralBackend> {
-    vector: B::Buffer,
-    mass: B::Buffer,
-    applied: B::Buffer,
-}
-
-struct SubspaceEntry<'a, B: SpectralBackend> {
-    vector: &'a B::Buffer,
-    mass: &'a B::Buffer,
-    applied: &'a B::Buffer,
-}
-
-struct ResidualComputation {
-    max_residual: f64,
-    avg_residual: f64,
-    max_relative_residual: f64,
-    avg_relative_residual: f64,
-    max_relative_scale: f64,
-    avg_relative_scale: f64,
-    accepted: usize,
-    preconditioner_trials: usize,
-    preconditioner_avg_before: f64,
-    preconditioner_avg_after: f64,
-}
-
-fn residual_relative_scale<B: SpectralBackend>(
-    backend: &B,
-    entry: &BlockEntry<B>,
-    lambda: f64,
-) -> f64 {
-    let vector_norm = mass_norm(backend, &entry.vector, &entry.mass);
-    let rayleigh_scale = lambda.abs() * vector_norm.max(1e-12);
-    let op_norm = backend
-        .dot(&entry.applied, &entry.applied)
-        .re
-        .max(0.0)
-        .sqrt();
-    let combined = rayleigh_scale.max(op_norm);
-    if combined > 0.0 {
-        combined
-    } else {
-        vector_norm
-    }
-}
-
-fn compute_relative_residual_with_scale<B: SpectralBackend>(
-    backend: &B,
-    entry: &BlockEntry<B>,
-    lambda: f64,
-    residual_norm: f64,
-) -> (f64, f64) {
-    let scale = residual_relative_scale(backend, entry, lambda);
-    let relative = if scale > 0.0 {
-        residual_norm / scale
-    } else {
-        residual_norm
-    };
-    (relative, scale)
-}
-
-fn compute_relative_residual<B: SpectralBackend>(
-    backend: &B,
-    entry: &BlockEntry<B>,
-    lambda: f64,
-    residual_norm: f64,
-) -> f64 {
-    compute_relative_residual_with_scale(backend, entry, lambda, residual_norm).0
-}
-
-fn build_gamma_mode<O, B>(operator: &mut O) -> Option<GammaMode<B>>
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut vector = operator.alloc_field();
-    for value in vector.as_mut_slice().iter_mut() {
-        *value = Complex64::new(1.0, 0.0);
-    }
-    let mut mass_vector = operator.alloc_field();
-    operator.apply_mass(&vector, &mut mass_vector);
-    let norm = normalize_with_mass_precomputed(operator.backend(), &mut vector, &mut mass_vector);
-    if norm == 0.0 {
-        return None;
-    }
-    Some(GammaMode {
-        vector,
-        mass_vector,
-    })
-}
-
-fn seed_block_vector(data: &mut [Complex64], phase: f64) {
-    let mut state = phase.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    if state == 0 {
-        state = 0xDEAD_BEEF_CAFE_BABE;
-    }
-    for value in data.iter_mut() {
-        state = state ^ (state << 13);
-        state = state ^ (state >> 7);
-        state = state ^ (state << 17);
-        let real = ((state >> 12) as f64) / ((1u64 << 52) as f64) * 2.0 - 1.0;
-        *value = Complex64::new(real, 0.0);
-    }
-}
-
-fn zero_buffer(data: &mut [Complex64]) {
-    for value in data.iter_mut() {
-        *value = Complex64::default();
-    }
-}
-
-fn jacobi_eigendecomposition(mut matrix: Vec<f64>, n: usize, tol: f64) -> (Vec<f64>, Vec<f64>) {
-    if n == 1 {
-        return (vec![matrix[0]], vec![1.0]);
-    }
-    let max_sweeps = n * n * 8;
-    let mut eigenvectors = vec![0.0; n * n];
-    for i in 0..n {
-        eigenvectors[i * n + i] = 1.0;
-    }
-    for _ in 0..max_sweeps {
-        let mut max_off = 0.0;
-        let mut p = 0;
-        let mut q = 1;
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let val = matrix[i * n + j].abs();
-                if val > max_off {
-                    max_off = val;
-                    p = i;
-                    q = j;
+                    // Re-normalize after projection
+                    let norm = normalization::b_norm(backend, &entry.vector, &entry.mass);
+                    if norm > 1e-12 {
+                        let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
+                        backend.scale(scale, &mut entry.vector);
+                        backend.scale(scale, &mut entry.mass);
+                    }
                 }
             }
-        }
-        if max_off < tol {
-            break;
-        }
-        let idx = |r: usize, c: usize| r * n + c;
-        let app = matrix[idx(p, p)];
-        let aqq = matrix[idx(q, q)];
-        let apq = matrix[idx(p, q)];
-        if apq.abs() < tol {
-            continue;
-        }
-        let tau = (aqq - app) / (2.0 * apq);
-        let t = if tau >= 0.0 {
-            1.0 / (tau + (1.0 + tau * tau).sqrt())
-        } else {
-            -1.0 / (-tau + (1.0 + tau * tau).sqrt())
-        };
-        let c = 1.0 / (1.0 + t * t).sqrt();
-        let s = t * c;
-
-        for i in 0..n {
-            if i == p || i == q {
-                continue;
-            }
-            let aip = matrix[idx(i, p)];
-            let aiq = matrix[idx(i, q)];
-            matrix[idx(i, p)] = c * aip - s * aiq;
-            matrix[idx(p, i)] = matrix[idx(i, p)];
-            matrix[idx(i, q)] = c * aiq + s * aip;
-            matrix[idx(q, i)] = matrix[idx(i, q)];
-        }
-
-        let new_app = c * c * app - 2.0 * c * s * apq + s * s * aqq;
-        let new_aqq = s * s * app + 2.0 * c * s * apq + c * c * aqq;
-        matrix[idx(p, p)] = new_app;
-        matrix[idx(q, q)] = new_aqq;
-        matrix[idx(p, q)] = 0.0;
-        matrix[idx(q, p)] = 0.0;
-
-        for i in 0..n {
-            let vip = eigenvectors[i * n + p];
-            let viq = eigenvectors[i * n + q];
-            eigenvectors[i * n + p] = c * vip - s * viq;
-            eigenvectors[i * n + q] = s * vip + c * viq;
-        }
-    }
-    let eigenvalues = (0..n).map(|i| matrix[i * n + i]).collect();
-    (eigenvalues, eigenvectors)
-}
-
-fn enforce_constraints<O, B>(
-    operator: &mut O,
-    vector: &mut B::Buffer,
-    mass_vector: &mut B::Buffer,
-    gamma_mode: Option<&GammaMode<B>>,
-    deflation: Option<&DeflationWorkspace<B>>,
-    symmetry: Option<&SymmetryProjector>,
-) where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    if let Some(sym) = symmetry {
-        sym.apply(vector);
-        operator.apply_mass(vector, mass_vector);
-    }
-    if let Some(mode) = gamma_mode {
-        let mut passes = 0;
-        loop {
-            reorthogonalize_with_mass(operator.backend(), vector, &mode.vector, &mode.mass_vector);
-            operator.apply_mass(vector, mass_vector);
-            let overlap = operator.backend().dot(vector, &mode.mass_vector).norm();
-            passes += 1;
-            if overlap <= 1e-12 || passes >= 3 {
-                break;
+            // Second pass: re-apply operator (requires mutable borrow)
+            for entry in &mut x_block {
+                self.operator.apply(&entry.vector, &mut entry.applied);
             }
         }
-    }
-    if let Some(space) = deflation {
-        space.project(operator.backend(), vector, mass_vector);
-    }
-}
 
-fn initialize_block<O, B>(
-    operator: &mut O,
-    count: usize,
-    gamma_mode: Option<&GammaMode<B>>,
-    deflation: Option<&DeflationWorkspace<B>>,
-    symmetry: Option<&SymmetryProjector>,
-    warm_start: Option<&[Field2D]>,
-) -> (Vec<BlockEntry<B>>, usize)
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut entries = Vec::with_capacity(count);
-    let mut warm_hits = 0usize;
-    if let Some(seeds) = warm_start {
-        for field in seeds.iter().take(count) {
-            if let Some(entry) =
-                build_entry_from_field(operator, field, gamma_mode, deflation, symmetry, &entries)
+        // Step 4: Apply symmetry projection to initial block (if projector is set)
+        // This constrains the initial guess to the target irrep
+        if self.symmetry_projector.is_some() {
+            for entry in &mut x_block {
+                self.apply_symmetry(&mut entry.vector);
+            }
+            // Re-apply B operator and A operator after symmetry projection
+            for entry in &mut x_block {
+                self.operator.apply_mass(&entry.vector, &mut entry.mass);
+                self.operator.apply(&entry.vector, &mut entry.applied);
+            }
+            // Re-normalize after symmetry projection
             {
-                entries.push(entry);
-                warm_hits += 1;
+                let backend = self.operator.backend();
+                for entry in &mut x_block {
+                    let norm = normalization::b_norm(backend, &entry.vector, &entry.mass);
+                    if norm > 1e-12 {
+                        let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
+                        backend.scale(scale, &mut entry.vector);
+                        backend.scale(scale, &mut entry.mass);
+                        backend.scale(scale, &mut entry.applied);
+                    }
+                }
             }
-            if entries.len() == count {
-                break;
-            }
+            debug!(
+                "[eigensolver] Applied symmetry projection to {} initial vectors",
+                x_block.len()
+            );
         }
-    }
-    let mut attempts = 0usize;
-    let max_attempts = count.max(1) * 8;
-    let mut phase = 1.0;
-    while entries.len() < count && attempts < max_attempts {
-        let mut vector = operator.alloc_field();
-        seed_block_vector(vector.as_mut_slice(), phase);
-        phase += 1.0;
-        match build_entry_from_buffer(operator, vector, gamma_mode, deflation, symmetry, &entries) {
-            Some(entry) => entries.push(entry),
-            None => {
-                attempts += 1;
-            }
-        }
-    }
-    (entries, warm_hits)
-}
 
-fn inject_gamma_seed<O, B>(
-    operator: &mut O,
-    entries: &mut Vec<BlockEntry<B>>,
-    eigenvalues: Option<&mut Vec<f64>>,
-    gamma_mode: &GammaMode<B>,
-    block_limit: usize,
-) where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    if block_limit == 0 {
-        return;
+        self.x_block = x_block;
+        self.initialized = true;
+
+        // Compute initial Rayleigh quotients as eigenvalue estimates
+        self.eigenvalues = self
+            .x_block
+            .iter()
+            .map(|entry| entry.rayleigh_quotient(self.operator.backend()))
+            .collect();
     }
-    let mut applied = operator.alloc_field();
-    operator.apply(&gamma_mode.vector, &mut applied);
-    let gamma_entry = BlockEntry {
-        vector: gamma_mode.vector.clone(),
-        mass: gamma_mode.mass_vector.clone(),
-        applied,
-    };
-    let mut rest = std::mem::take(entries);
-    reorthogonalize_block(operator, &mut rest, std::slice::from_ref(&gamma_entry));
-    let mut combined = vec![gamma_entry];
-    combined.append(&mut rest);
-    if combined.len() > block_limit {
-        combined.truncate(block_limit);
+
+    /// Check if the solver has been initialized.
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
     }
-    *entries = combined;
-    if let Some(values) = eigenvalues {
-        if entries.is_empty() {
-            values.clear();
+
+    /// Get the current iteration count.
+    pub fn iteration(&self) -> usize {
+        self.iteration
+    }
+
+    /// Get the current eigenvalue estimates.
+    pub fn eigenvalues(&self) -> &[f64] {
+        &self.eigenvalues
+    }
+
+    /// Get the grid from the operator.
+    pub fn grid(&self) -> Grid2D {
+        self.operator.grid()
+    }
+
+    /// Get the current block size.
+    pub fn block_size(&self) -> usize {
+        self.x_block.len()
+    }
+
+    /// Get the number of locked (deflated) bands.
+    pub fn locked_count(&self) -> usize {
+        self.deflation.len()
+    }
+
+    /// Get the total number of bands (locked + active).
+    pub fn total_bands(&self) -> usize {
+        self.deflation.len() + self.x_block.len()
+    }
+
+    /// Get a reference to the deflation subspace.
+    pub fn deflation(&self) -> &DeflationSubspace<B> {
+        &self.deflation
+    }
+
+    /// Get a reference to the operator.
+    pub fn operator(&self) -> &O {
+        self.operator
+    }
+
+    /// Get a mutable reference to the operator.
+    pub fn operator_mut(&mut self) -> &mut O {
+        self.operator
+    }
+
+    /// Check if a preconditioner is available.
+    pub fn has_preconditioner(&self) -> bool {
+        self.preconditioner.is_some()
+    }
+
+
+
+    /// Check if the preconditioner commutes with symmetry projection.
+    ///
+    /// For optimal LOBPCG convergence with symmetry, the preconditioner M⁻¹
+    /// should commute with the symmetry projector P_sym:
+    ///
+    /// ```text
+    /// P_sym M⁻¹ v ≈ M⁻¹ P_sym v
+    /// ```
+    ///
+    /// If they don't commute, the preconditioner will inject components outside
+    /// the target irrep, which must be projected out. This can slow convergence.
+    ///
+    /// This check is performed once at the start of solve() using a random
+    /// test vector from the current X block.
+    fn check_preconditioner_symmetry_commutation(&mut self) {
+        // Only check if both symmetry and preconditioner are active
+        let projector = match &self.symmetry_projector {
+            Some(p) => p,
+            None => return,
+        };
+
+        if self.preconditioner.is_none() {
             return;
         }
-        values.insert(0, 0.0);
-        if values.len() > entries.len() {
-            values.truncate(entries.len());
-        } else if values.len() < entries.len() {
-            values.resize(entries.len(), 0.0);
+
+        if self.x_block.is_empty() {
+            return;
+        }
+
+        // Use first X vector as test vector (it's already in the symmetry subspace)
+        let test_vec = &self.x_block[0].vector;
+        let backend = self.operator.backend();
+
+        // Compute: v1 = P_sym(M⁻¹(v))
+        let mut v1 = test_vec.clone();
+        if let Some(ref mut precond) = self.preconditioner {
+            precond.apply(backend, &mut v1);
+        }
+        let v1_before_sym = v1.clone();
+        projector.apply(&mut v1);
+
+        // Compute: v2 = M⁻¹(P_sym(v))
+        // Since test_vec is already symmetry-projected, P_sym(v) = v
+        let mut v2 = test_vec.clone();
+        if let Some(ref mut precond) = self.preconditioner {
+            precond.apply(backend, &mut v2);
+        }
+
+        // Compute relative difference: ||v1 - v2|| / ||v2||
+        // But actually, we want to measure how much the preconditioner
+        // breaks symmetry: ||P_sym(M⁻¹ v) - M⁻¹ v|| / ||M⁻¹ v||
+        // This measures the "leakage" outside the symmetry subspace.
+
+        // Compute ||M⁻¹ v||
+        let norm_precond = backend.dot(&v1_before_sym, &v1_before_sym).re.sqrt();
+
+        // Compute ||P_sym(M⁻¹ v) - M⁻¹ v|| = ||v1 - v1_before_sym||
+        let mut diff = v1_before_sym.clone();
+        backend.axpy(num_complex::Complex64::new(-1.0, 0.0), &v1, &mut diff);
+        let norm_diff = backend.dot(&diff, &diff).re.sqrt();
+
+        let relative_leakage = if norm_precond > 1e-15 {
+            norm_diff / norm_precond
+        } else {
+            0.0
+        };
+
+        // Threshold for warning
+        const COMMUTATION_WARN_THRESHOLD: f64 = 1e-6;
+        const COMMUTATION_ERROR_THRESHOLD: f64 = 1e-2;
+
+        if relative_leakage > COMMUTATION_ERROR_THRESHOLD {
+            warn!(
+                "[symmetry] Preconditioner does NOT commute with symmetry! \
+                Relative leakage = {:.2e} (>{:.0e}). \
+                This will significantly slow convergence. \
+                Consider using a symmetry-compatible preconditioner.",
+                relative_leakage, COMMUTATION_ERROR_THRESHOLD
+            );
+        } else if relative_leakage > COMMUTATION_WARN_THRESHOLD {
+            warn!(
+                "[symmetry] Preconditioner has weak symmetry commutation. \
+                Relative leakage = {:.2e}. \
+                This may slow convergence slightly.",
+                relative_leakage
+            );
+        } else {
+            debug!(
+                "[symmetry] Preconditioner commutes with symmetry (leakage = {:.2e})",
+                relative_leakage
+            );
         }
     }
-}
 
-fn build_entry_from_field<O, B>(
-    operator: &mut O,
-    field: &Field2D,
-    gamma_mode: Option<&GammaMode<B>>,
-    deflation: Option<&DeflationWorkspace<B>>,
-    symmetry: Option<&SymmetryProjector>,
-    basis: &[BlockEntry<B>],
-) -> Option<BlockEntry<B>>
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut vector = operator.alloc_field();
-    vector.as_mut_slice().copy_from_slice(field.as_slice());
-    build_entry_from_buffer(operator, vector, gamma_mode, deflation, symmetry, basis)
-}
+    // ========================================================================
+    // Residual Computation
+    // ========================================================================
 
-fn build_entry_from_buffer<O, B>(
-    operator: &mut O,
-    mut vector: B::Buffer,
-    gamma_mode: Option<&GammaMode<B>>,
-    deflation: Option<&DeflationWorkspace<B>>,
-    symmetry: Option<&SymmetryProjector>,
-    basis: &[BlockEntry<B>],
-) -> Option<BlockEntry<B>>
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut mass = operator.alloc_field();
-    operator.apply_mass(&vector, &mut mass);
-    enforce_constraints(
-        operator,
-        &mut vector,
-        &mut mass,
-        gamma_mode,
-        deflation,
-        symmetry,
-    );
-    project_against_entries(operator.backend(), &mut vector, &mut mass, basis);
-    let norm = mass_norm(operator.backend(), &vector, &mass);
-    if norm <= 1e-12 {
-        return None;
-    }
-    let scale = Complex64::new(1.0 / norm, 0.0);
-    operator.backend().scale(scale, &mut vector);
-    operator.backend().scale(scale, &mut mass);
-    let mut applied = operator.alloc_field();
-    operator.apply(&vector, &mut applied);
-    Some(BlockEntry {
-        vector,
-        mass,
-        applied,
-    })
-}
+    /// Compute the residual block: R_k = A*X_k - B*X_k * Λ_k
+    ///
+    /// For each band i:
+    ///   r_i = A*x_i - λ_i * B*x_i
+    ///
+    /// where λ_i is the current Rayleigh quotient estimate.
+    ///
+    /// Returns only the residual vectors (norms computed separately after deflation).
+    fn compute_residuals(&self) -> Vec<B::Buffer> {
+        let backend = self.operator.backend();
+        let n = self.x_block.len();
 
-fn project_against_entries<B: SpectralBackend>(
-    backend: &B,
-    vector: &mut B::Buffer,
-    mass: &mut B::Buffer,
-    basis: &[BlockEntry<B>],
-) {
-    for entry in basis {
-        let coeff = backend.dot(vector, &entry.mass);
-        backend.axpy(-coeff, &entry.vector, vector);
-        backend.axpy(-coeff, &entry.mass, mass);
-    }
-}
+        let mut residuals: Vec<B::Buffer> = Vec::with_capacity(n);
 
-fn build_subspace_entries<'a, B: SpectralBackend>(
-    primary: &'a [BlockEntry<B>],
-    p: &'a [BlockEntry<B>],
-    w: &'a [BlockEntry<B>],
-) -> Vec<SubspaceEntry<'a, B>> {
-    let mut entries = Vec::with_capacity(primary.len() + p.len() + w.len());
-    for entry in primary {
-        entries.push(SubspaceEntry {
-            vector: &entry.vector,
-            mass: &entry.mass,
-            applied: &entry.applied,
-        });
-    }
-    for entry in p {
-        entries.push(SubspaceEntry {
-            vector: &entry.vector,
-            mass: &entry.mass,
-            applied: &entry.applied,
-        });
-    }
-    for entry in w {
-        entries.push(SubspaceEntry {
-            vector: &entry.vector,
-            mass: &entry.mass,
-            applied: &entry.applied,
-        });
-    }
-    entries
-}
+        for (i, entry) in self.x_block.iter().enumerate() {
+            // r_i = A*x_i (start with applied)
+            let mut r = entry.applied.clone();
 
-fn rayleigh_ritz<O, B>(
-    operator: &mut O,
-    subspace: &[SubspaceEntry<'_, B>],
-    want: usize,
-    history_dim: usize,
-    tol: f64,
-) -> (Vec<f64>, Vec<BlockEntry<B>>, ProjectionDiagnostics)
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let dim = subspace.len();
-    if dim == 0 {
-        return (
-            Vec::new(),
-            Vec::new(),
-            ProjectionDiagnostics {
-                history_dim,
-                ..ProjectionDiagnostics::default()
-            },
-        );
-    }
-    let history_dim = history_dim.min(dim);
-    let mut fallback_used = false;
-    let mut final_values = Vec::new();
-    let mut final_entries = Vec::new();
-    let mut final_stats = ProjectionStats {
-        original_dim: dim,
-        requested_dim: want,
-        ..ProjectionStats::default()
-    };
-    let mut require_fallback;
-    if let Some((values, entries, stats)) = attempt_projection(operator, subspace, want, tol) {
-        require_fallback = projection_guard_triggered(&stats);
-        #[cfg(debug_assertions)]
-        {
-            rayleigh_ritz_debug_log(format!(
-                "[rayleigh-ritz-debug] attempt stats: reduced={} cond={} min_mass={} max_mass={} fallback_guard={}",
-                stats.reduced_dim,
-                stats.ratio(),
-                stats.min_mass_eigenvalue,
-                stats.max_mass_eigenvalue,
-                require_fallback
-            ));
+            // r_i = A*x_i - λ_i * B*x_i
+            let lambda = self.eigenvalues[i];
+            backend.axpy(
+                num_complex::Complex64::new(-lambda, 0.0),
+                &entry.mass,
+                &mut r,
+            );
+
+            residuals.push(r);
         }
-        final_values = values;
-        final_entries = entries;
-        final_stats = stats;
-    } else {
-        require_fallback = true;
+
+        residuals
     }
 
-    if require_fallback {
-        if history_dim > 0 {
-            let trimmed_len = dim.saturating_sub(history_dim);
-            if trimmed_len > 0 {
-                if let Some((values, entries, stats)) =
-                    attempt_projection(operator, &subspace[..trimmed_len], want, tol)
-                {
-                    fallback_used = true;
-                    final_values = values;
-                    final_entries = entries;
-                    final_stats = stats;
-                    require_fallback = projection_guard_triggered(&final_stats);
+    /// Compute B-norms of residual vectors: ||r_i||_B = sqrt(r_i^* B r_i)
+    ///
+    /// This should be called AFTER deflation to get the correct norms
+    /// (deflated components are removed, so we measure what actually matters).
+    fn compute_residual_b_norms(&mut self, residuals: &[B::Buffer]) -> Vec<f64> {
+        let mut norms: Vec<f64> = Vec::with_capacity(residuals.len());
+
+        for r in residuals {
+            // Compute B*r
+            let mut br = self.operator.alloc_field();
+            self.operator.apply_mass(r, &mut br);
+
+            // ||r||_B = sqrt(r^* B r)
+            let norm_sq = self.operator.backend().dot(r, &br).re;
+            norms.push(norm_sq.max(0.0).sqrt());
+        }
+
+        norms
+    }
+
+    /// Compute relative residual norms: ||r_i||_B / (|λ_i| * ||x_i||_B)
+    ///
+    /// This is the standard relative residual for generalized eigenproblems.
+    /// Since x_i is B-normalized (||x_i||_B = 1), this simplifies to:
+    ///   relative_resid = ||r_i||_B / |λ_i|
+    ///
+    /// Uses a floor on λ to avoid division by near-zero eigenvalues.
+    fn compute_relative_residuals(&self, residual_b_norms: &[f64]) -> Vec<f64> {
+        const LAMBDA_FLOOR: f64 = 1e-10;
+
+        residual_b_norms
+            .iter()
+            .zip(self.eigenvalues.iter())
+            .map(|(&r_norm_b, &lambda)| {
+                // ||r||_B / |λ| (since ||x||_B = 1 by construction)
+                let denom = lambda.abs().max(LAMBDA_FLOOR);
+                r_norm_b / denom
+            })
+            .collect()
+    }
+
+    /// Compute relative eigenvalue changes: |λ_new - λ_old| / |λ_old|
+    ///
+    /// This measures how much the eigenvalue estimates have changed from the
+    /// previous iteration. Eigenvalue-based convergence is often faster than
+    /// residual-based convergence because eigenvalues stabilize before residuals.
+    ///
+    /// Returns INFINITY for the first iteration (no previous values) or if
+    /// the previous eigenvalue is near zero.
+    fn compute_relative_eigenvalue_changes(&self) -> Vec<f64> {
+        const LAMBDA_FLOOR: f64 = 1e-10;
+
+        // If no previous eigenvalues, return INFINITY for all bands
+        if self.previous_eigenvalues.is_empty() {
+            return vec![f64::INFINITY; self.eigenvalues.len()];
+        }
+
+        self.eigenvalues
+            .iter()
+            .zip(self.previous_eigenvalues.iter())
+            .map(|(&lambda_new, &lambda_old)| {
+                // |λ_new - λ_old| / |λ_old|
+                let denom = lambda_old.abs().max(LAMBDA_FLOOR);
+                (lambda_new - lambda_old).abs() / denom
+            })
+            .collect()
+    }
+
+    /// Store current eigenvalues for the next iteration's comparison.
+    fn store_previous_eigenvalues(&mut self) {
+        self.previous_eigenvalues = self.eigenvalues.clone();
+    }
+
+    // ========================================================================
+    // Preconditioning
+    // ========================================================================
+
+    /// Apply preconditioner to residuals: P_k = M^{-1} R_k
+    ///
+    /// If no preconditioner is available, returns a clone of the residuals
+    /// (equivalent to M = I).
+    fn precondition_residuals(&mut self, residuals: &[B::Buffer]) -> Vec<B::Buffer> {
+        let backend = self.operator.backend();
+
+        residuals
+            .iter()
+            .map(|r| {
+                let mut p = r.clone();
+                if let Some(ref mut precond) = self.preconditioner {
+                    precond.apply(backend, &mut p);
                 }
+                // If no preconditioner, p = r (identity preconditioning)
+                p
+            })
+            .collect()
+    }
+
+    // ========================================================================
+    // Deflation Projection
+    // ========================================================================
+
+    /// Apply deflation projection to a block of vectors: V ← P_Y V = V - Y(Y^* B V)
+    ///
+    /// This ensures the vectors are B-orthogonal to all locked eigenvectors in Y.
+    /// If the deflation subspace is empty, this is a no-op.
+    fn apply_deflation(&self, vectors: &mut [B::Buffer]) {
+        if self.deflation.is_empty() {
+            return;
+        }
+        self.deflation
+            .project_block_no_mass(self.operator.backend(), vectors);
+    }
+
+    /// Lock converged bands and move them to the deflation subspace.
+    ///
+    /// # Arguments
+    /// * `bands_to_lock` - Indices of bands to lock (in the current active block)
+    ///
+    /// # Returns
+    /// The number of bands successfully locked.
+    fn lock_converged_bands(&mut self, bands_to_lock: &[usize]) -> usize {
+        if bands_to_lock.is_empty() {
+            return 0;
+        }
+
+        let mut locked_count = 0;
+
+        // Sort in reverse order so we can remove from x_block without index shifting issues
+        let mut sorted_indices: Vec<usize> = bands_to_lock.to_vec();
+        sorted_indices.sort_by(|a, b| b.cmp(a));
+
+        for &band_idx in &sorted_indices {
+            if band_idx >= self.x_block.len() {
+                continue;
             }
-        }
 
-        if require_fallback {
-            let (raw_values, raw_entries) =
-                solve_raw_projected_system(operator, subspace, want, tol);
-            if !raw_values.is_empty() && raw_entries.len() == raw_values.len() {
-                #[cfg(debug_assertions)]
-                {
-                    rayleigh_ritz_debug_log(format!(
-                        "[rayleigh-ritz-debug] raw solve values={:?}",
-                        raw_values
-                    ));
-                }
-                fallback_used = true;
-                final_values = raw_values;
-                final_entries = raw_entries;
-                final_stats.reduced_dim = final_entries.len();
-                final_stats.min_mass_eigenvalue = 0.0;
-                final_stats.max_mass_eigenvalue = 0.0;
-            }
-        }
-    }
-    if final_stats.reduced_dim == 0 && final_values.is_empty() && final_entries.is_empty() {
-        log_projected_dimension(dim, 0, want);
-        log_rayleigh_ritz_counts(0, 0, want, dim);
-        return (
-            Vec::new(),
-            Vec::new(),
-            ProjectionDiagnostics {
-                original_dim: dim,
-                requested_dim: want,
-                history_dim,
-                fallback_used,
-                reduced_dim: 0,
-                min_mass_eigenvalue: 0.0,
-                max_mass_eigenvalue: 0.0,
-                condition_estimate: f64::INFINITY,
-                ..ProjectionDiagnostics::default()
-            },
-        );
-    }
-    if final_entries.len() < want && dim >= want {
-        let (raw_values, raw_entries) = solve_raw_projected_system(operator, subspace, want, tol);
-        if !raw_values.is_empty() && raw_entries.len() == raw_values.len() {
-            let lambda_tol = tol.max(MIN_RR_TOL);
-            let mut added = 0usize;
-            for (raw_value, raw_entry) in raw_values.into_iter().zip(raw_entries.into_iter()) {
-                if want > 0 && final_entries.len() >= want {
-                    break;
-                }
-                if final_values
-                    .iter()
-                    .any(|&existing| (existing - raw_value).abs() <= lambda_tol)
-                {
+            // Get the band's data - we need to clone and potentially symmetry-project
+            let entry = &self.x_block[band_idx];
+            let mut vector = entry.vector.clone();
+            let mut mass = entry.mass.clone();
+            let eigenvalue = self.eigenvalues[band_idx];
+
+            // CRITICAL: Apply symmetry projection before adding to deflation.
+            // This ensures the deflation subspace stays symmetry-adapted,
+            // which is required for P_Y and P_sym to commute.
+            if let Some(ref proj) = self.symmetry_projector {
+                proj.apply(&mut vector);
+                // Recompute B*vector after projection
+                self.operator.apply_mass(&vector, &mut mass);
+
+                // Re-normalize after symmetry projection
+                let backend = self.operator.backend();
+                let norm = normalization::b_norm(backend, &vector, &mass);
+                if norm > 1e-12 {
+                    let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
+                    backend.scale(scale, &mut vector);
+                    backend.scale(scale, &mut mass);
+                } else {
+                    // Vector projected to zero - shouldn't happen for converged bands
+                    warn!(
+                        "[deflation] Band {} projected to zero by symmetry, skipping lock",
+                        band_idx
+                    );
                     continue;
                 }
-                let insert_pos = final_values
-                    .iter()
-                    .position(|&existing| raw_value < existing)
-                    .unwrap_or(final_values.len());
-                final_values.insert(insert_pos, raw_value);
-                final_entries.insert(insert_pos, raw_entry);
-                added += 1;
-                fallback_used = true;
             }
-            if added > 0 {
-                final_stats.reduced_dim = final_entries.len();
-                final_stats.min_mass_eigenvalue = 0.0;
-                final_stats.max_mass_eigenvalue = 0.0;
-            }
-        }
-    }
-    let diagnostics = final_stats.to_public(history_dim, fallback_used);
-    #[cfg(test)]
-    {
-        if dim <= 4 {
-            eprintln!(
-                "[rayleigh-ritz-debug] dim={} values={:?} reduced={} requested={} fallback={}",
-                dim,
-                final_values,
-                final_stats.reduced_dim,
-                final_stats.requested_dim,
-                fallback_used
-            );
-        }
-    }
-    log_projected_dimension(final_stats.original_dim, final_stats.reduced_dim, want);
-    log_rayleigh_ritz_counts(
-        final_values.len(),
-        final_entries.len(),
-        want,
-        final_stats.original_dim,
-    );
-    #[cfg(debug_assertions)]
-    {
-        if operator.grid().len() <= 64 {
-            rayleigh_ritz_debug_log(format!(
-                "[rayleigh-ritz-debug] grid={} eigenvalues={:?}",
-                operator.grid().len(),
-                final_values
-            ));
-        }
-    }
-    (final_values, final_entries, diagnostics)
-}
 
-fn attempt_projection<O, B>(
-    operator: &mut O,
-    subspace: &[SubspaceEntry<'_, B>],
-    want: usize,
-    tol: f64,
-) -> Option<(Vec<f64>, Vec<BlockEntry<B>>, ProjectionStats)>
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    if subspace.is_empty() {
-        return None;
-    }
-    let dim = subspace.len();
-    let (op_proj, mass_proj) = build_projected_matrices(operator.backend(), subspace);
-    let (prepared, mut stats) = stabilize_projected_system(&op_proj, &mass_proj, dim, want, tol)?;
-    let (values, entries) =
-        solve_projected_eigensystem(operator, subspace, want, tol, dim, prepared);
-    stats.original_dim = dim;
-    Some((values, entries, stats))
-}
+            // The "global" band index includes previously locked bands
+            let global_band_idx = self.deflation.len() + band_idx;
 
-fn projection_guard_triggered(stats: &ProjectionStats) -> bool {
-    if stats.reduced_dim == 0 {
-        return true;
-    }
-    let cond = stats.ratio();
-    !cond.is_finite() || cond > PROJECTION_CONDITION_LIMIT || !stats.satisfies_rank()
-}
+            // Try to add to deflation subspace
+            let backend = self.operator.backend();
+            let added =
+                self.deflation
+                    .add_vector(backend, &vector, &mass, eigenvalue, global_band_idx);
 
-fn solve_projected_eigensystem<O, B>(
-    operator: &mut O,
-    subspace: &[SubspaceEntry<'_, B>],
-    want: usize,
-    tol: f64,
-    dim: usize,
-    prepared: StabilizedProjection,
-) -> (Vec<f64>, Vec<BlockEntry<B>>)
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    if prepared.reduced_dim == 0 {
-        return (Vec::new(), Vec::new());
-    }
-    let (values, eigenvectors) = generalized_eigen(
-        prepared.op_matrix,
-        prepared.mass_matrix,
-        prepared.reduced_dim,
-        tol,
-    )
-    .expect("generalized eigen solve failed in block solver");
-    #[cfg(test)]
-    if prepared.reduced_dim <= 4 {
-        eprintln!(
-            "[rayleigh-ritz-debug] raw generalized eigen values={:?}",
-            values
-        );
-    }
-    let mut order: Vec<usize> = (0..values.len()).collect();
-    order.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap_or(Ordering::Equal));
-    let mut new_entries = Vec::with_capacity(want.min(dim));
-    let mut selected_values: Vec<f64> = Vec::with_capacity(want.min(dim));
-    let lambda_tol = tol.max(MIN_RR_TOL);
-    let eigen_cols = if prepared.reduced_dim == 0 {
-        0
-    } else {
-        eigenvectors.len() / prepared.reduced_dim
-    };
-    let lifted_vectors = lift_projected_eigenvectors(
-        &prepared.transform,
-        dim,
-        prepared.reduced_dim,
-        &eigenvectors,
-        eigen_cols,
-    );
-    for idx in order {
-        if idx >= eigen_cols {
-            continue;
-        }
-        if want > 0 && new_entries.len() >= want {
-            break;
-        }
-        let value = values[idx];
-        if !value.is_finite() {
-            continue;
-        }
-        if value < -tol.abs().max(MIN_RR_TOL) {
-            continue;
-        }
-        if value > RAYLEIGH_RITZ_VALUE_LIMIT {
-            continue;
-        }
-        if selected_values
-            .iter()
-            .any(|existing| (*existing - value).abs() <= lambda_tol)
-        {
-            continue;
-        }
-        selected_values.push(value);
-        let coeffs = extract_complex_column(&lifted_vectors, dim, eigen_cols, idx);
-        let entry = combine_entries(operator, subspace, &coeffs);
-        new_entries.push(entry);
-    }
-    #[cfg(test)]
-    if prepared.reduced_dim <= 4 {
-        eprintln!(
-            "[rayleigh-ritz-debug] selected eigenvalues={:?}",
-            selected_values
-        );
-    }
-    (selected_values, new_entries)
-}
-
-fn solve_raw_projected_system<O, B>(
-    operator: &mut O,
-    subspace: &[SubspaceEntry<'_, B>],
-    want: usize,
-    tol: f64,
-) -> (Vec<f64>, Vec<BlockEntry<B>>)
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let dim = subspace.len();
-    if dim == 0 {
-        return (Vec::new(), Vec::new());
-    }
-    let (op_proj, mass_proj) = build_projected_matrices(operator.backend(), subspace);
-    let (values, eigenvectors) = match generalized_eigen(op_proj, mass_proj, dim, tol) {
-        Some(res) => res,
-        None => return (Vec::new(), Vec::new()),
-    };
-    let mut order: Vec<usize> = (0..values.len()).collect();
-    order.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap_or(Ordering::Equal));
-    let eigen_cols = if dim == 0 {
-        0
-    } else {
-        eigenvectors.len() / dim
-    };
-    if eigen_cols == 0 {
-        return (Vec::new(), Vec::new());
-    }
-    let limit = if want == 0 {
-        eigen_cols
-    } else {
-        want.min(eigen_cols)
-    };
-    let mut new_entries = Vec::with_capacity(limit);
-    let mut selected_values: Vec<f64> = Vec::with_capacity(limit);
-    let lambda_tol = tol.max(MIN_RR_TOL);
-    for idx in order {
-        if idx >= eigen_cols {
-            continue;
-        }
-        if selected_values.len() >= limit {
-            break;
-        }
-        let value = values[idx];
-        if !value.is_finite() {
-            continue;
-        }
-        if value < -tol.abs().max(MIN_RR_TOL) {
-            continue;
-        }
-        if value > RAYLEIGH_RITZ_VALUE_LIMIT {
-            continue;
-        }
-        if selected_values
-            .iter()
-            .any(|existing| (*existing - value).abs() <= lambda_tol)
-        {
-            continue;
-        }
-        selected_values.push(value);
-        let coeffs = extract_complex_column(&eigenvectors, dim, eigen_cols, idx);
-        let entry = combine_entries(operator, subspace, &coeffs);
-        new_entries.push(entry);
-    }
-    (selected_values, new_entries)
-}
-
-#[cfg(debug_assertions)]
-fn log_rayleigh_ritz_counts(total_values: usize, produced: usize, want: usize, dim: usize) {
-    rayleigh_ritz_debug_log(format!(
-        "[rayleigh-ritz] values={} produced={} want={} dim={}",
-        total_values, produced, want, dim
-    ));
-}
-
-#[cfg(not(debug_assertions))]
-fn log_rayleigh_ritz_counts(_total_values: usize, _produced: usize, _want: usize, _dim: usize) {}
-
-#[cfg(debug_assertions)]
-struct AttemptLogBuffer {
-    front_limit: usize,
-    tail_limit: usize,
-    total: usize,
-    tail: VecDeque<String>,
-    flushed: bool,
-}
-
-#[cfg(debug_assertions)]
-impl AttemptLogBuffer {
-    fn new(front_limit: usize, tail_limit: usize) -> Self {
-        Self {
-            front_limit,
-            tail_limit,
-            total: 0,
-            tail: VecDeque::with_capacity(tail_limit.max(1)),
-            flushed: false,
-        }
-    }
-
-    fn log(&mut self, message: String) {
-        self.total += 1;
-        if self.total <= self.front_limit {
-            eprintln!("{}", message);
-            return;
-        }
-        self.tail.push_back(message);
-        if self.tail.len() > self.tail_limit {
-            self.tail.pop_front();
-        }
-    }
-
-    fn flush(&mut self) {
-        if self.flushed {
-            return;
-        }
-        if self.total > self.front_limit {
-            let suppressed = self
-                .total
-                .saturating_sub(self.front_limit + self.tail.len());
-            if suppressed > 0 {
-                eprintln!(
-                    "[rayleigh-ritz-debug] ... suppressed {} intermediate attempt logs ...",
-                    suppressed
+            if added {
+                locked_count += 1;
+                debug!(
+                    "[deflation] Locked band {} (λ={:.6e}, ω={:.6e})",
+                    global_band_idx + 1,
+                    eigenvalue,
+                    if eigenvalue > 0.0 {
+                        eigenvalue.sqrt()
+                    } else {
+                        0.0
+                    }
                 );
             }
-            for entry in self.tail.iter() {
-                eprintln!("{}", entry);
+        }
+
+        // Now remove the locked bands from x_block and eigenvalues
+        // (sorted_indices is in reverse order, so removal is safe)
+        for &band_idx in &sorted_indices {
+            if band_idx < self.x_block.len() {
+                self.x_block.remove(band_idx);
+                self.eigenvalues.remove(band_idx);
             }
         }
-        self.flushed = true;
-    }
-}
 
-#[cfg(debug_assertions)]
-impl Drop for AttemptLogBuffer {
-    fn drop(&mut self) {
-        self.flush();
-    }
-}
-
-#[cfg(debug_assertions)]
-const RAYLEIGH_RITZ_LOG_FRONT: usize = 5;
-#[cfg(debug_assertions)]
-const RAYLEIGH_RITZ_LOG_TAIL: usize = 5;
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static RAYLEIGH_RITZ_LOG_STATE: RefCell<RayleighRitzLogState> =
-        RefCell::new(RayleighRitzLogState::new());
-}
-
-#[cfg(debug_assertions)]
-struct RayleighRitzLogState {
-    depth: usize,
-    buffer: Option<AttemptLogBuffer>,
-}
-
-#[cfg(debug_assertions)]
-impl RayleighRitzLogState {
-    fn new() -> Self {
-        Self {
-            depth: 0,
-            buffer: None,
+        // Also need to trim W block if it's larger than new X block
+        let new_block_size = self.x_block.len();
+        if self.w_block.len() > new_block_size {
+            self.w_block.truncate(new_block_size);
         }
+
+        locked_count
     }
 
-    fn enter(&mut self) {
-        if self.depth == 0 {
-            self.buffer = Some(AttemptLogBuffer::new(
-                RAYLEIGH_RITZ_LOG_FRONT,
-                RAYLEIGH_RITZ_LOG_TAIL,
-            ));
+    // ========================================================================
+    // Search Subspace Construction
+    // ========================================================================
+
+    /// Collect the search subspace Z_k = [X_k, P_k, W_k] as owned vectors.
+    ///
+    /// This clones the vectors to avoid borrow conflicts with subsequent
+    /// mutable operations (like orthonormalization).
+    ///
+    /// Returns (subspace, (x_size, p_size, w_size)) for tracking per-block statistics.
+    fn collect_subspace(&self, p_block: &[B::Buffer]) -> (Vec<B::Buffer>, (usize, usize, usize)) {
+        let m = self.x_block.len();
+
+        // Use W directions only if enabled in config and available
+        let has_w = self.config.use_w_history && !self.w_block.is_empty();
+        let w_size = if has_w { self.w_block.len() } else { 0 };
+
+        let subspace_dim = m + p_block.len() + w_size;
+        let mut subspace: Vec<B::Buffer> = Vec::with_capacity(subspace_dim);
+
+        // Add X_k vectors (cloned)
+        for entry in &self.x_block {
+            subspace.push(entry.vector.clone());
         }
-        self.depth = self.depth.saturating_add(1);
+
+        // Add P_k vectors (cloned)
+        for p in p_block {
+            subspace.push(p.clone());
+        }
+
+        // Add W_k vectors (cloned) if available
+        if has_w {
+            for w in &self.w_block {
+                subspace.push(w.clone());
+            }
+        }
+
+        let block_sizes = (m, p_block.len(), w_size);
+        (subspace, block_sizes)
     }
 
-    fn exit(&mut self) {
-        if self.depth == 0 {
+    /// Get the current subspace dimension.
+    ///
+    /// Returns 2m on first iteration (no W), 3m otherwise.
+    pub fn subspace_dimension(&self) -> usize {
+        let m = self.x_block.len();
+        let has_w = self.config.use_w_history && !self.w_block.is_empty();
+        if has_w { 3 * m } else { 2 * m }
+    }
+
+    // ========================================================================
+    // Subspace Orthonormalization
+    // ========================================================================
+
+    /// B-orthonormalize the search subspace to get Q_k.
+    ///
+    /// Given Z_k = [X_k, P_k, W_k], compute Q_k such that:
+    /// - Q_k^* B Q_k = I  (B-orthonormal)
+    /// - range(Q_k) = range(Z_k)  (same subspace)
+    ///
+    /// This uses SVQB to handle:
+    /// - Nearly linearly dependent columns
+    /// - Rank deficiency detection and vector dropping
+    /// - Numerical stability for ill-conditioned Gram matrices
+    ///
+    /// Returns (Q_k, BQ_k) where BQ_k[i] = B * Q_k[i], and the SVQB result.
+    fn orthonormalize_subspace_owned(
+        &mut self,
+        mut q_block: Vec<B::Buffer>,
+        (x_size, p_size, w_size): (usize, usize, usize),
+    ) -> (Vec<B::Buffer>, Vec<B::Buffer>, SvqbResult) {
+        // Compute B * q for each vector
+        let mut bq_block: Vec<B::Buffer> = Vec::with_capacity(q_block.len());
+        for q in &q_block {
+            let mut bq = self.operator.alloc_field();
+            self.operator.apply_mass(q, &mut bq);
+            bq_block.push(bq);
+        }
+
+        // Apply SVQB to B-orthonormalize
+        let config = SvqbConfig::default();
+        let mut result = svqb_orthonormalize(
+            self.operator.backend(),
+            &mut q_block,
+            &mut bq_block,
+            &config,
+        );
+
+        // Compute per-block drop counts from kept_indices
+        let block_drops = result.compute_block_drops(x_size, p_size, w_size);
+        result.block_drops = Some(block_drops);
+
+        // Truncate to the output rank (SVQB may have dropped vectors)
+        q_block.truncate(result.output_rank);
+        bq_block.truncate(result.output_rank);
+
+        (q_block, bq_block, result)
+    }
+
+    // ========================================================================
+    // Projected Operator
+    // ========================================================================
+
+    /// Form the projected operator A_s = Q_k^* A Q_k.
+    ///
+    /// This is a small dense Hermitian matrix of size r×r where r = subspace_rank.
+    /// The matrix is stored in column-major order as a flat Vec<Complex64>.
+    ///
+    /// Note: B_s = Q_k^* B Q_k = I by construction (SVQB ensures B-orthonormality),
+    /// so we don't need to compute it explicitly.
+    fn project_operator(
+        &mut self,
+        q_block: &[B::Buffer],
+        _bq_block: &[B::Buffer], // Not used since B_s = I, but kept for future use
+    ) -> Vec<num_complex::Complex64> {
+        let r = q_block.len();
+
+        // A_s[i,j] = <q_i, A q_j> = q_i^* (A q_j)
+        // The matrix is Hermitian, so A_s[j,i] = conj(A_s[i,j])
+        let mut a_projected = vec![num_complex::Complex64::new(0.0, 0.0); r * r];
+
+        // First compute A * q_j for all j
+        let mut aq_block: Vec<B::Buffer> = Vec::with_capacity(r);
+        for q in q_block {
+            let mut aq = self.operator.alloc_field();
+            self.operator.apply(q, &mut aq);
+            aq_block.push(aq);
+        }
+
+        // Now compute all inner products (no more mutable borrow needed)
+        let backend = self.operator.backend();
+        for j in 0..r {
+            for i in 0..r {
+                let inner = backend.dot(&q_block[i], &aq_block[j]);
+                a_projected[i + j * r] = inner; // Column-major: A[i,j] at index i + j*r
+            }
+        }
+
+        a_projected
+    }
+
+    // ========================================================================
+    // Ritz Vector Update (Step 9)
+    // ========================================================================
+
+    /// Update the eigenvector approximations using the Rayleigh-Ritz results.
+    ///
+    /// Given the B-orthonormal subspace basis Q_k and the dense eigenpairs (Y, Θ),
+    /// compute new Ritz vectors:
+    ///
+    /// ```text
+    /// X_{k+1} = Q_k * Y_1
+    /// Λ_{k+1} = Θ_1
+    /// ```
+    ///
+    /// where Y_1 is the (r × m) block of eigenvectors corresponding to the m
+    /// smallest eigenvalues, and Θ_1 contains those eigenvalues.
+    ///
+    /// This also recomputes B*X and A*X for the new approximations.
+    fn update_ritz_vectors(
+        &mut self,
+        q_block: &[B::Buffer],
+        bq_block: &[B::Buffer],
+        dense_result: &DenseEigenResult,
+    ) {
+        let n_bands = self.config.n_bands;
+        let r = dense_result.dim; // Subspace dimension
+        let m = n_bands.min(r); // Number of Ritz pairs to extract
+
+        if m == 0 || r == 0 {
             return;
         }
-        self.depth -= 1;
-        if self.depth == 0 {
-            if let Some(mut buffer) = self.buffer.take() {
-                buffer.flush();
+
+        // Update eigenvalues: take the m smallest (already sorted)
+        self.eigenvalues.clear();
+        for j in 0..m {
+            self.eigenvalues.push(dense_result.eigenvalue(j));
+        }
+
+        // Compute new Ritz vectors: x_j = Σ_i Q_k[i] * Y[i,j]
+        // For each of the m smallest eigenpairs
+        let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
+
+        for j in 0..m {
+            // Get the j-th eigenvector from dense result (column j of Y)
+            let y_j = dense_result.eigenvector(j); // Slice of length r
+
+            // Compute x_j = Σ_i q_i * y_j[i]
+            // Initialize with the first term scaled appropriately
+            let backend = self.operator.backend();
+
+            // Clone the first Q vector and scale it
+            let mut x_j = q_block[0].clone();
+            backend.scale(y_j[0], &mut x_j);
+
+            // Accumulate: x_j += q_i * y_j[i] for i >= 1
+            for i in 1..r {
+                let coeff = y_j[i];
+                backend.axpy(coeff, &q_block[i], &mut x_j);
             }
-        }
-    }
 
-    fn log(&mut self, message: String) {
-        if let Some(buffer) = self.buffer.as_mut() {
-            buffer.log(message);
-        } else {
-            eprintln!("{}", message);
-        }
-    }
-}
+            // Compute B*x_j = Σ_i (B*q_i) * y_j[i] using precomputed BQ
+            let mut bx_j = bq_block[0].clone();
+            backend.scale(y_j[0], &mut bx_j);
 
-#[cfg(debug_assertions)]
-struct RayleighRitzLogScope;
-
-#[cfg(debug_assertions)]
-impl RayleighRitzLogScope {
-    fn new() -> Self {
-        RAYLEIGH_RITZ_LOG_STATE.with(|state| state.borrow_mut().enter());
-        Self
-    }
-}
-
-#[cfg(debug_assertions)]
-impl Drop for RayleighRitzLogScope {
-    fn drop(&mut self) {
-        RAYLEIGH_RITZ_LOG_STATE.with(|state| state.borrow_mut().exit());
-    }
-}
-
-#[cfg(debug_assertions)]
-fn rayleigh_ritz_debug_log(message: String) {
-    RAYLEIGH_RITZ_LOG_STATE.with(|state| state.borrow_mut().log(message));
-}
-
-#[cfg(not(debug_assertions))]
-fn rayleigh_ritz_debug_log(_message: String) {}
-
-fn extract_complex_column(
-    matrix: &[Complex64],
-    rows: usize,
-    cols: usize,
-    col: usize,
-) -> Vec<Complex64> {
-    (0..rows).map(|row| matrix[row * cols + col]).collect()
-}
-
-fn build_projected_matrices<B: SpectralBackend>(
-    backend: &B,
-    subspace: &[SubspaceEntry<'_, B>],
-) -> (Vec<Complex64>, Vec<Complex64>) {
-    let dim = subspace.len();
-    let mut op_proj = vec![Complex64::default(); dim * dim];
-    let mut mass_proj = vec![Complex64::default(); dim * dim];
-    for i in 0..dim {
-        for j in i..dim {
-            let mass_val = backend.dot(subspace[i].vector, subspace[j].mass);
-            let op_val = backend.dot(subspace[i].vector, subspace[j].applied);
-            let idx = i * dim + j;
-            mass_proj[idx] = mass_val;
-            op_proj[idx] = op_val;
-            if i != j {
-                mass_proj[j * dim + i] = mass_val.conj();
-                op_proj[j * dim + i] = op_val.conj();
+            for i in 1..r {
+                let coeff = y_j[i];
+                backend.axpy(coeff, &bq_block[i], &mut bx_j);
             }
+
+            // Compute A*x_j (need fresh application since we don't have AQ precomputed)
+            let mut ax_j = self.operator.alloc_field();
+            self.operator.apply(&x_j, &mut ax_j);
+
+            new_x_block.push(BlockEntry {
+                vector: x_j,
+                mass: bx_j,
+                applied: ax_j,
+            });
         }
+
+        // Replace old X block with new Ritz vectors
+        self.x_block = new_x_block;
     }
-    enforce_hermitian(&mut op_proj, dim);
-    enforce_hermitian(&mut mass_proj, dim);
-    #[cfg(test)]
-    if dim <= 4 {
-        eprintln!("[rayleigh-ritz-debug] op_proj={:?}", op_proj);
-        eprintln!("[rayleigh-ritz-debug] mass_proj={:?}", mass_proj);
-    }
-    (op_proj, mass_proj)
-}
 
-struct StabilizedProjection {
-    op_matrix: Vec<Complex64>,
-    mass_matrix: Vec<Complex64>,
-    transform: Vec<Complex64>,
-    reduced_dim: usize,
-}
+    /// Compute new history directions W_{k+1} = Q_k * Y_2.
+    ///
+    /// The history directions capture the "complementary" search directions
+    /// from the Rayleigh-Ritz projection. Different LOBPCG variants use
+    /// different strategies:
+    ///
+    /// 1. **Standard**: W_{k+1} = columns m..2m of Q_k * Y (next m eigenvectors)
+    /// 2. **Simplified**: W_{k+1} = P_k (just reuse preconditioned residuals)
+    /// 3. **Full**: W_{k+1} = all non-X directions in the projected subspace
+    ///
+    /// We use the standard approach: take columns m..2m of the eigenvector
+    /// matrix Y, which correspond to the "next best" directions after X.
+    /// These directions are B-orthogonal to X by construction.
+    ///
+    /// If the subspace is too small (r < 2m), we take whatever is available
+    /// beyond the X directions (columns m..r).
+    fn update_history_directions(
+        &mut self,
+        q_block: &[B::Buffer],
+        dense_result: &DenseEigenResult,
+    ) {
+        let n_bands = self.config.n_bands;
+        let r = dense_result.dim; // Subspace dimension
+        let m = n_bands.min(r); // Number of X vectors
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ProjectionStats {
-    original_dim: usize,
-    reduced_dim: usize,
-    requested_dim: usize,
-    min_mass_eigenvalue: f64,
-    max_mass_eigenvalue: f64,
-}
+        // W directions start at column m and go up to min(2m, r)
+        let w_start = m;
+        let w_end = (2 * m).min(r);
+        let n_w = w_end.saturating_sub(w_start);
 
-impl ProjectionStats {
-    fn ratio(&self) -> f64 {
-        if self.min_mass_eigenvalue <= 0.0 {
-            f64::INFINITY
-        } else {
-            self.max_mass_eigenvalue / self.min_mass_eigenvalue
+        if n_w == 0 || r == 0 {
+            // No room for W directions (subspace too small)
+            self.w_block.clear();
+            return;
         }
-    }
 
-    fn satisfies_rank(&self) -> bool {
-        if self.original_dim == 0 {
-            return false;
-        }
-        // Even if stabilization trims the subspace below the requested
-        // dimension, proceed as long as we have at least one stable
-        // direction; otherwise, fall back to a safer solve path.
-        self.reduced_dim > 0
-    }
+        // Compute W directions: w_j = Σ_i q_i * y_{m+j}[i]
+        let mut new_w_block: Vec<B::Buffer> = Vec::with_capacity(n_w);
+        let backend = self.operator.backend();
 
-    fn to_public(self, history_dim: usize, fallback_used: bool) -> ProjectionDiagnostics {
-        ProjectionDiagnostics {
-            original_dim: self.original_dim,
-            reduced_dim: self.reduced_dim,
-            requested_dim: self.requested_dim,
-            history_dim,
-            min_mass_eigenvalue: self.min_mass_eigenvalue,
-            max_mass_eigenvalue: self.max_mass_eigenvalue,
-            condition_estimate: self.ratio(),
-            fallback_used,
-        }
-    }
-}
+        for j in w_start..w_end {
+            // Get the j-th eigenvector from dense result
+            let y_j = dense_result.eigenvector(j); // Slice of length r
 
-fn stabilize_projected_system(
-    op_proj: &[Complex64],
-    mass_proj: &[Complex64],
-    dim: usize,
-    want: usize,
-    tol: f64,
-) -> Option<(StabilizedProjection, ProjectionStats)> {
-    if dim == 0 {
-        return None;
-    }
-    let mut stats = ProjectionStats {
-        original_dim: dim,
-        requested_dim: want,
-        reduced_dim: 0,
-        min_mass_eigenvalue: f64::INFINITY,
-        max_mass_eigenvalue: 0.0,
-    };
-    let block_dim = dim * 2;
-    let min_required = want.min(dim).max(1);
-    let mass_block = expand_complex_hermitian(mass_proj, dim);
-    let (mass_vals, mass_vecs) = jacobi_eigendecomposition(mass_block, block_dim, tol);
-    let mut min_mass_eval = f64::INFINITY;
-    let mut max_mass_eval = 0.0_f64;
-    let mut has_small_or_negative = false;
-    for &val in &mass_vals {
-        if val > 0.0 {
-            if val < min_mass_eval {
-                min_mass_eval = val;
+            // Compute w = Σ_i q_i * y_j[i]
+            let mut w = q_block[0].clone();
+            backend.scale(y_j[0], &mut w);
+
+            for i in 1..r {
+                let coeff = y_j[i];
+                backend.axpy(coeff, &q_block[i], &mut w);
             }
-            if val > max_mass_eval {
-                max_mass_eval = val;
-            }
-        } else if val.is_finite() {
-            has_small_or_negative = true;
+
+            new_w_block.push(w);
         }
+
+        self.w_block = new_w_block;
     }
-    let max_val = mass_vals.iter().cloned().fold(0.0_f64, f64::max);
-    if max_val <= 0.0 {
-        return None;
-    }
-    // Filter out directions whose mass eigenvalues are too small to yield a
-    // well-conditioned projected problem. A slightly more aggressive cutoff
-    // helps prevent the Rayleigh–Ritz stage from injecting wildly scaled
-    // vectors when the block has accumulated near-null directions.
-    const REL_TOL: f64 = 1e-6;
-    const ABS_TOL: f64 = 1e-10;
-    let cutoff = (max_val * REL_TOL).max(ABS_TOL);
-    let cond = if has_small_or_negative || min_mass_eval <= cutoff {
-        f64::INFINITY
-    } else if min_mass_eval > 0.0 {
-        max_mass_eval / min_mass_eval
-    } else {
-        f64::INFINITY
-    };
-    let can_skip_stabilization =
-        dim <= want.max(1) && min_mass_eval > cutoff && cond <= PROJECTION_CONDITION_LIMIT;
-    if can_skip_stabilization {
-        stats.reduced_dim = dim;
-        stats.min_mass_eigenvalue = min_mass_eval;
-        stats.max_mass_eigenvalue = max_mass_eval;
-        let mut transform = vec![Complex64::default(); dim * dim];
-        for i in 0..dim {
-            transform[i * dim + i] = Complex64::new(1.0, 0.0);
+
+    // ========================================================================
+    // Main Solve Loop
+    // ========================================================================
+
+    /// Run the LOBPCG iteration to convergence.
+    ///
+    /// This is the main entry point for solving the eigenvalue problem.
+    /// It iterates until either:
+    /// - All requested bands have converged (relative residual < tol)
+    /// - Maximum iterations reached
+    ///
+    /// # Minimal Projection Strategy
+    ///
+    /// The algorithm uses a minimal projection strategy for deflation and symmetry:
+    ///
+    /// **Residuals (R):**
+    /// - Apply deflation once: R ← P_Y R
+    /// - Apply symmetry once (if enabled): R ← P_sym R
+    ///
+    /// **Preconditioned residuals (P):**
+    /// - Apply preconditioner first: P = M^{-1} R
+    /// - Apply deflation once: P ← P_Y P
+    /// - Apply symmetry once (if enabled): P ← P_sym P
+    ///
+    /// **Search subspace (Z = [X, P, W]):**
+    /// - No re-projection needed: X, P, W are already in the deflated + symmetric
+    ///   subspace from previous iterations
+    /// - Just orthonormalize via SVQB
+    ///
+    /// This minimal strategy works because the deflation subspace Y is kept
+    /// symmetry-adapted (locked vectors are symmetry-projected before adding),
+    /// so P_Y and P_sym commute: P_sym P_Y = P_Y P_sym.
+    ///
+    /// # Algorithm Steps
+    ///
+    /// 1. **Compute residuals**: R_k = A*X_k - B*X_k * Λ_k
+    /// 2. **Apply deflation to R**: R_k ← P_Y R_k
+    /// 3. **Apply symmetry to R** (optional): R_k ← P_sym R_k
+    /// 4. **Compute B-norms**: ||R_k||_B for convergence check
+    /// 5. **Check convergence**: relative residual < tol?
+    /// 6. **Lock converged bands** (optional): move to deflation subspace
+    /// 7. **Precondition residuals**: P_k = M^{-1} R_k
+    /// 8. **Apply deflation to P**: P_k ← P_Y P_k
+    /// 9. **Apply symmetry to P** (optional): P_k ← P_sym P_k
+    /// 10. **Build search subspace**: Z_k = [X_k, P_k, W_k]
+    /// 11. **B-orthonormalize**: Q_k = SVQB(Z_k)
+    /// 12. **Project operator**: A_s = Q_k^* A Q_k
+    /// 13. **Dense eigenproblem**: A_s Y = Y Θ
+    /// 14. **Update Ritz vectors**: X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
+    /// 15. **Update history directions**: W_{k+1} = Q_k * Y_2
+    ///
+    /// # Returns
+    /// An `EigensolverResult` containing the computed eigenvalues and convergence info.
+    pub fn solve(&mut self) -> EigensolverResult {
+        // Ensure we're initialized
+        if !self.initialized {
+            self.initialize();
         }
-        return Some((
-            StabilizedProjection {
-                op_matrix: op_proj.to_vec(),
-                mass_matrix: mass_proj.to_vec(),
-                transform,
-                reduced_dim: dim,
-            },
-            stats,
-        ));
-    }
-    let mut selected: Vec<(usize, f64)> = mass_vals
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, val)| {
-            if *val > cutoff {
-                Some((idx, *val))
-            } else {
-                None
-            }
-        })
-        .collect();
-    if selected.is_empty() {
-        return None;
-    }
-    selected.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-    let target = want.max(1);
-    const MULTIPLIER: usize = 3;
-    const ABS_MAX_DIM: usize = 64;
-    let mut limit = target * MULTIPLIER;
-    if limit < target + 2 {
-        limit = target + 2;
-    }
-    limit = limit.min(dim).min(ABS_MAX_DIM);
-    if selected.len() > limit {
-        selected.truncate(limit);
-    }
-    selected.sort_by_key(|&(idx, _)| idx);
-    let complex_vecs = convert_block_vectors(&mass_vecs, dim, block_dim);
-    let mut columns: Vec<Vec<Complex64>> = Vec::new();
-    let mut raw_columns: Vec<Vec<Complex64>> = Vec::new();
-    let mut raw_norms: Vec<f64> = Vec::new();
-    const DUP_THRESHOLD: f64 = 1.0 - 1e-6;
-    const VEC_NORM_TOL: f64 = 1e-14;
-    for &(eig_idx, value) in selected.iter() {
-        if columns.len() >= dim {
-            break;
-        }
-        let mut raw = vec![Complex64::default(); dim];
-        for row in 0..dim {
-            raw[row] = complex_vecs[row * block_dim + eig_idx];
-        }
-        let norm_sq = raw.iter().map(|c| c.norm_sqr()).sum::<f64>();
-        if norm_sq < VEC_NORM_TOL {
-            continue;
-        }
-        let mut duplicate = false;
-        for (existing, &existing_norm_sq) in raw_columns.iter().zip(raw_norms.iter()) {
-            let overlap = complex_dot(existing, &raw);
-            let ratio = overlap.norm_sqr() / (norm_sq * existing_norm_sq);
-            if ratio >= DUP_THRESHOLD {
-                duplicate = true;
+
+        // Check preconditioner-symmetry commutation (once at start)
+        // self.check_preconditioner_symmetry_commutation();
+
+        let n_bands_requested = self.config.n_bands;
+        let n_bands = n_bands_requested.min(self.x_block.len());
+        let mut convergence = ConvergenceInfo::new(n_bands);
+        let start_time = Instant::now();
+        let bloch = self.operator.bloch();
+
+        // Main LOBPCG iteration loop
+        for iter in 0..self.config.max_iter {
+            self.iteration = iter;
+
+            // Track the number of active bands (may shrink due to locking)
+            let n_active = self.x_block.len();
+            if n_active == 0 {
+                // All bands have been locked
                 break;
             }
-        }
-        if duplicate && columns.len() >= min_required {
-            continue;
-        }
-        let scale = 1.0 / value.sqrt();
-        let mut candidate = raw.clone();
-        for val in candidate.iter_mut() {
-            *val *= scale;
-        }
-        raw_columns.push(raw);
-        raw_norms.push(norm_sq);
-        columns.push(candidate);
-        stats.reduced_dim += 1;
-        stats.min_mass_eigenvalue = stats.min_mass_eigenvalue.min(value);
-        stats.max_mass_eigenvalue = stats.max_mass_eigenvalue.max(value);
-    }
-    if columns.is_empty() {
-        return None;
-    }
-    if !stats.min_mass_eigenvalue.is_finite() {
-        stats.min_mass_eigenvalue = 0.0;
-    }
-    let mut reduced_dim = columns.len();
-    let mut transform = vec![Complex64::default(); dim * reduced_dim];
-    for (col_idx, data) in columns.iter().enumerate() {
-        for row in 0..dim {
-            transform[row * reduced_dim + col_idx] = data[row];
-        }
-    }
 
-    let mut temp_op = complex_matmul(dim, dim, reduced_dim, op_proj, &transform);
-    let mut op_reduced =
-        complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
-    let mut temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
-    let mut mass_reduced =
-        complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_mass);
+            // ================================================================
+            // Step 1: Compute residuals R_k = A*X_k - B*X_k * Λ_k
+            // ================================================================
+            let mut residuals = self.compute_residuals();
 
-    // Drop directions whose reduced mass eigenvalues fall below the cutoff to
-    // avoid feeding nearly singular systems into the generalized eigen solve.
-    let (mass_eval_block, _) = jacobi_eigendecomposition(
-        expand_complex_hermitian(&mass_reduced, reduced_dim),
-        reduced_dim * 2,
-        tol,
-    );
-    let filtered_indices: Vec<usize> = mass_eval_block
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, &val)| if val > cutoff { Some(idx) } else { None })
-        .collect();
-    if filtered_indices.len() < reduced_dim && !filtered_indices.is_empty() {
-        let new_dim = filtered_indices.len();
-        let mut filtered_transform = vec![Complex64::default(); dim * new_dim];
-        for (out_col, &keep_idx) in filtered_indices.iter().enumerate() {
-            for row in 0..dim {
-                filtered_transform[row * new_dim + out_col] =
-                    transform[row * reduced_dim + keep_idx];
-            }
-        }
-        transform = filtered_transform;
-        reduced_dim = new_dim;
-        temp_op = complex_matmul(dim, dim, reduced_dim, op_proj, &transform);
-        op_reduced =
-            complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
-        temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
-        mass_reduced = complex_matmul_conj_transpose_left(
-            dim,
-            reduced_dim,
-            reduced_dim,
-            &transform,
-            &temp_mass,
-        );
-    }
-    let final_mass_evals = jacobi_eigendecomposition(
-        expand_complex_hermitian(&mass_reduced, reduced_dim),
-        reduced_dim * 2,
-        tol,
-    )
-    .0;
-    stats.reduced_dim = reduced_dim;
-    stats.min_mass_eigenvalue = final_mass_evals
-        .iter()
-        .cloned()
-        .filter(|v| *v > 0.0)
-        .fold(f64::INFINITY, f64::min);
-    if !stats.min_mass_eigenvalue.is_finite() {
-        stats.min_mass_eigenvalue = 0.0;
-    }
-    stats.max_mass_eigenvalue = final_mass_evals.iter().cloned().fold(0.0_f64, f64::max);
-    if has_small_or_negative {
-        stats.min_mass_eigenvalue = 0.0;
-    }
-    if stats.reduced_dim < min_required {
-        return None;
-    }
-    let final_cond = if stats.min_mass_eigenvalue > 0.0 {
-        stats.max_mass_eigenvalue / stats.min_mass_eigenvalue
-    } else {
-        f64::INFINITY
-    };
-    if !final_cond.is_finite() || final_cond > PROJECTION_CONDITION_LIMIT {
-        return None;
-    }
-    Some((
-        StabilizedProjection {
-            op_matrix: op_reduced,
-            mass_matrix: mass_reduced,
-            transform,
-            reduced_dim,
-        },
-        stats,
-    ))
-}
+            // ================================================================
+            // Step 2: Apply deflation to residuals R_k ← P_Y R_k
+            // This removes components along locked eigenvectors.
+            // Applied FIRST because Y is now symmetry-adapted, so P_Y and
+            // P_sym commute. Deflation removes the nullspace components.
+            // ================================================================
+            self.apply_deflation(&mut residuals);
 
-fn lift_projected_eigenvectors(
-    transform: &[Complex64],
-    rows: usize,
-    reduced_dim: usize,
-    eigenvectors: &[Complex64],
-    cols: usize,
-) -> Vec<Complex64> {
-    if rows == 0 || reduced_dim == 0 || cols == 0 {
-        return Vec::new();
-    }
-    complex_matmul(rows, reduced_dim, cols, transform, eigenvectors)
-}
+            // ================================================================
+            // Step 3: Apply symmetry projection to residuals R_k ← P_sym R_k
+            // Applied AFTER deflation to clean up any numerical noise.
+            // Since Y is symmetry-adapted, P_sym P_Y = P_Y P_sym.
+            // ================================================================
+            self.apply_symmetry_block(&mut residuals);
 
-#[cfg(debug_assertions)]
-fn log_projected_dimension(original: usize, reduced: usize, want: usize) {
-    rayleigh_ritz_debug_log(format!(
-        "[rayleigh-ritz] projected dimension {} -> {} (want={})",
-        original, reduced, want
-    ));
-}
+            // ================================================================
+            // Step 4: Compute B-norms of deflated residuals
+            // This is the correct metric: we measure what's left after
+            // projecting out the locked subspace
+            // ================================================================
+            let residual_b_norms = self.compute_residual_b_norms(&residuals);
 
-#[cfg(not(debug_assertions))]
-fn log_projected_dimension(_original: usize, _reduced: usize, _want: usize) {}
+            // ================================================================
+            // Step 5: Compute relative residuals (for diagnostics)
+            // ================================================================
+            let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
 
-fn expand_complex_hermitian(matrix: &[Complex64], dim: usize) -> Vec<f64> {
-    let block_dim = dim * 2;
-    let mut block = vec![0.0; block_dim * block_dim];
-    for row in 0..dim {
-        for col in 0..dim {
-            let val = matrix[row * dim + col];
-            let re = val.re;
-            let im = val.im;
-            block[row * block_dim + col] = re;
-            block[row * block_dim + (col + dim)] = -im;
-            block[(row + dim) * block_dim + col] = im;
-            block[(row + dim) * block_dim + (col + dim)] = re;
-        }
-    }
-    block
-}
-
-fn enforce_hermitian(matrix: &mut [Complex64], dim: usize) {
-    for i in 0..dim {
-        let diag = matrix[i * dim + i];
-        matrix[i * dim + i] = Complex64::new(diag.re, 0.0);
-        for j in (i + 1)..dim {
-            let upper = matrix[i * dim + j];
-            let lower = matrix[j * dim + i].conj();
-            let average = (upper + lower) * 0.5;
-            matrix[i * dim + j] = average;
-            matrix[j * dim + i] = average.conj();
-        }
-    }
-}
-
-fn complex_matmul(
-    rows: usize,
-    mid: usize,
-    cols: usize,
-    a: &[Complex64],
-    b: &[Complex64],
-) -> Vec<Complex64> {
-    debug_assert_eq!(a.len(), rows * mid);
-    debug_assert_eq!(b.len(), mid * cols);
-    let mut out = vec![Complex64::default(); rows * cols];
-    for i in 0..rows {
-        for k in 0..mid {
-            let aik = a[i * mid + k];
-            if aik == Complex64::default() {
-                continue;
-            }
-            for j in 0..cols {
-                out[i * cols + j] += aik * b[k * cols + j];
-            }
-        }
-    }
-    out
-}
-
-fn complex_matmul_conj_transpose_left(
-    rows: usize,
-    cols_left: usize,
-    cols_right: usize,
-    a: &[Complex64],
-    b: &[Complex64],
-) -> Vec<Complex64> {
-    debug_assert_eq!(a.len(), rows * cols_left);
-    debug_assert_eq!(b.len(), rows * cols_right);
-    let mut out = vec![Complex64::default(); cols_left * cols_right];
-    for i in 0..cols_left {
-        for j in 0..cols_right {
-            let mut sum = Complex64::default();
-            for row in 0..rows {
-                let aval = a[row * cols_left + i].conj();
-                let bval = b[row * cols_right + j];
-                sum += aval * bval;
-            }
-            out[i * cols_right + j] = sum;
-        }
-    }
-    out
-}
-
-fn complex_dot(a: &[Complex64], b: &[Complex64]) -> Complex64 {
-    debug_assert_eq!(a.len(), b.len());
-    let mut sum = Complex64::default();
-    for (ai, bi) in a.iter().zip(b.iter()) {
-        sum += ai.conj() * bi;
-    }
-    sum
-}
-
-fn combine_entries<O, B>(
-    operator: &mut O,
-    subspace: &[SubspaceEntry<'_, B>],
-    coeffs: &[Complex64],
-) -> BlockEntry<B>
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut vector = operator.alloc_field();
-    zero_buffer(vector.as_mut_slice());
-    let mut mass = operator.alloc_field();
-    zero_buffer(mass.as_mut_slice());
-    let mut applied = operator.alloc_field();
-    zero_buffer(applied.as_mut_slice());
-    for (entry, &coeff) in subspace.iter().zip(coeffs.iter()) {
-        if coeff.norm_sqr() < 1e-24 {
-            continue;
-        }
-        operator.backend().axpy(coeff, entry.vector, &mut vector);
-        operator.backend().axpy(coeff, entry.mass, &mut mass);
-        operator.backend().axpy(coeff, entry.applied, &mut applied);
-    }
-    let norm = mass_norm(operator.backend(), &vector, &mass);
-    if norm > 0.0 {
-        let scale = Complex64::new(1.0 / norm, 0.0);
-        operator.backend().scale(scale, &mut vector);
-        operator.backend().scale(scale, &mut mass);
-        operator.backend().scale(scale, &mut applied);
-    }
-    BlockEntry {
-        vector,
-        mass,
-        applied,
-    }
-}
-
-fn compute_preconditioned_residuals<O, B>(
-    operator: &mut O,
-    eigenvalues: &[f64],
-    x_entries: &[BlockEntry<B>],
-    w_entries: &[BlockEntry<B>],
-    gamma_mode: Option<&GammaMode<B>>,
-    deflation: Option<&DeflationWorkspace<B>>,
-    symmetry: Option<&SymmetryProjector>,
-    preconditioner: &mut Option<&mut dyn OperatorPreconditioner<B>>,
-    tol: f64,
-    iteration_index: usize,
-    snapshot_manager: Option<&mut ResidualSnapshotManager>,
-    snapshot_store: &mut Vec<ResidualSnapshot>,
-) -> (ResidualComputation, Vec<BlockEntry<B>>)
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut snapshot_manager = snapshot_manager;
-    let mut max_residual: f64 = 0.0;
-    let mut sum_residual: f64 = 0.0;
-    let mut max_relative: f64 = 0.0;
-    let mut sum_relative: f64 = 0.0;
-    let mut max_scale: f64 = 0.0;
-    let mut sum_scale: f64 = 0.0;
-    let mut evaluated: usize = 0;
-    let mut accepted: usize = 0;
-    let mut preconditioner_trials = 0usize;
-    let mut preconditioner_sum_before = 0.0;
-    let mut preconditioner_sum_after = 0.0;
-    let mut p_entries = Vec::new();
-    let direction_limit = x_entries.len().max(1);
-    for (idx, entry) in x_entries.iter().enumerate() {
-        let lambda = *eigenvalues.get(idx).unwrap_or(&0.0);
-        let mut vector = operator.alloc_field();
-        vector
-            .as_mut_slice()
-            .copy_from_slice(entry.applied.as_slice());
-        operator
-            .backend()
-            .axpy(Complex64::new(-lambda, 0.0), &entry.mass, &mut vector);
-        let mut mass = operator.alloc_field();
-        operator.apply_mass(&vector, &mut mass);
-        if let Some(manager) = snapshot_manager.as_deref_mut() {
-            manager.capture(
-                operator,
-                iteration_index,
-                idx,
-                ResidualSnapshotStage::Raw,
-                &vector,
-                snapshot_store,
-            );
-        }
-        enforce_constraints(
-            operator,
-            &mut vector,
-            &mut mass,
-            gamma_mode,
-            deflation,
-            symmetry,
-        );
-        project_against_entries(operator.backend(), &mut vector, &mut mass, x_entries);
-        project_against_entries(operator.backend(), &mut vector, &mut mass, &p_entries);
-        project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
-        if let Some(manager) = snapshot_manager.as_deref_mut() {
-            manager.capture(
-                operator,
-                iteration_index,
-                idx,
-                ResidualSnapshotStage::Projected,
-                &vector,
-                snapshot_store,
-            );
-        }
-        let mut norm = mass_norm(operator.backend(), &vector, &mass);
-        max_residual = max_residual.max(norm);
-        let (mut relative, scale) =
-            compute_relative_residual_with_scale(operator.backend(), entry, lambda, norm);
-        max_relative = max_relative.max(relative);
-        max_scale = max_scale.max(scale);
-        sum_residual += norm;
-        sum_relative += relative;
-        sum_scale += scale;
-        evaluated += 1;
-        if relative <= tol {
-            continue;
-        }
-        if norm <= ABSOLUTE_RESIDUAL_GUARD && relative <= tol * 10.0 {
-            continue;
-        }
-        let mut preconditioned = false;
-        if let Some(precond) = preconditioner.as_mut() {
-            preconditioned = true;
-            preconditioner_trials += 1;
-            preconditioner_sum_before += norm;
-            let backend = operator.backend();
-            (**precond).apply(backend, &mut vector);
-        }
-        operator.apply_mass(&vector, &mut mass);
-        enforce_constraints(
-            operator,
-            &mut vector,
-            &mut mass,
-            gamma_mode,
-            deflation,
-            symmetry,
-        );
-        project_against_entries(operator.backend(), &mut vector, &mut mass, x_entries);
-        project_against_entries(operator.backend(), &mut vector, &mut mass, &p_entries);
-        project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
-        if preconditioned {
-            if let Some(manager) = snapshot_manager.as_deref_mut() {
-                manager.capture(
-                    operator,
-                    iteration_index,
-                    idx,
-                    ResidualSnapshotStage::Preconditioned,
-                    &vector,
-                    snapshot_store,
+            // ================================================================
+            // Step 5b: Convergence check based on eigenvalue changes
+            // Skip iter 0 and 1: we need at least 2 Ritz updates to have
+            // meaningful eigenvalue changes (iter 0 initializes, iter 1 first real update)
+            // ================================================================
+            let n_check = n_active.min(relative_residuals.len());
+            
+            // Only check convergence starting from iteration 2
+            // iter 0: initial eigenvalues from Rayleigh quotients
+            // iter 1: first Ritz update - store these as baseline
+            // iter 2+: compare to previous iteration
+            if iter >= 2 {
+                let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
+                convergence.update_with_eigenvalue_changes(
+                    &relative_residuals[..n_check],
+                    &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
+                    self.config.tol,
                 );
             }
-        }
-        norm = mass_norm(operator.backend(), &vector, &mass);
-        if preconditioned {
-            preconditioner_sum_after += norm;
-        }
-        if scale > 0.0 {
-            relative = norm / scale;
-        } else {
-            relative = norm;
-        }
-        if norm <= 1e-12 {
-            continue;
-        }
-        if relative <= tol {
-            continue;
-        }
-        accepted += 1;
-        let scale = Complex64::new(1.0 / norm, 0.0);
-        operator.backend().scale(scale, &mut vector);
-        operator.backend().scale(scale, &mut mass);
-        let mut applied = operator.alloc_field();
-        operator.apply(&vector, &mut applied);
-        p_entries.push(BlockEntry {
-            vector,
-            mass,
-            applied,
-        });
-        if p_entries.len() >= direction_limit {
-            break;
-        }
-    }
-    let avg_residual = if evaluated > 0 {
-        sum_residual / evaluated as f64
-    } else {
-        0.0
-    };
-    let avg_relative = if evaluated > 0 {
-        sum_relative / evaluated as f64
-    } else {
-        0.0
-    };
-    let avg_scale = if evaluated > 0 {
-        sum_scale / evaluated as f64
-    } else {
-        0.0
-    };
-    (
-        ResidualComputation {
-            max_residual,
-            avg_residual,
-            max_relative_residual: max_relative,
-            avg_relative_residual: avg_relative,
-            max_relative_scale: max_scale,
-            avg_relative_scale: avg_scale,
-            accepted,
-            preconditioner_trials,
-            preconditioner_avg_before: if preconditioner_trials > 0 {
-                preconditioner_sum_before / preconditioner_trials as f64
-            } else {
-                0.0
-            },
-            preconditioner_avg_after: if preconditioner_trials > 0 {
-                preconditioner_sum_after / preconditioner_trials as f64
-            } else {
-                0.0
-            },
-        },
-        p_entries,
-    )
-}
 
-fn reorthogonalize_block<O, B>(
-    operator: &mut O,
-    block: &mut Vec<BlockEntry<B>>,
-    reference: &[BlockEntry<B>],
-) where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut idx = 0;
-    while idx < block.len() {
-        let mut remove = false;
-        {
-            let backend = operator.backend();
-            let (earlier, rest) = block.split_at_mut(idx);
-            let entry = &mut rest[0];
+            // Check for overall convergence (all requested bands)
+            let n_locked = self.deflation.len();
+            let total_converged = n_locked + convergence.n_converged;
+            if total_converged >= n_bands_requested {
+                // All requested bands have converged
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let max_ev_change = convergence.max_eigenvalue_change;
 
-            const MAX_REORTHOG_PASSES: usize = 3;
-            const OVERLAP_TOL: f64 = 1e-12;
+                // Combine locked and active eigenvalues
+                let all_eigenvalues = self.collect_all_eigenvalues();
+                let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
-            for _ in 0..MAX_REORTHOG_PASSES {
-                project_against_entries(backend, &mut entry.vector, &mut entry.mass, reference);
-                project_against_entries(backend, &mut entry.vector, &mut entry.mass, earlier);
-                let norm =
-                    normalize_with_mass_precomputed(backend, &mut entry.vector, &mut entry.mass);
-                if norm <= 1e-12 {
-                    remove = true;
-                    break;
-                }
-                let overlap = max_mass_overlap(backend, entry, reference, earlier);
-                if overlap <= OVERLAP_TOL {
-                    break;
-                }
+                // Convert Bloch wavevector to fractional k-point for logging
+                let k_frac = [bloch[0] / (2.0 * PI), bloch[1] / (2.0 * PI)];
+                let k_idx = self.config.k_index.unwrap_or(0);
+
+                let iters = iter + 1;
+                let time_per_iter = elapsed / iters as f64;
+                info!(
+                    "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, locked={})",
+                    k_idx,
+                    k_frac[0],
+                    k_frac[1],
+                    iters,
+                    max_ev_change,
+                    freq_min,
+                    freq_max,
+                    elapsed,
+                    time_per_iter * 1000.0,
+                    n_locked
+                );
+
+                return EigensolverResult {
+                    eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
+                        .to_vec(),
+                    iterations: iter + 1,
+                    convergence,
+                    converged: true,
+                };
             }
-            if !remove {
-                zero_buffer(entry.applied.as_mut_slice());
-                operator.apply(&entry.vector, &mut entry.applied);
-            }
-        }
-        if remove {
-            block.remove(idx);
-        } else {
-            idx += 1;
-        }
-    }
-}
 
-fn max_mass_overlap<B: SpectralBackend>(
-    backend: &B,
-    entry: &BlockEntry<B>,
-    reference: &[BlockEntry<B>],
-    earlier: &[BlockEntry<B>],
-) -> f64 {
-    reference
-        .iter()
-        .chain(earlier.iter())
-        .map(|basis| backend.dot(&entry.vector, &basis.mass).norm())
-        .fold(0.0, f64::max)
-}
+            // ================================================================
+            // Step 6: Lock converged bands (optional)
+            // Lock bands that have converged to the deflation subspace
+            // Uses eigenvalue-based convergence criterion
+            // Only try locking from iteration 2 onward (need eigenvalue history)
+            // ================================================================
+            if iter >= 2 && self.locking_config.enabled && self.config.use_locking {
+                // Recompute eigenvalue changes for locking decision
+                let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
+                let locking_result = check_for_locking(
+                    &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
+                    iter,
+                    self.config.tol,
+                    &self.locking_config,
+                );
 
-fn finalize_modes<O, B>(
-    operator: &mut O,
-    entries: &[BlockEntry<B>],
-    eigenvalues: &[f64],
-    target: usize,
-    tol: f64,
-    gamma_deflated: bool,
-) -> (Vec<f64>, Vec<Field2D>, EigenDiagnostics)
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut omegas = Vec::new();
-    let mut modes = Vec::new();
-    let mut diagnostics = EigenDiagnostics::new(tol.max(1e-9));
-    let grid = operator.grid();
-    let freq_tol = diagnostics.freq_tolerance;
-    let mut last_kept: Option<f64> = None;
-    log_finalize_context(gamma_deflated, target, eigenvalues.len());
-    let total_candidates = entries.len().min(eigenvalues.len());
-    for (idx, (entry, &lambda)) in entries
-        .iter()
-        .zip(eigenvalues.iter())
-        .take(total_candidates)
-        .enumerate()
-    {
-        log_finalize_candidate(lambda);
-        if lambda < 0.0 {
-            log_finalize_skip("negative", lambda);
-            diagnostics.negative_modes_skipped += 1;
-            continue;
-        }
-        let omega = lambda.sqrt();
-        if gamma_deflated {
-            let gamma_floor = freq_tol.max(1.0);
-            if omega <= gamma_floor {
-                log_finalize_skip("gamma_zero", lambda);
-                diagnostics.duplicate_modes_skipped += 1;
-                continue;
-            }
-        }
-        if let Some(prev) = last_kept {
-            let remaining_candidates = total_candidates.saturating_sub(idx + 1);
-            let can_skip_duplicate = omegas.len() + remaining_candidates >= target;
-            if (omega - prev).abs() <= freq_tol && can_skip_duplicate {
-                log_finalize_skip("duplicate", lambda);
-                diagnostics.duplicate_modes_skipped += 1;
-                continue;
-            }
-        }
-        let mass_norm = mass_norm(operator.backend(), &entry.vector, &entry.mass);
-        let residual_norm = compute_residual_norm(operator, entry, lambda);
-        let relative_residual =
-            compute_relative_residual(operator.backend(), entry, lambda, residual_norm);
-        diagnostics.max_residual = diagnostics.max_residual.max(residual_norm);
-        diagnostics.max_relative_residual =
-            diagnostics.max_relative_residual.max(relative_residual);
-        diagnostics.modes.push(ModeDiagnostics {
-            omega,
-            lambda,
-            residual_norm,
-            mass_norm,
-            relative_residual,
-        });
+                if locking_result.has_locks() {
+                    let n_locked_now = self.lock_converged_bands(&locking_result.bands_to_lock);
+                    if n_locked_now > 0 {
+                        debug!(
+                            "[iter {:>4}] Locked {} bands (by Δλ), {} active remaining",
+                            iter + 1,
+                            n_locked_now,
+                            self.x_block.len()
+                        );
 
-        let data = entry.vector.as_slice().to_vec();
-        modes.push(Field2D::from_vec(grid, data));
-        omegas.push(omega);
-        last_kept = Some(omega);
-        if omegas.len() == target {
-            break;
-        }
-    }
-    (omegas, modes, diagnostics)
-}
+                        // If all bands are now locked, we're done
+                        if self.x_block.is_empty() {
+                            break;
+                        }
 
-#[cfg(debug_assertions)]
-fn log_finalize_context(gamma_deflated: bool, target: usize, eig_count: usize) {
-    rayleigh_ritz_debug_log(format!(
-        "[rayleigh-ritz] finalize context gamma_deflated={} target={} eigenvalues={}",
-        gamma_deflated, target, eig_count
-    ));
-}
-
-#[cfg(not(debug_assertions))]
-fn log_finalize_context(_gamma_deflated: bool, _target: usize, _eig_count: usize) {}
-
-#[cfg(debug_assertions)]
-fn log_finalize_candidate(lambda: f64) {
-    rayleigh_ritz_debug_log(format!("[rayleigh-ritz] finalize lambda={}", lambda));
-}
-
-#[cfg(debug_assertions)]
-fn log_finalize_skip(reason: &str, lambda: f64) {
-    rayleigh_ritz_debug_log(format!(
-        "[rayleigh-ritz] finalize skipped {} candidate lambda={}",
-        reason, lambda
-    ));
-}
-
-#[cfg(not(debug_assertions))]
-fn log_finalize_candidate(_lambda: f64) {}
-
-#[cfg(not(debug_assertions))]
-fn log_finalize_skip(_reason: &str, _lambda: f64) {}
-
-fn compute_residual_norm<O, B>(operator: &mut O, entry: &BlockEntry<B>, lambda: f64) -> f64
-where
-    O: LinearOperator<B>,
-    B: SpectralBackend,
-{
-    let mut residual = operator.alloc_field();
-    residual
-        .as_mut_slice()
-        .copy_from_slice(entry.applied.as_slice());
-    operator
-        .backend()
-        .axpy(Complex64::new(-lambda, 0.0), &entry.mass, &mut residual);
-    let mut residual_mass = operator.alloc_field();
-    operator.apply_mass(&residual, &mut residual_mass);
-    mass_norm(operator.backend(), &residual, &residual_mass)
-}
-
-fn generalized_eigen(
-    op_matrix: Vec<Complex64>,
-    mass_matrix: Vec<Complex64>,
-    dim: usize,
-    tol: f64,
-) -> Option<(Vec<f64>, Vec<Complex64>)> {
-    let l = match cholesky_decompose_hermitian(&mass_matrix, dim) {
-        Some(factor) => factor,
-        None => {
-            log_eigen_failure("cholesky", dim);
-            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
-        }
-    };
-    let temp = match solve_lower_triangular_complex(&l, &op_matrix, dim, dim) {
-        Some(val) => val,
-        None => {
-            log_eigen_failure("solve_lower", dim);
-            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
-        }
-    };
-    let c = match solve_upper_triangular_right_conj(&l, &temp, dim) {
-        Some(val) => val,
-        None => {
-            log_eigen_failure("solve_right", dim);
-            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
-        }
-    };
-    let block = expand_complex_hermitian(&c, dim);
-    let block_dim = dim * 2;
-    let (values, eigenvectors) = jacobi_eigendecomposition(block, block_dim, tol);
-    let complex_eigenvectors = convert_block_vectors(&eigenvectors, dim, block_dim);
-    let coeffs = match solve_upper_triangular_conj(&l, &complex_eigenvectors, dim, block_dim) {
-        Some(val) => val,
-        None => {
-            log_eigen_failure("solve_upper", dim);
-            return generalized_eigen_with_whitening(op_matrix, mass_matrix, dim, tol);
-        }
-    };
-    Some((values, coeffs))
-}
-
-#[cfg(debug_assertions)]
-fn log_eigen_failure(stage: &str, dim: usize) {
-    rayleigh_ritz_debug_log(format!(
-        "[rayleigh-ritz] generalized eigen failed at {} (dim={})",
-        stage, dim
-    ));
-}
-
-#[cfg(not(debug_assertions))]
-fn log_eigen_failure(_stage: &str, _dim: usize) {}
-
-fn cholesky_decompose_hermitian(matrix: &[Complex64], dim: usize) -> Option<Vec<Complex64>> {
-    let mut l = vec![Complex64::default(); dim * dim];
-    const NEG_TOL: f64 = 1e-10;
-    for i in 0..dim {
-        for j in 0..=i {
-            let mut sum = matrix[i * dim + j];
-            for k in 0..j {
-                sum -= l[i * dim + k] * l[j * dim + k].conj();
-            }
-            if i == j {
-                let diag = sum.re;
-                if diag <= 0.0 {
-                    if diag > -NEG_TOL {
-                        l[i * dim + j] = Complex64::new(NEG_TOL.sqrt(), 0.0);
-                        continue;
+                        // Eigenvalues may have changed indices, but we'll recompute next iteration
+                        // For now, continue with remaining active bands
                     }
-                    log_cholesky_diag(diag, i);
-                    return None;
                 }
-                l[i * dim + j] = Complex64::new(diag.sqrt(), 0.0);
-            } else {
-                let denom = l[j * dim + j];
-                if denom.norm_sqr() < 1e-24 {
-                    log_cholesky_diag(0.0, j);
-                    return None;
+            }
+
+            // ================================================================
+            // Step 7: Precondition residuals P_k = M^{-1} R_k
+            // ================================================================
+            let mut p_block = self.precondition_residuals(&residuals);
+
+            // ================================================================
+            // Step 8+9: Apply deflation and symmetry to P
+            // P_k ← P_Y P_k (preconditioner may have reintroduced components along Y)
+            // P_k ← P_sym P_k (preconditioning may have broken symmetry)
+            // NOTE: Order matters less since Y is symmetry-adapted, so P_Y and P_sym commute.
+            // ================================================================
+            self.apply_deflation(&mut p_block);
+            self.apply_symmetry_block(&mut p_block);
+
+            // ================================================================
+            // Step 10: Build search subspace Z_k = [X_k, P_k, W_k]
+            // ================================================================
+            let (subspace, block_sizes) = self.collect_subspace(&p_block);
+
+            // ================================================================
+            // Step 11: B-orthonormalize to get Q_k with Q_k^* B Q_k = I
+            // Uses SVQB to handle near-linear-dependence and rank deficiency
+            // ================================================================
+            let (q_block, bq_block, svqb_result) =
+                self.orthonormalize_subspace_owned(subspace, block_sizes);
+            let subspace_rank = svqb_result.output_rank;
+
+            // ================================================================
+            // DIAGNOSTIC: Subspace condition number warning (every iteration)
+            // A high condition number indicates near-linear-dependence which
+            // can cause eigenvalue jumps and convergence instability.
+            // ================================================================
+            let condition_number = svqb_result.condition_number();
+
+            // Warn if condition number is dangerously high (near-singular subspace)
+            const CONDITION_WARN_THRESHOLD: f64 = 1e10;
+            const CONDITION_CRITICAL_THRESHOLD: f64 = 1e14;
+            if condition_number > CONDITION_CRITICAL_THRESHOLD {
+                warn!(
+                    "[iter {:>4}] CRITICAL: Subspace near-singular! κ={:.2e} (dropped {} vectors). \
+                    Consider soft restart.",
+                    iter + 1,
+                    condition_number,
+                    svqb_result.dropped_count
+                );
+            } else if condition_number > CONDITION_WARN_THRESHOLD {
+                warn!(
+                    "[iter {:>4}] Subspace poorly conditioned: κ={:.2e} (rank={}/{}, dropped={})",
+                    iter + 1,
+                    condition_number,
+                    svqb_result.output_rank,
+                    svqb_result.input_count,
+                    svqb_result.dropped_count
+                );
+            }
+
+            // ================================================================
+            // Step 12: Form projected operator A_s = Q_k^* A Q_k
+            // Note: B_s = Q_k^* B Q_k = I by construction (SVQB ensures this)
+            // ================================================================
+            let a_projected = self.project_operator(&q_block, &bq_block);
+
+            // ================================================================
+            // Step 13: Solve dense eigenproblem A_s Y = Y Θ
+            // ================================================================
+            let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
+
+            // Store previous frequencies for comparison (for warning about increases)
+            let prev_frequencies: Vec<f64> = self
+                .eigenvalues
+                .iter()
+                .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
+                .collect();
+
+            // ================================================================
+            // Step 14a: Store current eigenvalues BEFORE Ritz update
+            // This allows next iteration to compute Δλ = |λ_new - λ_old|
+            // ================================================================
+            self.store_previous_eigenvalues();
+
+            // ================================================================
+            // Step 14b: Update X block with new Ritz vectors
+            // X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
+            // ================================================================
+            self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
+
+            // Warn if any frequencies increased (potential variational principle violation)
+            // Only warn if the increase is significant compared to the convergence tolerance
+            // A band at convergence might fluctuate at ~tol level, so we use tol as threshold
+            if iter > 0 && !prev_frequencies.is_empty() {
+                let curr_frequencies: Vec<f64> = self
+                    .eigenvalues
+                    .iter()
+                    .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
+                    .collect();
+
+                // Use convergence tolerance as the threshold for "significant" increase
+                // ω = √λ, so relative change in ω ≈ 0.5 * relative change in λ
+                // We compare absolute changes scaled by typical frequency magnitude
+                let freq_tol = self.config.tol;
+
+                let mut increases: Vec<String> = Vec::new();
+                let n_compare = prev_frequencies.len().min(curr_frequencies.len());
+                for (band, (&prev, &curr)) in prev_frequencies[..n_compare]
+                    .iter()
+                    .zip(curr_frequencies[..n_compare].iter())
+                    .enumerate()
+                {
+                    // Only warn if increase is larger than convergence tolerance (relative)
+                    // For small frequencies, use absolute tolerance as floor
+                    let threshold = (prev * freq_tol).max(1e-12);
+                    if curr > prev + threshold {
+                        // Band index should account for locked bands
+                        let global_band = self.deflation.len() + band;
+                        increases.push(format!("b{}:{:.4e}→{:.4e}", global_band + 1, prev, curr));
+                    }
                 }
-                l[i * dim + j] = sum / denom;
+
+                if !increases.is_empty() {
+                    warn!(
+                        "[iter {:>4}] ω increased: {}",
+                        iter + 1,
+                        increases.join(", ")
+                    );
+                }
+            }
+
+            // ================================================================
+            // Step 15: Compute new history directions W_{k+1} = Q_k * Y_2
+            // ================================================================
+            self.update_history_directions(&q_block, &dense_result);
+
+            // ================================================================
+            // Debug logging at selected iterations
+            // ================================================================
+            if should_log_iteration(iter) {
+                let iter_elapsed = start_time.elapsed().as_secs_f64();
+                let n_converged = convergence.n_converged;
+                let max_res = convergence.max_residual;
+                let max_ev_change = convergence.max_eigenvalue_change;
+                let n_locked = self.deflation.len();
+
+                // Collect ALL frequencies (locked + active) for complete picture
+                let all_eigenvalues = self.collect_all_eigenvalues();
+                let all_frequencies: Vec<f64> = all_eigenvalues
+                    .iter()
+                    .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
+                    .collect();
+
+                debug!(
+                    "[iter {:>4}] elapsed={:.3}s converged={}/{} locked={} max_Δλ={:.2e} max_res={:.2e} subspace_rank={} w_size={}",
+                    iter + 1,
+                    iter_elapsed,
+                    n_converged,
+                    n_active,
+                    n_locked,
+                    max_ev_change,
+                    max_res,
+                    subspace_rank,
+                    self.w_block.len()
+                );
+                // Log condition number with per-block drop info
+                if let Some((x_drop, p_drop, w_drop)) = svqb_result.block_drops {
+                    debug!(
+                        "[iter {:>4}] subspace κ = {:.2e} (dropped {}: X={}, P={}, W={})",
+                        iter + 1,
+                        condition_number,
+                        svqb_result.dropped_count,
+                        x_drop,
+                        p_drop,
+                        w_drop
+                    );
+                } else {
+                    debug!(
+                        "[iter {:>4}] subspace κ = {:.2e} (dropped {} of {} directions)",
+                        iter + 1,
+                        condition_number,
+                        svqb_result.dropped_count,
+                        svqb_result.input_count
+                    );
+                }
+                debug!(
+                    "[iter {:>4}] frequencies (ω):  {} (first {} locked)",
+                    iter + 1,
+                    format_values(&all_frequencies, 6),
+                    n_locked
+                );
+                debug!(
+                    "[iter {:>4}] residual_B_norms: {}",
+                    iter + 1,
+                    format_values(&residual_b_norms[..n_active.min(residual_b_norms.len())], 6)
+                );
+                debug!(
+                    "[iter {:>4}] relative_resids:  {}",
+                    iter + 1,
+                    format_values(
+                        &relative_residuals[..n_active.min(relative_residuals.len())],
+                        6
+                    )
+                );
+
+                // ============================================================
+                // DIAGNOSTIC: Rayleigh quotient vs Ritz eigenvalue check
+                // This is the key invariant: λ_RQ = <x,Ax>_B/<x,Bx>_B should
+                // match λ_RR from the dense eigenproblem. If they diverge,
+                // the Rayleigh-Ritz projection is not variationally consistent.
+                // ============================================================
+                let backend = self.operator.backend();
+                let mut rq_discrepancies: Vec<String> = Vec::new();
+                for (j, entry) in self.x_block.iter().enumerate() {
+                    // λ_RQ = (x^* A x) / (x^* B x)
+                    // We have entry.applied = A*x and entry.mass = B*x
+                    let x_ax = backend.dot(&entry.vector, &entry.applied).re;
+                    let x_bx = backend.dot(&entry.vector, &entry.mass).re;
+                    let lambda_rq = if x_bx.abs() > 1e-15 { x_ax / x_bx } else { 0.0 };
+
+                    // λ_RR from stored eigenvalue (from Ritz projection)
+                    let lambda_rr = self.eigenvalues[j];
+
+                    // Compute relative discrepancy
+                    let denom = lambda_rr.abs().max(1e-10);
+                    let rel_diff = (lambda_rq - lambda_rr).abs() / denom;
+
+                    // Flag if discrepancy is significant (> 1e-6 relative)
+                    if rel_diff > 1e-6 {
+                        let global_band = n_locked + j;
+                        rq_discrepancies.push(format!(
+                            "b{}:RQ={:.6e},RR={:.6e},Δ={:.2e}",
+                            global_band + 1,
+                            lambda_rq,
+                            lambda_rr,
+                            rel_diff
+                        ));
+                    }
+                }
+                if !rq_discrepancies.is_empty() {
+                    warn!(
+                        "[iter {:>4}] Rayleigh quotient ≠ Ritz eigenvalue: {}",
+                        iter + 1,
+                        rq_discrepancies.join("; ")
+                    );
+                }
+
+                // SVQB diagnostics (only log if rank deficiency detected)
+                let min_sv = svqb_result.singular_values.last().copied().unwrap_or(0.0);
+                let max_sv = svqb_result.singular_values.first().copied().unwrap_or(0.0);
+                if svqb_result.dropped_count > 0 || min_sv < 1e-6 {
+                    debug!(
+                        "[iter {:>4}] SVQB: input={} output={} dropped={} σ=[{:.2e}..{:.2e}]",
+                        iter + 1,
+                        svqb_result.input_count,
+                        svqb_result.output_rank,
+                        svqb_result.dropped_count,
+                        min_sv,
+                        max_sv
+                    );
+                }
             }
         }
-    }
-    Some(l)
-}
 
-#[cfg(debug_assertions)]
-fn log_cholesky_diag(value: f64, index: usize) {
-    rayleigh_ritz_debug_log(format!(
-        "[rayleigh-ritz] cholesky diag failure at row {} (value={})",
-        index, value
-    ));
-}
+        // End of loop: either max iterations reached or all bands locked
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let max_ev_change = convergence.max_eigenvalue_change;
+        let n_locked = self.deflation.len();
 
-#[cfg(not(debug_assertions))]
-fn log_cholesky_diag(_value: f64, _index: usize) {}
+        // Combine locked and active eigenvalues
+        let all_eigenvalues = self.collect_all_eigenvalues();
+        let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
-fn solve_lower_triangular_complex(
-    l: &[Complex64],
-    b: &[Complex64],
-    dim: usize,
-    cols: usize,
-) -> Option<Vec<Complex64>> {
-    let mut x = vec![Complex64::default(); dim * cols];
-    for col in 0..cols {
-        for row in 0..dim {
-            let mut sum = b[row * cols + col];
-            for k in 0..row {
-                sum -= l[row * dim + k] * x[k * cols + col];
-            }
-            let diag = l[row * dim + row];
-            if diag.norm_sqr() < 1e-24 {
-                return None;
-            }
-            x[row * cols + col] = sum / diag;
-        }
-    }
-    Some(x)
-}
+        // Determine if we actually converged
+        let total_converged = n_locked + convergence.n_converged;
+        let converged = total_converged >= n_bands_requested;
 
-fn solve_upper_triangular_right_conj(
-    l: &[Complex64],
-    b: &[Complex64],
-    dim: usize,
-) -> Option<Vec<Complex64>> {
-    let mut x = vec![Complex64::default(); dim * dim];
-    for row in 0..dim {
-        for rev_col in 0..dim {
-            let col = dim - 1 - rev_col;
-            let mut sum = b[row * dim + col];
-            for k in (col + 1)..dim {
-                sum -= x[row * dim + k] * l[k * dim + col].conj();
-            }
-            let diag = l[col * dim + col].conj();
-            if diag.norm_sqr() < 1e-24 {
-                return None;
-            }
-            x[row * dim + col] = sum / diag;
-        }
-    }
-    Some(x)
-}
+        // Convert Bloch wavevector to fractional k-point for logging
+        let k_frac = [bloch[0] / (2.0 * PI), bloch[1] / (2.0 * PI)];
+        let k_idx = self.config.k_index.unwrap_or(0);
 
-fn solve_upper_triangular_conj(
-    l: &[Complex64],
-    b: &[Complex64],
-    dim: usize,
-    cols: usize,
-) -> Option<Vec<Complex64>> {
-    let mut x = vec![Complex64::default(); dim * cols];
-    for col in 0..cols {
-        for rev_row in 0..dim {
-            let row = dim - 1 - rev_row;
-            let mut sum = b[row * cols + col];
-            for k in (row + 1)..dim {
-                sum -= l[k * dim + row].conj() * x[k * cols + col];
-            }
-            let diag = l[row * dim + row].conj();
-            if diag.norm_sqr() < 1e-24 {
-                return None;
-            }
-            x[row * cols + col] = sum / diag;
-        }
-    }
-    Some(x)
-}
-
-fn convert_block_vectors(data: &[f64], dim: usize, cols: usize) -> Vec<Complex64> {
-    let mut complex = vec![Complex64::default(); dim * cols];
-    for col in 0..cols {
-        for row in 0..dim {
-            let real = data[row * cols + col];
-            let imag = data[(row + dim) * cols + col];
-            complex[row * cols + col] = Complex64::new(real, imag);
-        }
-    }
-    complex
-}
-
-fn generalized_eigen_with_whitening(
-    op_matrix: Vec<Complex64>,
-    mass_matrix: Vec<Complex64>,
-    dim: usize,
-    tol: f64,
-) -> Option<(Vec<f64>, Vec<Complex64>)> {
-    let block_dim = dim * 2;
-    let op_block = expand_complex_hermitian(&op_matrix, dim);
-    let mass_block = expand_complex_hermitian(&mass_matrix, dim);
-    let (mass_vals, mass_vecs) = jacobi_eigendecomposition(mass_block, block_dim, tol);
-    const MASS_TOL: f64 = 1e-10;
-    let mut keep = Vec::new();
-    for (idx, &value) in mass_vals.iter().enumerate() {
-        if value > MASS_TOL {
-            keep.push(idx);
-        }
-    }
-    if keep.is_empty() {
-        log_whitening_rank(0, block_dim);
-        return generalized_eigen_identity(op_matrix, dim, tol);
-    }
-    let k = keep.len();
-    log_whitening_rank(k, block_dim);
-    let mut whitening = vec![0.0; block_dim * k];
-    for (col_idx, &eig_idx) in keep.iter().enumerate() {
-        let scale = 1.0 / mass_vals[eig_idx].sqrt();
-        for row in 0..block_dim {
-            whitening[row * k + col_idx] = mass_vecs[row * block_dim + eig_idx] * scale;
-        }
-    }
-    let temp = matmul(block_dim, block_dim, k, &op_block, &whitening);
-    let reduced = matmul_transpose_left(block_dim, k, k, &whitening, &temp);
-    let (values, reduced_vecs) = jacobi_eigendecomposition(reduced, k, tol);
-    let block_coeffs = matmul(block_dim, k, k, &whitening, &reduced_vecs);
-    let complex_eigenvectors = convert_block_vectors(&block_coeffs, dim, k);
-    Some((values, complex_eigenvectors))
-}
-
-#[cfg(debug_assertions)]
-fn log_whitening_rank(rank: usize, total: usize) {
-    rayleigh_ritz_debug_log(format!(
-        "[rayleigh-ritz] whitening fallback rank {} of {}",
-        rank, total
-    ));
-}
-
-#[cfg(not(debug_assertions))]
-fn log_whitening_rank(_rank: usize, _total: usize) {}
-
-fn matmul(rows: usize, mid: usize, cols: usize, a: &[f64], b: &[f64]) -> Vec<f64> {
-    let mut out = vec![0.0; rows * cols];
-    for i in 0..rows {
-        for k in 0..mid {
-            let aik = a[i * mid + k];
-            if aik == 0.0 {
-                continue;
-            }
-            for j in 0..cols {
-                out[i * cols + j] += aik * b[k * cols + j];
-            }
-        }
-    }
-    out
-}
-
-fn matmul_transpose_left(
-    rows: usize,
-    cols_left: usize,
-    cols_right: usize,
-    a: &[f64],
-    b: &[f64],
-) -> Vec<f64> {
-    let mut out = vec![0.0; cols_left * cols_right];
-    for i in 0..cols_left {
-        for row in 0..rows {
-            let ari = a[row * cols_left + i];
-            if ari == 0.0 {
-                continue;
-            }
-            for col in 0..cols_right {
-                out[i * cols_right + col] += ari * b[row * cols_right + col];
-            }
-        }
-    }
-    out
-}
-
-fn generalized_eigen_identity(
-    op_matrix: Vec<Complex64>,
-    dim: usize,
-    tol: f64,
-) -> Option<(Vec<f64>, Vec<Complex64>)> {
-    if dim == 0 {
-        return Some((Vec::new(), Vec::new()));
-    }
-    let block = expand_complex_hermitian(&op_matrix, dim);
-    let block_dim = dim * 2;
-    let (values, eigenvectors) = jacobi_eigendecomposition(block, block_dim, tol);
-    let complex = convert_block_vectors(&eigenvectors, dim, block_dim);
-    Some((values, complex))
-}
-
-#[cfg(test)]
-mod eigensolver_internal_tests {
-    use super::{EigenOptions, generalized_eigen};
-    use num_complex::Complex64;
-
-    #[test]
-    fn generalized_eigen_matches_diagonal_inputs() {
-        let diag = [0.25, 1.0, 4.0];
-        let dim = diag.len();
-        let mut op = vec![Complex64::default(); dim * dim];
-        let mut mass = vec![Complex64::default(); dim * dim];
-        for i in 0..dim {
-            op[i * dim + i] = Complex64::new(diag[i], 0.0);
-            mass[i * dim + i] = Complex64::new(1.0, 0.0);
-        }
-        let (vals, _) = generalized_eigen(op, mass, dim, 1e-12).expect("generalized eigen solve");
-        for (i, want) in diag.iter().enumerate() {
-            assert!(
-                (vals[i] - want).abs() < 1e-9,
-                "eigenvalue mismatch at {i}: got {}, want {}",
-                vals[i],
-                want
+        let iters = if converged { self.iteration + 1 } else { self.config.max_iter };
+        let time_per_iter = elapsed / iters as f64;
+        
+        if converged {
+            info!(
+                "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, locked={})",
+                k_idx,
+                k_frac[0],
+                k_frac[1],
+                iters,
+                max_ev_change,
+                freq_min,
+                freq_max,
+                elapsed,
+                time_per_iter * 1000.0,
+                n_locked
+            );
+        } else {
+            info!(
+                "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, NOT CONVERGED, locked={})",
+                k_idx,
+                k_frac[0],
+                k_frac[1],
+                iters,
+                max_ev_change,
+                freq_min,
+                freq_max,
+                elapsed,
+                time_per_iter * 1000.0,
+                n_locked
             );
         }
-    }
 
-    #[test]
-    fn default_block_size_adds_slack() {
-        let mut opts = EigenOptions::default();
-        opts.n_bands = 5;
-        assert_eq!(opts.effective_block_size(), 7);
-        opts.block_size = 10;
-        assert_eq!(opts.effective_block_size(), 10);
-    }
-}
-
-#[cfg(test)]
-mod projection_stability_tests {
-    use super::Complex64;
-    use super::rayleigh_ritz;
-    use super::{BlockEntry, LinearOperator, SpectralBackend};
-    use crate::field::Field2D;
-    use crate::grid::Grid2D;
-
-    #[derive(Clone, Copy, Default)]
-    struct IdentityBackend;
-
-    impl SpectralBackend for IdentityBackend {
-        type Buffer = Field2D;
-
-        fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {
-            Field2D::zeros(grid)
-        }
-
-        fn forward_fft_2d(&self, _buffer: &mut Self::Buffer) {}
-
-        fn inverse_fft_2d(&self, _buffer: &mut Self::Buffer) {}
-
-        fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
-            for value in buffer.as_mut_slice() {
-                *value *= alpha;
-            }
-        }
-
-        fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
-            for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-                *dst += alpha * src;
-            }
-        }
-
-        fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
-            x.as_slice()
-                .iter()
-                .zip(y.as_slice())
-                .map(|(a, b)| a.conj() * b)
-                .sum()
+        EigensolverResult {
+            eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
+            iterations: self.iteration + 1,
+            convergence,
+            converged,
         }
     }
 
-    struct IdentityOp {
-        backend: IdentityBackend,
-        grid: Grid2D,
+    /// Collect all eigenvalues (locked + active) in sorted order.
+    fn collect_all_eigenvalues(&self) -> Vec<f64> {
+        let mut all: Vec<f64> = Vec::with_capacity(self.deflation.len() + self.eigenvalues.len());
+
+        // Add locked eigenvalues
+        all.extend_from_slice(self.deflation.eigenvalues());
+
+        // Add active eigenvalues
+        all.extend_from_slice(&self.eigenvalues);
+
+        // Sort (locked should already be sorted, but ensure overall ordering)
+        all.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        all
     }
 
-    impl IdentityOp {
-        fn new(size: usize) -> Self {
-            Self {
-                backend: IdentityBackend,
-                grid: Grid2D::new(size, 1, 1.0, 1.0),
-            }
-        }
+    /// Get the current eigenvector approximations as Field2D.
+    ///
+    /// This extracts the vector component from each BlockEntry.
+    /// **Note**: This does NOT include locked (deflated) eigenvectors.
+    /// Use [`all_eigenvectors`] to get both locked and active vectors.
+    pub fn eigenvectors(&self) -> Vec<Field2D> {
+        self.x_block
+            .iter()
+            .take(self.config.n_bands)
+            .map(|entry| {
+                let grid = entry.vector.grid();
+                Field2D::from_vec(grid, entry.vector.as_slice().to_vec())
+            })
+            .collect()
     }
 
-    impl LinearOperator<IdentityBackend> for IdentityOp {
-        fn apply(&mut self, input: &Field2D, output: &mut Field2D) {
-            output.as_mut_slice().copy_from_slice(input.as_slice());
-        }
-
-        fn apply_mass(&mut self, input: &Field2D, output: &mut Field2D) {
-            output.as_mut_slice().copy_from_slice(input.as_slice());
-        }
-
-        fn alloc_field(&self) -> Field2D {
-            self.backend.alloc_field(self.grid)
-        }
-
-        fn backend(&self) -> &IdentityBackend {
-            &self.backend
-        }
-
-        fn backend_mut(&mut self) -> &mut IdentityBackend {
-            &mut self.backend
-        }
-
-        fn grid(&self) -> Grid2D {
-            self.grid
-        }
-    }
-
-    #[test]
-    fn trims_singular_mass_when_dim_matches_request() {
-        let mut op = IdentityOp::new(2);
-
-        let mut v1 = op.alloc_field();
-        v1.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
-        let mut m1 = op.alloc_field();
-        op.apply_mass(&v1, &mut m1);
-        let mut a1 = op.alloc_field();
-        op.apply(&v1, &mut a1);
-
-        let mut v2 = op.alloc_field();
-        // Deliberately inject a nearly null direction to emulate a singular
-        // mass matrix.
-        v2.as_mut_slice()[0] = Complex64::new(0.0, 0.0);
-        v2.as_mut_slice()[1] = Complex64::new(0.0, 0.0);
-        let mut m2 = op.alloc_field();
-        op.apply_mass(&v2, &mut m2);
-        let mut a2 = op.alloc_field();
-        op.apply(&v2, &mut a2);
-
-        let entries = vec![
-            BlockEntry {
-                vector: v1,
-                mass: m1,
-                applied: a1,
-            },
-            BlockEntry {
-                vector: v2,
-                mass: m2,
-                applied: a2,
-            },
-        ];
-        let subspace = super::build_subspace_entries(&entries, &[], &[]);
-
-        let (values, _, diag) = rayleigh_ritz(&mut op, &subspace, 2, 0, 1e-12);
-
-        assert!(diag.min_mass_eigenvalue == 0.0);
-        assert!(diag.condition_estimate.is_infinite());
-        assert!(
-            diag.fallback_used,
-            "unstable mass matrix should trigger fallback"
+    /// Get all eigenvectors (locked + active) as Field2D, sorted by eigenvalue.
+    ///
+    /// This returns the complete set of eigenvectors including:
+    /// - Locked (deflated) vectors (e.g., Γ constant mode with ω=0)
+    /// - Active vectors from the current iteration
+    ///
+    /// The vectors are returned in the same order as [`collect_all_eigenvalues`],
+    /// sorted by eigenvalue from smallest to largest.
+    pub fn all_eigenvectors(&self) -> Vec<Field2D> {
+        let grid = self.operator.grid();
+        
+        // Collect (eigenvalue, eigenvector) pairs
+        let mut all_pairs: Vec<(f64, Field2D)> = Vec::with_capacity(
+            self.deflation.len() + self.x_block.len()
         );
-        assert!(values.len() >= 1, "at least one mode should survive");
+        
+        // Add locked (deflated) vectors
+        for (eigenvalue, vector) in self.deflation.eigenvalues().iter()
+            .zip(self.deflation.vectors().iter())
+        {
+            let field = Field2D::from_vec(grid, vector.as_slice().to_vec());
+            all_pairs.push((*eigenvalue, field));
+        }
+        
+        // Add active vectors
+        for (eigenvalue, entry) in self.eigenvalues.iter().zip(self.x_block.iter()) {
+            let field = Field2D::from_vec(grid, entry.vector.as_slice().to_vec());
+            all_pairs.push((*eigenvalue, field));
+        }
+        
+        // Sort by eigenvalue
+        all_pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Take n_bands and extract eigenvectors
+        all_pairs.into_iter()
+            .take(self.config.n_bands)
+            .map(|(_, vec)| vec)
+            .collect()
+    }
+
+    /// Create a RunConfig from the current solver state.
+    ///
+    /// This captures all configuration parameters for diagnostic recording.
+    /// Note: The preconditioner type defaults to FourierDiagonal if a preconditioner
+    /// is present. For more control, use `create_run_config_with_precond_type`.
+    pub fn create_run_config(&self, label: impl Into<String>) -> RunConfig {
+        use crate::diagnostics::PreconditionerType;
+
+        let grid = self.operator.grid();
+        let bloch = self.operator.bloch();
+
+        // Default preconditioner type based on presence
+        let precond_type = if self.preconditioner.is_some() {
+            PreconditionerType::Structured
+        } else {
+            PreconditionerType::None
+        };
+
+        RunConfig::new(label)
+            .with_resolution(grid.nx, grid.ny)
+            .with_dimensions(grid.lx, grid.ly)
+            .with_eigensolver_params(
+                self.config.n_bands,
+                self.config.max_iter,
+                self.config.tol,
+                self.config.effective_block_size(),
+            )
+            .with_toggles(
+                precond_type,
+                self.config.use_w_history,
+                self.warm_start.is_some(),
+                self.config.use_locking,
+            )
+            .with_k_point(
+                0, // Will be overwritten by caller if part of k-path
+                [
+                    bloch[0] / (2.0 * std::f64::consts::PI),
+                    bloch[1] / (2.0 * std::f64::consts::PI),
+                ],
+                bloch,
+            )
+    }
+
+    /// Create a RunConfig with explicit preconditioner type.
+    pub fn create_run_config_with_precond_type(
+        &self,
+        label: impl Into<String>,
+        precond_type: crate::diagnostics::PreconditionerType,
+    ) -> RunConfig {
+        let grid = self.operator.grid();
+        let bloch = self.operator.bloch();
+
+        RunConfig::new(label)
+            .with_resolution(grid.nx, grid.ny)
+            .with_dimensions(grid.lx, grid.ly)
+            .with_eigensolver_params(
+                self.config.n_bands,
+                self.config.max_iter,
+                self.config.tol,
+                self.config.effective_block_size(),
+            )
+            .with_toggles(
+                precond_type,
+                self.config.use_w_history,
+                self.warm_start.is_some(),
+                self.config.use_locking,
+            )
+            .with_k_point(
+                0,
+                [
+                    bloch[0] / (2.0 * std::f64::consts::PI),
+                    bloch[1] / (2.0 * std::f64::consts::PI),
+                ],
+                bloch,
+            )
+    }
+
+    /// Run the LOBPCG iteration with full diagnostics recording.
+    ///
+    /// This is similar to [`solve`], but records per-iteration snapshots
+    /// for later analysis and plotting. Use this when you want to study
+    /// convergence behavior in detail.
+    ///
+    /// # Minimal Projection Strategy
+    ///
+    /// The algorithm uses a minimal projection strategy for deflation and symmetry:
+    ///
+    /// **Residuals (R):**
+    /// - Apply deflation once: R ← P_Y R
+    /// - Apply symmetry once (if enabled): R ← P_sym R
+    ///
+    /// **Preconditioned residuals (P):**
+    /// - Apply preconditioner first: P = M^{-1} R
+    /// - Apply deflation once: P ← P_Y P
+    /// - Apply symmetry once (if enabled): P ← P_sym P
+    ///
+    /// **Search subspace (Z = [X, P, W]):**
+    /// - No re-projection needed: X, P, W are already in the deflated + symmetric
+    ///   subspace from previous iterations
+    /// - Just orthonormalize via SVQB
+    ///
+    /// This minimal strategy works because the deflation subspace Y is kept
+    /// symmetry-adapted (locked vectors are symmetry-projected before adding),
+    /// so P_Y and P_sym commute: P_sym P_Y = P_Y P_sym.
+    ///
+    /// # Arguments
+    /// - `label`: A human-readable label for this run (e.g., "baseline", "no_precond")
+    ///
+    /// # Returns
+    /// A [`DiagnosticResult`] containing both the standard result and
+    /// the full convergence history.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let diag_result = solver.solve_with_diagnostics("baseline_run");
+    ///
+    /// // Standard result
+    /// println!("Converged: {}", diag_result.result.converged);
+    ///
+    /// // Export diagnostics to JSON
+    /// let json = serde_json::to_string_pretty(&diag_result.diagnostics)?;
+    /// std::fs::write("convergence.json", json)?;
+    /// ```
+    pub fn solve_with_diagnostics(&mut self, label: impl Into<String>) -> DiagnosticResult {
+        // Ensure we're initialized
+        if !self.initialized {
+            self.initialize();
+        }
+
+        // Check preconditioner-symmetry commutation (once at start)
+        self.check_preconditioner_symmetry_commutation();
+
+        let n_bands_requested = self.config.n_bands;
+        let n_bands = n_bands_requested.min(self.x_block.len());
+        let mut convergence = ConvergenceInfo::new(n_bands);
+        let start_time = Instant::now();
+        let bloch = self.operator.bloch();
+
+        // Set up diagnostics recorder
+        let run_config = self.create_run_config(label);
+        let mut recorder = ConvergenceRecorder::new(run_config);
+        recorder.start();
+
+        // Threshold for warning about poor subspace conditioning
+        const CONDITION_WARN_THRESHOLD: f64 = 1e10;
+        const CONDITION_CRITICAL_THRESHOLD: f64 = 1e14;
+
+        // Main LOBPCG iteration loop
+        for iter in 0..self.config.max_iter {
+            self.iteration = iter;
+
+            // Track the number of active bands (may shrink due to locking)
+            let n_active = self.x_block.len();
+            if n_active == 0 {
+                // All bands have been locked
+                break;
+            }
+
+            // ================================================================
+            // Step 1: Compute residuals R_k = A*X_k - B*X_k * Λ_k
+            // ================================================================
+            let mut residuals = self.compute_residuals();
+
+            // ================================================================
+            // Step 2: Apply deflation to residuals R_k ← P_Y R_k
+            // This removes components along locked eigenvectors.
+            // Applied FIRST because Y is now symmetry-adapted, so P_Y and
+            // P_sym commute. Deflation removes the nullspace components.
+            // ================================================================
+            self.apply_deflation(&mut residuals);
+
+            // ================================================================
+            // Step 3: Apply symmetry projection to residuals R_k ← P_sym R_k
+            // Applied AFTER deflation to clean up any numerical noise.
+            // Since Y is symmetry-adapted, P_sym P_Y = P_Y P_sym.
+            // ================================================================
+            self.apply_symmetry_block(&mut residuals);
+
+            // ================================================================
+            // Step 4: Compute B-norms of deflated residuals
+            // This is the correct metric: we measure what's left after
+            // projecting out the locked subspace
+            // ================================================================
+            let residual_b_norms = self.compute_residual_b_norms(&residuals);
+
+            // ================================================================
+            // Step 5: Compute relative residuals (for diagnostics)
+            // ================================================================
+            let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
+
+            // ================================================================
+            // Step 5b: Convergence check based on eigenvalue changes
+            // Skip iter 0 and 1: we need at least 2 Ritz updates to have
+            // meaningful eigenvalue changes (iter 0 initializes, iter 1 first real update)
+            // ================================================================
+            let n_check = n_active.min(relative_residuals.len());
+            
+            // Only check convergence starting from iteration 2
+            // iter 0: initial eigenvalues from Rayleigh quotients
+            // iter 1: first Ritz update - store these as baseline
+            // iter 2+: compare to previous iteration
+            if iter >= 2 {
+                let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
+                convergence.update_with_eigenvalue_changes(
+                    &relative_residuals[..n_check],
+                    &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
+                    self.config.tol,
+                );
+            }
+
+            // Check for overall convergence
+            let n_locked = self.deflation.len();
+            let total_converged = n_locked + convergence.n_converged;
+
+            // Prepare subspace info for recording (will be filled in after SVQB)
+            let subspace_dim_input = self.subspace_dimension();
+            let w_size = self.w_block.len();
+
+            // Run the rest of the iteration to get subspace info
+            if total_converged >= n_bands_requested {
+                // Record final snapshot before returning
+                let snapshot = IterationSnapshot::new(iter)
+                    .with_eigenvalues(self.eigenvalues.clone())
+                    .with_residuals(residual_b_norms.clone(), relative_residuals.clone())
+                    .with_convergence_counts(convergence.n_converged, n_locked, n_active)
+                    .with_subspace_info(subspace_dim_input, subspace_dim_input, 0, w_size);
+                recorder.record_iteration(snapshot);
+
+                // All requested bands have converged
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let max_rel = convergence.max_residual;
+                let all_eigenvalues = self.collect_all_eigenvalues();
+                let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
+
+                info!(
+                    "[solve_diag] k#{:03} k=({:+.3},{:+.3}) iters={:>3} rel={:+10.3e} frequencies=[{:>8.3}..{:>8.3}] elapsed={:.2}s (locked={})",
+                    iter + 1,
+                    bloch[0],
+                    bloch[1],
+                    iter + 1,
+                    max_rel,
+                    freq_min,
+                    freq_max,
+                    elapsed,
+                    n_locked
+                );
+
+                let result = EigensolverResult {
+                    eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
+                        .to_vec(),
+                    iterations: iter + 1,
+                    convergence,
+                    converged: true,
+                };
+
+                let diagnostics = recorder.finalize_with_result(iter + 1, true);
+                return DiagnosticResult {
+                    result,
+                    diagnostics,
+                };
+            }
+
+            // ================================================================
+            // Step 6: Check for locking (optional)
+            // Uses eigenvalue-based convergence criterion
+            // Only try locking from iteration 2 onward (need eigenvalue history)
+            // ================================================================
+            if iter >= 2 && self.locking_config.enabled && self.config.use_locking {
+                // Recompute eigenvalue changes for locking decision
+                let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
+                let locking_result = check_for_locking(
+                    &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
+                    iter,
+                    self.config.tol,
+                    &self.locking_config,
+                );
+
+                if locking_result.has_locks() {
+                    let n_locked_now = self.lock_converged_bands(&locking_result.bands_to_lock);
+                    if n_locked_now > 0 {
+                        debug!(
+                            "[iter {:>4}] Locked {} bands (by Δλ), {} active remaining",
+                            iter + 1,
+                            n_locked_now,
+                            self.x_block.len()
+                        );
+
+                        if self.x_block.is_empty() {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // ================================================================
+            // Step 7: Precondition residuals P_k = M^{-1} R_k
+            // ================================================================
+            let mut p_block = self.precondition_residuals(&residuals);
+
+            // ================================================================
+            // Step 8+9: Apply deflation and symmetry to P
+            // P_k ← P_Y P_k (preconditioner may have reintroduced components along Y)
+            // P_k ← P_sym P_k (preconditioning may have broken symmetry)
+            // ================================================================
+            self.apply_deflation(&mut p_block);
+            self.apply_symmetry_block(&mut p_block);
+
+            // ================================================================
+            // Step 10: Build search subspace Z_k = [X_k, P_k, W_k]
+            // ================================================================
+            let (subspace, block_sizes) = self.collect_subspace(&p_block);
+
+            // ================================================================
+            // Step 11: B-orthonormalize to get Q_k
+            // ================================================================
+            let (q_block, bq_block, svqb_result) =
+                self.orthonormalize_subspace_owned(subspace, block_sizes);
+            let subspace_rank = svqb_result.output_rank;
+
+            // Check subspace conditioning (detect potential near-linear dependence)
+            let condition_number = svqb_result.condition_number();
+            if condition_number > CONDITION_CRITICAL_THRESHOLD {
+                warn!(
+                    "[iter {:>4}] CRITICAL: Subspace near-singular! κ={:.2e} (dropped {} vectors). \
+                    Consider soft restart.",
+                    iter + 1,
+                    condition_number,
+                    svqb_result.dropped_count
+                );
+            } else if condition_number > CONDITION_WARN_THRESHOLD {
+                warn!(
+                    "[iter {:>4}] Subspace poorly conditioned: κ={:.2e} (rank={}/{}, dropped={})",
+                    iter + 1,
+                    condition_number,
+                    svqb_result.output_rank,
+                    svqb_result.input_count,
+                    svqb_result.dropped_count
+                );
+            }
+
+            // ================================================================
+            // Record iteration snapshot
+            // ================================================================
+            let snapshot = IterationSnapshot::new(iter)
+                .with_eigenvalues(self.eigenvalues.clone())
+                .with_residuals(residual_b_norms.clone(), relative_residuals.clone())
+                .with_convergence_counts(convergence.n_converged, n_locked, n_active)
+                .with_subspace_info(
+                    svqb_result.input_count,
+                    svqb_result.output_rank,
+                    svqb_result.dropped_count,
+                    w_size,
+                );
+            recorder.record_iteration(snapshot);
+
+            // ================================================================
+            // Step 12: Form projected operator A_s = Q_k^* A Q_k
+            // ================================================================
+            let a_projected = self.project_operator(&q_block, &bq_block);
+
+            // ================================================================
+            // Step 13: Solve dense eigenproblem A_s Y = Y Θ
+            // ================================================================
+            let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
+
+            // Store previous frequencies for comparison (for warning about increases)
+            let prev_frequencies: Vec<f64> = self
+                .eigenvalues
+                .iter()
+                .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
+                .collect();
+
+            // ================================================================
+            // Step 14a: Store current eigenvalues BEFORE Ritz update
+            // This allows next iteration to compute Δλ = |λ_new - λ_old|
+            // ================================================================
+            self.store_previous_eigenvalues();
+
+            // ================================================================
+            // Step 14b: Update X block with new Ritz vectors
+            // X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
+            // ================================================================
+            self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
+
+            // Warn if any frequencies increased (potential variational principle violation)
+            // Only warn if the increase is significant compared to the convergence tolerance
+            // A band at convergence might fluctuate at ~tol level, so we use tol as threshold
+            if iter > 0 && !prev_frequencies.is_empty() {
+                let curr_frequencies: Vec<f64> = self
+                    .eigenvalues
+                    .iter()
+                    .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
+                    .collect();
+
+                // Use convergence tolerance as the threshold for "significant" increase
+                // ω = √λ, so relative change in ω ≈ 0.5 * relative change in λ
+                // We compare absolute changes scaled by typical frequency magnitude
+                let freq_tol = self.config.tol;
+
+                let mut increases: Vec<String> = Vec::new();
+                let n_compare = prev_frequencies.len().min(curr_frequencies.len());
+                for (band, (&prev, &curr)) in prev_frequencies[..n_compare]
+                    .iter()
+                    .zip(curr_frequencies[..n_compare].iter())
+                    .enumerate()
+                {
+                    // Only warn if increase is larger than convergence tolerance (relative)
+                    // For small frequencies, use absolute tolerance as floor
+                    let threshold = (prev * freq_tol).max(1e-12);
+                    if curr > prev + threshold {
+                        // Band index should account for locked bands
+                        let global_band = self.deflation.len() + band;
+                        increases.push(format!("b{}:{:.4e}→{:.4e}", global_band + 1, prev, curr));
+                    }
+                }
+
+                if !increases.is_empty() {
+                    warn!(
+                        "[iter {:>4}] ω increased: {}",
+                        iter + 1,
+                        increases.join(", ")
+                    );
+                }
+            }
+
+            // ================================================================
+            // Step 15: Update history directions W_{k+1}
+            // ================================================================
+            self.update_history_directions(&q_block, &dense_result);
+
+            // Debug logging at selected iterations
+            if should_log_iteration(iter) {
+                let iter_elapsed = start_time.elapsed().as_secs_f64();
+                let n_converged = convergence.n_converged;
+                let max_res = convergence.max_residual;
+                let max_ev_change = convergence.max_eigenvalue_change;
+                let n_locked = self.deflation.len();
+
+                // Collect ALL frequencies (locked + active) for complete picture
+                let all_eigenvalues = self.collect_all_eigenvalues();
+                let all_frequencies: Vec<f64> = all_eigenvalues
+                    .iter()
+                    .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
+                    .collect();
+
+                debug!(
+                    "[iter {:>4}] elapsed={:.3}s converged={}/{} locked={} max_Δλ={:.2e} max_res={:.2e} subspace_rank={} w_size={}",
+                    iter + 1,
+                    iter_elapsed,
+                    n_converged,
+                    n_active,
+                    n_locked,
+                    max_ev_change,
+                    max_res,
+                    subspace_rank,
+                    self.w_block.len()
+                );
+                debug!(
+                    "[iter {:>4}] frequencies (ω):  {} (first {} locked)",
+                    iter + 1,
+                    format_values(&all_frequencies, 6),
+                    n_locked
+                );
+                // Log condition number with per-block drop info
+                if let Some((x_drop, p_drop, w_drop)) = svqb_result.block_drops {
+                    debug!(
+                        "[iter {:>4}] subspace κ = {:.2e} (dropped {}: X={}, P={}, W={})",
+                        iter + 1,
+                        condition_number,
+                        svqb_result.dropped_count,
+                        x_drop,
+                        p_drop,
+                        w_drop
+                    );
+                } else {
+                    debug!(
+                        "[iter {:>4}] subspace κ = {:.2e} (dropped {} of {} directions)",
+                        iter + 1,
+                        condition_number,
+                        svqb_result.dropped_count,
+                        svqb_result.input_count
+                    );
+                }
+            }
+        }
+
+        // End of loop: either max iterations reached or all bands locked
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let max_ev_change = convergence.max_eigenvalue_change;
+        let n_locked = self.deflation.len();
+
+        let all_eigenvalues = self.collect_all_eigenvalues();
+        let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
+
+        let total_converged = n_locked + convergence.n_converged;
+        let converged = total_converged >= n_bands_requested;
+
+        if converged {
+            info!(
+                "[solve_diag] k#{:03} k=({:+.3},{:+.3}) iters={:>3} Δλ={:+10.3e} frequencies=[{:>8.3}..{:>8.3}] elapsed={:.2}s (locked={})",
+                self.iteration + 1,
+                bloch[0],
+                bloch[1],
+                self.iteration + 1,
+                max_ev_change,
+                freq_min,
+                freq_max,
+                elapsed,
+                n_locked
+            );
+        } else {
+            info!(
+                "[solve_diag] k#{:03} k=({:+.3},{:+.3}) iters={:>3} Δλ={:+10.3e} frequencies=[{:>8.3}..{:>8.3}] elapsed={:.2}s (NOT CONVERGED, locked={})",
+                self.config.max_iter,
+                bloch[0],
+                bloch[1],
+                self.config.max_iter,
+                max_ev_change,
+                freq_min,
+                freq_max,
+                elapsed,
+                n_locked
+            );
+        }
+
+        let result = EigensolverResult {
+            eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
+            iterations: self.iteration + 1,
+            convergence,
+            converged,
+        };
+
+        let diagnostics = recorder.finalize_with_result(self.iteration + 1, converged);
+        DiagnosticResult {
+            result,
+            diagnostics,
+        }
     }
 }

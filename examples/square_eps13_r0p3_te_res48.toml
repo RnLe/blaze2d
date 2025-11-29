@@ -1,7 +1,9 @@
-# Example configuration for a square lattice of air holes
+# Square lattice eps_bg=13, r/a=0.3, high-res grid for TE
+
+polarization = "TE"
 
 [geometry]
-eps_bg = 12.0
+eps_bg = 13.0
 
 [geometry.lattice]
 a1 = [1.0, 0.0]
@@ -9,22 +11,20 @@ a2 = [0.0, 1.0]
 
 [[geometry.atoms]]
 pos = [0.5, 0.5]
-radius = 0.2
+radius = 0.3
 eps_inside = 1.0
 
 [grid]
-nx = 32
-ny = 32
+nx = 48
+ny = 48
 lx = 1.0
 ly = 1.0
-
-polarization = "TM"
 
 [path]
 preset = "square"
 segments_per_leg = 8
 
 [eigensolver]
-n_bands = 5
-max_iter = 160
-tol = 1e-8
+n_bands = 8
+max_iter = 500
+tol = 1e-6

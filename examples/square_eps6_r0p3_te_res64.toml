@@ -1,9 +1,9 @@
-# Square lattice eps_bg=13, r/a=0.3, low-res grid for TM
+# Square lattice eps_bg=6, r/a=0.3, high-res grid (64x64) for TE
 
-polarization = "TM"
+polarization = "TE"
 
 [geometry]
-eps_bg = 13.0
+eps_bg = 6.0
 
 [geometry.lattice]
 a1 = [1.0, 0.0]
@@ -15,14 +15,14 @@ radius = 0.3
 eps_inside = 1.0
 
 [grid]
-nx = 24
-ny = 24
+nx = 64
+ny = 64
 lx = 1.0
 ly = 1.0
 
 [path]
 preset = "square"
-segments_per_leg = 4
+segments_per_leg = 10
 
 [eigensolver]
 n_bands = 8

@@ -381,9 +381,14 @@ fn jacobi_preconditioner_uses_tm_effective_epsilon() {
     let mut field = plane_wave(grid, 0, 1);
     let backend_ref = theta.backend();
     preconditioner.apply(backend_ref, &mut field);
-    let eps = dielectric_clone.eps();
-    let avg_eps = eps.iter().copied().sum::<f64>() / eps.len() as f64;
-    let eps_eff = if avg_eps <= 0.0 { 1.0 } else { avg_eps };
+    // TM mode uses harmonic mean of epsilon: 1/mean(1/ε)
+    let inv_eps = dielectric_clone.inv_eps();
+    let avg_inv_eps = inv_eps.iter().copied().sum::<f64>() / inv_eps.len() as f64;
+    let eps_eff = if avg_inv_eps <= 0.0 {
+        1.0
+    } else {
+        1.0 / avg_inv_eps
+    };
     let expected_scale =
         eps_eff / (shifted_eigenvalue(grid, bloch, 0, 1) + FOURIER_DIAGONAL_SHIFT * eps_eff);
     let mut expected = plane_wave(grid, 0, 1);
@@ -425,13 +430,320 @@ fn structured_preconditioner_exposes_dielectric_weights() {
         .spatial_weights()
         .expect("structured preconditioner should have weights");
     let eps = dielectric_clone.eps();
-    let inv_eps = dielectric_clone.inv_eps();
-    let avg_inv = inv_eps.iter().copied().sum::<f64>() / inv_eps.len() as f64;
-    let eps_eff = if avg_inv <= 0.0 { 1.0 } else { 1.0 / avg_inv };
+    // TE mode uses arithmetic mean of epsilon for effective epsilon
+    let avg_eps = eps.iter().copied().sum::<f64>() / eps.len() as f64;
+    let eps_eff = if avg_eps <= 0.0 { 1.0 } else { avg_eps };
     for (w, &eps_val) in weights.iter().zip(eps.iter()) {
         let expected = (eps_val / eps_eff)
             .max(STRUCTURED_WEIGHT_MIN)
             .min(STRUCTURED_WEIGHT_MAX);
         assert!((*w - expected).abs() < 1e-9, "weight mismatch");
+    }
+}
+
+/// Test that the HOMOGENEOUS (Fourier-diagonal) preconditioner reduces high-frequency
+/// residual norms effectively. This verifies the core frequency-dependent scaling.
+///
+/// Note: The STRUCTURED preconditioner includes spatial weights that mix frequencies,
+/// so it doesn't reduce pure plane-wave norms as dramatically. Instead, it's designed
+/// to improve the condition number of the preconditioned system, which is tested
+/// indirectly via actual LOBPCG convergence in integration tests.
+#[test]
+fn homogeneous_preconditioner_reduces_high_frequency_residual() {
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let dielectric = patterned_dielectric(grid);
+    let backend = TestBackend;
+    let bloch = [0.1 * PI, 0.05 * PI];
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    // Use HOMOGENEOUS preconditioner (no spatial weights)
+    let mut preconditioner = theta.build_homogeneous_preconditioner();
+
+    // Create a high-frequency "residual" vector (mimics what LOBPCG would compute)
+    let high_freq = plane_wave(grid, 3, -2);
+    let mut residual = high_freq.clone();
+
+    let before_norm = field_norm(&residual);
+    let backend_ref = theta.backend();
+    preconditioner.apply(backend_ref, &mut residual);
+    let after_norm = field_norm(&residual);
+
+    // The homogeneous preconditioner should significantly reduce high-frequency norms
+    // because it scales by 1/|k+G|² (approximately)
+    let reduction = before_norm / after_norm;
+    assert!(
+        reduction >= 5.0,
+        "expected ≥5x reduction for high-freq mode, got {reduction:.2}x"
+    );
+
+    // Also verify that a low-frequency mode is not over-damped
+    let low_freq = plane_wave(grid, 0, 1);
+    let mut low_residual = low_freq.clone();
+    let low_before = field_norm(&low_residual);
+    preconditioner.apply(backend_ref, &mut low_residual);
+    let low_after = field_norm(&low_residual);
+
+    // Low-frequency modes should have much less reduction
+    let low_reduction = low_before / low_after;
+    assert!(
+        low_reduction < reduction / 2.0,
+        "low-freq reduction ({low_reduction:.2}x) should be much less than high-freq ({reduction:.2}x)"
+    );
+}
+
+/// Test that structured preconditioner applies spatial weights appropriately.
+/// The structured preconditioner mixes frequencies via spatial weights, so we verify
+/// that high-frequency modes are still reduced more than low-frequency modes,
+/// even if the absolute reduction is smaller than the homogeneous case.
+#[test]
+fn structured_preconditioner_reduces_high_freq_more_than_low_freq() {
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let dielectric = patterned_dielectric(grid);
+    let backend = TestBackend;
+    let bloch = [0.1 * PI, 0.05 * PI];
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    let mut preconditioner = theta.build_structured_preconditioner();
+
+    // High-frequency mode
+    let high_freq = plane_wave(grid, 3, -2);
+    let mut high_residual = high_freq.clone();
+    let high_before = field_norm(&high_residual);
+    let backend_ref = theta.backend();
+    preconditioner.apply(backend_ref, &mut high_residual);
+    let high_after = field_norm(&high_residual);
+    let high_reduction = high_before / high_after;
+
+    // Low-frequency mode
+    let low_freq = plane_wave(grid, 0, 1);
+    let mut low_residual = low_freq.clone();
+    let low_before = field_norm(&low_residual);
+    preconditioner.apply(backend_ref, &mut low_residual);
+    let low_after = field_norm(&low_residual);
+    let low_reduction = low_before / low_after;
+
+    // High-frequency should be reduced MORE than low-frequency
+    // (this is the key property for effective preconditioning)
+    assert!(
+        high_reduction > low_reduction,
+        "high-freq reduction ({high_reduction:.2}x) should exceed low-freq ({low_reduction:.2}x)"
+    );
+}
+
+/// Test that the preconditioner approximately inverts the operator for smooth fields.
+/// For LOBPCG to work well, K^{-1}A should have a bounded condition number.
+#[test]
+fn preconditioner_approximates_operator_inverse() {
+    let grid = Grid2D::new(6, 6, 1.0, 1.0);
+    let dielectric = uniform_dielectric(grid, 8.0);
+    let backend = TestBackend;
+    let bloch = [0.0, 0.0];
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    let mut preconditioner = theta.build_structured_preconditioner();
+
+    // For a plane wave, A*v = λ*v where λ = |k+G|²/ε
+    // So K^{-1}*A*v should be approximately v (if K ≈ A^{-1})
+    let input = plane_wave(grid, 1, 0);
+    let mut applied = theta.alloc_field();
+    theta.apply(&input, &mut applied);
+
+    // Apply preconditioner to A*v
+    let backend_ref = theta.backend();
+    preconditioner.apply(backend_ref, &mut applied);
+
+    // The result should be proportional to input with coefficient close to 1
+    let inner = inner_product(&applied, &input);
+    let input_norm_sq = inner_product(&input, &input);
+    let applied_norm_sq = inner_product(&applied, &applied);
+
+    // Check that K^{-1}*A*v is roughly aligned with v
+    let cosine_sq = inner.norm_sqr() / (input_norm_sq.re * applied_norm_sq.re);
+    assert!(
+        cosine_sq > 0.9,
+        "K^{{-1}}A should preserve direction, got cos²={cosine_sq:.4}"
+    );
+
+    // The eigenvalue of K^{-1}A should be close to 1 for a good preconditioner
+    let kia_eigenvalue = inner.re / input_norm_sq.re;
+    assert!(
+        (kia_eigenvalue - 1.0).abs() < 0.5,
+        "K^{{-1}}A eigenvalue should be close to 1, got {kia_eigenvalue:.4}"
+    );
+}
+
+// ============================================================================
+// Uniform Medium Eigenvalue Tests
+// ============================================================================
+// These tests verify that for uniform ε(r) = ε_const, the computed Rayleigh
+// quotients match the analytic eigenvalues exactly:
+//
+// TE (untransformed):  λ = |k+G|² / ε_const  (generalized A x = λ B x, A=-∇², B=ε)
+// TM:                  λ = |k+G|² / ε_const  (standard A x = λ x, A=-∇·(ε⁻¹∇))
+//
+// If these tests pass, the TE A,B are internally consistent. Any systematic
+// shift in the photonic crystal case would then be due to dielectric interface
+// discretization differences, not a bug in the Rayleigh quotient.
+
+/// Helper to compute Rayleigh quotient λ = (x† A x) / (x† B x)
+fn rayleigh_quotient(theta: &mut ThetaOperator<TestBackend>, v: &Field2D) -> f64 {
+    let mut av = theta.alloc_field();
+    let mut bv = theta.alloc_field();
+    theta.apply(v, &mut av);
+    theta.apply_mass(v, &mut bv);
+
+    let numerator = inner_product(&av, v);
+    let denominator = inner_product(&bv, v);
+
+    numerator.re / denominator.re
+}
+
+/// Test TE uniform medium eigenvalues at Γ point.
+/// For ε_const = 5.0, plane wave |mx, my⟩ should have λ = |k+G|² / ε_const.
+#[test]
+fn te_uniform_medium_rayleigh_quotient_matches_analytic() {
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let eps_const = 5.0;
+    let dielectric = uniform_dielectric(grid, eps_const);
+    let backend = TestBackend;
+    let bloch = [0.0, 0.0]; // Γ point
+
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+
+    // Test several plane waves
+    let test_modes = [(1, 0), (0, 1), (1, 1), (2, 1), (-1, 2)];
+
+    for (mx, my) in test_modes {
+        let v = plane_wave(grid, mx, my);
+        let lambda = rayleigh_quotient(&mut theta, &v);
+
+        // Analytic: λ = |k+G|² / ε = |2π·(mx/Lx, my/Ly)|² / ε
+        let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
+        let expected = k_plus_g_sq / eps_const;
+
+        let rel_error = (lambda - expected).abs() / expected.max(1e-10);
+        assert!(
+            rel_error < 1e-10,
+            "TE uniform medium: mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}"
+        );
+    }
+}
+
+/// Test TM uniform medium eigenvalues at Γ point.
+/// For ε_const = 5.0, plane wave |mx, my⟩ should have λ = |k+G|² / ε_const.
+#[test]
+fn tm_uniform_medium_rayleigh_quotient_matches_analytic() {
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let eps_const = 5.0;
+    let dielectric = uniform_dielectric(grid, eps_const);
+    let backend = TestBackend;
+    let bloch = [0.0, 0.0]; // Γ point
+
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+
+    // Test several plane waves
+    let test_modes = [(1, 0), (0, 1), (1, 1), (2, 1), (-1, 2)];
+
+    for (mx, my) in test_modes {
+        let v = plane_wave(grid, mx, my);
+        let lambda = rayleigh_quotient(&mut theta, &v);
+
+        // Analytic: λ = |k+G|² / ε (for TM, operator already includes 1/ε)
+        let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
+        let expected = k_plus_g_sq / eps_const;
+
+        let rel_error = (lambda - expected).abs() / expected.max(1e-10);
+        assert!(
+            rel_error < 1e-10,
+            "TM uniform medium: mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}"
+        );
+    }
+}
+
+/// Test TE uniform medium at arbitrary k-point.
+/// The shift k affects |k+G|² but the eigenvalue formula is the same.
+#[test]
+fn te_uniform_medium_at_arbitrary_k_point() {
+    let grid = Grid2D::new(6, 6, 1.2, 0.9);
+    let eps_const = 7.5;
+    let dielectric = uniform_dielectric(grid, eps_const);
+    let backend = TestBackend;
+    let bloch = [0.35 * PI, -0.2 * PI]; // Off Γ
+
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+
+    let test_modes = [(0, 0), (1, 0), (-1, 1), (2, -1)];
+
+    for (mx, my) in test_modes {
+        let v = plane_wave(grid, mx, my);
+        let lambda = rayleigh_quotient(&mut theta, &v);
+
+        let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
+        let expected = k_plus_g_sq / eps_const;
+
+        let rel_error = (lambda - expected).abs() / expected.max(1e-10);
+        assert!(
+            rel_error < 1e-10,
+            "TE at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
+            bloch[0], bloch[1]
+        );
+    }
+}
+
+/// Test TM uniform medium at arbitrary k-point.
+#[test]
+fn tm_uniform_medium_at_arbitrary_k_point() {
+    let grid = Grid2D::new(6, 6, 1.2, 0.9);
+    let eps_const = 7.5;
+    let dielectric = uniform_dielectric(grid, eps_const);
+    let backend = TestBackend;
+    let bloch = [0.35 * PI, -0.2 * PI]; // Off Γ
+
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+
+    let test_modes = [(0, 0), (1, 0), (-1, 1), (2, -1)];
+
+    for (mx, my) in test_modes {
+        let v = plane_wave(grid, mx, my);
+        let lambda = rayleigh_quotient(&mut theta, &v);
+
+        let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
+        let expected = k_plus_g_sq / eps_const;
+
+        let rel_error = (lambda - expected).abs() / expected.max(1e-10);
+        assert!(
+            rel_error < 1e-10,
+            "TM at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
+            bloch[0], bloch[1]
+        );
+    }
+}
+
+/// Test that TE and TM give IDENTICAL eigenvalues in uniform medium.
+/// This is a critical consistency check: both polarizations should give
+/// λ = |k+G|² / ε for a uniform dielectric.
+#[test]
+fn te_and_tm_match_in_uniform_medium() {
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let eps_const = 4.0;
+    let dielectric_te = uniform_dielectric(grid, eps_const);
+    let dielectric_tm = uniform_dielectric(grid, eps_const);
+    let backend_te = TestBackend;
+    let backend_tm = TestBackend;
+    let bloch = [0.2 * PI, 0.15 * PI];
+
+    let mut theta_te = ThetaOperator::new(backend_te, dielectric_te, Polarization::TE, bloch);
+    let mut theta_tm = ThetaOperator::new(backend_tm, dielectric_tm, Polarization::TM, bloch);
+
+    let test_modes = [(1, 0), (0, 1), (1, 1), (2, -1), (-1, 2)];
+
+    for (mx, my) in test_modes {
+        let v = plane_wave(grid, mx, my);
+
+        let lambda_te = rayleigh_quotient(&mut theta_te, &v);
+        let lambda_tm = rayleigh_quotient(&mut theta_tm, &v);
+
+        let rel_diff = (lambda_te - lambda_tm).abs() / lambda_te.max(1e-10);
+        assert!(
+            rel_diff < 1e-10,
+            "TE vs TM mismatch in uniform medium: mode ({mx},{my}) λ_TE={lambda_te:.10e} λ_TM={lambda_tm:.10e} rel_diff={rel_diff:.2e}"
+        );
     }
 }

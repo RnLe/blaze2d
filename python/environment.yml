@@ -16,3 +16,4 @@ dependencies:
   - jinja2
   - python-dotenv
   - plotly
+  - seaborn
