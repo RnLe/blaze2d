@@ -255,7 +255,7 @@ fn test_fft_normalization() {
 }
 
 #[test]
-fn test_te_operator_eigenvalue() {
+fn test_tm_operator_eigenvalue() {
     use crate::CpuBackend;
     use mpb2d_core::backend::SpectralBackend;
     use mpb2d_core::dielectric::{Dielectric2D, DielectricOptions};
@@ -284,9 +284,9 @@ fn test_te_operator_eigenvalue() {
     };
     let dielectric = Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default());
 
-    // Create TE operator at Γ point (k = 0)
+    // Create TM operator at Γ point (k = 0)
     let bloch = [0.0, 0.0];
-    let mut operator = ThetaOperator::new(backend.clone(), dielectric, Polarization::TE, bloch);
+    let mut operator = ThetaOperator::new(backend.clone(), dielectric, Polarization::TM, bloch);
 
     // Create a plane wave with G = (2π, 0)
     let mut input_data = vec![Complex64::default(); 64];
@@ -326,7 +326,7 @@ fn test_te_operator_eigenvalue() {
 }
 
 #[test]
-fn test_tm_operator_eigenvalue() {
+fn test_te_operator_eigenvalue() {
     use crate::CpuBackend;
     use mpb2d_core::backend::SpectralBackend;
     use mpb2d_core::dielectric::{Dielectric2D, DielectricOptions};
@@ -355,9 +355,9 @@ fn test_tm_operator_eigenvalue() {
     };
     let dielectric = Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default());
 
-    // Create TM operator at Γ point (k = 0)
+    // Create TE operator at Γ point (k = 0)
     let bloch = [0.0, 0.0];
-    let mut operator = ThetaOperator::new(backend.clone(), dielectric, Polarization::TM, bloch);
+    let mut operator = ThetaOperator::new(backend.clone(), dielectric, Polarization::TE, bloch);
 
     // Create a plane wave with G = (2π, 0)
     let mut input_data = vec![Complex64::default(); 64];

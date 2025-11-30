@@ -356,10 +356,10 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
 
     // Get dielectric epsilon for B-weighted overlaps
-    // - TM mode: B = I, use standard inner product (None)
-    // - TE mode (generalized): B = ε, use ε-weighted inner product
+    // - TE mode: B = I, use standard inner product (None)
+    // - TM mode (generalized): B = ε, use ε-weighted inner product
     let eps_for_tracking: Option<Vec<f64>> =
-        if job.pol == Polarization::TE {
+        if job.pol == Polarization::TM {
             Some(dielectric.eps().to_vec())
         } else {
             None
@@ -733,10 +733,10 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
 
     // Get dielectric epsilon for B-weighted overlaps
-    // - TM mode: B = I, use standard inner product (None)
-    // - TE mode (generalized): B = ε, use ε-weighted inner product
+    // - TE mode: B = I, use standard inner product (None)
+    // - TM mode (generalized): B = ε, use ε-weighted inner product
     let eps_for_tracking: Option<Vec<f64>> =
-        if job.pol == Polarization::TE {
+        if job.pol == Polarization::TM {
             Some(dielectric.eps().to_vec())
         } else {
             None

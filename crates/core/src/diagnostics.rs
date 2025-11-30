@@ -74,8 +74,8 @@ use serde::{Deserialize, Serialize};
 /// inverts the Laplacian symbol |k+G|².
 ///
 /// For 2D scalar TE/TM problems, this simplifies to a scalar Laplacian inverse:
-/// - **TE**: M⁻¹(q) = 1 / (|q|² + σ²)  (A = -Δ, no ε in operator)
-/// - **TM**: M⁻¹(q) = ε_eff / (|q|² + σ²)  (A = -∇·(ε⁻¹∇))
+/// - **TM**: M⁻¹(q) = 1 / (|q|² + σ²)  (A = -Δ, no ε in operator)
+/// - **TE**: M⁻¹(q) = ε_eff / (|q|² + σ²)  (A = -∇·(ε⁻¹∇))
 ///
 /// The Fourier-diagonal kernel-compensated variant explicitly zeros the Γ-mode (q=0)
 /// in Fourier space at the Γ-point only, relying on deflation to handle the null space.
@@ -84,8 +84,8 @@ use serde::{Deserialize, Serialize};
 pub enum PreconditionerType {
     /// Automatic selection based on polarization (default)
     ///
-    /// - **TE**: Uses FourierDiagonalKernelCompensated (symmetry-compatible)
-    /// - **TM**: Uses TransverseProjection (best condition reduction)
+    /// - **TM**: Uses FourierDiagonalKernelCompensated (symmetry-compatible)
+    /// - **TE**: Uses TransverseProjection (best condition reduction)
     Auto,
     /// No preconditioner (identity)
     None,
@@ -96,23 +96,23 @@ pub enum PreconditionerType {
     /// relying on deflation to handle the null space. Away from Γ, uses only
     /// the regularization shift since |k|² > 0 provides natural regularization.
     ///
-    /// - **TE**: M⁻¹(q) = 1 / (|q|² + σ²) for q ≠ 0, zero at q = 0 (Γ only)
-    /// - **TM**: M⁻¹(q) = ε_eff / (|q|² + σ²) for q ≠ 0, zero at q = 0 (Γ only)
+    /// - **TM**: M⁻¹(q) = 1 / (|q|² + σ²) for q ≠ 0, zero at q = 0 (Γ only)
+    /// - **TE**: M⁻¹(q) = ε_eff / (|q|² + σ²) for q ≠ 0, zero at q = 0 (Γ only)
     ///
     /// Combines well with explicit Γ-mode deflation for robust convergence.
     /// Cost: 2 FFTs per application.
     FourierDiagonalKernelCompensated,
     /// MPB-style transverse-projection preconditioner
     ///
-    /// The most effective preconditioner for TM mode with high dielectric contrast.
+    /// The most effective preconditioner for TE mode with high dielectric contrast.
     /// Accounts for the spatial variation of ε(r) by computing:
     /// 1. Invert gradient in Fourier space: G = -i(k+G)/|k+G|² · r̂
     /// 2. Multiply by ε(r) in real space
     /// 3. Invert divergence in Fourier space
     ///
-    /// For TE mode, falls back to the kernel-compensated Fourier-diagonal.
+    /// For TM mode, falls back to the kernel-compensated Fourier-diagonal.
     ///
-    /// Cost: 6 FFTs for TM (vs 2 for diagonal), but typically 5-10× fewer iterations.
+    /// Cost: 6 FFTs for TE (vs 2 for diagonal), but typically 5-10× fewer iterations.
     ///
     /// Based on Johnson & Joannopoulos, Optics Express 8, 173 (2001).
     TransverseProjection,
@@ -138,15 +138,15 @@ impl std::fmt::Display for PreconditionerType {
 impl PreconditionerType {
     /// Resolve `Auto` to the appropriate preconditioner for the given polarization.
     ///
-    /// - **TE**: Returns `FourierDiagonalKernelCompensated` (symmetry-compatible, works with transformed operator)
-    /// - **TM**: Returns `TransverseProjection` (best condition reduction for ε-dependent operator)
+    /// - **TM**: Returns `FourierDiagonalKernelCompensated` (symmetry-compatible, works with transformed operator)
+    /// - **TE**: Returns `TransverseProjection` (best condition reduction for ε-dependent operator)
     ///
     /// For non-Auto types, returns self unchanged.
     pub fn resolve_for_polarization(self, pol: crate::polarization::Polarization) -> Self {
         match self {
             Self::Auto => match pol {
-                crate::polarization::Polarization::TE => Self::FourierDiagonalKernelCompensated,
-                crate::polarization::Polarization::TM => Self::TransverseProjection,
+                crate::polarization::Polarization::TM => Self::FourierDiagonalKernelCompensated,
+                crate::polarization::Polarization::TE => Self::TransverseProjection,
             },
             other => other,
         }

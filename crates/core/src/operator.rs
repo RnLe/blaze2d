@@ -16,7 +16,7 @@ use crate::{
 };
 
 pub(crate) const K_PLUS_G_NEAR_ZERO_FLOOR: f64 = 1e-9;
-pub(crate) const TE_PRECONDITIONER_MASS_FRACTION: f64 = 1e-2;
+pub(crate) const TM_PRECONDITIONER_MASS_FRACTION: f64 = 1e-2;
 
 pub trait LinearOperator<B: SpectralBackend> {
     fn apply(&mut self, input: &B::Buffer, output: &mut B::Buffer);
@@ -87,11 +87,11 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     /// Create a new ThetaOperator for band structure calculation.
     ///
     /// This operator implements Maxwell's equations for 2D photonic crystals:
-    /// - TE mode: Uses generalized eigenproblem A·x = λ·B·x where B = ε(r).
+    /// - TM mode: Uses generalized eigenproblem A·x = λ·B·x where B = ε(r).
     ///   NOTE: A transformed formulation (A' = ε^{-1/2}·A·ε^{-1/2}, B' = I) was tried
     ///   but causes systematic eigenvalue shifts because pointwise ε^{-1/2} is NOT
     ///   the true matrix square root of the plane-wave mass matrix.
-    /// - TM mode: B = I (standard eigenproblem).
+    /// - TE mode: B = I (standard eigenproblem).
     ///
     /// **Important:** The G-vectors are computed using the reciprocal lattice basis:
     ///   G = n1*b1 + n2*b2
@@ -223,10 +223,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         };
 
         match self.polarization {
-            Polarization::TE => {
-                // TE: generalized eigenproblem (A x = λ B x, B = ε)
-                let eps_eff = self.effective_te_epsilon();
-                let mass_floor = te_preconditioner_mass_floor(eps_eff);
+            Polarization::TM => {
+                // TM: generalized eigenproblem (A x = λ B x, B = ε)
+                let eps_eff = self.effective_tm_epsilon();
+                let mass_floor = tm_preconditioner_mass_floor(eps_eff);
                 let inverse_diagonal = build_inverse_diagonal(
                     &self.k_plus_g_sq,
                     shift,
@@ -236,8 +236,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 );
                 FourierDiagonalPreconditioner::new(inverse_diagonal)
             }
-            Polarization::TM => {
-                let eps_eff = self.effective_tm_epsilon();
+            Polarization::TE => {
+                let eps_eff = self.effective_te_epsilon();
                 let inverse_diagonal =
                     build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff, 0.0, near_zero_mask);
                 FourierDiagonalPreconditioner::new(inverse_diagonal)
@@ -250,17 +250,17 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     /// Uses σ(k) = α * s_min(k), where s_min is the smallest nonzero |k+G|².
     /// This ensures proper scaling at different k-points.
     ///
-    /// This is the most effective preconditioner for TM mode, as it accounts for
-    /// the spatial variation of ε(r) in the approximate inverse. For TE mode,
+    /// This is the most effective preconditioner for TE mode, as it accounts for
+    /// the spatial variation of ε(r) in the approximate inverse. For TM mode,
     /// it falls back to a Fourier-diagonal preconditioner since the operator is
     /// already diagonal in Fourier space.
     ///
     /// # Performance
     ///
-    /// - TM mode: 6 FFTs per application (vs 2 for Fourier-diagonal)
-    /// - TE mode: 2 FFTs per application (same as Fourier-diagonal)
+    /// - TE mode: 6 FFTs per application (vs 2 for Fourier-diagonal)
+    /// - TM mode: 2 FFTs per application (same as Fourier-diagonal)
     ///
-    /// The extra cost for TM is typically offset by the dramatic reduction in
+    /// The extra cost for TE is typically offset by the dramatic reduction in
     /// iteration count (often 5-10× fewer iterations).
     pub fn build_transverse_projection_preconditioner_adaptive(
         &self,
@@ -357,7 +357,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
 
         // For λ_min, use the smallest non-zero |k+G|²
-        // This is exact for TM with uniform ε, and a reasonable lower bound otherwise
+        // This is exact for TE with uniform ε, and a reasonable lower bound otherwise
         let lambda_min = self.k_plus_g_sq_min;
 
         let kappa = if lambda_min > 1e-15 {
@@ -592,12 +592,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
     pub fn capture_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
         match self.polarization {
-            Polarization::TM => self.capture_tm_snapshot(input),
             Polarization::TE => self.capture_te_snapshot(input),
+            Polarization::TM => self.capture_tm_snapshot(input),
         }
     }
 
-    fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
+    fn apply_te(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
 
@@ -635,14 +635,14 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         copy_buffer(output, &self.scratch);
     }
 
-    /// Apply the TE operator: A·x = |k+G|²·x (Laplacian in Fourier space)
+    /// Apply the TM operator: A·x = |k+G|²·x (Laplacian in Fourier space)
     ///
     /// NOTE: A transformed formulation (A' = ε^{-1/2} · A · ε^{-1/2}) was attempted
     /// to convert the generalized eigenproblem to a standard one, but this caused
     /// eigenvalue shifts and numerical issues. We use the untransformed generalized
     /// eigenproblem formulation instead.
-    fn apply_te(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
-        // Standard TE: A·x = |k+G|²·x
+    fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
+        // Standard TM: A·x = |k+G|²·x
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
         let data = self.scratch.as_mut_slice();
@@ -654,10 +654,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 let mut sorted: Vec<f64> = self.k_plus_g_sq.iter().cloned().collect();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 log::debug!(
-                    "[operator] TE k_plus_g_sq first 8: {:?}",
+                    "[operator] TM k_plus_g_sq first 8: {:?}",
                     &sorted[..sorted.len().min(8)]
                 );
-                log::debug!("[operator] TE k_plus_g_sq max={:.4}", max_k_sq);
+                log::debug!("[operator] TM k_plus_g_sq max={:.4}", max_k_sq);
             });
         }
         for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
@@ -667,7 +667,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         copy_buffer(output, &self.scratch);
     }
 
-    fn capture_tm_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
+    fn capture_te_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
         let field_spatial = input.as_slice().to_vec();
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
@@ -723,7 +723,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
     }
 
-    fn capture_te_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
+    fn capture_tm_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
         let field_spatial = input.as_slice().to_vec();
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
@@ -771,11 +771,11 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 }
 
 impl<B: SpectralBackend> ThetaOperator<B> {
-    fn effective_te_epsilon(&self) -> f64 {
+    fn effective_tm_epsilon(&self) -> f64 {
         arithmetic_mean(self.dielectric.eps()).unwrap_or(1.0)
     }
 
-    fn effective_tm_epsilon(&self) -> f64 {
+    fn effective_te_epsilon(&self) -> f64 {
         harmonic_mean(self.dielectric.inv_eps()).unwrap_or(1.0)
     }
 }
@@ -783,16 +783,16 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
     fn apply(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         match self.polarization {
-            Polarization::TM => self.apply_tm(input, output),
             Polarization::TE => self.apply_te(input, output),
+            Polarization::TM => self.apply_tm(input, output),
         }
     }
 
     fn apply_mass(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         match self.polarization {
-            Polarization::TM => copy_buffer(output, input),
-            Polarization::TE => {
-                // TE: Generalized eigenproblem with B = ε (mass matrix)
+            Polarization::TE => copy_buffer(output, input),
+            Polarization::TM => {
+                // TM: Generalized eigenproblem with B = ε (mass matrix)
                 copy_buffer(output, input);
                 apply_scalar_eps(output.as_mut_slice(), self.dielectric.eps());
             }
@@ -1178,11 +1178,11 @@ fn build_k_plus_g_tables_with_reciprocal(
     )
 }
 
-fn te_preconditioner_mass_floor(eps_eff: f64) -> f64 {
+fn tm_preconditioner_mass_floor(eps_eff: f64) -> f64 {
     if !eps_eff.is_finite() || eps_eff <= 0.0 {
         return 0.0;
     }
-    eps_eff * TE_PRECONDITIONER_MASS_FRACTION
+    eps_eff * TM_PRECONDITIONER_MASS_FRACTION
 }
 
 fn inverse_scale(k_sq: f64, shift: f64, eps_eff: f64, mass_floor: f64) -> f64 {
@@ -1289,7 +1289,7 @@ fn assemble_divergence(
 mod tests {
     use super::{
         K_PLUS_G_NEAR_ZERO_FLOOR, clamp_gradient_components, inverse_scale,
-        te_preconditioner_mass_floor,
+        tm_preconditioner_mass_floor,
     };
 
     #[test]
@@ -1325,7 +1325,7 @@ mod tests {
     #[test]
     fn te_mass_floor_enters_denominator() {
         let eps_eff = 12.0;
-        let mass_floor = te_preconditioner_mass_floor(eps_eff);
+        let mass_floor = tm_preconditioner_mass_floor(eps_eff);
         let tiny = K_PLUS_G_NEAR_ZERO_FLOOR / 10.0;
         let baseline = inverse_scale(tiny, 1e-3, eps_eff, 0.0);
         let mass_adjusted = inverse_scale(tiny, 1e-3, eps_eff, mass_floor);

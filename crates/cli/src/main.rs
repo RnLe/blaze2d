@@ -136,7 +136,7 @@ impl From<PathArg> for PathPreset {
 /// CLI-friendly preconditioner type argument
 #[derive(Clone, Debug, ValueEnum, Default)]
 enum PrecondArg {
-    /// Auto-select based on polarization (TE=fourier-diagonal-kernel-compensated, TM=transverse-projection)
+    /// Auto-select based on polarization (TM=fourier-diagonal-kernel-compensated, TE=transverse-projection)
     #[default]
     Auto,
     /// No preconditioner

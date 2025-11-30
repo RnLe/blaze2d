@@ -1,11 +1,5 @@
 //! Operator preconditioners shared by eigensolvers.
 //!
-//! # Polarization Convention
-//!
-//! **Important**: This crate uses the opposite TE/TM convention from MPB!
-//! - **Our TM** (H_z scalar) = **MPB's TE**: Operator is Θ = -∇·(ε⁻¹∇)
-//! - **Our TE** (E_z scalar) = **MPB's TM**: Operator is Θ = -∇² with mass B = ε
-//!
 //! # Preconditioner Hierarchy
 //!
 //! This module provides two preconditioner variants:
@@ -14,13 +8,13 @@
 //!    - O(N log N) cost per application (2 FFTs)
 //!    - Treats ε as uniform - limited effectiveness for high contrast
 //!    - Includes kernel compensation: zeros DC mode at Γ-point
-//!    - Default for TE mode
+//!    - Default for TM mode
 //!
 //! 2. **[`TransverseProjectionPreconditioner`]**: MPB-style physics-informed preconditioner.
 //!    - O(N log N) cost per application (6 FFTs for both TE and TM)
 //!    - Accounts for spatial ε(r) variation via approximate inverse
 //!    - Achieves dramatic condition number reduction (10-100× better than diagonal)
-//!    - Default for TM mode
+//!    - Default for TE mode
 //!    - Based on Johnson & Joannopoulos, Optics Express 8, 173 (2001)
 //!
 //! # MPB Transverse-Projection Algorithm
@@ -39,8 +33,8 @@
 //!
 //! | Scenario | Recommended Preconditioner |
 //! |----------|---------------------------|
-//! | TE mode (any contrast) | FourierDiagonalKernelCompensated (default) |
-//! | TM mode (any contrast) | TransverseProjection (default) |
+//! | TM mode (any contrast) | FourierDiagonalKernelCompensated (default) |
+//! | TE mode (any contrast) | TransverseProjection (default) |
 
 use num_complex::Complex64;
 
@@ -281,7 +275,7 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             })
             .collect();
 
-        // Store ε(r) for TM mode
+        // Store ε(r) for TE mode
         let eps = dielectric.eps().to_vec();
 
         // Allocate scratch buffers
@@ -303,7 +297,7 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
         }
     }
 
-    /// Apply the full transverse-projection preconditioner for TM mode.
+    /// Apply the full transverse-projection preconditioner for TE mode.
     ///
     /// This is the MPB-style preconditioner for the operator Θ = -∇·(ε⁻¹∇).
     /// It approximates Θ⁻¹ by inverting the gradient/divergence operators
