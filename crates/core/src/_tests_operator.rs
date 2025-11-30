@@ -16,6 +16,7 @@ use super::operator::{
 use super::polarization::Polarization;
 use super::preconditioner::OperatorPreconditioner;
 
+#[derive(Clone)]
 struct TestBackend;
 
 impl SpectralBackend for TestBackend {

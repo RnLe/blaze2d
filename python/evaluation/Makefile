@@ -89,6 +89,7 @@ compare_square_lowres:
 	@$(MAKE) --no-print-directory SKIP_REFERENCE_WIPE=$(SKIP_REFERENCE_WIPE) prepare_reference_data CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 	@$(MAKE) --no-print-directory mpb CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 	@$(MAKE) --no-print-directory mpb2d-benchmark CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
+	@$(MAKE) --no-print-directory mpb2d-cuda CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 	@$(MAKE) --no-print-directory export-epsilon-compare CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 	@$(MAKE) --no-print-directory export-iterations CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 
@@ -115,6 +116,15 @@ mpb2d:
 	fi
 	@echo "[evaluation] running mpb2d for $(EVAL_NAME)"
 	$(MPB2D_COMMAND)
+
+# mpb2d with CUDA acceleration
+mpb2d-cuda:
+	@if [ -z "$(strip $(MPB2D_CUDA_COMMAND))" ]; then \
+		echo "MPB2D_CUDA_COMMAND is empty in $(CONFIG)"; \
+		exit 1; \
+	fi
+	@echo "[evaluation] running mpb2d (CUDA) for $(EVAL_NAME)"
+	$(MPB2D_CUDA_COMMAND)
 
 # mpb2d with benchmark logging (for compare_square_lowres)
 # Uses script -q to preserve TTY for colored output while logging

@@ -8,9 +8,13 @@ authors.workspace = true
 
 [features]
 default = []
-cuda = ["dep:cudarc", "mpb2d-core/cuda"]
+# CUDA backend uses cuBLAS for linear algebra but CPU FFT (rustfft) for transforms.
+# Benchmarks showed cuFFT has too much overhead for typical photonic crystal grid sizes.
+cuda = ["dep:cudarc", "dep:rustfft", "mpb2d-core/cuda"]
 
 [dependencies]
 mpb2d-core = { path = "../core" }
 num-complex.workspace = true
-cudarc = { version = "0.18", optional = true, features = ["cuda-version-from-build-system", "cublas", "driver"] }
+cudarc = { version = "0.18", optional = true, features = ["cuda-version-from-build-system", "cublas", "driver", "nvrtc"] }
+log = "0.4"
+rustfft = { version = "6.2", optional = true }
