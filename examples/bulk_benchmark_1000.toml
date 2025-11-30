@@ -1,0 +1,38 @@
+# Benchmark configuration: ~1000 jobs for performance testing
+# Triangular lattice with air holes, varying radius and background epsilon
+
+[bulk]
+dry_run = false
+
+[geometry]
+eps_bg = 13.0  # Will be swept
+
+[geometry.lattice]
+lattice_type = "triangular"
+
+[[geometry.atoms]]
+# Air hole at origin
+eps_inside = 1.0
+radius = 0.30  # Will be swept
+pos = [0.0, 0.0]
+
+[grid]
+nx = 32
+ny = 32
+n_bands = 6
+k_points = 55  # Default IBZ path
+
+[output]
+mode = "full"
+directory = "./benchmark_1000_output"
+
+# Parameter sweeps
+# 25 eps_bg × 40 radius = 1000 jobs
+
+[ranges]
+# Background epsilon: 2.0 to 14.0 in 25 steps
+eps_bg = { min = 2.0, max = 14.0, step = 0.5 }
+
+# Atom 0 radius sweep: 0.05 to 0.45 in 40 steps
+[[ranges.atoms]]
+radius = { min = 0.05, max = 0.44, step = 0.01 }

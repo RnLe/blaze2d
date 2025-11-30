@@ -12,10 +12,10 @@ use env_logger::Builder;
 use log::{error, info, warn};
 use mpb2d_core::{
     bandstructure::{self, BandStructureResult, RunOptions, Verbosity},
+    brillouin::{generate_path, BrillouinPath},
     diagnostics::PreconditionerType,
     dielectric::Dielectric2D,
     io::{JobConfig, PathPreset},
-    symmetry::standard_path,
 };
 
 #[cfg(feature = "cuda")]
@@ -39,7 +39,7 @@ struct Cli {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Override k-path with a preset (square or hexagonal)
+    /// Override k-path with a preset (square, rectangular, triangular, or hexagonal)
     #[arg(long, value_enum)]
     path: Option<PathArg>,
 
@@ -123,9 +123,16 @@ struct Cli {
     skip_solve: bool,
 }
 
+/// CLI path argument supporting all four lattice types.
 #[derive(Clone, Debug, ValueEnum)]
 enum PathArg {
+    /// Square lattice: Γ → X → M → Γ
     Square,
+    /// Rectangular lattice: Γ → X → S → Y → Γ
+    Rectangular,
+    /// Triangular lattice: Γ → M → K → Γ
+    Triangular,
+    /// Hexagonal lattice (alias for triangular): Γ → M → K → Γ
     Hexagonal,
 }
 
@@ -133,7 +140,20 @@ impl From<PathArg> for PathPreset {
     fn from(value: PathArg) -> Self {
         match value {
             PathArg::Square => PathPreset::Square,
+            PathArg::Rectangular => PathPreset::Rectangular,
+            PathArg::Triangular => PathPreset::Triangular,
             PathArg::Hexagonal => PathPreset::Hexagonal,
+        }
+    }
+}
+
+impl From<PathArg> for BrillouinPath {
+    fn from(value: PathArg) -> Self {
+        match value {
+            PathArg::Square => BrillouinPath::Square,
+            PathArg::Rectangular => BrillouinPath::Rectangular,
+            PathArg::Triangular => BrillouinPath::Triangular,
+            PathArg::Hexagonal => BrillouinPath::Hexagonal,
         }
     }
 }
@@ -276,18 +296,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Apply k-path override if specified
     if let Some(preset) = cli.path.clone() {
-        let path_type = PathPreset::from(preset.clone());
-        let samples = standard_path(
-            &config.geometry.lattice,
-            path_type.into(),
-            cli.segments_per_leg,
-        );
+        let brillouin_path = BrillouinPath::from(preset.clone());
+        let samples = generate_path(&brillouin_path, cli.segments_per_leg);
         config.k_path = samples;
         config.path = None;
         if !cli.quiet {
             info!(
-                "overriding k-path via preset {:?} (segments_per_leg={})",
-                preset, cli.segments_per_leg
+                "overriding k-path via preset {:?} ({}) with {} segments/leg",
+                preset,
+                brillouin_path.name(),
+                cli.segments_per_leg
             );
         }
     }

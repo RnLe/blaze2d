@@ -23,6 +23,7 @@
 //! - Duersch & Shao, "A Robust and Efficient Implementation of LOBPCG" (2018)
 //! - Hetmaniuk & Lehoucq, "Basis selection in LOBPCG" (2006)
 
+use faer::{Mat, Side};
 use num_complex::Complex64;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
@@ -294,6 +295,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     }
 
     // Step 1: Form the Gram matrix G = X^H B X
+    // G is Hermitian, so we only compute upper triangle and mirror
     #[cfg(feature = "cuda")]
     let gram = {
         // GPU path: use batched gram_matrix (single ZGEMM call)
@@ -302,11 +304,16 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
 
     #[cfg(not(feature = "cuda"))]
     let gram = {
-        // CPU path: use individual dot products (better compiler optimization)
+        // CPU path: exploit Hermitian symmetry - only compute upper triangle
         let mut gram = vec![Complex64::ZERO; p * p];
         for i in 0..p {
-            for j in 0..p {
-                gram[i * p + j] = backend.dot(&vectors[i], &mass_vectors[j]);
+            // Diagonal: real
+            gram[i * p + i] = backend.dot(&vectors[i], &mass_vectors[i]);
+            // Upper triangle
+            for j in (i + 1)..p {
+                let val = backend.dot(&vectors[i], &mass_vectors[j]);
+                gram[i * p + j] = val;
+                gram[j * p + i] = val.conj(); // Hermitian symmetry
             }
         }
         gram
@@ -362,19 +369,30 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     }
 
     // Step 5: Apply transformation X_new = X_old * T
-    // We need temporary storage to avoid overwriting while reading
+    // Restructured for better cache locality - iterate over n (large) in innermost loop
     let n = vectors[0].as_slice().len();
     let mut new_vectors: Vec<Vec<Complex64>> = vec![vec![Complex64::ZERO; n]; rank];
     let mut new_mass: Vec<Vec<Complex64>> = vec![vec![Complex64::ZERO; n]; rank];
 
-    for out_idx in 0..rank {
-        for in_idx in 0..p {
+    // Process each input vector once, accumulating to all outputs
+    for in_idx in 0..p {
+        let src_vec = vectors[in_idx].as_slice();
+        let src_mass = mass_vectors[in_idx].as_slice();
+        
+        for out_idx in 0..rank {
             let coeff = transform[in_idx * rank + out_idx];
-            if coeff.norm() > 1e-30 {
-                for k in 0..n {
-                    new_vectors[out_idx][k] += coeff * vectors[in_idx].as_slice()[k];
-                    new_mass[out_idx][k] += coeff * mass_vectors[in_idx].as_slice()[k];
-                }
+            // Skip tiny coefficients - most are non-trivial so branch prediction is good
+            if coeff.re.abs() < 1e-30 && coeff.im.abs() < 1e-30 {
+                continue;
+            }
+            
+            let dst_vec = &mut new_vectors[out_idx];
+            let dst_mass = &mut new_mass[out_idx];
+            
+            // Tight inner loop over n elements
+            for k in 0..n {
+                dst_vec[k] += coeff * src_vec[k];
+                dst_mass[k] += coeff * src_mass[k];
             }
         }
     }
@@ -472,18 +490,18 @@ pub fn orthonormalize_against_basis<B: SpectralBackend>(
 // ============================================================================
 
 /// Fill a buffer with zeros.
+#[inline]
 pub fn zero_buffer(data: &mut [Complex64]) {
-    for value in data.iter_mut() {
-        *value = Complex64::ZERO;
-    }
+    data.fill(Complex64::ZERO);
 }
 
-/// Compute eigendecomposition of a Hermitian matrix.
+/// Compute eigendecomposition of a Hermitian matrix using faer.
 ///
 /// Returns (eigenvalues, eigenvectors) where eigenvalues are sorted in descending order
-/// and eigenvectors[i*n + j] is the j-th component of the i-th eigenvector.
+/// and eigenvectors[row*n + col] is the row-th component of the col-th eigenvector.
 ///
-/// This uses the Jacobi algorithm for small matrices, which is simple and robust.
+/// Uses faer's optimized self-adjoint eigensolver which is significantly faster
+/// than hand-rolled Jacobi for all matrix sizes.
 fn hermitian_eigendecomposition(matrix: &[Complex64], n: usize) -> (Vec<f64>, Vec<Complex64>) {
     if n == 0 {
         return (vec![], vec![]);
@@ -493,116 +511,37 @@ fn hermitian_eigendecomposition(matrix: &[Complex64], n: usize) -> (Vec<f64>, Ve
         return (vec![matrix[0].re], vec![Complex64::ONE]);
     }
 
-    // Copy matrix for working
-    let mut work = matrix.to_vec();
+    // Convert to faer Mat<c64>
+    // Input matrix[i*n + j] is element (i, j) in row-major
+    // faer uses column-major but from_fn(rows, cols, |i, j|) handles this
+    let a_faer = Mat::<faer::c64>::from_fn(n, n, |i, j| {
+        let c = matrix[i * n + j];
+        faer::c64::new(c.re, c.im)
+    });
+
+    // Compute eigendecomposition of self-adjoint matrix
+    // faer returns eigenvalues in ascending order
+    let eigen = a_faer
+        .self_adjoint_eigen(Side::Lower)
+        .expect("Eigendecomposition should succeed for Hermitian matrix");
+
+    // Extract eigenvalues and reverse to get descending order
+    let s_diag = eigen.S().column_vector();
+    let mut eigenvalues: Vec<f64> = (0..n).map(|i| s_diag.get(i).re).collect();
+    eigenvalues.reverse();
+
+    // Extract eigenvectors: output[row * n + col] = component row of eigenvector col
+    // faer's U is column-major: U.get(i, j) = component i of eigenvector j
+    // We reverse column order to match descending eigenvalues
+    let u = eigen.U();
     let mut eigenvectors = vec![Complex64::ZERO; n * n];
-
-    // Initialize eigenvectors to identity
-    for i in 0..n {
-        eigenvectors[i * n + i] = Complex64::ONE;
-    }
-
-    // Jacobi iteration for Hermitian eigendecomposition
-    const MAX_SWEEPS: usize = 50;
-    const TOL: f64 = 1e-15;
-
-    for _sweep in 0..MAX_SWEEPS {
-        // One sweep = process all off-diagonal pairs
-        let mut max_off = 0.0f64;
-
-        for p in 0..n {
-            for q in (p + 1)..n {
-                let apq = work[p * n + q];
-                let apq_norm = apq.norm();
-
-                if apq_norm > max_off {
-                    max_off = apq_norm;
-                }
-
-                if apq_norm < TOL {
-                    continue;
-                }
-
-                let app = work[p * n + p].re;
-                let aqq = work[q * n + q].re;
-
-                // For Hermitian matrices with complex off-diagonal:
-                // First, factor out the phase: a_pq = |a_pq| * e^{i*phi}
-                let phase = if apq_norm > 1e-30 {
-                    apq / apq_norm
-                } else {
-                    Complex64::ONE
-                };
-
-                // Compute rotation angle for the real Jacobi problem with |a_pq|
-                let tau = (aqq - app) / (2.0 * apq_norm);
-                let t = if tau >= 0.0 {
-                    1.0 / (tau + (1.0 + tau * tau).sqrt())
-                } else {
-                    -1.0 / (-tau + (1.0 + tau * tau).sqrt())
-                };
-
-                let c = 1.0 / (1.0 + t * t).sqrt();
-                let s = t * c;
-
-                // The complex rotation incorporates the phase
-                let s_phase = Complex64::new(s, 0.0) * phase;
-                let c_val = Complex64::new(c, 0.0);
-
-                // Update diagonal elements
-                let new_app = app - t * apq_norm;
-                let new_aqq = aqq + t * apq_norm;
-                work[p * n + p] = Complex64::new(new_app, 0.0);
-                work[q * n + q] = Complex64::new(new_aqq, 0.0);
-                work[p * n + q] = Complex64::ZERO;
-                work[q * n + p] = Complex64::ZERO;
-
-                // Update off-diagonal elements in rows/columns p and q
-                for k in 0..n {
-                    if k != p && k != q {
-                        let akp = work[k * n + p];
-                        let akq = work[k * n + q];
-
-                        // Apply Givens rotation: [c, -s*conj(phase); s*phase, c]
-                        let new_akp = c_val * akp - s_phase.conj() * akq;
-                        let new_akq = s_phase * akp + c_val * akq;
-
-                        work[k * n + p] = new_akp;
-                        work[p * n + k] = new_akp.conj();
-                        work[k * n + q] = new_akq;
-                        work[q * n + k] = new_akq.conj();
-                    }
-                }
-
-                // Update eigenvector matrix
-                for k in 0..n {
-                    let vkp = eigenvectors[k * n + p];
-                    let vkq = eigenvectors[k * n + q];
-                    eigenvectors[k * n + p] = c_val * vkp - s_phase.conj() * vkq;
-                    eigenvectors[k * n + q] = s_phase * vkp + c_val * vkq;
-                }
-            }
-        }
-
-        if max_off < TOL {
-            break;
-        }
-    }
-
-    // Extract eigenvalues from diagonal
-    let eigenvalues: Vec<f64> = (0..n).map(|i| work[i * n + i].re).collect();
-
-    // Sort by descending eigenvalue
-    let mut indices: Vec<usize> = (0..n).collect();
-    indices.sort_by(|&a, &b| eigenvalues[b].partial_cmp(&eigenvalues[a]).unwrap());
-
-    let sorted_eigenvalues: Vec<f64> = indices.iter().map(|&i| eigenvalues[i]).collect();
-    let mut sorted_eigenvectors = vec![Complex64::ZERO; n * n];
-    for (new_col, &old_col) in indices.iter().enumerate() {
+    for col in 0..n {
+        let src_col = n - 1 - col; // Reverse to match descending eigenvalues
         for row in 0..n {
-            sorted_eigenvectors[row * n + new_col] = eigenvectors[row * n + old_col];
+            let c = u.get(row, src_col);
+            eigenvectors[row * n + col] = Complex64::new(c.re, c.im);
         }
     }
 
-    (sorted_eigenvalues, sorted_eigenvectors)
+    (eigenvalues, eigenvectors)
 }

@@ -1,0 +1,32 @@
+# Example: Rectangular lattice with air holes
+# Demonstrates the Γ → X → S → Y → Γ high-symmetry path
+
+polarization = "TM"
+
+[geometry]
+eps_bg = 12.0
+
+# Rectangular lattice with a = 1, b = 1.5
+[geometry.lattice]
+a1 = [1.0, 0.0]
+a2 = [0.0, 1.5]
+
+[[geometry.atoms]]
+pos = [0.0, 0.0]
+radius = 0.25
+eps_inside = 1.0
+
+[grid]
+nx = 32
+ny = 48  # Proportional to aspect ratio
+lx = 1.0
+ly = 1.5
+
+[path]
+preset = "rectangular"  # Γ → X → S → Y → Γ
+segments_per_leg = 12
+
+[eigensolver]
+n_bands = 8
+max_iter = 200
+tol = 1e-6

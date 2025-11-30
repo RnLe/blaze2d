@@ -1,0 +1,34 @@
+# Example: Triangular (hexagonal) lattice with air holes
+# Classic photonic crystal structure
+# Uses Γ → M → K → Γ high-symmetry path
+
+polarization = "TE"
+
+[geometry]
+eps_bg = 13.0
+
+# Triangular lattice with a = 1 (120° convention)
+[geometry.lattice]
+a1 = [1.0, 0.0]
+a2 = [-0.5, 0.8660254037844386]  # [-0.5, √3/2]
+
+# Single centered air hole
+[[geometry.atoms]]
+pos = [0.0, 0.0]
+radius = 0.3
+eps_inside = 1.0
+
+[grid]
+nx = 32
+ny = 32
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "triangular"  # Γ → M → K → Γ
+segments_per_leg = 12
+
+[eigensolver]
+n_bands = 10
+max_iter = 200
+tol = 1e-8

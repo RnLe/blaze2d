@@ -6,11 +6,44 @@
 //!
 //! # File Format
 //!
+//! ## Legacy format (still supported):
+//!
 //! ```toml
 //! [geometry.lattice]
 //! a1 = [1.0, 0.0]
 //! a2 = [0.0, 1.0]
 //!
+//! [[geometry.atoms]]
+//! pos = [0.0, 0.0]
+//! radius = 0.3
+//! eps_inside = 1.0
+//! ```
+//!
+//! ## New typed lattice format (recommended):
+//!
+//! ```toml
+//! # Square lattice (simplest)
+//! [geometry.lattice]
+//! type = "square"
+//! a = 1.0  # optional, default = 1.0
+//!
+//! # Rectangular lattice
+//! [geometry.lattice]
+//! type = "rectangular"
+//! b = 1.5  # a = 1.0 is fixed
+//!
+//! # Triangular/hexagonal lattice
+//! [geometry.lattice]
+//! type = "triangular"
+//! a = 1.0  # optional
+//!
+//! # Oblique lattice
+//! [geometry.lattice]
+//! type = "oblique"
+//! b = 1.2
+//! alpha = 1.0472  # 60° in radians
+//!
+//! # For any lattice type:
 //! [[geometry.atoms]]
 //! pos = [0.0, 0.0]
 //! radius = 0.3
@@ -25,7 +58,7 @@
 //! polarization = "TM"
 //!
 //! [path]
-//! preset = "square"
+//! preset = "square"  # or "rectangular", "triangular", "hexagonal"
 //! segments_per_leg = 12
 //!
 //! [eigensolver]
@@ -38,6 +71,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     bandstructure::BandStructureJob,
+    bravais::LatticeType,
+    brillouin::{generate_path, BrillouinPath, PathPreset as NewPathPreset},
     dielectric::DielectricOptions,
     eigensolver::EigensolverConfig,
     geometry::Geometry2D,
@@ -51,20 +86,64 @@ use crate::{
 // ============================================================================
 
 /// Preset k-path through the Brillouin zone.
+///
+/// Now supports rectangular lattice paths in addition to square and hexagonal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PathPreset {
     /// Square lattice path: Γ → X → M → Γ
     Square,
-    /// Hexagonal lattice path: Γ → M → K → Γ
+    /// Rectangular lattice path: Γ → X → S → Y → Γ
+    Rectangular,
+    /// Triangular lattice path: Γ → M → K → Γ
+    Triangular,
+    /// Hexagonal lattice path (alias for triangular): Γ → M → K → Γ
     Hexagonal,
+}
+
+impl PathPreset {
+    /// Get the Brillouin path type for this preset.
+    pub fn to_brillouin_path(&self) -> BrillouinPath {
+        match self {
+            PathPreset::Square => BrillouinPath::Square,
+            PathPreset::Rectangular => BrillouinPath::Rectangular,
+            PathPreset::Triangular => BrillouinPath::Triangular,
+            PathPreset::Hexagonal => BrillouinPath::Hexagonal,
+        }
+    }
+
+    /// Get the recommended preset for a lattice type.
+    pub fn for_lattice_type(lattice_type: LatticeType) -> Option<Self> {
+        match lattice_type {
+            LatticeType::Square => Some(PathPreset::Square),
+            LatticeType::Rectangular => Some(PathPreset::Rectangular),
+            LatticeType::Triangular => Some(PathPreset::Triangular),
+            LatticeType::Oblique => None,
+        }
+    }
 }
 
 impl From<PathPreset> for PathType {
     fn from(value: PathPreset) -> Self {
         match value {
             PathPreset::Square => PathType::Square,
-            PathPreset::Hexagonal => PathType::Hexagonal,
+            PathPreset::Rectangular => {
+                // For backward compatibility with symmetry module
+                // We generate the rectangular path directly
+                PathType::Custom(BrillouinPath::Rectangular.raw_k_points())
+            }
+            PathPreset::Triangular | PathPreset::Hexagonal => PathType::Hexagonal,
+        }
+    }
+}
+
+impl From<PathPreset> for NewPathPreset {
+    fn from(value: PathPreset) -> Self {
+        match value {
+            PathPreset::Square => NewPathPreset::Square,
+            PathPreset::Rectangular => NewPathPreset::Rectangular,
+            PathPreset::Triangular => NewPathPreset::Triangular,
+            PathPreset::Hexagonal => NewPathPreset::Hexagonal,
         }
     }
 }
@@ -81,6 +160,13 @@ pub struct PathSpec {
 
 fn default_segments_per_leg() -> usize {
     8
+}
+
+impl PathSpec {
+    /// Generate the k-path from this specification.
+    pub fn generate(&self) -> Vec<[f64; 2]> {
+        generate_path(&self.preset.to_brillouin_path(), self.segments_per_leg)
+    }
 }
 
 // ============================================================================
@@ -119,11 +205,20 @@ impl From<JobConfig> for BandStructureJob {
         let mut k_path = value.k_path;
         if k_path.is_empty() {
             if let Some(spec) = &value.path {
-                k_path = symmetry::standard_path(
-                    &value.geometry.lattice,
-                    spec.preset.clone().into(),
-                    spec.segments_per_leg,
-                );
+                // Use the new path generation for rectangular, 
+                // fall back to symmetry module for others
+                match spec.preset {
+                    PathPreset::Rectangular => {
+                        k_path = spec.generate();
+                    }
+                    _ => {
+                        k_path = symmetry::standard_path(
+                            &value.geometry.lattice,
+                            spec.preset.clone().into(),
+                            spec.segments_per_leg,
+                        );
+                    }
+                }
             }
         }
         assert!(
@@ -141,3 +236,4 @@ impl From<JobConfig> for BandStructureJob {
         }
     }
 }
+
