@@ -1,0 +1,7 @@
+# Cargo configuration for maximum performance
+# 
+# This enables CPU-specific optimizations (AVX2, FMA, etc.) for this machine.
+# Note: Binaries built with these flags are NOT portable to other CPUs.
+
+[build]
+rustflags = ["-C", "target-cpu=native"]

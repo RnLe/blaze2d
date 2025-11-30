@@ -42,7 +42,7 @@ SKIP_REFERENCE_WIPE ?= 0
 
 .PHONY: all run mpb mpb2d mpb2d-benchmark list-config clean prepare_reference_data help \
         export-epsilon export-epsilon-tensor export-epsilon-all export-iterations \
-        export-epsilon-mpb export-epsilon-compare benchmark $(EVAL_TARGETS)
+        export-epsilon-mpb export-epsilon-inverse-mpb export-epsilon-compare benchmark $(EVAL_TARGETS)
 
 help:
 	@echo "Evaluation harness for MPB vs. mpb2d runs."
@@ -57,6 +57,7 @@ help:
 	@echo "  make export-epsilon                # export epsilon(r) data to CSV"
 	@echo "  make export-epsilon-tensor         # export inverse epsilon tensor to CSV"
 	@echo "  make export-epsilon-all            # export both epsilon files"
+	@echo "  make export-epsilon-inverse-mpb    # export inverse epsilon tensor from MPB"
 	@echo "  make export-iterations             # export per-iteration convergence data"
 	@echo ""
 	@echo "Available configs: $(EVAL_TARGETS)"
@@ -244,9 +245,44 @@ export-epsilon-mpb:
 		--lattice $(MPB_LATTICE) \
 		--export-epsilon $(EPSILON_OUTPUT_PREFIX)_epsilon_mpb.csv
 
+export-epsilon-inverse-mpb:
+	@echo "[evaluation] exporting inverse epsilon tensor from MPB for $(EVAL_NAME)"
+	@echo "  output: $(EPSILON_OUTPUT_PREFIX)_epsilon_inv_mpb.csv"
+	mamba run -n mpb-reference python ../generate_square_tm_bands.py \
+		--output /dev/null \
+		--resolution $(MPB_RESOLUTION) \
+		--num-bands 1 \
+		--k-density 1 \
+		--radius $(MPB_RADIUS) \
+		--eps-bg $(MPB_EPS_BG) \
+		--eps-hole $(MPB_EPS_HOLE) \
+		--polarization tm \
+		--lattice $(MPB_LATTICE) \
+		--export-epsilon-inverse $(EPSILON_OUTPUT_PREFIX)_epsilon_inv_mpb.csv
+
+# Export RAW inverse epsilon tensor from MPB's HDF5 (no interpolation).
+# This is what the MPB eigensolver actually uses internally.
+export-epsilon-inverse-h5:
+	@echo "[evaluation] exporting RAW inverse epsilon tensor from MPB HDF5 for $(EVAL_NAME)"
+	@echo "  output: $(EPSILON_OUTPUT_PREFIX)_epsilon_inv_h5.csv"
+	mamba run -n mpb-reference python ../generate_square_tm_bands.py \
+		--output /dev/null \
+		--resolution $(MPB_RESOLUTION) \
+		--num-bands 1 \
+		--k-density 1 \
+		--radius $(MPB_RADIUS) \
+		--eps-bg $(MPB_EPS_BG) \
+		--eps-hole $(MPB_EPS_HOLE) \
+		--polarization tm \
+		--lattice $(MPB_LATTICE) \
+		--export-epsilon-inverse-h5 $(EPSILON_OUTPUT_PREFIX)_epsilon_inv_h5.csv
+
 export-epsilon-compare:
 	@$(MAKE) --no-print-directory export-epsilon
+	@$(MAKE) --no-print-directory export-epsilon-tensor
 	@$(MAKE) --no-print-directory export-epsilon-mpb
+	@$(MAKE) --no-print-directory export-epsilon-inverse-mpb
+	@$(MAKE) --no-print-directory export-epsilon-inverse-h5
 
 # ============================================================================
 # Iteration Trace Export Targets

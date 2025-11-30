@@ -6,6 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+# Use batched GPU-optimized operations (gram_matrix, linear_combinations).
+# This feature is automatically enabled by the CUDA backend.
+cuda = []
+
 [dependencies]
 num-complex.workspace = true
 serde.workspace = true

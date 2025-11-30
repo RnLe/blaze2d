@@ -6,8 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+cuda = ["mpb2d-backend-cuda/cuda", "dep:mpb2d-backend-cuda"]
+
 [dependencies]
 mpb2d-core = { path = "../core" }
+mpb2d-backend-cuda = { path = "../backend-cuda", optional = true }
 num-complex.workspace = true
 rayon.workspace = true
 rustfft.workspace = true
@@ -19,4 +24,8 @@ criterion.workspace = true
 
 [[bench]]
 name = "fft"
+harness = false
+
+[[bench]]
+name = "resolution_scaling"
 harness = false

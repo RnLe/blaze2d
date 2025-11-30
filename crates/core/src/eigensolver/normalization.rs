@@ -294,12 +294,23 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     }
 
     // Step 1: Form the Gram matrix G = X^H B X
-    let mut gram = vec![Complex64::ZERO; p * p];
-    for i in 0..p {
-        for j in 0..p {
-            gram[i * p + j] = backend.dot(&vectors[i], &mass_vectors[j]);
+    #[cfg(feature = "cuda")]
+    let gram = {
+        // GPU path: use batched gram_matrix (single ZGEMM call)
+        backend.gram_matrix(vectors, mass_vectors)
+    };
+
+    #[cfg(not(feature = "cuda"))]
+    let gram = {
+        // CPU path: use individual dot products (better compiler optimization)
+        let mut gram = vec![Complex64::ZERO; p * p];
+        for i in 0..p {
+            for j in 0..p {
+                gram[i * p + j] = backend.dot(&vectors[i], &mass_vectors[j]);
+            }
         }
-    }
+        gram
+    };
 
     // Step 2: Eigendecomposition of the Hermitian Gram matrix
     // G = Q Λ Q^H where Λ = diag(λ_1, ..., λ_p), sorted descending

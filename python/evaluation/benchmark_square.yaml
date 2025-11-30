@@ -171,3 +171,55 @@ runs:
     total_time_s: 0.170
     time_per_iter_ms: 1.100
     description: "Switched TE/TM naming to match standard convention. No code changes."
+
+  - timestamp: "2025-11-30T12:19:08+01:00"
+    polarization: "TE"
+    min_iter: 7
+    max_iter: 21
+    total_iterations: 287
+    total_time_s: 0.440
+    time_per_iter_ms: 1.500
+    description: "Switched x and y convention for the inverse epsilon tensor. TE data is in much better agreement with reference now. This also magically improved convergence slightly. Nice."
+  - timestamp: "2025-11-30T12:19:08+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 159
+    total_time_s: 0.170
+    time_per_iter_ms: 1.100
+    description: "Switched x and y convention for the inverse epsilon tensor. TE data is in much better agreement with reference now. No convergence change for TM (only TE uses the inverse epsilon tensor)."
+
+  - timestamp: "2025-11-30T15:28:09+01:00"
+    polarization: "TE"
+    min_iter: 7
+    max_iter: 21
+    total_iterations: 287
+    total_time_s: 1.520
+    time_per_iter_ms: 5.300
+    description: "Slow-down due to batched GPU-optimized operations (gram_matrix, linear_combinations). This batching was also applied to the CPU backend for consistency, but it seems to have a significant performance penalty there."
+  - timestamp: "2025-11-30T15:28:09+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 159
+    total_time_s: 0.740
+    time_per_iter_ms: 4.700
+    description: "Slow-down due to batched GPU-optimized operations (gram_matrix, linear_combinations). This batching was also applied to the CPU backend for consistency, but it seems to have a significant performance penalty there."
+
+  - timestamp: "2025-11-30T16:05:37+01:00"
+    polarization: "TE"
+    min_iter: 7
+    max_iter: 21
+    total_iterations: 287
+    total_time_s: 0.380
+    time_per_iter_ms: 1.300
+    description: "Reverted batched GPU-optimized operations (gram_matrix, linear_combinations) back for the CPU backend. GPU still uses them."
+  - timestamp: "2025-11-30T16:05:37+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 159
+    total_time_s: 0.150
+    time_per_iter_ms: 1.000
+    description: "Reverted batched GPU-optimized operations (gram_matrix, linear_combinations) back for the CPU backend. GPU still uses them."
+
