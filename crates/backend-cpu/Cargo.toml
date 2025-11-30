@@ -12,3 +12,11 @@ num-complex.workspace = true
 rayon.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
+num_cpus.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "fft"
+harness = false

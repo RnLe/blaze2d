@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 clap.workspace = true
 mpb2d-core = { path = "../core" }
+mpb2d-backend-cpu = { path = "../backend-cpu" }
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true

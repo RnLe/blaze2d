@@ -1,7 +1,7 @@
 //! WASM-oriented backend shims.
 
-use mpb2d-core::backend::{SpectralBackend, SpectralBuffer};
-use mpb2d-core::grid::Grid2D;
+use mpb2d_core::backend::{SpectralBackend, SpectralBuffer};
+use mpb2d_core::grid::Grid2D;
 use num_complex::Complex64;
 
 #[cfg(feature = "bindings")]
@@ -19,6 +19,18 @@ impl SpectralBuffer for WasmField {
     fn len(&self) -> usize {
         self.data.len()
     }
+
+    fn grid(&self) -> Grid2D {
+        self.grid
+    }
+
+    fn as_slice(&self) -> &[Complex64] {
+        &self.data
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [Complex64] {
+        &mut self.data
+    }
 }
 
 impl SpectralBackend for WasmBackend {
@@ -35,5 +47,19 @@ impl SpectralBackend for WasmBackend {
 
     fn inverse_fft_2d(&self, _buffer: &mut Self::Buffer) {}
 
-    fn scale(&self, _alpha: Complex64, _buffer: &mut Self::Buffer) {}
+    fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
+        for value in &mut buffer.data {
+            *value *= alpha;
+        }
+    }
+
+    fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+        for (dst, src) in y.data.iter_mut().zip(&x.data) {
+            *dst += alpha * src;
+        }
+    }
+
+    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+        x.data.iter().zip(&y.data).map(|(a, b)| a.conj() * b).sum()
+    }
 }
