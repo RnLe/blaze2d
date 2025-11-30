@@ -127,6 +127,37 @@ pub struct ReciprocalLattice2D {
     pub b2: [f64; 2],
 }
 
+impl ReciprocalLattice2D {
+    /// Convert fractional k-space coordinates to Cartesian Bloch wavevector.
+    ///
+    /// The fractional coordinates (k1, k2) represent a k-point as:
+    ///   k_cart = k1 * b1 + k2 * b2
+    ///
+    /// where b1 and b2 are the reciprocal lattice vectors.
+    ///
+    /// # Important
+    ///
+    /// For non-orthogonal lattices (hexagonal, oblique), this transformation
+    /// is NOT simply `[2π * k1, 2π * k2]`. The reciprocal lattice vectors
+    /// must be used to get the correct Cartesian Bloch wavevector.
+    ///
+    /// # Examples
+    ///
+    /// For a square lattice with a=1: b1 = [2π, 0], b2 = [0, 2π]
+    ///   - M-point (0.5, 0) → [π, 0] ✓
+    ///
+    /// For a hexagonal lattice (60° convention): b1 ≈ [2π, -2π/√3], b2 = [0, 4π/√3]
+    ///   - M-point (0.5, 0) → [π, -π/√3] (NOT [π, 0]!)
+    ///   - K-point (1/3, 1/3) → [(2/3)π, (2/3)π/√3]
+    #[inline]
+    pub fn fractional_to_cartesian(&self, k_frac: [f64; 2]) -> [f64; 2] {
+        [
+            k_frac[0] * self.b1[0] + k_frac[1] * self.b2[0],
+            k_frac[0] * self.b1[1] + k_frac[1] * self.b2[1],
+        ]
+    }
+}
+
 fn vector_norm(v: [f64; 2]) -> f64 {
     (v[0] * v[0] + v[1] * v[1]).sqrt()
 }

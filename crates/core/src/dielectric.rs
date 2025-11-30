@@ -95,6 +95,10 @@ pub struct Dielectric2D {
     unsmoothed_eps: Option<Vec<f64>>,
     unsmoothed_inv_eps: Option<Vec<f64>>,
     pub grid: Grid2D,
+    /// Reciprocal lattice vectors b1, b2 for computing G-vectors.
+    /// G = n1*b1 + n2*b2 for integer indices n1, n2.
+    reciprocal_b1: [f64; 2],
+    reciprocal_b2: [f64; 2],
 }
 
 impl Dielectric2D {
@@ -103,6 +107,12 @@ impl Dielectric2D {
             grid.nx > 0 && grid.ny > 0,
             "grid dimensions must be non-zero"
         );
+
+        // Compute reciprocal lattice vectors for G-vector construction
+        let reciprocal = geom.lattice.reciprocal();
+        let reciprocal_b1 = reciprocal.b1;
+        let reciprocal_b2 = reciprocal.b2;
+
         let raw_eps = sample_raw_eps(geom, grid);
         if !opts.smoothing_enabled() {
             let inv_eps_r = raw_eps
@@ -119,6 +129,8 @@ impl Dielectric2D {
                 unsmoothed_eps: None,
                 unsmoothed_inv_eps: None,
                 grid,
+                reciprocal_b1,
+                reciprocal_b2,
             };
         }
 
@@ -147,6 +159,8 @@ impl Dielectric2D {
             unsmoothed_eps: Some(raw_eps),
             unsmoothed_inv_eps: Some(raw_inv_eps),
             grid,
+            reciprocal_b1,
+            reciprocal_b2,
         }
     }
 
@@ -168,6 +182,18 @@ impl Dielectric2D {
 
     pub fn unsmoothed_inv_eps(&self) -> Option<&[f64]> {
         self.unsmoothed_inv_eps.as_deref()
+    }
+
+    /// Get the first reciprocal lattice vector b1.
+    /// G-vectors are computed as G = n1*b1 + n2*b2.
+    pub fn reciprocal_b1(&self) -> [f64; 2] {
+        self.reciprocal_b1
+    }
+
+    /// Get the second reciprocal lattice vector b2.
+    /// G-vectors are computed as G = n1*b1 + n2*b2.
+    pub fn reciprocal_b2(&self) -> [f64; 2] {
+        self.reciprocal_b2
     }
 
     /// Export epsilon data to CSV file.

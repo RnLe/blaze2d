@@ -154,3 +154,4 @@ runs:
     total_time_s: 0.460
     time_per_iter_ms: 1.500
     description: "Cleaned up the code (removed symmetry decision logic). Converges slightly better now? What the heck?"
+

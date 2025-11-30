@@ -2,11 +2,7 @@
 
 use num_complex::Complex64;
 
-use std::{
-    collections::HashMap,
-    f64::consts::PI,
-    sync::{Arc, Mutex, OnceLock},
-};
+use std::f64::consts::PI;
 
 use crate::{
     backend::{SpectralBackend, SpectralBuffer},
@@ -96,6 +92,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     ///   but causes systematic eigenvalue shifts because pointwise ε^{-1/2} is NOT
     ///   the true matrix square root of the plane-wave mass matrix.
     /// - TM mode: B = I (standard eigenproblem).
+    ///
+    /// **Important:** The G-vectors are computed using the reciprocal lattice basis:
+    ///   G = n1*b1 + n2*b2
+    /// This is essential for non-orthogonal lattices (hexagonal, oblique).
     pub fn new(
         backend: B,
         dielectric: Dielectric2D,
@@ -103,9 +103,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         bloch_k: [f64; 2],
     ) -> Self {
         let grid = dielectric.grid;
-        let wave_tables = cached_wave_tables(grid);
-        let kx_shifted = shift_k_vector(wave_tables.kx(), bloch_k[0]);
-        let ky_shifted = shift_k_vector(wave_tables.ky(), bloch_k[1]);
+
+        // Get reciprocal lattice vectors from dielectric for proper G-vector computation
+        let b1 = dielectric.reciprocal_b1();
+        let b2 = dielectric.reciprocal_b2();
+
+        // Build k+G tables using the reciprocal lattice basis
+        // G = n1*b1 + n2*b2 (not the old Cartesian 2π/L formula)
         let (
             k_plus_g_x,
             k_plus_g_y,
@@ -114,7 +118,16 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             k_plus_g_sq_min,
             k_plus_g_floor_count,
             k_plus_g_was_clamped,
-        ) = build_shifted_k_plus_g_tables(&wave_tables, bloch_k);
+        ) = build_k_plus_g_tables_with_reciprocal(grid, b1, b2, bloch_k);
+
+        // kx_shifted and ky_shifted are still needed for gradient operators
+        // These use the OLD approach - need to think about this...
+        // Actually, k_plus_g_x and k_plus_g_y already contain k+G, so we can use those directly
+        // The "shifted" versions were a legacy from the old approach.
+        // We keep them for API compatibility but derive from k_plus_g values.
+        let kx_shifted = k_plus_g_x.clone();
+        let ky_shifted = k_plus_g_y.clone();
+
         let scratch = backend.alloc_field(grid);
         let grad_x = backend.alloc_field(grid);
         let grad_y = backend.alloc_field(grid);
@@ -1045,13 +1058,70 @@ fn build_k_vector(n: usize, length: f64) -> Vec<f64> {
         .collect()
 }
 
-fn build_shifted_k_plus_g_tables(
-    base: &GridWaveTables,
+/// Build integer FFT indices centered around 0.
+///
+/// For n=8: returns [0, 1, 2, 3, 4, -3, -2, -1]
+/// This matches the standard FFT frequency ordering.
+fn build_fft_indices(n: usize) -> Vec<isize> {
+    (0..n)
+        .map(|i| {
+            if i <= n / 2 {
+                i as isize
+            } else {
+                i as isize - n as isize
+            }
+        })
+        .collect()
+}
+
+/// Build G-vectors using the reciprocal lattice basis.
+///
+/// For a general 2D lattice, G-vectors are:
+///   G = n1 * b1 + n2 * b2
+///
+/// where b1, b2 are the reciprocal lattice vectors and n1, n2 are integers
+/// in the range determined by the FFT grid size.
+///
+/// This is essential for non-orthogonal lattices (hexagonal, oblique) where
+/// using Cartesian G = 2π/L gives wrong eigenvalues.
+fn build_g_vectors_with_reciprocal_lattice(
+    grid: Grid2D,
+    b1: [f64; 2],
+    b2: [f64; 2],
+) -> (Vec<f64>, Vec<f64>) {
+    let n1_indices = build_fft_indices(grid.nx);
+    let n2_indices = build_fft_indices(grid.ny);
+    let len = grid.len();
+    let mut gx = vec![0.0; len];
+    let mut gy = vec![0.0; len];
+
+    for iy in 0..grid.ny {
+        for ix in 0..grid.nx {
+            let idx = grid.idx(ix, iy);
+            let n1 = n1_indices[ix] as f64;
+            let n2 = n2_indices[iy] as f64;
+            // G = n1 * b1 + n2 * b2
+            gx[idx] = n1 * b1[0] + n2 * b2[0];
+            gy[idx] = n1 * b1[1] + n2 * b2[1];
+        }
+    }
+
+    (gx, gy)
+}
+
+/// Build k+G tables using reciprocal lattice G-vectors.
+///
+/// This replaces the old Cartesian G-vector computation with proper
+/// reciprocal lattice vectors: G = n1*b1 + n2*b2.
+fn build_k_plus_g_tables_with_reciprocal(
+    grid: Grid2D,
+    b1: [f64; 2],
+    b2: [f64; 2],
     bloch: [f64; 2],
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, usize, Vec<bool>) {
-    let len = base.grid.len();
-    let gx_base = base.gx();
-    let gy_base = base.gy();
+    let (gx_base, gy_base) = build_g_vectors_with_reciprocal_lattice(grid, b1, b2);
+    let len = grid.len();
+
     #[cfg(debug_assertions)]
     {
         let mut unique_gx: Vec<f64> = gx_base.iter().cloned().collect();
@@ -1062,6 +1132,7 @@ fn build_shifted_k_plus_g_tables(
             &unique_gx[..unique_gx.len().min(8)]
         );
     }
+
     let mut k_plus_g_x = vec![0.0; len];
     let mut k_plus_g_y = vec![0.0; len];
     let mut squares = vec![0.0; len];
@@ -1069,6 +1140,7 @@ fn build_shifted_k_plus_g_tables(
     let mut raw_min = f64::INFINITY;
     let mut clamped_min = f64::INFINITY;
     let mut floor_count = 0usize;
+
     for idx in 0..len {
         let raw_kx = gx_base[idx] + bloch[0];
         let raw_ky = gy_base[idx] + bloch[1];
@@ -1087,12 +1159,14 @@ fn build_shifted_k_plus_g_tables(
         k_plus_g_y[idx] = clamped_ky;
         squares[idx] = clamped_sq;
     }
+
     if raw_min == f64::INFINITY {
         raw_min = 0.0;
     }
     if clamped_min == f64::INFINITY {
         clamped_min = 0.0;
     }
+
     (
         k_plus_g_x,
         k_plus_g_y,
@@ -1260,10 +1334,6 @@ mod tests {
     }
 }
 
-fn shift_k_vector(base: &[f64], shift: f64) -> Vec<f64> {
-    base.iter().map(|&k| k + shift).collect()
-}
-
 fn clamp_gradient_components(kx: f64, ky: f64) -> (f64, f64) {
     if !kx.is_finite() || !ky.is_finite() {
         let magnitude = K_PLUS_G_NEAR_ZERO_FLOOR.sqrt();
@@ -1327,100 +1397,6 @@ fn build_inverse_diagonal(
     }
 
     result
-}
-
-#[derive(Debug)]
-struct GridWaveTables {
-    grid: Grid2D,
-    kx: Vec<f64>,
-    ky: Vec<f64>,
-    gx: Vec<f64>,
-    gy: Vec<f64>,
-    g_sq: Vec<f64>,
-}
-
-impl GridWaveTables {
-    fn new(grid: Grid2D) -> Self {
-        let kx = build_k_vector(grid.nx, grid.lx);
-        let ky = build_k_vector(grid.ny, grid.ly);
-        let len = grid.len();
-        let mut gx = vec![0.0; len];
-        let mut gy = vec![0.0; len];
-        for iy in 0..grid.ny {
-            for ix in 0..grid.nx {
-                let idx = grid.idx(ix, iy);
-                gx[idx] = kx[ix];
-                gy[idx] = ky[iy];
-            }
-        }
-        let g_sq = gx
-            .iter()
-            .zip(gy.iter())
-            .map(|(&gx_val, &gy_val)| gx_val * gx_val + gy_val * gy_val)
-            .collect();
-        Self {
-            grid,
-            kx,
-            ky,
-            gx,
-            gy,
-            g_sq,
-        }
-    }
-
-    fn kx(&self) -> &[f64] {
-        &self.kx
-    }
-
-    fn ky(&self) -> &[f64] {
-        &self.ky
-    }
-
-    fn gx(&self) -> &[f64] {
-        &self.gx
-    }
-
-    fn gy(&self) -> &[f64] {
-        &self.gy
-    }
-
-    #[allow(dead_code)]
-    fn g_sq(&self) -> &[f64] {
-        &self.g_sq
-    }
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct GridKey {
-    nx: usize,
-    ny: usize,
-    lx_bits: u64,
-    ly_bits: u64,
-}
-
-impl From<Grid2D> for GridKey {
-    fn from(grid: Grid2D) -> Self {
-        Self {
-            nx: grid.nx,
-            ny: grid.ny,
-            lx_bits: grid.lx.to_bits(),
-            ly_bits: grid.ly.to_bits(),
-        }
-    }
-}
-
-static GRID_WAVE_CACHE: OnceLock<Mutex<HashMap<GridKey, Arc<GridWaveTables>>>> = OnceLock::new();
-
-fn cached_wave_tables(grid: Grid2D) -> Arc<GridWaveTables> {
-    let key = GridKey::from(grid);
-    let cache = GRID_WAVE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap();
-    if let Some(existing) = guard.get(&key) {
-        return existing.clone();
-    }
-    let tables = Arc::new(GridWaveTables::new(grid));
-    guard.insert(key, tables.clone());
-    tables
 }
 
 fn arithmetic_mean(values: &[f64]) -> Option<f64> {

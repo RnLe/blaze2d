@@ -46,7 +46,6 @@
 //! ```
 
 use log::{debug, info, warn};
-use std::f64::consts::PI;
 use std::time::Instant;
 
 use crate::{
@@ -248,13 +247,20 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     // Resolve Auto preconditioner type based on polarization
     let precond_type = options.precond_type.resolve_for_polarization(job.pol);
 
+    // Compute reciprocal lattice for proper k-space coordinate conversion.
+    // This is essential for non-orthogonal lattices (hexagonal, oblique) where
+    // the fractional k-coordinates must be transformed using the reciprocal
+    // lattice vectors, not just multiplied by 2π.
+    let reciprocal = job.geom.lattice.reciprocal();
+
     info!(
-        "[bandstructure] grid={}x{} pol={:?} bands={} k_points={}",
+        "[bandstructure] grid={}x{} pol={:?} bands={} k_points={} lattice={:?}",
         job.grid.nx,
         job.grid.ny,
         job.pol,
         job.eigensolver.n_bands,
         job.k_path.len(),
+        job.geom.lattice.classify(),
     );
 
     // Sample the dielectric function from geometry
@@ -283,7 +289,9 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         let diag_k_idx = job.k_path.iter().position(|&k| !is_gamma_point(k));
         if let Some(idx) = diag_k_idx {
             let k_frac = job.k_path[idx];
-            let bloch = [2.0 * PI * k_frac[0], 2.0 * PI * k_frac[1]];
+            // Convert fractional k-coordinates to Cartesian Bloch wavevector
+            // using the reciprocal lattice (essential for non-orthogonal lattices)
+            let bloch = reciprocal.fractional_to_cartesian(k_frac);
 
             // Create temporary operator for diagnostics
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
@@ -397,8 +405,11 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             debug!("[bandstructure] k#{:03} is Γ-point: constant mode will be deflated", k_idx);
         }
 
-        // Convert fractional k-point to Bloch wavevector (in 2π/a units)
-        let bloch = [2.0 * PI * k_frac[0], 2.0 * PI * k_frac[1]];
+        // Convert fractional k-point to Cartesian Bloch wavevector using the
+        // reciprocal lattice. This is essential for non-orthogonal lattices
+        // (hexagonal, oblique) where M=(0.5,0) in fractional coordinates does
+        // NOT map to [π, 0] in Cartesian k-space.
+        let bloch = reciprocal.fractional_to_cartesian(k_frac);
 
         // Prepare warm-start slice (if available from previous k-point)
         // Note: Warm-start from Γ is now enabled - eigenvectors from Γ (with deflation)
@@ -600,13 +611,20 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     // Resolve Auto preconditioner type based on polarization
     let precond_type = options.precond_type.resolve_for_polarization(job.pol);
 
+    // Compute reciprocal lattice for proper k-space coordinate conversion.
+    // This is essential for non-orthogonal lattices (hexagonal, oblique) where
+    // the fractional k-coordinates must be transformed using the reciprocal
+    // lattice vectors, not just multiplied by 2π.
+    let reciprocal = job.geom.lattice.reciprocal();
+
     info!(
-        "[bandstructure] grid={}x{} pol={:?} bands={} k_points={} (diagnostics={})",
+        "[bandstructure] grid={}x{} pol={:?} bands={} k_points={} lattice={:?} (diagnostics={})",
         job.grid.nx,
         job.grid.ny,
         job.pol,
         job.eigensolver.n_bands,
         job.k_path.len(),
+        job.geom.lattice.classify(),
         study_name
     );
 
@@ -641,7 +659,9 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         let diag_k_idx = job.k_path.iter().position(|&k| !is_gamma_point(k));
         if let Some(idx) = diag_k_idx {
             let k_frac = job.k_path[idx];
-            let bloch = [2.0 * PI * k_frac[0], 2.0 * PI * k_frac[1]];
+            // Convert fractional k-coordinates to Cartesian Bloch wavevector
+            // using the reciprocal lattice (essential for non-orthogonal lattices)
+            let bloch = reciprocal.fractional_to_cartesian(k_frac);
 
             // Create temporary operator for diagnostics
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
@@ -762,8 +782,11 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
             debug!("[bandstructure] k#{:03} is Γ-point: constant mode will be deflated", k_idx);
         }
 
-        // Convert fractional k-point to Bloch wavevector (in 2π/a units)
-        let bloch = [2.0 * PI * k_frac[0], 2.0 * PI * k_frac[1]];
+        // Convert fractional k-point to Cartesian Bloch wavevector using the
+        // reciprocal lattice. This is essential for non-orthogonal lattices
+        // (hexagonal, oblique) where M=(0.5,0) in fractional coordinates does
+        // NOT map to [π, 0] in Cartesian k-space.
+        let bloch = reciprocal.fractional_to_cartesian(k_frac);
 
         // Construct the Maxwell operator Θ for this k-point
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
