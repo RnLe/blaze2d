@@ -16,23 +16,75 @@
 //! parameter ranges instead of single values. The file must include `[bulk]` section
 //! to be recognized as a bulk request.
 //!
-//! ## Full Mode
+//! ## Output Modes
 //!
-//! Outputs one CSV file per solver run, containing complete band structure data.
+//! - **Full Mode**: One CSV file per solver run, containing complete band structure data.
+//! - **Selective Mode**: Single merged CSV with only specified k-points and bands.
 //!
-//! ## Selective Mode
+//! ## I/O Modes
 //!
-//! Outputs a single merged CSV file containing only specified k-points and bands,
-//! with swept parameters as columns for easy analysis.
+//! - **Sync**: Traditional synchronous I/O (default, current behavior)
+//! - **Batch**: Buffer results in memory (~10 MB) and write in background thread
+//! - **Stream**: Real-time emission for live consumers (Python plotting, WASM)
+//!
+//! # Example: Batch Mode
+//!
+//! ```ignore
+//! use mpb2d_bulk_driver::{BulkDriver, BatchConfig, OutputChannel};
+//! use std::sync::Arc;
+//!
+//! let driver = BulkDriver::new(config, None);
+//! let stats = driver.run_batched(BatchConfig::default())?;
+//! ```
+//!
+//! # Example: Streaming Mode
+//!
+//! ```ignore
+//! let (receiver, handle) = driver.run_streaming()?;
+//! for result in receiver {
+//!     println!("Job {} complete", result.job_index);
+//! }
+//! handle.join().unwrap()?;
+//! ```
 
 pub mod adaptive;
+pub mod batch;
+pub mod channel;
 pub mod config;
 pub mod driver;
 pub mod expansion;
 pub mod output;
+pub mod stream;
 
+// Re-export adaptive thread management
 pub use adaptive::{AdaptiveConfig, AdaptiveThreadManager};
-pub use config::{BulkConfig, OutputConfig, OutputMode, ParameterRange, RangeSpec, SelectiveSpec};
-pub use driver::{BulkDriver, ThreadMode};
-pub use expansion::{expand_jobs, ExpandedJob};
+
+// Re-export batch I/O
+pub use batch::BatchChannel;
+
+// Re-export channel types
+pub use channel::{
+    BackpressurePolicy, BatchConfig, ChannelError, ChannelStats, CompactBandResult,
+    OutputChannel, OutputChannelSink, StreamConfig,
+};
+
+// Re-export configuration
+pub use config::{
+    BatchSettings, BulkConfig, IoMode, OutputConfig, OutputMode, ParameterRange, RangeSpec,
+    SelectiveSpec,
+};
+
+// Re-export driver
+pub use driver::{BulkDriver, DriverError, DriverStats, JobError, JobResult, ThreadMode};
+
+// Re-export job expansion
+pub use expansion::{expand_jobs, ExpandedJob, JobParams};
+
+// Re-export legacy output writer
 pub use output::OutputWriter;
+
+// Re-export streaming
+pub use stream::{
+    CallbackSubscriber, ChannelSubscriber, CollectingSubscriber, FilteredStreamChannel,
+    SelectiveFilter, SharedStreamChannel, StreamChannel, Subscriber,
+};

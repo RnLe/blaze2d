@@ -288,12 +288,66 @@ pub struct SelectiveSpec {
     pub bands: Vec<usize>,
 }
 
+/// I/O mode for output handling.
+///
+/// This controls how results are written during computation:
+/// - **Sync**: Traditional synchronous writes (current behavior)
+/// - **Batch**: Buffer results in memory and write in large chunks
+/// - **Stream**: Emit results in real-time for live consumers
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IoMode {
+    /// Traditional synchronous I/O (write each result immediately)
+    #[default]
+    Sync,
+    /// Batched I/O with background writer (buffer results, write in chunks)
+    Batch,
+    /// Streaming mode for real-time consumers (Python, WASM)
+    Stream,
+}
+
+/// Settings for batch mode I/O.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSettings {
+    /// Buffer size in bytes before triggering a flush (default: 10 MB)
+    ///
+    /// For typical band structure results (10 bands × 100 k-points):
+    /// - Each result is ~10 KB
+    /// - 10 MB buffer holds ~1000 results
+    #[serde(default = "default_buffer_size")]
+    pub buffer_size: usize,
+
+    /// Maximum time between flushes in seconds (optional)
+    ///
+    /// If set, the buffer will be flushed at this interval even if not full.
+    /// Useful for long-running jobs where you want periodic checkpoints.
+    #[serde(default)]
+    pub flush_interval_secs: Option<f64>,
+}
+
+fn default_buffer_size() -> usize {
+    10 * 1024 * 1024 // 10 MB
+}
+
+impl Default for BatchSettings {
+    fn default() -> Self {
+        Self {
+            buffer_size: default_buffer_size(),
+            flush_interval_secs: None,
+        }
+    }
+}
+
 /// Output configuration section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputConfig {
     /// Output mode: "full" or "selective"
     #[serde(default)]
     pub mode: OutputMode,
+
+    /// I/O mode: "sync", "batch", or "stream"
+    #[serde(default)]
+    pub io_mode: IoMode,
 
     /// Output directory for full mode (files named by job index)
     #[serde(default = "default_output_dir")]
@@ -311,9 +365,13 @@ pub struct OutputConfig {
     #[serde(default)]
     pub selective: SelectiveSpec,
 
-    /// Write output in batches (number of jobs before flushing)
+    /// Write output in batches (number of jobs before flushing) - legacy
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
+
+    /// Batch mode settings
+    #[serde(default)]
+    pub batch: BatchSettings,
 }
 
 fn default_output_dir() -> PathBuf {
@@ -336,11 +394,13 @@ impl Default for OutputConfig {
     fn default() -> Self {
         Self {
             mode: OutputMode::Full,
+            io_mode: IoMode::Sync,
             directory: default_output_dir(),
             filename: default_output_file(),
             prefix: default_prefix(),
             selective: SelectiveSpec::default(),
             batch_size: default_batch_size(),
+            batch: BatchSettings::default(),
         }
     }
 }

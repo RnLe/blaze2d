@@ -16,4 +16,8 @@ bindings = ["dep:pyo3"]
 [dependencies]
 log.workspace = true
 mpb2d-core = { path = "../core" }
-pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
+mpb2d-bulk-driver = { path = "../bulk-driver" }
+mpb2d-backend-cpu = { path = "../backend-cpu" }
+pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
