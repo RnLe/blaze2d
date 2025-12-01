@@ -1,0 +1,33 @@
+# Benchmark for 24x24 grid, 8 bands - matching compare_square_lowres
+[bulk]
+dry_run = false
+
+[geometry]
+eps_bg = 13.0
+
+[geometry.lattice]
+lattice_type = "square"
+
+[[geometry.atoms]]
+eps_inside = 1.0
+radius = 0.30
+pos = [0.0, 0.0]
+
+[grid]
+nx = 24
+ny = 24
+n_bands = 8
+k_points = 31
+
+[output]
+mode = "full"
+directory = "./benchmark_24x24_output"
+
+# Parameter sweeps - 100 jobs
+# 2 polarizations × 5 eps × 10 radii = 100 jobs
+[ranges]
+polarization = ["TE", "TM"]
+eps_bg = { min = 8.0, max = 12.0, step = 1.0 }
+
+[[ranges.atoms]]
+radius = { min = 0.20, max = 0.38, step = 0.02 }
