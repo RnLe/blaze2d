@@ -263,7 +263,7 @@ fn test_tm_operator_eigenvalue() {
     use mpb2d_core::geometry::Geometry2D;
     use mpb2d_core::grid::Grid2D;
     use mpb2d_core::lattice::Lattice2D;
-    use mpb2d_core::operator::{LinearOperator, ThetaOperator};
+    use mpb2d_core::operators::{LinearOperator, ThetaOperator};
     use mpb2d_core::polarization::Polarization;
     use std::f64::consts::PI;
 
@@ -334,7 +334,7 @@ fn test_te_operator_eigenvalue() {
     use mpb2d_core::geometry::Geometry2D;
     use mpb2d_core::grid::Grid2D;
     use mpb2d_core::lattice::Lattice2D;
-    use mpb2d_core::operator::{LinearOperator, ThetaOperator};
+    use mpb2d_core::operators::{LinearOperator, ThetaOperator};
     use mpb2d_core::polarization::Polarization;
     use std::f64::consts::PI;
 

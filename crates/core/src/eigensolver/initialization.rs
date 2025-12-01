@@ -27,7 +27,7 @@ use num_complex::Complex64;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::field::Field2D;
-use crate::operator::LinearOperator;
+use crate::operators::LinearOperator;
 
 use super::normalization::{normalize_to_unit_b_norm_with_tol, project_out};
 

@@ -1,7 +1,8 @@
 //! MPB2D Bulk Driver - Smart multi-threaded parameter sweep driver.
 //!
 //! This crate provides a high-performance driver for running many photonic crystal
-//! band structure calculations in parallel. It handles:
+//! band structure calculations in parallel, as well as Envelope Approximation (EA)
+//! eigenproblems for moiré lattice research. It handles:
 //!
 //! - **Parameter space definition**: Define ranges for radius, epsilon, lattice type,
 //!   multi-atom basis positions, resolution, and polarization
@@ -9,6 +10,13 @@
 //! - **Thread pool management**: Efficient parallel execution with configurable thread count
 //! - **Progress tracking**: Real-time progress logging without per-thread noise
 //! - **Output batching**: High-performance CSV output in full or selective mode
+//!
+//! # Solver Types
+//!
+//! The bulk driver supports two solver types:
+//!
+//! - **Maxwell** (default): Photonic crystal band structure calculations
+//! - **EA**: Envelope Approximation eigenproblems for moiré lattices
 //!
 //! # Usage
 //!
@@ -65,20 +73,23 @@ pub use batch::BatchChannel;
 // Re-export channel types
 pub use channel::{
     BackpressurePolicy, BatchConfig, ChannelError, ChannelStats, CompactBandResult,
-    OutputChannel, OutputChannelSink, StreamConfig,
+    CompactResultType, EAResult, MaxwellResult, OutputChannel, OutputChannelSink, StreamConfig,
 };
 
 // Re-export configuration
 pub use config::{
-    BatchSettings, BulkConfig, IoMode, OutputConfig, OutputMode, ParameterRange, RangeSpec,
-    SelectiveSpec,
+    BatchSettings, BulkConfig, EAConfig, IoMode, OutputConfig, OutputMode, ParameterRange,
+    RangeSpec, SelectiveSpec, SolverSection, SolverType,
 };
 
 // Re-export driver
-pub use driver::{BulkDriver, DriverError, DriverStats, JobError, JobResult, ThreadMode};
+pub use driver::{
+    BulkDriver, DriverError, DriverStats, EAJobResult, JobError, JobResult, JobResultType,
+    ThreadMode,
+};
 
 // Re-export job expansion
-pub use expansion::{expand_jobs, ExpandedJob, JobParams};
+pub use expansion::{expand_jobs, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams};
 
 // Re-export legacy output writer
 pub use output::OutputWriter;

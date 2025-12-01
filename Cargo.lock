@@ -108,6 +108,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "blaze2d"
+version = "0.2.0"
+dependencies = [
+ "crossbeam-channel",
+ "log",
+ "mpb2d-backend-cpu",
+ "mpb2d-bulk-driver",
+ "mpb2d-core",
+ "parking_lot",
+ "pyo3",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1119,19 +1132,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "toml",
-]
-
-[[package]]
-name = "mpb2d-python"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "log",
- "mpb2d-backend-cpu",
- "mpb2d-bulk-driver",
- "mpb2d-core",
- "parking_lot",
- "pyo3",
 ]
 
 [[package]]

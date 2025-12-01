@@ -44,6 +44,22 @@ pub struct CompactBandResult {
     /// Parameter values used for this job
     pub params: JobParams,
 
+    /// The result type (Maxwell with k-path data, or EA with eigenvalues only)
+    pub result_type: CompactResultType,
+}
+
+/// Type of compact result.
+#[derive(Debug, Clone)]
+pub enum CompactResultType {
+    /// Maxwell result with full band structure
+    Maxwell(MaxwellResult),
+    /// EA result with eigenvalues only (no k-path)
+    EA(EAResult),
+}
+
+/// Maxwell band structure result.
+#[derive(Debug, Clone)]
+pub struct MaxwellResult {
     /// K-path in fractional coordinates
     pub k_path: Vec<[f64; 2]>,
 
@@ -55,31 +71,58 @@ pub struct CompactBandResult {
     pub bands: Vec<Vec<f64>>,
 }
 
+/// EA eigenvalue result.
+#[derive(Debug, Clone)]
+pub struct EAResult {
+    /// Computed eigenvalues
+    pub eigenvalues: Vec<f64>,
+
+    /// Number of iterations taken
+    pub n_iterations: usize,
+
+    /// Whether convergence was achieved
+    pub converged: bool,
+}
+
 impl CompactBandResult {
     /// Create from a job result and expanded job.
     pub fn from_job_result(
         job: &crate::expansion::ExpandedJob,
         result: &crate::driver::JobResult,
     ) -> Self {
-        // Normalize frequencies (divide by 2π)
-        let bands: Vec<Vec<f64>> = result
-            .result
-            .bands
-            .iter()
-            .map(|k_bands| {
-                k_bands
+        let result_type = match &result.result {
+            crate::driver::JobResultType::Maxwell(band_result) => {
+                // Normalize frequencies (divide by 2π)
+                let bands: Vec<Vec<f64>> = band_result
+                    .bands
                     .iter()
-                    .map(|omega| omega / (2.0 * std::f64::consts::PI))
-                    .collect()
-            })
-            .collect();
+                    .map(|k_bands| {
+                        k_bands
+                            .iter()
+                            .map(|omega| omega / (2.0 * std::f64::consts::PI))
+                            .collect()
+                    })
+                    .collect();
+
+                CompactResultType::Maxwell(MaxwellResult {
+                    k_path: band_result.k_path.clone(),
+                    distances: band_result.distances.clone(),
+                    bands,
+                })
+            }
+            crate::driver::JobResultType::EA(ea_result) => {
+                CompactResultType::EA(EAResult {
+                    eigenvalues: ea_result.eigenvalues.clone(),
+                    n_iterations: ea_result.n_iterations,
+                    converged: ea_result.converged,
+                })
+            }
+        };
 
         Self {
             job_index: job.index,
             params: job.params.clone(),
-            k_path: result.result.k_path.clone(),
-            distances: result.result.distances.clone(),
-            bands,
+            result_type,
         }
     }
 
@@ -88,29 +131,66 @@ impl CompactBandResult {
         // Base struct overhead
         let base = std::mem::size_of::<Self>();
 
-        // k_path: Vec<[f64; 2]>
-        let k_path_size = self.k_path.len() * 16;
-
-        // distances: Vec<f64>
-        let distances_size = self.distances.len() * 8;
-
-        // bands: Vec<Vec<f64>>
-        let bands_size: usize = self.bands.iter().map(|b| b.len() * 8 + 24).sum();
-
         // params (rough estimate)
         let params_size = 200;
 
-        base + k_path_size + distances_size + bands_size + params_size
+        let result_size = match &self.result_type {
+            CompactResultType::Maxwell(m) => {
+                // k_path: Vec<[f64; 2]>
+                let k_path_size = m.k_path.len() * 16;
+                // distances: Vec<f64>
+                let distances_size = m.distances.len() * 8;
+                // bands: Vec<Vec<f64>>
+                let bands_size: usize = m.bands.iter().map(|b| b.len() * 8 + 24).sum();
+                k_path_size + distances_size + bands_size
+            }
+            CompactResultType::EA(ea) => {
+                // eigenvalues: Vec<f64>
+                ea.eigenvalues.len() * 8 + 24
+            }
+        };
+
+        base + params_size + result_size
     }
 
-    /// Number of k-points in this result.
+    /// Number of k-points in this result (Maxwell only).
     pub fn num_k_points(&self) -> usize {
-        self.k_path.len()
+        match &self.result_type {
+            CompactResultType::Maxwell(m) => m.k_path.len(),
+            CompactResultType::EA(_) => 1, // EA has no k-path concept
+        }
     }
 
     /// Number of bands computed.
     pub fn num_bands(&self) -> usize {
-        self.bands.first().map(|b| b.len()).unwrap_or(0)
+        match &self.result_type {
+            CompactResultType::Maxwell(m) => m.bands.first().map(|b| b.len()).unwrap_or(0),
+            CompactResultType::EA(ea) => ea.eigenvalues.len(),
+        }
+    }
+
+    /// Get k_path if this is a Maxwell result (for legacy compatibility).
+    pub fn k_path(&self) -> Option<&Vec<[f64; 2]>> {
+        match &self.result_type {
+            CompactResultType::Maxwell(m) => Some(&m.k_path),
+            CompactResultType::EA(_) => None,
+        }
+    }
+
+    /// Get distances if this is a Maxwell result (for legacy compatibility).
+    pub fn distances(&self) -> Option<&Vec<f64>> {
+        match &self.result_type {
+            CompactResultType::Maxwell(m) => Some(&m.distances),
+            CompactResultType::EA(_) => None,
+        }
+    }
+
+    /// Get bands if this is a Maxwell result (for legacy compatibility).
+    pub fn bands(&self) -> Option<&Vec<Vec<f64>>> {
+        match &self.result_type {
+            CompactResultType::Maxwell(m) => Some(&m.bands),
+            CompactResultType::EA(_) => None,
+        }
     }
 }
 
@@ -415,11 +495,13 @@ mod tests {
                     eps_inside: 1.0,
                 }],
             },
-            k_path: (0..100).map(|i| [i as f64 / 100.0, 0.0]).collect(),
-            distances: (0..100).map(|i| i as f64 / 100.0).collect(),
-            bands: (0..100)
-                .map(|_| (0..10).map(|b| 0.1 * b as f64).collect())
-                .collect(),
+            result_type: CompactResultType::Maxwell(MaxwellResult {
+                k_path: (0..100).map(|i| [i as f64 / 100.0, 0.0]).collect(),
+                distances: (0..100).map(|i| i as f64 / 100.0).collect(),
+                bands: (0..100)
+                    .map(|_| (0..10).map(|b| 0.1 * b as f64).collect())
+                    .collect(),
+            }),
         }
     }
 

@@ -8,7 +8,7 @@ use super::initialization::{
 use crate::backend::SpectralBackend;
 use crate::field::Field2D;
 use crate::grid::Grid2D;
-use crate::operator::LinearOperator;
+use crate::operators::LinearOperator;
 use num_complex::Complex64;
 
 // ============================================================================

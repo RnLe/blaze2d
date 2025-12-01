@@ -63,8 +63,8 @@ use num_complex::Complex64;
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::field::Field2D;
 use crate::grid::Grid2D;
-use crate::operator::LinearOperator;
-use crate::preconditioner::OperatorPreconditioner;
+use crate::operators::LinearOperator;
+use crate::preconditioners::OperatorPreconditioner;
 
 // ============================================================================
 // Configuration

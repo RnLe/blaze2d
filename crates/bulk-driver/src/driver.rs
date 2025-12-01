@@ -14,7 +14,7 @@ use log::{debug, error, warn};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-use mpb2d_core::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
+use mpb2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
 use mpb2d_core::profiler::print_profile;
 
 #[cfg(feature = "cuda")]
@@ -26,8 +26,8 @@ use mpb2d_backend_cpu::CpuBackend;
 use crate::adaptive::{AdaptiveConfig, AdaptiveThreadManager, AdjustmentReason};
 use crate::batch::BatchChannel;
 use crate::channel::{BatchConfig, CompactBandResult, OutputChannel, StreamConfig};
-use crate::config::{BulkConfig, OutputMode, SelectiveSpec};
-use crate::expansion::{expand_jobs, ExpandedJob};
+use crate::config::{BulkConfig, OutputMode, SelectiveSpec, SolverType};
+use crate::expansion::{expand_jobs, ExpandedJob, ExpandedJobType, EAJobSpec};
 use crate::output::OutputWriter;
 use crate::stream::{FilteredStreamChannel, SelectiveFilter, StreamChannel};
 
@@ -41,14 +41,52 @@ pub struct JobResult {
     /// Job index (matches ExpandedJob.index)
     pub index: usize,
 
-    /// The band structure result
-    pub result: BandStructureResult,
+    /// The result (Maxwell or EA)
+    pub result: JobResultType,
 
     /// Execution time
     pub duration: Duration,
 
     /// Any warnings or notes
     pub notes: Vec<String>,
+}
+
+/// Type of job result.
+#[derive(Debug, Clone)]
+pub enum JobResultType {
+    /// Maxwell band structure result
+    Maxwell(BandStructureResult),
+    /// EA eigenvalue result
+    EA(EAJobResult),
+}
+
+impl JobResult {
+    /// Get the Maxwell result, if this is a Maxwell job.
+    pub fn maxwell(&self) -> Option<&BandStructureResult> {
+        match &self.result {
+            JobResultType::Maxwell(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Get the EA result, if this is an EA job.
+    pub fn ea(&self) -> Option<&EAJobResult> {
+        match &self.result {
+            JobResultType::EA(r) => Some(r),
+            _ => None,
+        }
+    }
+}
+
+/// Result from an EA eigenvalue problem.
+#[derive(Debug, Clone)]
+pub struct EAJobResult {
+    /// Computed eigenvalues
+    pub eigenvalues: Vec<f64>,
+    /// Number of iterations taken
+    pub n_iterations: usize,
+    /// Whether convergence was achieved
+    pub converged: bool,
 }
 
 /// Error during job execution.
@@ -81,27 +119,38 @@ impl PreRunReport {
         lines.push(String::from("╰─────────────────────────────────────────────────╯"));
         lines.push(String::new());
 
-        // Job summary
-        lines.push(format!("  Jobs: {}  │  Threads: {}", jobs.len(), thread_mode));
+        // Job summary with solver type
+        let solver_str = match config.solver_type() {
+            SolverType::Maxwell => "Maxwell",
+            SolverType::EA => "EA",
+        };
+        lines.push(format!("  Solver: {}  │  Jobs: {}  │  Threads: {}", solver_str, jobs.len(), thread_mode));
         lines.push(String::new());
 
-        // Fixed parameters (from base config)
+        // Fixed parameters (from base config) - only for Maxwell
         let mut fixed = Vec::new();
-        if config.ranges.eps_bg.is_none() {
-            fixed.push(format!("ε_bg={:.1}", config.geometry.eps_bg));
-        }
-        if config.ranges.resolution.is_none() {
-            fixed.push(format!("grid={}×{}", config.grid.nx, config.grid.ny));
-        }
-        if config.ranges.lattice_type.is_none() {
-            if let Some(ref lt) = config.geometry.lattice.lattice_type {
-                fixed.push(format!("lattice={}", lt));
+        if let Some(ref geometry) = config.geometry {
+            if config.ranges.eps_bg.is_none() {
+                fixed.push(format!("ε_bg={:.1}", geometry.eps_bg));
             }
-        }
-        // Only show atoms info if there are atoms and they're not being swept
-        if !config.geometry.atoms.is_empty() {
-            let base_atoms_count = config.geometry.atoms.len();
-            fixed.push(format!("atoms={}", base_atoms_count));
+            if config.ranges.resolution.is_none() {
+                fixed.push(format!("grid={}×{}", config.grid.nx, config.grid.ny));
+            }
+            if config.ranges.lattice_type.is_none() {
+                if let Some(ref lt) = geometry.lattice.lattice_type {
+                    fixed.push(format!("lattice={}", lt));
+                }
+            }
+            // Only show atoms info if there are atoms and they're not being swept
+            if !geometry.atoms.is_empty() {
+                let base_atoms_count = geometry.atoms.len();
+                fixed.push(format!("atoms={}", base_atoms_count));
+            }
+        } else {
+            // EA solver - show EA-specific fixed parameters
+            fixed.push(format!("grid={}×{}", config.grid.nx, config.grid.ny));
+            fixed.push(format!("η={:.4}", config.ea.eta));
+            fixed.push(format!("n_bands={}", config.eigensolver.n_bands));
         }
 
         if !fixed.is_empty() {
@@ -796,6 +845,14 @@ impl BulkDriver {
 
     /// Execute a single job.
     fn execute_job(&self, expanded: &ExpandedJob) -> Result<JobResult, JobError> {
+        match &expanded.job_type {
+            ExpandedJobType::Maxwell(job) => self.execute_maxwell_job(expanded.index, job),
+            ExpandedJobType::EA(spec) => self.execute_ea_job(expanded.index, spec),
+        }
+    }
+
+    /// Execute a Maxwell band structure job.
+    fn execute_maxwell_job(&self, index: usize, job: &mpb2d_core::bandstructure::BandStructureJob) -> Result<JobResult, JobError> {
         let start = Instant::now();
 
         // Select backend
@@ -808,7 +865,7 @@ impl BulkDriver {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             bandstructure::run_with_options(
                 backend,
-                &expanded.job,
+                job,
                 Verbosity::Quiet,
                 RunOptions::default(),
             )
@@ -816,8 +873,8 @@ impl BulkDriver {
 
         match result {
             Ok(band_result) => Ok(JobResult {
-                index: expanded.index,
-                result: band_result,
+                index,
+                result: JobResultType::Maxwell(band_result),
                 duration: start.elapsed(),
                 notes: vec![],
             }),
@@ -830,7 +887,87 @@ impl BulkDriver {
                     "unknown panic".to_string()
                 };
                 Err(JobError {
-                    index: expanded.index,
+                    index,
+                    message: msg,
+                })
+            }
+        }
+    }
+
+    /// Execute an EA eigenvalue problem.
+    fn execute_ea_job(&self, index: usize, spec: &EAJobSpec) -> Result<JobResult, JobError> {
+        use mpb2d_core::drivers::single_solve;
+        use mpb2d_core::operators::EAOperatorBuilder;
+
+        let start = Instant::now();
+
+        // Select backend
+        #[cfg(feature = "cuda")]
+        let backend = CudaBackend::new();
+        #[cfg(not(feature = "cuda"))]
+        let backend = CpuBackend::new();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Read input data files
+            let potential = read_f64_binary(&spec.potential_path)
+                .map_err(|e| format!("failed to read potential: {}", e))?;
+            let mass_inv = read_f64_binary(&spec.mass_inv_path)
+                .map_err(|e| format!("failed to read mass_inv: {}", e))?;
+            let vg = spec.vg_path.as_ref().map(|p| {
+                read_f64_binary(p)
+                    .map_err(|e| format!("failed to read vg: {}", e))
+            }).transpose()?;
+
+            let nx = spec.grid.nx;
+            let ny = spec.grid.ny;
+            let [lx, ly] = spec.domain_size;
+            let dx = lx / nx as f64;
+            let dy = ly / ny as f64;
+
+            // Build EAOperator
+            let mut builder = EAOperatorBuilder::new(backend.clone(), nx, ny)
+                .with_spacing(dx, dy)
+                .with_eta(spec.eta)
+                .with_potential(potential)
+                .with_mass_inv(mass_inv);
+
+            if let Some(vg_data) = vg {
+                builder = builder.with_vg(vg_data);
+            }
+
+            let mut operator = builder.build();
+
+            // Run the solve
+            let solve_result = single_solve::solve(&mut operator, None, &spec.solve_config);
+
+            Ok::<_, String>(EAJobResult {
+                eigenvalues: solve_result.eigenvalues,
+                n_iterations: solve_result.iterations,
+                converged: solve_result.converged,
+            })
+        }));
+
+        match result {
+            Ok(Ok(ea_result)) => Ok(JobResult {
+                index,
+                result: JobResultType::EA(ea_result),
+                duration: start.elapsed(),
+                notes: vec![],
+            }),
+            Ok(Err(msg)) => Err(JobError {
+                index,
+                message: msg,
+            }),
+            Err(e) => {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                Err(JobError {
+                    index,
                     message: msg,
                 })
             }
@@ -1157,6 +1294,46 @@ impl BulkDriver {
             adaptive_summary: Some(adaptive_summary),
         })
     }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Read a binary file containing f64 values in row-major (C-order) layout.
+fn read_f64_binary(path: &std::path::Path) -> Result<Vec<f64>, std::io::Error> {
+    use std::fs::File;
+    use std::io::Read;
+
+    let mut file = File::open(path)?;
+    let file_len = file.metadata()?.len() as usize;
+
+    // Each f64 is 8 bytes
+    if file_len % 8 != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "file size {} is not a multiple of 8 (expected f64 array)",
+                file_len
+            ),
+        ));
+    }
+
+    let n_values = file_len / 8;
+    let mut data = vec![0.0f64; n_values];
+
+    // Read directly into the slice
+    // SAFETY: f64 has no alignment requirements stricter than 8, and we're
+    // reading exactly the right number of bytes
+    let bytes = unsafe {
+        std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, file_len)
+    };
+    file.read_exact(bytes)?;
+
+    // Handle endianness if needed (assuming little-endian for now)
+    // TODO: Add endianness detection/conversion if needed
+
+    Ok(data)
 }
 
 // ============================================================================

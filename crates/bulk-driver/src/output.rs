@@ -120,14 +120,27 @@ impl OutputWriter {
         job: &ExpandedJob,
         result: &JobResult,
     ) -> Result<(), OutputError> {
-        match self.config.mode {
-            OutputMode::Full => self.write_full(job, result),
-            OutputMode::Selective => self.accumulate_selective(job, result),
+        match (&self.config.mode, &result.result) {
+            (OutputMode::Full, crate::driver::JobResultType::Maxwell(_)) => {
+                self.write_full_maxwell(job, result)
+            }
+            (OutputMode::Full, crate::driver::JobResultType::EA(_)) => {
+                self.write_full_ea(job, result)
+            }
+            (OutputMode::Selective, crate::driver::JobResultType::Maxwell(_)) => {
+                self.accumulate_selective(job, result)
+            }
+            (OutputMode::Selective, crate::driver::JobResultType::EA(_)) => {
+                // EA doesn't have k-points, so selective mode just writes eigenvalues
+                self.write_full_ea(job, result)
+            }
         }
     }
 
-    /// Write full mode output (one file per job).
-    fn write_full(&mut self, job: &ExpandedJob, result: &JobResult) -> Result<(), OutputError> {
+    /// Write full mode output for Maxwell (one file per job).
+    fn write_full_maxwell(&mut self, job: &ExpandedJob, result: &JobResult) -> Result<(), OutputError> {
+        let band_result = result.maxwell().expect("expected Maxwell result");
+
         let filename = format!(
             "{}_{:06}.csv",
             self.config.prefix,
@@ -146,22 +159,21 @@ impl OutputWriter {
         }
         write!(writer, ",k_index,kx,ky,k_distance")?;
 
-        let max_bands = result.result.bands.iter().map(|b| b.len()).max().unwrap_or(0);
+        let max_bands = band_result.bands.iter().map(|b| b.len()).max().unwrap_or(0);
         for i in 1..=max_bands {
             write!(writer, ",band{}", i)?;
         }
         writeln!(writer)?;
 
         // Write data rows
-        for (k_idx, ((kx, ky), bands)) in result
-            .result
+        for (k_idx, ((kx, ky), bands)) in band_result
             .k_path
             .iter()
             .map(|k| (k[0], k[1]))
-            .zip(result.result.bands.iter())
+            .zip(band_result.bands.iter())
             .enumerate()
         {
-            let distance = result.result.distances.get(k_idx).copied().unwrap_or(0.0);
+            let distance = band_result.distances.get(k_idx).copied().unwrap_or(0.0);
 
             write!(writer, "{}", job.index)?;
             for (_, value) in &param_cols {
@@ -187,25 +199,73 @@ impl OutputWriter {
         Ok(())
     }
 
+    /// Write full mode output for EA (one file per job).
+    fn write_full_ea(&mut self, job: &ExpandedJob, result: &JobResult) -> Result<(), OutputError> {
+        let ea_result = result.ea().expect("expected EA result");
+
+        let filename = format!(
+            "{}_{:06}_ea.csv",
+            self.config.prefix,
+            job.index
+        );
+        let path = self.output_dir.join(filename);
+
+        let file = File::create(&path)?;
+        let mut writer = BufWriter::new(file);
+
+        // Write header with parameters
+        let param_cols = job.params.to_columns();
+        write!(writer, "job_index")?;
+        for (name, _) in &param_cols {
+            write!(writer, ",{}", name)?;
+        }
+        write!(writer, ",n_iterations,converged,band_index,eigenvalue")?;
+        writeln!(writer)?;
+
+        // Write data rows (one per eigenvalue)
+        for (band_idx, eigenvalue) in ea_result.eigenvalues.iter().enumerate() {
+            write!(writer, "{}", job.index)?;
+            for (_, value) in &param_cols {
+                write!(writer, ",{}", value)?;
+            }
+            write!(
+                writer,
+                ",{},{},{},{}",
+                ea_result.n_iterations,
+                ea_result.converged,
+                band_idx + 1,  // 1-based band index
+                eigenvalue
+            )?;
+            writeln!(writer)?;
+        }
+
+        writer.flush()?;
+        debug!("wrote {}", path.display());
+
+        Ok(())
+    }
+
     /// Accumulate data for selective mode.
     fn accumulate_selective(
         &mut self,
         job: &ExpandedJob,
         result: &JobResult,
     ) -> Result<(), OutputError> {
+        let band_result = result.maxwell().expect("selective mode requires Maxwell result");
+
         let param_cols = job.params.to_columns();
         let param_values: Vec<String> = param_cols.iter().map(|(_, v)| v.clone()).collect();
 
         // Determine which k-points to include
         let k_indices: Vec<usize> = if self.config.selective.k_indices.is_empty() {
             // If no indices specified, use all
-            (0..result.result.k_path.len()).collect()
+            (0..band_result.k_path.len()).collect()
         } else {
             self.config
                 .selective
                 .k_indices
                 .iter()
-                .filter(|&&i| i < result.result.k_path.len())
+                .filter(|&&i| i < band_result.k_path.len())
                 .copied()
                 .collect()
         };
@@ -214,9 +274,9 @@ impl OutputWriter {
         let band_indices: Vec<usize> = self.config.selective.bands.clone();
 
         for &k_idx in &k_indices {
-            let k_point = result.result.k_path.get(k_idx);
-            let bands = result.result.bands.get(k_idx);
-            let distance = result.result.distances.get(k_idx).copied().unwrap_or(0.0);
+            let k_point = band_result.k_path.get(k_idx);
+            let bands = band_result.bands.get(k_idx);
+            let distance = band_result.distances.get(k_idx).copied().unwrap_or(0.0);
 
             if let (Some(k), Some(b)) = (k_point, bands) {
                 let band_values: Vec<f64> = band_indices

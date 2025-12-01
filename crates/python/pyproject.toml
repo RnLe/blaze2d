@@ -1,0 +1,60 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "blaze2d"
+version = "0.2.0"
+description = "BLAZE - Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "RnLe", email = "rene.marcel.lehner@gmail.com" }
+]
+keywords = [
+    "photonic-crystals",
+    "band-structure",
+    "eigensolver",
+    "LOBPCG",
+    "physics",
+    "simulation",
+    "computational-physics",
+    "materials-science"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.5"]
+all = ["matplotlib>=3.5", "pandas>=1.3"]
+
+[tool.maturin]
+# Build the cdylib with bindings feature
+features = ["bindings"]
+# Python module name
+module-name = "blaze"
+# Strip debug symbols for smaller binaries
+strip = true
+# Include only the necessary files
+include = [
+    "README.md",
+    "LICENSE",
+]

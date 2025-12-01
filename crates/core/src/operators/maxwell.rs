@@ -1,46 +1,61 @@
-//! Operator implementations (toy Laplacian + physical Θ operator).
+//! Maxwell operator for 2D photonic crystal band structure calculations.
+//!
+//! This module provides the `ThetaOperator` which implements the Maxwell curl-curl
+//! operator for computing photonic band structures in 2D periodic dielectric structures.
+//!
+//! # Physical Background
+//!
+//! The operator solves Maxwell's equations for electromagnetic modes in periodic media:
+//!
+//! ```text
+//! ∇ × (ε⁻¹ ∇ × H) = (ω/c)² H     (TE mode, H out of plane)
+//! ∇ · (ε⁻¹ ∇ E_z) = (ω/c)² ε E_z  (TM mode, E out of plane)
+//! ```
+//!
+//! With Bloch boundary conditions: H(r + R) = e^{ik·R} H(r).
+//!
+//! # Polarization Modes
+//!
+//! - **TM (Transverse Magnetic)**: E-field out of plane, H in-plane.
+//!   Uses generalized eigenproblem A·x = λ·B·x where B = ε(r).
+//!
+//! - **TE (Transverse Electric)**: H-field out of plane, E in-plane.
+//!   Uses standard eigenproblem A·x = λ·x (B = I).
 
 use num_complex::Complex64;
 
-use std::f64::consts::PI;
-
-use crate::{
-    backend::{SpectralBackend, SpectralBuffer},
-    dielectric::Dielectric2D,
-    grid::Grid2D,
-    polarization::Polarization,
-    preconditioner::{
-        FourierDiagonalPreconditioner, SpectralStats,
-        TransverseProjectionPreconditioner,
-    },
+use crate::backend::{SpectralBackend, SpectralBuffer};
+use crate::dielectric::Dielectric2D;
+use crate::grid::Grid2D;
+use crate::operators::{LinearOperator, K_PLUS_G_NEAR_ZERO_FLOOR, TM_PRECONDITIONER_MASS_FRACTION};
+use crate::polarization::Polarization;
+use crate::preconditioners::{
+    FourierDiagonalPreconditioner, SpectralStats, TransverseProjectionPreconditioner,
 };
 
-pub(crate) const K_PLUS_G_NEAR_ZERO_FLOOR: f64 = 1e-9;
-pub(crate) const TM_PRECONDITIONER_MASS_FRACTION: f64 = 1e-2;
+// ============================================================================
+// ThetaOperator - Maxwell Curl-Curl Operator
+// ============================================================================
 
-pub trait LinearOperator<B: SpectralBackend> {
-    fn apply(&mut self, input: &B::Buffer, output: &mut B::Buffer);
-    fn apply_mass(&mut self, input: &B::Buffer, output: &mut B::Buffer);
-    fn alloc_field(&self) -> B::Buffer;
-    fn backend(&self) -> &B;
-    fn backend_mut(&mut self) -> &mut B;
-    fn grid(&self) -> Grid2D;
-    /// Get the Bloch wavevector (k-point) for this operator.
-    fn bloch(&self) -> [f64; 2];
-
-    /// Get the transformation factor for Γ-point kernel basis.
-    ///
-    /// For operators using a similarity transform (like transformed TE where
-    /// A' = ε^{-1/2} A ε^{-1/2}), the kernel basis must also be transformed:
-    /// v₀ = ε^{1/2} u₀ instead of the naive constant mode u₀.
-    ///
-    /// Returns `Some(&[f64])` with the pointwise transformation factor (ε^{1/2}),
-    /// or `None` if no transformation is needed (standard formulation).
-    fn gamma_kernel_transform(&self) -> Option<&[f64]> {
-        None // Default: no transformation needed
-    }
-}
-
+/// The Maxwell Θ operator for 2D photonic crystal band structure.
+///
+/// This operator implements:
+/// - **TE mode**: Θ = -∇·(ε⁻¹∇) (standard eigenproblem, B = I)
+/// - **TM mode**: Θ = -∇² (generalized eigenproblem, B = ε)
+///
+/// # Construction
+///
+/// The operator is constructed for a specific k-point (Bloch wavevector):
+///
+/// ```ignore
+/// let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
+/// ```
+///
+/// # G-Vector Computation
+///
+/// G-vectors are computed using the reciprocal lattice basis:
+/// G = n₁·b₁ + n₂·b₂, where b₁, b₂ are reciprocal lattice vectors.
+/// This is essential for non-orthogonal lattices (hexagonal, oblique).
 pub struct ThetaOperator<B: SpectralBackend> {
     backend: B,
     dielectric: Dielectric2D,
@@ -64,6 +79,7 @@ pub struct ThetaOperator<B: SpectralBackend> {
     k_plus_g_was_clamped: Vec<bool>,
 }
 
+/// Snapshot of operator state for debugging and visualization.
 #[derive(Debug, Clone)]
 pub struct OperatorSnapshotData {
     pub grid: Grid2D,
@@ -88,9 +104,6 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     ///
     /// This operator implements Maxwell's equations for 2D photonic crystals:
     /// - TM mode: Uses generalized eigenproblem A·x = λ·B·x where B = ε(r).
-    ///   NOTE: A transformed formulation (A' = ε^{-1/2}·A·ε^{-1/2}, B' = I) was tried
-    ///   but causes systematic eigenvalue shifts because pointwise ε^{-1/2} is NOT
-    ///   the true matrix square root of the plane-wave mass matrix.
     /// - TE mode: B = I (standard eigenproblem).
     ///
     /// **Important:** The G-vectors are computed using the reciprocal lattice basis:
@@ -109,7 +122,6 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let b2 = dielectric.reciprocal_b2();
 
         // Build k+G tables using the reciprocal lattice basis
-        // G = n1*b1 + n2*b2 (not the old Cartesian 2π/L formula)
         let (
             k_plus_g_x,
             k_plus_g_y,
@@ -120,11 +132,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             k_plus_g_was_clamped,
         ) = build_k_plus_g_tables_with_reciprocal(grid, b1, b2, bloch_k);
 
-        // kx_shifted and ky_shifted are still needed for gradient operators
-        // These use the OLD approach - need to think about this...
-        // Actually, k_plus_g_x and k_plus_g_y already contain k+G, so we can use those directly
-        // The "shifted" versions were a legacy from the old approach.
-        // We keep them for API compatibility but derive from k_plus_g values.
+        // kx_shifted and ky_shifted derived from k_plus_g values
         let kx_shifted = k_plus_g_x.clone();
         let ky_shifted = k_plus_g_y.clone();
 
@@ -162,37 +170,34 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         self.bloch[0].abs() < GAMMA_TOL && self.bloch[1].abs() < GAMMA_TOL
     }
 
+    /// Allocate a new field buffer.
     pub fn alloc_field(&self) -> B::Buffer {
         self.backend.alloc_field(self.grid)
     }
 
+    /// Get a reference to the backend.
     pub fn backend(&self) -> &B {
         &self.backend
     }
 
+    /// Get a mutable reference to the backend.
     pub fn backend_mut(&mut self) -> &mut B {
         &mut self.backend
     }
 
     /// Compute spectral statistics for the current k-point.
-    ///
-    /// Returns statistics about the |k+G|² spectrum, which can be used
-    /// for k-dependent preconditioner regularization.
     pub fn spectral_stats(&self) -> SpectralStats {
         SpectralStats::compute(&self.k_plus_g_sq)
     }
 
     /// Build homogeneous preconditioner with k-dependent (adaptive) shift.
-    ///
-    /// Uses σ(k) = β * s_median(k), where s_median is the median of |k+G|².
-    /// This ensures the shift scales with the local spectral range.
     pub fn build_homogeneous_preconditioner_adaptive(&self) -> FourierDiagonalPreconditioner {
         let stats = self.spectral_stats();
         let shift = stats.adaptive_shift();
         log::debug!(
             "preconditioner: adaptive shift σ(k)={:.2e} (α={:.1}, s_min={:.2e}, s_med={:.2e}, s_max={:.2e})",
             shift,
-            crate::preconditioner::SHIFT_SMIN_FRACTION,
+            crate::preconditioners::SHIFT_SMIN_FRACTION,
             stats.s_min,
             stats.s_median,
             stats.s_max
@@ -201,30 +206,18 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     }
 
     /// Build homogeneous preconditioner with a specific shift value.
-    ///
-    /// # Kernel Compensation Strategy
-    ///
-    /// - **At Γ (k=0)**: Zero the G=0 mode in the preconditioner. This mode is
-    ///   deflated from the eigenproblem anyway, so zeroing it prevents amplification.
-    /// - **Away from Γ (k≠0)**: Use floor-based regularization only (no hard zeroing).
-    ///   The G=0 mode now has |k+G|² = |k|² > 0 and is a legitimate physical mode.
-    ///   Hard-zeroing it would destroy the long-wavelength components that dominate
-    ///   the first bands near Γ, causing catastrophic iteration counts.
     fn build_homogeneous_preconditioner_with_shift(
         &self,
         shift: f64,
     ) -> FourierDiagonalPreconditioner {
-        // Only zero near-zero modes at Γ-point where they're actually in the null space.
-        // Away from Γ, these modes have |k+G|² = |k|² > 0 and must NOT be zeroed.
         let near_zero_mask = if self.is_gamma() {
             Some(self.k_plus_g_was_clamped.as_slice())
         } else {
-            None // No kernel compensation away from Γ - use regularization floor only
+            None
         };
 
         match self.polarization {
             Polarization::TM => {
-                // TM: generalized eigenproblem (A x = λ B x, B = ε)
                 let eps_eff = self.effective_tm_epsilon();
                 let mass_floor = tm_preconditioner_mass_floor(eps_eff);
                 let inverse_diagonal = build_inverse_diagonal(
@@ -232,7 +225,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                     shift,
                     eps_eff,
                     mass_floor,
-                    near_zero_mask, // Kernel-compensation ONLY at Γ
+                    near_zero_mask,
                 );
                 FourierDiagonalPreconditioner::new(inverse_diagonal)
             }
@@ -246,22 +239,6 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     }
 
     /// Build the MPB-style transverse-projection preconditioner with adaptive shift.
-    ///
-    /// Uses σ(k) = α * s_min(k), where s_min is the smallest nonzero |k+G|².
-    /// This ensures proper scaling at different k-points.
-    ///
-    /// This is the most effective preconditioner for TE mode, as it accounts for
-    /// the spatial variation of ε(r) in the approximate inverse. For TM mode,
-    /// it falls back to a Fourier-diagonal preconditioner since the operator is
-    /// already diagonal in Fourier space.
-    ///
-    /// # Performance
-    ///
-    /// - TE mode: 6 FFTs per application (vs 2 for Fourier-diagonal)
-    /// - TM mode: 2 FFTs per application (same as Fourier-diagonal)
-    ///
-    /// The extra cost for TE is typically offset by the dramatic reduction in
-    /// iteration count (often 5-10× fewer iterations).
     pub fn build_transverse_projection_preconditioner_adaptive(
         &self,
     ) -> TransverseProjectionPreconditioner<B> {
@@ -292,99 +269,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     }
 
     /// Estimate the condition number κ = λ_max / λ_min of the operator A.
-    ///
-    /// Uses power iteration to estimate λ_max. For λ_min, we use the smallest
-    /// non-zero |k+G|² as an approximation (exact for homogeneous dielectric).
-    ///
-    /// # Arguments
-    /// * `n_iters` - Number of power iterations (default ~10-20 is usually sufficient)
-    ///
-    /// # Returns
-    /// (λ_max_estimate, λ_min_estimate, κ_estimate)
     pub fn estimate_condition_number(&mut self, n_iters: usize) -> (f64, f64, f64) {
-        // Power iteration for λ_max
-        let mut v = self.alloc_field();
-        let mut av = self.alloc_field();
-
-        // Initialize with random-ish vector (use k+G values as pseudo-random)
-        for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
-            *val = Complex64::new(
-                (i as f64 * 0.618033988749895).sin(), // Golden ratio for pseudo-random
-                (i as f64 * 0.414213562373095).cos(), // sqrt(2)-1
-            );
-        }
-
-        // Normalize
-        let norm: f64 = v
-            .as_slice()
-            .iter()
-            .map(|c| c.norm_sqr())
-            .sum::<f64>()
-            .sqrt();
-        if norm > 1e-15 {
-            for val in v.as_mut_slice().iter_mut() {
-                *val /= norm;
-            }
-        }
-
-        let mut lambda_max = 0.0;
-        for _ in 0..n_iters {
-            // av = A * v
-            self.apply(&v, &mut av);
-
-            // Rayleigh quotient: λ ≈ v* A v / v* v
-            let numerator: f64 = v
-                .as_slice()
-                .iter()
-                .zip(av.as_slice().iter())
-                .map(|(vi, avi)| (vi.conj() * avi).re)
-                .sum();
-            lambda_max = numerator; // v is normalized, so v*v = 1
-
-            // Normalize av for next iteration
-            let norm: f64 = av
-                .as_slice()
-                .iter()
-                .map(|c| c.norm_sqr())
-                .sum::<f64>()
-                .sqrt();
-            if norm > 1e-15 {
-                for val in av.as_mut_slice().iter_mut() {
-                    *val /= norm;
-                }
-            }
-            std::mem::swap(&mut v, &mut av);
-        }
-
-        // For λ_min, use the smallest non-zero |k+G|²
-        // This is exact for TE with uniform ε, and a reasonable lower bound otherwise
-        let lambda_min = self.k_plus_g_sq_min;
-
-        let kappa = if lambda_min > 1e-15 {
-            lambda_max / lambda_min
-        } else {
-            f64::INFINITY
-        };
-
-        (lambda_max, lambda_min, kappa)
-    }
-
-    /// Estimate the condition number of the preconditioned operator M⁻¹A.
-    ///
-    /// For a well-chosen preconditioner, κ(M⁻¹A) should be much smaller than κ(A).
-    ///
-    /// # Arguments
-    /// * `precond` - The preconditioner to evaluate
-    /// * `n_iters` - Number of power iterations
-    ///
-    /// # Returns
-    /// (λ_max_estimate, λ_min_estimate, κ_estimate) for M⁻¹A
-    pub fn estimate_preconditioned_condition_number(
-        &mut self,
-        precond: &mut dyn crate::preconditioner::OperatorPreconditioner<B>,
-        n_iters: usize,
-    ) -> (f64, f64, f64) {
-        // Power iteration for λ_max of M⁻¹A
         let mut v = self.alloc_field();
         let mut av = self.alloc_field();
 
@@ -397,12 +282,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
 
         // Normalize
-        let norm: f64 = v
-            .as_slice()
-            .iter()
-            .map(|c| c.norm_sqr())
-            .sum::<f64>()
-            .sqrt();
+        let norm: f64 = v.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
         if norm > 1e-15 {
             for val in v.as_mut_slice().iter_mut() {
                 *val /= norm;
@@ -411,12 +291,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
         let mut lambda_max = 0.0;
         for _ in 0..n_iters {
-            // av = A * v
             self.apply(&v, &mut av);
-            // av = M⁻¹ * av (in-place)
-            precond.apply(&self.backend, &mut av);
-
-            // Rayleigh quotient: λ ≈ v* M⁻¹A v / v* v
             let numerator: f64 = v
                 .as_slice()
                 .iter()
@@ -425,13 +300,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 .sum();
             lambda_max = numerator;
 
-            // Normalize for next iteration
-            let norm: f64 = av
-                .as_slice()
-                .iter()
-                .map(|c| c.norm_sqr())
-                .sum::<f64>()
-                .sqrt();
+            let norm: f64 = av.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
             if norm > 1e-15 {
                 for val in av.as_mut_slice().iter_mut() {
                     *val /= norm;
@@ -440,36 +309,62 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             std::mem::swap(&mut v, &mut av);
         }
 
-        // For λ_min of M⁻¹A, use inverse power iteration
-        // Re-initialize
+        let lambda_min = self.k_plus_g_sq_min;
+        let kappa = if lambda_min > 1e-15 {
+            lambda_max / lambda_min
+        } else {
+            f64::INFINITY
+        };
+
+        (lambda_max, lambda_min, kappa)
+    }
+
+    /// Estimate the condition number of the preconditioned operator M⁻¹A.
+    pub fn estimate_preconditioned_condition_number(
+        &mut self,
+        precond: &mut dyn crate::preconditioners::OperatorPreconditioner<B>,
+        n_iters: usize,
+    ) -> (f64, f64, f64) {
+        let mut v = self.alloc_field();
+        let mut av = self.alloc_field();
+
         for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
             *val = Complex64::new(
-                (i as f64 * 1.414213562373095).sin(),
-                (i as f64 * 1.732050807568877).cos(),
+                (i as f64 * 0.618033988749895).sin(),
+                (i as f64 * 0.414213562373095).cos(),
             );
         }
-        let norm: f64 = v
-            .as_slice()
-            .iter()
-            .map(|c| c.norm_sqr())
-            .sum::<f64>()
-            .sqrt();
+
+        let norm: f64 = v.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
         if norm > 1e-15 {
             for val in v.as_mut_slice().iter_mut() {
                 *val /= norm;
             }
         }
 
-        // For the minimum eigenvalue, we'd need (M⁻¹A)⁻¹ = A⁻¹M, which is expensive.
-        // Instead, estimate from the preconditioner spectrum: for a diagonal preconditioner
-        // M⁻¹(q) ≈ ε_eff / (|k+G|² + σ²), the eigenvalues of M⁻¹A are approximately
-        // λ ≈ |k+G|² * ε_eff / (|k+G|² + σ²), which ranges from near 0 (small |k+G|²)
-        // to ε_eff (large |k+G|²).
-        //
-        // A practical estimate: λ_min ≈ s_min * ε_eff / (s_min + σ²) where s_min is
-        // the smallest |k+G|². But this can be near 0, so we use 1.0 as a rough floor.
-        let lambda_min_approx = 1.0; // Rough estimate - ideal preconditioner gives λ_min ≈ 1
+        let mut lambda_max = 0.0;
+        for _ in 0..n_iters {
+            self.apply(&v, &mut av);
+            precond.apply(&self.backend, &mut av);
 
+            let numerator: f64 = v
+                .as_slice()
+                .iter()
+                .zip(av.as_slice().iter())
+                .map(|(vi, avi)| (vi.conj() * avi).re)
+                .sum();
+            lambda_max = numerator;
+
+            let norm: f64 = av.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
+            if norm > 1e-15 {
+                for val in av.as_mut_slice().iter_mut() {
+                    *val /= norm;
+                }
+            }
+            std::mem::swap(&mut v, &mut av);
+        }
+
+        let lambda_min_approx = 1.0;
         let kappa = if lambda_min_approx > 1e-15 {
             lambda_max / lambda_min_approx
         } else {
@@ -479,17 +374,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         (lambda_max, lambda_min_approx, kappa)
     }
 
-    /// Check self-adjointness of the operator: |⟨Ax, y⟩ - ⟨x, Ay⟩| / (‖Ax‖‖y‖)
-    ///
-    /// For a self-adjoint operator, this should be close to machine epsilon.
-    /// Returns the relative deviation from self-adjointness.
+    /// Check self-adjointness of the operator.
     pub fn check_self_adjointness(&mut self) -> f64 {
         let mut x = self.alloc_field();
         let mut y = self.alloc_field();
         let mut ax = self.alloc_field();
         let mut ay = self.alloc_field();
 
-        // Initialize with pseudo-random vectors
         for (i, val) in x.as_mut_slice().iter_mut().enumerate() {
             *val = Complex64::new(
                 (i as f64 * 0.618033988749895).sin(),
@@ -503,11 +394,9 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             );
         }
 
-        // Compute Ax and Ay
         self.apply(&x, &mut ax);
         self.apply(&y, &mut ay);
 
-        // Compute ⟨Ax, y⟩ and ⟨x, Ay⟩
         let ax_y: Complex64 = ax
             .as_slice()
             .iter()
@@ -521,18 +410,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             .map(|(a, b)| a.conj() * b)
             .sum();
 
-        // Compute norms for normalization
         let norm_ax: f64 = ax.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
         let norm_y: f64 = y.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
 
         let diff = (ax_y - x_ay).norm();
         let scale = norm_ax * norm_y;
 
-        if scale > 1e-15 {
-            diff / scale
-        } else {
-            0.0
-        }
+        if scale > 1e-15 { diff / scale } else { 0.0 }
     }
 
     /// Get dielectric contrast ratio: ε_max / ε_min
@@ -543,14 +427,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
         let eps_min = eps.iter().cloned().fold(f64::INFINITY, f64::min);
         let eps_max = eps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        if eps_min > 1e-15 {
-            eps_max / eps_min
-        } else {
-            f64::INFINITY
-        }
+        if eps_min > 1e-15 { eps_max / eps_min } else { f64::INFINITY }
     }
 
-    /// Get effective epsilon values for logging
+    /// Get effective epsilon values for logging.
     pub fn effective_epsilons(&self) -> (f64, f64) {
         (self.effective_te_epsilon(), self.effective_tm_epsilon())
     }
@@ -590,6 +470,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         self.k_plus_g_floor_count
     }
 
+    /// Capture a snapshot of operator state for debugging.
     pub fn capture_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
         match self.polarization {
             Polarization::TE => self.capture_te_snapshot(input),
@@ -635,14 +516,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         copy_buffer(output, &self.scratch);
     }
 
-    /// Apply the TM operator: A·x = |k+G|²·x (Laplacian in Fourier space)
-    ///
-    /// NOTE: A transformed formulation (A' = ε^{-1/2} · A · ε^{-1/2}) was attempted
-    /// to convert the generalized eigenproblem to a standard one, but this caused
-    /// eigenvalue shifts and numerical issues. We use the untransformed generalized
-    /// eigenproblem formulation instead.
     fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
-        // Standard TM: A·x = |k+G|²·x
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
         let data = self.scratch.as_mut_slice();
@@ -768,9 +642,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             eps_grad_y: None,
         }
     }
-}
 
-impl<B: SpectralBackend> ThetaOperator<B> {
     fn effective_tm_epsilon(&self) -> f64 {
         arithmetic_mean(self.dielectric.eps()).unwrap_or(1.0)
     }
@@ -792,7 +664,6 @@ impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
         match self.polarization {
             Polarization::TE => copy_buffer(output, input),
             Polarization::TM => {
-                // TM: Generalized eigenproblem with B = ε (mass matrix)
                 copy_buffer(output, input);
                 apply_scalar_eps(output.as_mut_slice(), self.dielectric.eps());
             }
@@ -820,248 +691,14 @@ impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
     }
 
     fn gamma_kernel_transform(&self) -> Option<&[f64]> {
-        // No kernel transformation needed for untransformed operators.
-        // (A transformed TE formulation would use ε^{1/2} here, but that approach
-        // caused eigenvalue shifts and was removed.)
         None
     }
 }
 
-pub struct ToyLaplacian<B: SpectralBackend> {
-    backend: B,
-    grid: Grid2D,
-    kx: Vec<f64>,
-    ky: Vec<f64>,
-    scratch: B::Buffer,
-}
-
-impl<B: SpectralBackend> ToyLaplacian<B> {
-    pub fn new(backend: B, grid: Grid2D) -> Self {
-        assert!(
-            grid.nx > 0 && grid.ny > 0,
-            "grid must have non-zero dimensions"
-        );
-        assert!(
-            grid.lx > 0.0 && grid.ly > 0.0,
-            "grid lengths must be positive"
-        );
-        let kx = build_k_vector(grid.nx, grid.lx);
-        let ky = build_k_vector(grid.ny, grid.ly);
-        let scratch = backend.alloc_field(grid);
-        Self {
-            backend,
-            grid,
-            kx,
-            ky,
-            scratch,
-        }
-    }
-
-    pub fn grid(&self) -> Grid2D {
-        self.grid
-    }
-
-    pub fn alloc_field(&self) -> B::Buffer {
-        self.backend.alloc_field(self.grid)
-    }
-
-    pub fn backend(&self) -> &B {
-        &self.backend
-    }
-
-    pub fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
-    }
-}
-
-impl<B: SpectralBackend> LinearOperator<B> for ToyLaplacian<B> {
-    fn apply(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
-        copy_buffer(&mut self.scratch, input);
-        self.backend.forward_fft_2d(&mut self.scratch);
-        let data = self.scratch.as_mut_slice();
-        let nx = self.grid.nx;
-        let ny = self.grid.ny;
-        for iy in 0..ny {
-            for ix in 0..nx {
-                let idx = iy * nx + ix;
-                let k2 = self.kx[ix] * self.kx[ix] + self.ky[iy] * self.ky[iy];
-                data[idx] *= k2;
-            }
-        }
-        self.backend.inverse_fft_2d(&mut self.scratch);
-        copy_buffer(output, &self.scratch);
-    }
-
-    fn apply_mass(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
-        copy_buffer(output, input);
-    }
-
-    fn alloc_field(&self) -> B::Buffer {
-        self.backend.alloc_field(self.grid)
-    }
-
-    fn backend(&self) -> &B {
-        &self.backend
-    }
-
-    fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
-    }
-
-    fn grid(&self) -> Grid2D {
-        self.grid
-    }
-
-    fn bloch(&self) -> [f64; 2] {
-        [0.0, 0.0] // ToyLaplacian doesn't use Bloch wavevectors
-    }
-}
-
 // ============================================================================
-// Toy Diagonal SPD Operator for Eigensolver Testing
+// Helper Functions
 // ============================================================================
 
-/// A simple diagonal SPD operator with known eigenvalues for testing the eigensolver.
-///
-/// This operator has eigenvalues λ_k = 1 + k for k = 0, 1, 2, ... (N-1) in Fourier space,
-/// where each Fourier mode is an exact eigenvector. This allows us to verify that
-/// the eigensolver converges to machine precision on a well-conditioned problem.
-///
-/// The operator is:
-/// - **Self-adjoint**: A = A^* (diagonal in Fourier space with real entries)
-/// - **Positive definite**: All eigenvalues λ_k ≥ 1 > 0
-/// - **Well-conditioned**: κ = λ_max / λ_min = N / 1 = N (linear in grid size)
-///
-/// The mass operator is the identity (B = I), so this is a standard eigenproblem.
-///
-/// # Expected eigenvalues
-/// For an N×N grid, the smallest eigenvalues are:
-/// - λ_0 = 1 (constant mode at index 0)
-/// - λ_1 = 2, λ_2 = 3, ... (subsequent modes)
-///
-/// The eigenvectors are the standard Fourier basis functions.
-pub struct ToyDiagonalSPD<B: SpectralBackend> {
-    backend: B,
-    grid: Grid2D,
-    /// Eigenvalues λ_k = 1 + k for each Fourier mode (sorted by magnitude)
-    eigenvalues: Vec<f64>,
-    scratch: B::Buffer,
-}
-
-impl<B: SpectralBackend> ToyDiagonalSPD<B> {
-    /// Create a new ToyDiagonalSPD operator.
-    ///
-    /// The eigenvalues are λ_k = 1 + k for k = 0, 1, 2, ..., N-1.
-    pub fn new(backend: B, grid: Grid2D) -> Self {
-        assert!(
-            grid.nx > 0 && grid.ny > 0,
-            "grid must have non-zero dimensions"
-        );
-
-        let n = grid.len();
-        // Eigenvalues: 1, 2, 3, ..., N
-        let eigenvalues: Vec<f64> = (0..n).map(|k| 1.0 + k as f64).collect();
-        let scratch = backend.alloc_field(grid);
-
-        Self {
-            backend,
-            grid,
-            eigenvalues,
-            scratch,
-        }
-    }
-
-    /// Get the exact eigenvalues (for verification).
-    pub fn exact_eigenvalues(&self, n_bands: usize) -> Vec<f64> {
-        self.eigenvalues[..n_bands.min(self.eigenvalues.len())].to_vec()
-    }
-
-    /// Get the condition number κ = λ_max / λ_min.
-    pub fn condition_number(&self) -> f64 {
-        let n = self.eigenvalues.len();
-        if n == 0 {
-            return 1.0;
-        }
-        self.eigenvalues[n - 1] / self.eigenvalues[0]
-    }
-
-    pub fn grid(&self) -> Grid2D {
-        self.grid
-    }
-
-    pub fn alloc_field(&self) -> B::Buffer {
-        self.backend.alloc_field(self.grid)
-    }
-
-    pub fn backend(&self) -> &B {
-        &self.backend
-    }
-
-    pub fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
-    }
-}
-
-impl<B: SpectralBackend> LinearOperator<B> for ToyDiagonalSPD<B> {
-    /// Apply A: multiply each Fourier mode by its eigenvalue λ_k = 1 + k.
-    fn apply(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
-        copy_buffer(&mut self.scratch, input);
-        self.backend.forward_fft_2d(&mut self.scratch);
-
-        // Multiply each Fourier mode by λ_k = 1 + k
-        let data = self.scratch.as_mut_slice();
-        for (k, value) in data.iter_mut().enumerate() {
-            *value *= self.eigenvalues[k];
-        }
-
-        self.backend.inverse_fft_2d(&mut self.scratch);
-        copy_buffer(output, &self.scratch);
-    }
-
-    /// Mass operator is identity: B = I.
-    fn apply_mass(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
-        copy_buffer(output, input);
-    }
-
-    fn alloc_field(&self) -> B::Buffer {
-        self.backend.alloc_field(self.grid)
-    }
-
-    fn backend(&self) -> &B {
-        &self.backend
-    }
-
-    fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
-    }
-
-    fn grid(&self) -> Grid2D {
-        self.grid
-    }
-
-    fn bloch(&self) -> [f64; 2] {
-        [0.0, 0.0] // Not used for this toy problem
-    }
-}
-
-fn build_k_vector(n: usize, length: f64) -> Vec<f64> {
-    let two_pi = 2.0 * PI;
-    (0..n)
-        .map(|i| {
-            let centered = if i <= n / 2 {
-                i as isize
-            } else {
-                i as isize - n as isize
-            };
-            two_pi * centered as f64 / length
-        })
-        .collect()
-}
-
-/// Build integer FFT indices centered around 0.
-///
-/// For n=8: returns [0, 1, 2, 3, 4, -3, -2, -1]
-/// This matches the standard FFT frequency ordering.
 fn build_fft_indices(n: usize) -> Vec<isize> {
     (0..n)
         .map(|i| {
@@ -1074,16 +711,6 @@ fn build_fft_indices(n: usize) -> Vec<isize> {
         .collect()
 }
 
-/// Build G-vectors using the reciprocal lattice basis.
-///
-/// For a general 2D lattice, G-vectors are:
-///   G = n1 * b1 + n2 * b2
-///
-/// where b1, b2 are the reciprocal lattice vectors and n1, n2 are integers
-/// in the range determined by the FFT grid size.
-///
-/// This is essential for non-orthogonal lattices (hexagonal, oblique) where
-/// using Cartesian G = 2π/L gives wrong eigenvalues.
 fn build_g_vectors_with_reciprocal_lattice(
     grid: Grid2D,
     b1: [f64; 2],
@@ -1100,7 +727,6 @@ fn build_g_vectors_with_reciprocal_lattice(
             let idx = grid.idx(ix, iy);
             let n1 = n1_indices[ix] as f64;
             let n2 = n2_indices[iy] as f64;
-            // G = n1 * b1 + n2 * b2
             gx[idx] = n1 * b1[0] + n2 * b2[0];
             gy[idx] = n1 * b1[1] + n2 * b2[1];
         }
@@ -1109,10 +735,6 @@ fn build_g_vectors_with_reciprocal_lattice(
     (gx, gy)
 }
 
-/// Build k+G tables using reciprocal lattice G-vectors.
-///
-/// This replaces the old Cartesian G-vector computation with proper
-/// reciprocal lattice vectors: G = n1*b1 + n2*b2.
 fn build_k_plus_g_tables_with_reciprocal(
     grid: Grid2D,
     b1: [f64; 2],
@@ -1178,6 +800,24 @@ fn build_k_plus_g_tables_with_reciprocal(
     )
 }
 
+fn clamp_gradient_components(kx: f64, ky: f64) -> (f64, f64) {
+    if !kx.is_finite() || !ky.is_finite() {
+        let magnitude = K_PLUS_G_NEAR_ZERO_FLOOR.sqrt();
+        return (magnitude, 0.0);
+    }
+
+    let norm_sq = kx * kx + ky * ky;
+    if norm_sq >= K_PLUS_G_NEAR_ZERO_FLOOR {
+        (kx, ky)
+    } else if norm_sq == 0.0 {
+        let magnitude = K_PLUS_G_NEAR_ZERO_FLOOR.sqrt();
+        (magnitude, 0.0)
+    } else {
+        let scale = (K_PLUS_G_NEAR_ZERO_FLOOR / norm_sq).sqrt();
+        (kx * scale, ky * scale)
+    }
+}
+
 fn tm_preconditioner_mass_floor(eps_eff: f64) -> f64 {
     if !eps_eff.is_finite() || eps_eff <= 0.0 {
         return 0.0;
@@ -1196,21 +836,35 @@ fn inverse_scale(k_sq: f64, shift: f64, eps_eff: f64, mass_floor: f64) -> f64 {
         0.0
     };
 
-    // For very small k_sq (near-DC modes), we should NOT amplify them.
-    // The DC mode is in the null space of Laplacian operators.
-    // Cap the maximum amplification to prevent preconditioner from
-    // creating components orthogonal to the search direction.
-    //
-    // We use a floor that ensures inverse_scale <= 1/shift (reasonable cap).
-    // For k_sq << shift, use k_sq + shift as the denominator instead of
-    // clamping k_sq to a tiny floor.
-    let safe_k_sq = k_sq.max(0.0); // Just ensure non-negative
+    let safe_k_sq = k_sq.max(0.0);
     let shift_scaled = shift * eps_eff.max(1e-12);
     let denominator = safe_k_sq + safe_mass + shift_scaled;
 
-    // The denominator is at least shift_scaled (since safe_k_sq >= 0, safe_mass >= 0)
-    // This gives a maximum value of eps_eff / shift_scaled = 1 / shift
     eps_eff / denominator
+}
+
+fn build_inverse_diagonal(
+    values: &[f64],
+    shift: f64,
+    eps_eff: f64,
+    mass_floor: f64,
+    near_zero_mask: Option<&[bool]>,
+) -> Vec<f64> {
+    let mut result: Vec<f64> = values
+        .iter()
+        .copied()
+        .map(|k| inverse_scale(k, shift, eps_eff, mass_floor))
+        .collect();
+
+    if let Some(mask) = near_zero_mask {
+        for (scale, &is_near_zero) in result.iter_mut().zip(mask.iter()) {
+            if is_near_zero {
+                *scale = 0.0;
+            }
+        }
+    }
+
+    result
 }
 
 fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
@@ -1285,12 +939,32 @@ fn assemble_divergence(
     }
 }
 
+fn arithmetic_mean(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let sum: f64 = values.iter().copied().sum();
+    Some(sum / values.len() as f64)
+}
+
+fn harmonic_mean(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let sum: f64 = values.iter().copied().sum();
+    if sum <= 0.0 {
+        return None;
+    }
+    Some(1.0 / (sum / values.len() as f64))
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
-    use super::{
-        K_PLUS_G_NEAR_ZERO_FLOOR, clamp_gradient_components, inverse_scale,
-        tm_preconditioner_mass_floor,
-    };
+    use super::*;
 
     #[test]
     fn clamp_gradient_handles_zero_and_nan() {
@@ -1309,14 +983,10 @@ mod tests {
         assert_eq!(inverse_scale(f64::NAN, 1e-3, 1.0, 0.0), 0.0);
         assert_eq!(inverse_scale(1.0, 1e-3, f64::NAN, 0.0), 0.0);
 
-        // For tiny k_sq, the denominator is dominated by shift_scaled = shift * eps_eff
-        // With eps_eff = 1.0 and shift = 1e-3, denominator ≈ 1e-3
-        // So inverse_scale ≈ eps_eff / 1e-3 = 1000 for the DC mode
         let tiny = K_PLUS_G_NEAR_ZERO_FLOOR / 10.0;
         let shift = 1e-3;
         let eps_eff = 1.0;
         let shift_scaled = shift * eps_eff;
-        // denominator = tiny + shift_scaled ≈ shift_scaled for tiny << shift_scaled
         let expected = eps_eff / (tiny + shift_scaled);
         let actual = inverse_scale(tiny, shift, eps_eff, 0.0);
         assert!((actual - expected).abs() < 1e-12);
@@ -1332,88 +1002,4 @@ mod tests {
         assert!(mass_floor > 0.0);
         assert!(mass_adjusted < baseline);
     }
-}
-
-fn clamp_gradient_components(kx: f64, ky: f64) -> (f64, f64) {
-    if !kx.is_finite() || !ky.is_finite() {
-        let magnitude = K_PLUS_G_NEAR_ZERO_FLOOR.sqrt();
-        return (magnitude, 0.0);
-    }
-
-    let norm_sq = kx * kx + ky * ky;
-    if norm_sq >= K_PLUS_G_NEAR_ZERO_FLOOR {
-        (kx, ky)
-    } else if norm_sq == 0.0 {
-        let magnitude = K_PLUS_G_NEAR_ZERO_FLOOR.sqrt();
-        (magnitude, 0.0)
-    } else {
-        let scale = (K_PLUS_G_NEAR_ZERO_FLOOR / norm_sq).sqrt();
-        (kx * scale, ky * scale)
-    }
-}
-
-/// Build the inverse diagonal scaling for the Fourier-space preconditioner.
-///
-/// # Arguments
-/// * `values` - The |k+G|² values for each Fourier mode
-/// * `shift` - Regularization shift σ² added to denominator
-/// * `eps_eff` - Effective permittivity for scaling
-/// * `mass_floor` - Additional mass term for TE mode stability
-/// * `near_zero_mask` - Optional mask indicating which modes have |k+G|² ≈ 0
-///
-/// # Near-Zero Mode Handling
-///
-/// Modes with |k+G|² ≈ 0 are in the null space of Laplacian-type operators.
-/// These must be zeroed in the preconditioner to avoid amplifying components
-/// that should be handled by deflation. This only occurs at/near the Γ-point
-/// (k ≈ 0) where the G=0 mode has |k+G|² = |k|² ≈ 0.
-///
-/// For k ≠ 0, the G=0 mode has |k+G|² = |k|² > 0 and should NOT be zeroed.
-fn build_inverse_diagonal(
-    values: &[f64],
-    shift: f64,
-    eps_eff: f64,
-    mass_floor: f64,
-    near_zero_mask: Option<&[bool]>,
-) -> Vec<f64> {
-    let mut result: Vec<f64> = values
-        .iter()
-        .copied()
-        .map(|k| inverse_scale(k, shift, eps_eff, mass_floor))
-        .collect();
-
-    // Zero out modes that are in/near the null space (|k+G|² ≈ 0).
-    // This is determined by the clamp mask, which correctly identifies
-    // near-zero modes at ANY k-point (not just Γ).
-    //
-    // At Γ (k=0): the G=0 mode has |k+G|² = 0 → zeroed (correct)
-    // At k≠0: the G=0 mode has |k+G|² = |k|² > 0 → NOT zeroed (correct)
-    if let Some(mask) = near_zero_mask {
-        for (scale, &is_near_zero) in result.iter_mut().zip(mask.iter()) {
-            if is_near_zero {
-                *scale = 0.0;
-            }
-        }
-    }
-
-    result
-}
-
-fn arithmetic_mean(values: &[f64]) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    let sum: f64 = values.iter().copied().sum();
-    Some(sum / values.len() as f64)
-}
-
-fn harmonic_mean(values: &[f64]) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    let sum: f64 = values.iter().copied().sum();
-    if sum <= 0.0 {
-        return None;
-    }
-    Some(1.0 / (sum / values.len() as f64))
 }

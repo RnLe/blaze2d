@@ -46,7 +46,6 @@ pub mod crystal;
 pub mod analytic_geometry;
 pub mod backend;
 pub mod band_tracking;
-pub mod bandstructure;
 pub mod diagnostics;
 pub mod dielectric;
 pub mod eigensolver;
@@ -56,13 +55,28 @@ pub mod grid;
 pub mod io;
 pub mod lattice;
 pub mod metrics;
-pub mod operator;
 pub mod polarization;
-pub mod preconditioner;
 pub mod profiler;
 pub mod reference;
 pub mod symmetry;
 pub mod units;
+
+// ============================================================================
+// New modular architecture (Option B refactor)
+// ============================================================================
+pub mod drivers;
+pub mod operators;
+pub mod preconditioners;
+
+// ============================================================================
+// Convenience re-exports for common types
+// ============================================================================
+
+/// Re-export of the core operator trait and Maxwell operator.
+pub use operators::{LinearOperator, ThetaOperator};
+
+/// Re-export of the bandstructure driver for backwards compatibility.
+pub use drivers::bandstructure;
 
 #[cfg(test)]
 mod _tests_backend;

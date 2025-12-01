@@ -3,10 +3,17 @@
 //! This module provides Python bindings for streaming band structure results
 //! in real-time, enabling live plotting and interactive analysis.
 //!
-//! # Example Usage (Python)
+//! # Supported Solver Types
+//!
+//! The bulk driver supports two solver types:
+//!
+//! - **Maxwell**: Photonic crystal band structure (k_path, distances, bands)
+//! - **EA**: Envelope Approximation for moiré lattices (eigenvalues only)
+//!
+//! # Example Usage (Python) - Maxwell Mode
 //!
 //! ```python
-//! from mpb2d import BulkDriver
+//! from blaze import BulkDriver
 //! import matplotlib.pyplot as plt
 //!
 //! driver = BulkDriver("sweep.toml")
@@ -14,16 +21,32 @@
 //! # Streaming iteration
 //! plt.ion()
 //! for result in driver.run_streaming():
-//!     plt.clf()
-//!     for band in result['bands']:
-//!         plt.plot(result['distances'], band)
-//!     plt.pause(0.01)
+//!     if result['result_type'] == 'maxwell':
+//!         plt.clf()
+//!         for band in result['bands']:
+//!             plt.plot(result['distances'], band)
+//!         plt.pause(0.01)
 //!
 //! # Or with callback
 //! def on_result(result):
 //!     print(f"Job {result['job_index']} complete")
 //!
 //! driver.run_with_callback(on_result)
+//! ```
+//!
+//! # Example Usage (Python) - EA Mode
+//!
+//! ```python
+//! from blaze import BulkDriver
+//!
+//! driver = BulkDriver("ea_config.toml")
+//!
+//! for result in driver.run_streaming():
+//!     if result['result_type'] == 'ea':
+//!         eigenvalues = result['eigenvalues']
+//!         print(f"Job {result['job_index']}: {len(eigenvalues)} eigenvalues")
+//!         print(f"  Lowest: {eigenvalues[0]:.6f}")
+//!         print(f"  Converged: {result['converged']}")
 //! ```
 
 use std::path::PathBuf;
@@ -38,8 +61,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use mpb2d_bulk_driver::{
-    BatchConfig, BulkConfig, BulkDriver, CompactBandResult, DriverError, DriverStats,
-    OutputChannel, StreamChannel, StreamConfig,
+    BatchConfig, BulkConfig, BulkDriver, CompactBandResult, CompactResultType, DriverError,
+    DriverStats, FilteredStreamChannel, OutputChannel, SelectiveFilter, StreamChannel,
+    StreamConfig,
 };
 
 // ============================================================================
@@ -47,6 +71,9 @@ use mpb2d_bulk_driver::{
 // ============================================================================
 
 /// Convert a CompactBandResult to a Python dictionary.
+///
+/// For Maxwell results, includes k_path, distances, and bands.
+/// For EA results, includes eigenvalues, n_iterations, and converged.
 fn result_to_py_dict(py: Python<'_>, result: &CompactBandResult) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
 
@@ -75,19 +102,41 @@ fn result_to_py_dict(py: Python<'_>, result: &CompactBandResult) -> PyResult<Py<
     params.set_item("atoms", atoms_list)?;
     dict.set_item("params", params)?;
 
-    // K-path as list of tuples
-    let k_path: Vec<(f64, f64)> = result.k_path.iter().map(|k| (k[0], k[1])).collect();
-    dict.set_item("k_path", k_path)?;
+    // Result type discriminator
+    match &result.result_type {
+        CompactResultType::Maxwell(maxwell) => {
+            dict.set_item("result_type", "maxwell")?;
 
-    // Distances
-    dict.set_item("distances", result.distances.clone())?;
+            // K-path as list of tuples
+            let k_path: Vec<(f64, f64)> = maxwell.k_path.iter().map(|k| (k[0], k[1])).collect();
+            dict.set_item("k_path", k_path)?;
 
-    // Bands as 2D list [k_index][band_index]
-    dict.set_item("bands", result.bands.clone())?;
+            // Distances
+            dict.set_item("distances", maxwell.distances.clone())?;
 
-    // Convenience accessors
-    dict.set_item("num_k_points", result.num_k_points())?;
-    dict.set_item("num_bands", result.num_bands())?;
+            // Bands as 2D list [k_index][band_index]
+            dict.set_item("bands", maxwell.bands.clone())?;
+
+            // Convenience accessors
+            dict.set_item("num_k_points", maxwell.k_path.len())?;
+            dict.set_item("num_bands", maxwell.bands.first().map(|b| b.len()).unwrap_or(0))?;
+        }
+        CompactResultType::EA(ea) => {
+            dict.set_item("result_type", "ea")?;
+
+            // Eigenvalues
+            dict.set_item("eigenvalues", ea.eigenvalues.clone())?;
+
+            // Solver info
+            dict.set_item("n_iterations", ea.n_iterations)?;
+            dict.set_item("converged", ea.converged)?;
+
+            // Convenience accessor
+            dict.set_item("num_eigenvalues", ea.eigenvalues.len())?;
+            // For compatibility with code that checks num_bands
+            dict.set_item("num_bands", ea.eigenvalues.len())?;
+        }
+    }
 
     Ok(dict.into())
 }
@@ -305,21 +354,58 @@ impl BulkDriverPy {
         self.config_path.to_string_lossy().to_string()
     }
 
+    /// Get the solver type ("maxwell" or "ea").
+    #[getter]
+    fn solver_type(&self) -> PyResult<String> {
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
+        Ok(format!("{}", config.solver.solver_type).to_lowercase())
+    }
+
+    /// Check if this is an EA (Envelope Approximation) solver.
+    #[getter]
+    fn is_ea(&self) -> PyResult<bool> {
+        use mpb2d_bulk_driver::SolverType;
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
+        Ok(matches!(config.solver.solver_type, SolverType::EA))
+    }
+
     /// Run the computation with streaming output.
     ///
-    /// Returns an iterator that yields band structure results as they complete.
-    /// Results are dictionaries with keys:
+    /// Returns an iterator that yields results as they complete.
+    ///
+    /// # Result Format
+    ///
+    /// All results include:
     ///   - job_index: int
+    ///   - result_type: str ("maxwell" or "ea")
     ///   - params: dict (eps_bg, resolution, polarization, atoms, ...)
+    ///   - num_bands: int
+    ///
+    /// Maxwell-specific fields (result_type == "maxwell"):
     ///   - k_path: list of (kx, ky) tuples
     ///   - distances: list of floats
     ///   - bands: 2D list [k_index][band_index]
     ///   - num_k_points: int
-    ///   - num_bands: int
     ///
-    /// Example:
+    /// EA-specific fields (result_type == "ea"):
+    ///   - eigenvalues: list of floats
+    ///   - n_iterations: int
+    ///   - converged: bool
+    ///   - num_eigenvalues: int
+    ///
+    /// # Example
+    ///
     ///     for result in driver.run_streaming():
-    ///         print(f"Job {result['job_index']}")
+    ///         if result['result_type'] == 'maxwell':
+    ///             print(f"Job {result['job_index']}: {result['num_bands']} bands")
+    ///         else:  # ea
+    ///             print(f"Job {result['job_index']}: E0 = {result['eigenvalues'][0]:.4f}")
     #[pyo3(name = "run_streaming")]
     fn run_streaming(&self, _py: Python<'_>) -> PyResult<BandResultIterator> {
         let config = self
@@ -352,6 +438,158 @@ impl BulkDriverPy {
             handle: Arc::new(Mutex::new(Some(handle))),
             finished: false,
         })
+    }
+
+    /// Run with streaming output and server-side filtering.
+    ///
+    /// This applies k-point and band filtering before streaming, reducing
+    /// memory and processing overhead when you only need a subset of data.
+    ///
+    /// Note: Filtering only applies to Maxwell results. EA results are passed
+    /// through unchanged (they have no k-path to filter).
+    ///
+    /// Args:
+    ///     k_indices: List of k-point indices to include (0-based), or None for all
+    ///     band_indices: List of band indices to include (0-based), or None for all
+    ///
+    /// Returns:
+    ///     Iterator yielding filtered band structure results
+    ///
+    /// Example:
+    ///     # Stream only Gamma (0), X (10), M (15) and first 4 bands
+    ///     for result in driver.run_streaming_filtered(
+    ///         k_indices=[0, 10, 15],
+    ///         band_indices=[0, 1, 2, 3]
+    ///     ):
+    ///         if result['result_type'] == 'maxwell':
+    ///             assert result['num_k_points'] == 3
+    ///             assert result['num_bands'] == 4
+    #[pyo3(name = "run_streaming_filtered", signature = (k_indices=None, band_indices=None))]
+    fn run_streaming_filtered(
+        &self,
+        _py: Python<'_>,
+        k_indices: Option<Vec<usize>>,
+        band_indices: Option<Vec<usize>>,
+    ) -> PyResult<BandResultIterator> {
+        let config = self
+            .config
+            .clone()
+            .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
+
+        let threads = if self.threads == 0 {
+            None
+        } else {
+            Some(self.threads)
+        };
+
+        // Create filter
+        let filter = SelectiveFilter::new(
+            k_indices.unwrap_or_default(),
+            band_indices.unwrap_or_default(),
+        );
+
+        // Create driver and filtered streaming channel
+        let driver = BulkDriver::new(config, threads);
+        let stream = Arc::new(FilteredStreamChannel::new(filter, StreamConfig::default()));
+        let receiver = stream.add_channel_subscriber();
+
+        let stream_clone = stream.clone();
+
+        let handle = thread::spawn(move || {
+            let channel = OutputChannel::Stream(stream_clone);
+            driver.run_with_channel(channel)
+        });
+
+        Ok(BandResultIterator {
+            receiver,
+            handle: Arc::new(Mutex::new(Some(handle))),
+            finished: false,
+        })
+    }
+
+    /// Run and collect all results into a list.
+    ///
+    /// This is a convenience method that runs the computation and returns
+    /// all results at once. Useful for small sweeps where you want all
+    /// results in memory.
+    ///
+    /// Note: For Maxwell results, filtering by k_indices and band_indices
+    /// is applied. EA results are passed through unchanged.
+    ///
+    /// Args:
+    ///     k_indices: Optional list of k-point indices to filter (0-based)
+    ///     band_indices: Optional list of band indices to filter (0-based)
+    ///
+    /// Returns:
+    ///     Tuple of (results_list, stats_dict)
+    ///     Each result is a dict with format documented in run_streaming().
+    ///
+    /// Example:
+    ///     results, stats = driver.run_collect()
+    ///     print(f"Got {len(results)} results in {stats['total_time_secs']:.2f}s")
+    ///     
+    ///     for r in results:
+    ///         if r['result_type'] == 'ea':
+    ///             print(f"  EA eigenvalues: {r['eigenvalues'][:3]}...")
+    #[pyo3(name = "run_collect", signature = (k_indices=None, band_indices=None))]
+    fn run_collect(
+        &self,
+        py: Python<'_>,
+        k_indices: Option<Vec<usize>>,
+        band_indices: Option<Vec<usize>>,
+    ) -> PyResult<(Py<PyList>, Py<PyDict>)> {
+        let config = self
+            .config
+            .clone()
+            .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
+
+        let threads = if self.threads == 0 {
+            None
+        } else {
+            Some(self.threads)
+        };
+
+        let filter = SelectiveFilter::new(
+            k_indices.unwrap_or_default(),
+            band_indices.unwrap_or_default(),
+        );
+
+        let driver = BulkDriver::new(config, threads);
+
+        // Use collecting subscriber
+        let stream = Arc::new(FilteredStreamChannel::new(filter, StreamConfig::default()));
+        let collector = stream.add_collecting_subscriber();
+        let stream_clone = stream.clone();
+
+        // Run with GIL released
+        let stats_result = py.allow_threads(|| {
+            let channel = OutputChannel::Stream(stream_clone);
+            driver.run_with_channel(channel)
+        });
+
+        let stats = stats_result.map_err(|e| PyRuntimeError::new_err(format!("driver error: {}", e)))?;
+
+        // Convert collected results to Python list
+        let results_list = PyList::empty(py);
+        for result in collector.results().iter() {
+            let dict = result_to_py_dict(py, result)?;
+            results_list.append(dict)?;
+        }
+
+        // Stats dict
+        let stats_dict = PyDict::new(py);
+        stats_dict.set_item("total_jobs", stats.total_jobs)?;
+        stats_dict.set_item("completed", stats.completed)?;
+        stats_dict.set_item("failed", stats.failed)?;
+        stats_dict.set_item("total_time_secs", stats.total_time.as_secs_f64())?;
+        if stats.total_time.as_secs_f64() > 0.0 {
+            stats_dict.set_item(
+                "jobs_per_second",
+                stats.completed as f64 / stats.total_time.as_secs_f64(),
+            )?;
+        }
+
+        Ok((results_list.into(), stats_dict.into()))
     }
 
     /// Run with batch mode (buffered I/O).

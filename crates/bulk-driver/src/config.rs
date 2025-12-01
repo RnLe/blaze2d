@@ -2,6 +2,17 @@
 //!
 //! This module defines the TOML structure for bulk jobs, including parameter ranges
 //! and output configuration.
+//!
+//! # Solver Types
+//!
+//! The bulk driver supports two solver types:
+//!
+//! - **Maxwell** (default): Photonic crystal band structure calculations using the
+//!   Maxwell eigenproblem. Requires geometry, k-path, and polarization.
+//!
+//! - **EA (Envelope Approximation)**: Moiré lattice eigenproblems using the effective
+//!   Hamiltonian H = V(R) - (η²/2)∇·M⁻¹(R)∇. Requires input data files for potential,
+//!   mass tensor, and optionally group velocity for drift terms.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -13,6 +24,207 @@ use mpb2d_core::{
     io::PathSpec,
     polarization::Polarization,
 };
+
+// ============================================================================
+// Solver Type Selection
+// ============================================================================
+
+/// Type of eigensolver to use.
+///
+/// The bulk driver can operate in different modes depending on the physics problem:
+///
+/// - `Maxwell`: Traditional photonic crystal band structure (requires geometry, k-path)
+/// - `EA`: Envelope approximation for moiré lattices (requires input data files)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SolverType {
+    /// Maxwell eigenproblem for photonic crystals.
+    ///
+    /// Solves: ∇ × (1/ε)∇ × H = (ω/c)² H
+    /// Requires: geometry, k-path, polarization
+    #[default]
+    Maxwell,
+
+    /// Envelope approximation for moiré lattices.
+    ///
+    /// Solves: H ψ = E ψ where H = V(R) - (η²/2)∇·M⁻¹(R)∇ - iη v_g·∇
+    /// Requires: input data files for V, M⁻¹, and optionally v_g
+    #[serde(rename = "ea")]
+    EA,
+}
+
+impl std::fmt::Display for SolverType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SolverType::Maxwell => write!(f, "Maxwell"),
+            SolverType::EA => write!(f, "EA (Envelope Approximation)"),
+        }
+    }
+}
+
+// ============================================================================
+// EA (Envelope Approximation) Configuration
+// ============================================================================
+
+/// Configuration for Envelope Approximation (EA) solver.
+///
+/// The EA solver reads pre-computed spatial data from files:
+/// - `potential`: V(R) - the effective potential on the moiré superlattice
+/// - `mass_inv`: M⁻¹(R) - the inverse mass tensor (spatially varying)
+/// - `vg`: Optional group velocity for drift terms
+///
+/// # File Format
+///
+/// All input files should be binary files containing f64 values in **row-major**
+/// (C-order) layout. The grid dimensions are inferred from the file size and
+/// the configured resolution.
+///
+/// ## Data Layout
+///
+/// - `potential`: `[Nx * Ny]` f64 values, V(x, y) at each grid point
+/// - `mass_inv`: `[Nx * Ny * 4]` f64 values, [m_xx, m_xy, m_yx, m_yy] at each point
+/// - `vg`: `[Nx * Ny * 2]` f64 values, [vg_x, vg_y] at each point (optional)
+///
+/// # Example TOML
+///
+/// ```toml
+/// [solver]
+/// type = "ea"
+///
+/// [ea]
+/// potential = "data/potential.bin"
+/// mass_inv = "data/mass_inv.bin"
+/// vg = "data/group_velocity.bin"  # optional
+/// eta = 1.0
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EAConfig {
+    /// Path to potential data file V(R).
+    ///
+    /// Binary file with Nx*Ny f64 values in row-major order.
+    #[serde(default)]
+    pub potential: Option<PathBuf>,
+
+    /// Path to inverse mass tensor data file M⁻¹(R).
+    ///
+    /// Binary file with Nx*Ny*4 f64 values in row-major order.
+    /// Components ordered as [m_xx, m_xy, m_yx, m_yy] at each grid point.
+    #[serde(default)]
+    pub mass_inv: Option<PathBuf>,
+
+    /// Path to group velocity data file v_g(R) for drift term.
+    ///
+    /// Binary file with Nx*Ny*2 f64 values in row-major order.
+    /// Components ordered as [vg_x, vg_y] at each grid point.
+    /// If not provided, drift term is disabled.
+    #[serde(default)]
+    pub vg: Option<PathBuf>,
+
+    /// Small parameter η in the envelope equation.
+    ///
+    /// This appears in both kinetic (-η²/2 ∇·M⁻¹∇) and drift (-iη v_g·∇) terms.
+    #[serde(default = "default_eta")]
+    pub eta: f64,
+
+    /// Physical dimensions of the simulation domain [Lx, Ly].
+    ///
+    /// If not specified, defaults to [1.0, 1.0] (unit cell).
+    #[serde(default = "default_domain_size")]
+    pub domain_size: [f64; 2],
+
+    /// Whether to use periodic boundary conditions.
+    ///
+    /// Currently only periodic BCs are supported.
+    #[serde(default = "default_periodic")]
+    pub periodic: bool,
+}
+
+fn default_eta() -> f64 {
+    1.0
+}
+
+fn default_domain_size() -> [f64; 2] {
+    [1.0, 1.0]
+}
+
+fn default_periodic() -> bool {
+    true
+}
+
+impl EAConfig {
+    /// Validate the EA configuration.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // Potential file is required
+        if self.potential.is_none() {
+            return Err(ConfigError::InvalidEAConfig(
+                "EA solver requires 'potential' file path".into(),
+            ));
+        }
+
+        // Mass inverse file is required
+        if self.mass_inv.is_none() {
+            return Err(ConfigError::InvalidEAConfig(
+                "EA solver requires 'mass_inv' file path".into(),
+            ));
+        }
+
+        // Eta must be positive
+        if self.eta <= 0.0 {
+            return Err(ConfigError::InvalidEAConfig(
+                "EA solver 'eta' must be positive".into(),
+            ));
+        }
+
+        // Domain size must be positive
+        if self.domain_size[0] <= 0.0 || self.domain_size[1] <= 0.0 {
+            return Err(ConfigError::InvalidEAConfig(
+                "EA solver 'domain_size' components must be positive".into(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check if input files exist and are readable.
+    pub fn check_files(&self) -> Result<(), ConfigError> {
+        if let Some(ref path) = self.potential {
+            if !path.exists() {
+                return Err(ConfigError::InvalidEAConfig(format!(
+                    "potential file not found: {}",
+                    path.display()
+                )));
+            }
+        }
+
+        if let Some(ref path) = self.mass_inv {
+            if !path.exists() {
+                return Err(ConfigError::InvalidEAConfig(format!(
+                    "mass_inv file not found: {}",
+                    path.display()
+                )));
+            }
+        }
+
+        if let Some(ref path) = self.vg {
+            if !path.exists() {
+                return Err(ConfigError::InvalidEAConfig(format!(
+                    "vg file not found: {}",
+                    path.display()
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Solver selection section in the TOML configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SolverSection {
+    /// Type of solver to use: "maxwell" or "ea"
+    #[serde(default, rename = "type")]
+    pub solver_type: SolverType,
+}
 
 // ============================================================================
 // Range Specification
@@ -442,26 +654,89 @@ impl Default for BulkSection {
 /// Complete configuration for a bulk parameter sweep.
 ///
 /// A TOML file is recognized as a bulk request if it contains the `[bulk]` section.
+///
+/// # Solver Types
+///
+/// The configuration supports two solver types:
+///
+/// - **Maxwell** (default): Requires `geometry`, `k_path`/`path`, and `polarization`.
+/// - **EA**: Requires `ea` section with input file paths. No k-path or geometry needed.
+///
+/// # Example (Maxwell)
+///
+/// ```toml
+/// [bulk]
+/// threads = 4
+///
+/// [solver]
+/// type = "maxwell"  # default, can be omitted
+///
+/// [geometry]
+/// eps_bg = 12.0
+/// # ... atoms, lattice ...
+///
+/// [grid]
+/// nx = 32
+/// ny = 32
+///
+/// # ... rest of Maxwell config
+/// ```
+///
+/// # Example (EA)
+///
+/// ```toml
+/// [bulk]
+/// threads = 4
+///
+/// [solver]
+/// type = "ea"
+///
+/// [ea]
+/// potential = "data/V.bin"
+/// mass_inv = "data/M_inv.bin"
+/// eta = 0.1
+///
+/// [grid]
+/// nx = 64
+/// ny = 64
+///
+/// [eigensolver]
+/// n_bands = 10
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulkConfig {
     /// Bulk execution settings (presence marks this as a bulk request)
     pub bulk: BulkSection,
 
-    /// Base geometry (non-swept parameters)
-    pub geometry: BaseGeometry,
+    /// Solver type selection (maxwell or ea)
+    #[serde(default)]
+    pub solver: SolverSection,
+
+    /// EA (Envelope Approximation) solver configuration.
+    /// Required when solver.type = "ea".
+    #[serde(default)]
+    pub ea: EAConfig,
+
+    /// Base geometry (non-swept parameters).
+    /// Required for Maxwell solver, ignored for EA solver.
+    #[serde(default)]
+    pub geometry: Option<BaseGeometry>,
 
     /// Computational grid
     pub grid: Grid2D,
 
-    /// Base polarization (used if not in ranges)
+    /// Base polarization (used if not in ranges).
+    /// Required for Maxwell solver, ignored for EA solver.
     #[serde(default = "default_polarization")]
     pub polarization: Polarization,
 
-    /// K-path specification
+    /// K-path specification.
+    /// Required for Maxwell solver, ignored for EA solver.
     #[serde(default)]
     pub path: Option<PathSpec>,
 
-    /// Explicit k-path (overrides path preset)
+    /// Explicit k-path (overrides path preset).
+    /// Required for Maxwell solver, ignored for EA solver.
     #[serde(default)]
     pub k_path: Vec<[f64; 2]>,
 
@@ -469,11 +744,14 @@ pub struct BulkConfig {
     #[serde(default)]
     pub eigensolver: EigensolverConfig,
 
-    /// Dielectric options
+    /// Dielectric options.
+    /// Only used by Maxwell solver.
     #[serde(default)]
     pub dielectric: DielectricOptions,
 
-    /// Parameter ranges to sweep
+    /// Parameter ranges to sweep.
+    /// For Maxwell: eps_bg, resolution, polarization, lattice_type, atoms.
+    /// For EA: Currently no parameter sweeps (future: eta, domain_size).
     #[serde(default)]
     pub ranges: ParameterRange,
 
@@ -505,10 +783,43 @@ impl BulkConfig {
         Ok(config)
     }
 
+    /// Get the solver type.
+    pub fn solver_type(&self) -> SolverType {
+        self.solver.solver_type
+    }
+
+    /// Check if this is an EA solver configuration.
+    pub fn is_ea(&self) -> bool {
+        self.solver.solver_type == SolverType::EA
+    }
+
+    /// Check if this is a Maxwell solver configuration.
+    pub fn is_maxwell(&self) -> bool {
+        self.solver.solver_type == SolverType::Maxwell
+    }
+
+    /// Get geometry for Maxwell solver.
+    /// Panics if geometry is not set (EA solver).
+    pub fn geometry(&self) -> &BaseGeometry {
+        self.geometry.as_ref().expect("geometry required for Maxwell solver")
+    }
+
     /// Validate the configuration.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Check that ranged parameters are not also in base config conflicts
-        // (The actual validation is more nuanced - we allow base values as defaults)
+        match self.solver.solver_type {
+            SolverType::Maxwell => self.validate_maxwell(),
+            SolverType::EA => self.validate_ea(),
+        }
+    }
+
+    /// Validate Maxwell-specific configuration.
+    fn validate_maxwell(&self) -> Result<(), ConfigError> {
+        // Geometry is required for Maxwell
+        if self.geometry.is_none() {
+            return Err(ConfigError::InvalidMaxwellConfig(
+                "Maxwell solver requires [geometry] section".into(),
+            ));
+        }
 
         // Validate ranges
         if let Some(range) = &self.ranges.eps_bg {
@@ -551,6 +862,18 @@ impl BulkConfig {
         Ok(())
     }
 
+    /// Validate EA-specific configuration.
+    fn validate_ea(&self) -> Result<(), ConfigError> {
+        // EA config is required
+        self.ea.validate()?;
+
+        // For EA, we don't need geometry or k-path
+        // Warn if they're provided (they'll be ignored)
+        // (This is just a note - we won't error)
+
+        Ok(())
+    }
+
     /// Get the effective number of threads.
     /// Defaults to physical CPU cores (optimal for CPU-bound workloads).
     pub fn effective_threads(&self) -> usize {
@@ -587,6 +910,12 @@ pub enum ConfigError {
 
     #[error("Configuration conflict: {0}")]
     Conflict(String),
+
+    #[error("Invalid Maxwell solver configuration: {0}")]
+    InvalidMaxwellConfig(String),
+
+    #[error("Invalid EA solver configuration: {0}")]
+    InvalidEAConfig(String),
 }
 
 // ============================================================================
@@ -630,5 +959,129 @@ eps_bg = 12.0
 "#;
         let result = BulkConfig::from_str(content);
         assert!(matches!(result, Err(ConfigError::NotBulkConfig)));
+    }
+
+    #[test]
+    fn custom_k_path_parsing() {
+        // NOTE: k_path must be at top-level in TOML (before any [section] headers)
+        // or it will be absorbed into the preceding section!
+        let content = r#"
+k_path = [[0.0, 0.0], [0.1, 0.0], [0.2, 0.0]]
+
+[bulk]
+threads = 1
+
+[geometry]
+eps_bg = 1.0
+
+[geometry.lattice]
+type = "square"
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.3
+eps_inside = 1.0
+
+[grid]
+nx = 16
+ny = 16
+
+[eigensolver]
+n_bands = 2
+
+[ranges]
+[[ranges.atoms]]
+
+[output]
+mode = "full"
+"#;
+        let config = BulkConfig::from_str(content).expect("should parse");
+        assert_eq!(config.k_path.len(), 3, "k_path should have 3 points");
+        assert_eq!(config.k_path[0], [0.0, 0.0]);
+        assert_eq!(config.k_path[1], [0.1, 0.0]);
+        assert_eq!(config.k_path[2], [0.2, 0.0]);
+        assert!(config.is_maxwell(), "default solver should be Maxwell");
+    }
+
+    #[test]
+    fn ea_solver_config_parsing() {
+        let content = r#"
+[bulk]
+threads = 2
+
+[solver]
+type = "ea"
+
+[ea]
+potential = "test_data/V.bin"
+mass_inv = "test_data/M_inv.bin"
+eta = 0.5
+domain_size = [10.0, 10.0]
+
+[grid]
+nx = 64
+ny = 64
+
+[eigensolver]
+n_bands = 8
+"#;
+        let config = BulkConfig::from_str(content).expect("should parse");
+        assert!(config.is_ea(), "should be EA solver");
+        assert_eq!(config.solver_type(), SolverType::EA);
+        assert_eq!(config.ea.eta, 0.5);
+        assert_eq!(config.ea.domain_size, [10.0, 10.0]);
+        assert_eq!(
+            config.ea.potential.as_ref().map(|p| p.to_str().unwrap()),
+            Some("test_data/V.bin")
+        );
+    }
+
+    #[test]
+    fn maxwell_requires_geometry() {
+        let content = r#"
+[bulk]
+threads = 1
+
+[solver]
+type = "maxwell"
+
+[grid]
+nx = 16
+ny = 16
+
+[eigensolver]
+n_bands = 2
+"#;
+        let result = BulkConfig::from_str(content);
+        assert!(matches!(result, Err(ConfigError::InvalidMaxwellConfig(_))));
+    }
+
+    #[test]
+    fn ea_requires_input_files() {
+        let content = r#"
+[bulk]
+threads = 1
+
+[solver]
+type = "ea"
+
+[ea]
+# Missing potential and mass_inv
+
+[grid]
+nx = 16
+ny = 16
+
+[eigensolver]
+n_bands = 2
+"#;
+        let result = BulkConfig::from_str(content);
+        assert!(matches!(result, Err(ConfigError::InvalidEAConfig(_))));
+    }
+
+    #[test]
+    fn solver_type_display() {
+        assert_eq!(format!("{}", SolverType::Maxwell), "Maxwell");
+        assert_eq!(format!("{}", SolverType::EA), "EA (Envelope Approximation)");
     }
 }

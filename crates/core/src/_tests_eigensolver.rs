@@ -6,7 +6,7 @@ use super::backend::SpectralBackend;
 use super::eigensolver::{BandState, ConvergenceInfo, Eigensolver, EigensolverConfig};
 use super::field::Field2D;
 use super::grid::Grid2D;
-use super::operator::LinearOperator;
+use super::operators::LinearOperator;
 use num_complex::Complex64;
 
 // ============================================================================
@@ -438,7 +438,7 @@ struct ScalingPreconditioner {
     scale: f64,
 }
 
-impl crate::preconditioner::OperatorPreconditioner<TestBackend> for ScalingPreconditioner {
+impl crate::preconditioners::OperatorPreconditioner<TestBackend> for ScalingPreconditioner {
     fn apply(&mut self, _backend: &TestBackend, buffer: &mut Field2D) {
         for value in buffer.as_mut_slice() {
             *value *= self.scale;
