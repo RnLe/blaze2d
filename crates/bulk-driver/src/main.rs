@@ -41,7 +41,7 @@ struct Cli {
     #[arg(long)]
     dry_run: bool,
 
-    /// Number of threads (-1 = adaptive/smart, 0 = all cores, N = fixed count)
+    /// Number of threads (-1 = adaptive/smart, 0 = all physical cores, N = fixed count)
     #[arg(short = 'j', long, default_value = "0", allow_hyphen_values = true)]
     threads: i32,
 

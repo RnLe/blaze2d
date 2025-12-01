@@ -492,8 +492,9 @@ impl BulkConfig {
     }
 
     /// Get the effective number of threads.
+    /// Defaults to physical CPU cores (optimal for CPU-bound workloads).
     pub fn effective_threads(&self) -> usize {
-        self.bulk.threads.unwrap_or_else(num_cpus::get)
+        self.bulk.threads.unwrap_or_else(num_cpus::get_physical)
     }
 
     /// Get total number of jobs.
