@@ -165,20 +165,29 @@ impl Verbosity {
 pub struct RunOptions {
     /// Preconditioner type (None, FourierDiagonalKernelCompensated, TransverseProjection).
     pub precond_type: PreconditionerType,
-    /// Enable subspace prediction for accelerated warm-start (Stage 1: rotation-only).
+    /// Enable subspace prediction for accelerated warm-start.
     ///
     /// When enabled, uses complex eigenvector overlaps and polar decomposition to
     /// compute a rotation matrix that aligns the previous subspace to the current one.
     /// This provides a better warm-start than simple copying, especially when bands
     /// reorder between k-points.
     pub use_subspace_prediction: bool,
+    /// Enable linear extrapolation in subspace prediction (Stage 2).
+    ///
+    /// When enabled (and `use_subspace_prediction` is also enabled), predicts the
+    /// next k-point's eigenvectors by extrapolating from the aligned subspace:
+    /// X_pred = (1+α)X̃_n - α X_{n-1}
+    ///
+    /// This is automatically disabled at k-path corners and near degeneracies.
+    pub use_extrapolation: bool,
 }
 
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
             precond_type: PreconditionerType::default(),
-            use_subspace_prediction: true, // Enabled by default for better warm-start
+            use_subspace_prediction: true,  // Stage 1: rotation-based warm-start
+            use_extrapolation: true,         // Stage 2: linear extrapolation
         }
     }
 }
@@ -201,6 +210,15 @@ impl RunOptions {
     /// guesses for the eigensolver at each k-point.
     pub fn with_subspace_prediction(mut self, enabled: bool) -> Self {
         self.use_subspace_prediction = enabled;
+        self
+    }
+
+    /// Enable linear extrapolation in subspace prediction (Stage 2).
+    ///
+    /// When enabled, predicts eigenvectors by extrapolating along the k-path.
+    /// Automatically disabled at corners and near degeneracies.
+    pub fn with_extrapolation(mut self, enabled: bool) -> Self {
+        self.use_extrapolation = enabled;
         self
     }
 }
@@ -369,8 +387,14 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
 
     // Subspace prediction history (rotation-based warm-start)
     let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction {
-        info!("[bandstructure] Subspace prediction enabled (rotation-based warm-start)");
-        Some(SubspaceHistory::new(warm_start_limit))
+        let mut history = SubspaceHistory::new(warm_start_limit);
+        if options.use_extrapolation {
+            history.enable_extrapolation();
+            info!("[bandstructure] Subspace prediction enabled (rotation + extrapolation)");
+        } else {
+            info!("[bandstructure] Subspace prediction enabled (rotation-only)");
+        }
+        Some(history)
     } else {
         None
     };
@@ -773,8 +797,14 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
 
     // Subspace prediction history (rotation-based warm-start)
     let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction {
-        info!("[bandstructure] Subspace prediction enabled (rotation-based warm-start)");
-        Some(SubspaceHistory::new(warm_start_limit))
+        let mut history = SubspaceHistory::new(warm_start_limit);
+        if options.use_extrapolation {
+            history.enable_extrapolation();
+            info!("[bandstructure] Subspace prediction enabled (rotation + extrapolation)");
+        } else {
+            info!("[bandstructure] Subspace prediction enabled (rotation-only)");
+        }
+        Some(history)
     } else {
         None
     };
