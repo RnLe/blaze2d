@@ -339,9 +339,13 @@ impl SubspaceHistory {
 // Complex Overlap Matrix Computation
 // ============================================================================
 
-/// Compute the complex B-weighted overlap matrix.
+/// Compute the complex B-weighted overlap matrix using faer GEMM.
 ///
 /// O = X_prev^† B X_curr where O[i,j] = ⟨prev[i] | curr[j]⟩_B
+///
+/// This uses matrix multiplication: O = (B^{1/2} X_prev)^† (B^{1/2} X_curr)
+/// For diagonal B (TM mode with ε), we apply B^{1/2} element-wise.
+/// For identity B (TE mode), this is simply X_prev^† X_curr.
 ///
 /// # Arguments
 /// * `prev` - Eigenvectors from k_{n-1}
@@ -360,17 +364,46 @@ pub fn compute_complex_overlap_matrix(
         return Mat::zeros(0, 0);
     }
 
-    // Build the overlap matrix
-    Mat::from_fn(m, m, |i, j| {
-        let inner = if let Some(epsilon) = eps {
-            // B-weighted inner product: ⟨prev[i], curr[j]⟩_B = Σ prev^* · ε · curr
-            b_inner_product(prev[i].as_slice(), curr[j].as_slice(), epsilon)
-        } else {
-            // Standard inner product: ⟨prev[i], curr[j]⟩ = Σ prev^* · curr
-            inner_product(prev[i].as_slice(), curr[j].as_slice())
-        };
-        faer::c64::new(inner.re, inner.im)
-    })
+    let n = prev[0].len(); // Grid points
+
+    // Build matrices in faer format
+    // For B-weighted inner product ⟨x, y⟩_B = x^† B y = (B^{1/2} x)^† (B^{1/2} y)
+    // With diagonal B = diag(ε), we have B^{1/2} = diag(√ε)
+    
+    if let Some(epsilon) = eps {
+        // TM mode: apply √ε weighting
+        // Build (√ε ⊙ X_prev) and (√ε ⊙ X_curr) matrices
+        let sqrt_eps: Vec<f64> = epsilon.iter().map(|&e| e.sqrt()).collect();
+        
+        let prev_weighted = Mat::<faer::c64>::from_fn(n, m, |row, col| {
+            let c = prev[col].as_slice()[row];
+            let w = sqrt_eps[row];
+            faer::c64::new(c.re * w, c.im * w)
+        });
+        
+        let curr_weighted = Mat::<faer::c64>::from_fn(n, m, |row, col| {
+            let c = curr[col].as_slice()[row];
+            let w = sqrt_eps[row];
+            faer::c64::new(c.re * w, c.im * w)
+        });
+        
+        // O = prev_weighted^† curr_weighted (m×n × n×m = m×m)
+        prev_weighted.adjoint() * &curr_weighted
+    } else {
+        // TE mode: identity B, just compute X_prev^† X_curr
+        let prev_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
+            let c = prev[col].as_slice()[row];
+            faer::c64::new(c.re, c.im)
+        });
+        
+        let curr_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
+            let c = curr[col].as_slice()[row];
+            faer::c64::new(c.re, c.im)
+        });
+        
+        // O = prev_mat^† curr_mat
+        prev_mat.adjoint() * &curr_mat
+    }
 }
 
 /// Standard inner product: ⟨x, y⟩ = Σ x^* · y
@@ -432,6 +465,8 @@ pub fn polar_decomposition(overlap: &Mat<faer::c64>) -> (Mat<faer::c64>, f64) {
 
 /// Apply the rotation to align eigenvectors: X̃ = X U^†
 ///
+/// Uses faer GEMM for efficient matrix multiplication.
+///
 /// # Arguments
 /// * `vectors` - The eigenvectors to rotate (X_n)
 /// * `rotation` - The m×m unitary rotation matrix U
@@ -447,32 +482,25 @@ pub fn apply_rotation(vectors: &[Field2D], rotation: &Mat<faer::c64>) -> Vec<Fie
     let grid = vectors[0].grid();
     let n = vectors[0].len(); // Grid points
 
-    // Compute U^† = U.adjoint() and convert to an owned matrix
-    // This avoids the ComplexConj type from adjoint view
-    let u_adj = rotation.adjoint().to_owned();
+    // Build X matrix (n × m) from vectors in faer format
+    let x_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
+        let c = vectors[col].as_slice()[row];
+        faer::c64::new(c.re, c.im)
+    });
 
-    // X̃[j] = Σ_i X[i] * U^†[i,j]
-    // For each output vector j, sum over input vectors i weighted by U^†[i,j]
+    // Compute X̃ = X * U^† using faer GEMM
+    // rotation.adjoint() gives U^†
+    let x_tilde = &x_mat * rotation.adjoint();
+
+    // Convert back to Vec<Field2D>
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
-
     for j in 0..m {
-        let mut output_data = vec![Complex64::ZERO; n];
-
-        for i in 0..m {
-            let coeff_faer = u_adj.get(i, j);
-            let coeff = Complex64::new(coeff_faer.re, coeff_faer.im);
-
-            // Skip near-zero coefficients
-            if coeff.norm() < 1e-15 {
-                continue;
-            }
-
-            let input_slice = vectors[i].as_slice();
-            for (k, val) in output_data.iter_mut().enumerate() {
-                *val += coeff * input_slice[k];
-            }
-        }
-
+        let output_data: Vec<Complex64> = (0..n)
+            .map(|k| {
+                let c = x_tilde.get(k, j);
+                Complex64::new(c.re, c.im)
+            })
+            .collect();
         result.push(Field2D::from_vec(grid, output_data));
     }
 
@@ -483,11 +511,13 @@ pub fn apply_rotation(vectors: &[Field2D], rotation: &Mat<faer::c64>) -> Vec<Fie
 // Linear Extrapolation with Rotation
 // ============================================================================
 
-/// Linear extrapolation with rotation alignment.
+/// Linear extrapolation with rotation alignment using fused GEMM.
 ///
-/// 1. Align X_n to X_{n-1}'s gauge: X̃_n = X_n U^†
-/// 2. Compute velocity: V = X̃_n - X_{n-1}
-/// 3. Extrapolate: X_pred = X̃_n + α*V = (1+α)*X̃_n - α*X_{n-1}
+/// Computes X_pred = (1+α)(X_curr U^†) - α X_prev in a single efficient pass:
+/// 1. Form transformation T = (1+α) U^† (m×m matrix)
+/// 2. X_pred = X_curr * T - α * X_prev
+///
+/// This fuses the rotation and extrapolation to avoid intermediate allocations.
 ///
 /// # Arguments
 /// * `prev` - Eigenvectors at k_{n-1}
@@ -508,28 +538,38 @@ pub fn extrapolate_with_rotation(
         return Vec::new();
     }
 
-    // Step 1: Align curr to prev's gauge
-    let aligned = apply_rotation(curr, rotation);
-
     let grid = prev[0].grid();
     let n = prev[0].len();
 
-    // Steps 2-3: X_pred = (1+α)*X̃_n - α*X_{n-1}
+    // Coefficients
     let coeff_aligned = 1.0 + alpha;
     let coeff_prev = -alpha;
 
+    // Build X_curr matrix (n × m)
+    let x_curr = Mat::<faer::c64>::from_fn(n, m, |row, col| {
+        let c = curr[col].as_slice()[row];
+        faer::c64::new(c.re, c.im)
+    });
+
+    // Compute scaled transformation: T = (1+α) U^†
+    let scale = faer::c64::new(coeff_aligned, 0.0);
+    let t_scaled = rotation.adjoint() * faer::Scale(scale);
+
+    // X_aligned = X_curr * T = (1+α) X_curr U^† using GEMM
+    let x_aligned = &x_curr * t_scaled;
+
+    // Build result: X_pred = X_aligned + coeff_prev * X_prev
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
+    let coeff_p = Complex64::new(coeff_prev, 0.0);
 
     for j in 0..m {
-        let aligned_slice = aligned[j].as_slice();
         let prev_slice = prev[j].as_slice();
-
         let output_data: Vec<Complex64> = (0..n)
             .map(|k| {
-                aligned_slice[k] * coeff_aligned + prev_slice[k] * coeff_prev
+                let aligned = x_aligned.get(k, j);
+                Complex64::new(aligned.re, aligned.im) + coeff_p * prev_slice[k]
             })
             .collect();
-
         result.push(Field2D::from_vec(grid, output_data));
     }
 

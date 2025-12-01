@@ -272,3 +272,19 @@ runs:
     total_time_s: 0.120
     time_per_iter_ms: 0.800
     description: ""
+  - timestamp: "2025-12-01T22:47:23+01:00"
+    polarization: "TE"
+    min_iter: 5
+    max_iter: 21
+    total_iterations: 254
+    total_time_s: 0.240
+    time_per_iter_ms: 0.900
+    description: "GEMM optimizations for the subspace rotation step."
+  - timestamp: "2025-12-01T22:47:23+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 149
+    total_time_s: 0.100
+    time_per_iter_ms: 0.600
+    description: "GEMM optimizations for the subspace rotation step."
