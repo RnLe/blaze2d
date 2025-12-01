@@ -57,6 +57,9 @@ use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 use std::time::Instant;
 
+use faer::Mat;
+use num_complex::Complex64;
+
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::field::Field2D;
 use crate::grid::Grid2D;
@@ -972,11 +975,11 @@ where
 
         // A_s[i,j] = <q_i, A q_j> = q_i^* (A q_j)
         // The matrix is Hermitian, so A_s[j,i] = conj(A_s[i,j])
-        let backend = self.operator.backend();
 
         #[cfg(feature = "cuda")]
         {
             // GPU path: use batched gram_matrix (single ZGEMM call)
+            let backend = self.operator.backend();
             let a_projected_row_major = backend.gram_matrix(q_block, &aq_block);
 
             // Convert from row-major (gram_matrix output) to column-major (expected by dense solver)
@@ -991,12 +994,32 @@ where
 
         #[cfg(not(feature = "cuda"))]
         {
-            // CPU path: use individual dot products (better compiler optimization)
+            // CPU path: use faer GEMM for matrix multiplication
+            // A_s = Q^H * AQ where Q is n×r and AQ is n×r
+            // Result is r×r in column-major order
+            let n = q_block[0].as_slice().len();
+            
+            // Build Q matrix (n × r) from q_block
+            let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
+                let c = q_block[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
+            
+            // Build AQ matrix (n × r) from aq_block
+            let aq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
+                let c = aq_block[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
+            
+            // Compute A_s = Q^H * AQ using GEMM
+            let a_s = q_mat.adjoint() * &aq_mat;  // r × r
+            
+            // Convert to column-major Vec<Complex64>
             let mut a_projected = vec![num_complex::Complex64::ZERO; r * r];
             for j in 0..r {
                 for i in 0..r {
-                    let inner = backend.dot(&q_block[i], &aq_block[j]);
-                    a_projected[i + j * r] = inner; // Column-major: A[i,j] at index i + j*r
+                    let c = a_s.get(i, j);
+                    a_projected[i + j * r] = num_complex::Complex64::new(c.re, c.im);
                 }
             }
             a_projected
@@ -1071,27 +1094,56 @@ where
 
         #[cfg(not(feature = "cuda"))]
         let new_x_block = {
-            // CPU path: use individual scale/axpy operations (better compiler optimization)
+            // CPU path: use faer GEMM for matrix multiplication
+            // X_new = Q * Y where Q is n×r and Y is r×m
+            let n = q_block[0].as_slice().len();
+            
+            // Build Q matrix (n × r) from q_block
+            let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
+                let c = q_block[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
+            
+            // Build BQ matrix (n × r) from bq_block
+            let bq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
+                let c = bq_block[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
+            
+            // Build Y matrix (r × m) from dense_result eigenvectors
+            let y_mat = Mat::<faer::c64>::from_fn(r, m, |row, col| {
+                let c = dense_result.eigenvector(col)[row];
+                faer::c64::new(c.re, c.im)
+            });
+            
+            // Compute X_new = Q * Y and BX_new = BQ * Y using GEMM
+            let x_new = &q_mat * &y_mat;   // n × m
+            let bx_new = &bq_mat * &y_mat; // n × m
+            
+            // Build new block entries with A*x computed fresh
             let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
-
+            
             for j in 0..m {
-                // Get the j-th eigenvector from dense result (column j of Y)
-                let y_j = dense_result.eigenvector(j); // Slice of length r
-
-                // Compute x_j = Σ_i q_i * y_j[i]
-                let mut x_j = q_block[0].clone();
-                self.operator.backend().scale(y_j[0], &mut x_j);
-                for i in 1..r {
-                    self.operator.backend().axpy(y_j[i], &q_block[i], &mut x_j);
+                // Extract x_j from GEMM result
+                let mut x_j = self.operator.alloc_field();
+                {
+                    let dst = x_j.as_mut_slice();
+                    for row in 0..n {
+                        let c = x_new.get(row, j);
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                 }
-
-                // Compute B*x_j = Σ_i (B*q_i) * y_j[i] using precomputed BQ
-                let mut bx_j = bq_block[0].clone();
-                self.operator.backend().scale(y_j[0], &mut bx_j);
-                for i in 1..r {
-                    self.operator.backend().axpy(y_j[i], &bq_block[i], &mut bx_j);
+                
+                // Extract bx_j from GEMM result
+                let mut bx_j = self.operator.alloc_field();
+                {
+                    let dst = bx_j.as_mut_slice();
+                    for row in 0..n {
+                        let c = bx_new.get(row, j);
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                 }
-
+                
                 // Compute A*x_j
                 let mut ax_j = self.operator.alloc_field();
                 self.operator.apply(&x_j, &mut ax_j);
@@ -1161,20 +1213,34 @@ where
 
         #[cfg(not(feature = "cuda"))]
         {
-            // CPU path: use individual scale/axpy operations (better compiler optimization)
+            // CPU path: use faer GEMM for matrix multiplication
+            // W_new = Q * Y_w where Q is n×r and Y_w is r×n_w
+            let n = q_block[0].as_slice().len();
+            
+            // Build Q matrix (n × r) from q_block
+            let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
+                let c = q_block[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
+            
+            // Build Y_w matrix (r × n_w) from dense_result eigenvectors (columns w_start..w_end)
+            let y_w_mat = Mat::<faer::c64>::from_fn(r, n_w, |row, col| {
+                let c = dense_result.eigenvector(w_start + col)[row];
+                faer::c64::new(c.re, c.im)
+            });
+            
+            // Compute W_new = Q * Y_w using GEMM
+            let w_new = &q_mat * &y_w_mat;  // n × n_w
+            
+            // Extract results into w_block
             let mut new_w_block: Vec<B::Buffer> = Vec::with_capacity(n_w);
-
-            for j in w_start..w_end {
-                // Get the j-th eigenvector from dense result
-                let y_j = dense_result.eigenvector(j); // Slice of length r
-
-                // Compute w = Σ_i q_i * y_j[i]
-                let mut w = q_block[0].clone();
-                self.operator.backend().scale(y_j[0], &mut w);
-                for i in 1..r {
-                    self.operator.backend().axpy(y_j[i], &q_block[i], &mut w);
+            for j in 0..n_w {
+                let mut w = self.operator.alloc_field();
+                let dst = w.as_mut_slice();
+                for row in 0..n {
+                    let c = w_new.get(row, j);
+                    dst[row] = Complex64::new(c.re, c.im);
                 }
-
                 new_w_block.push(w);
             }
 
@@ -1228,6 +1294,9 @@ where
     /// # Returns
     /// An `EigensolverResult` containing the computed eigenvalues and convergence info.
     pub fn solve(&mut self) -> EigensolverResult {
+        // Initialize faer with sequential execution (see lib.rs for rationale)
+        crate::init_faer_sequential();
+        
         // Ensure we're initialized
         if !self.initialized {
             self.initialize();
@@ -1861,6 +1930,9 @@ where
     /// std::fs::write("convergence.json", json)?;
     /// ```
     pub fn solve_with_diagnostics(&mut self, label: impl Into<String>) -> DiagnosticResult {
+        // Initialize faer with sequential execution (see lib.rs for rationale)
+        crate::init_faer_sequential();
+        
         // Ensure we're initialized
         if !self.initialized {
             self.initialize();
