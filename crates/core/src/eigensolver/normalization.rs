@@ -360,7 +360,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
 
     // Step 4 & 5: Build and apply transformation X_new = X_old * T
     // where T = Q_kept * Λ_kept^{-1/2} (p × rank matrix)
-    
+
     #[cfg(feature = "cuda")]
     {
         // GPU path: use existing manual implementation
@@ -371,7 +371,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 transform[row * rank + out_col] = eigenvectors[row * p + in_col] * scale;
             }
         }
-        
+
         let n = vectors[0].as_slice().len();
         let mut new_vectors: Vec<Vec<Complex64>> = vec![vec![Complex64::ZERO; n]; rank];
         let mut new_mass: Vec<Vec<Complex64>> = vec![vec![Complex64::ZERO; n]; rank];
@@ -379,16 +379,16 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         for in_idx in 0..p {
             let src_vec = vectors[in_idx].as_slice();
             let src_mass = mass_vectors[in_idx].as_slice();
-            
+
             for out_idx in 0..rank {
                 let coeff = transform[in_idx * rank + out_idx];
                 if coeff.re.abs() < 1e-30 && coeff.im.abs() < 1e-30 {
                     continue;
                 }
-                
+
                 let dst_vec = &mut new_vectors[out_idx];
                 let dst_mass = &mut new_mass[out_idx];
-                
+
                 for k in 0..n {
                     dst_vec[k] += coeff * src_vec[k];
                     dst_mass[k] += coeff * src_mass[k];
@@ -406,13 +406,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             }
         }
     }
-    
+
     #[cfg(not(feature = "cuda"))]
     {
         // CPU path: use faer GEMM for matrix multiplication
         // X_new = X_old * T where X_old is n×p and T is p×rank
         let n = vectors[0].as_slice().len();
-        
+
         // Build transformation matrix T directly in faer format (p × rank)
         let t_mat = Mat::<faer::c64>::from_fn(p, rank, |row, col| {
             let in_col = kept_indices[col];
@@ -420,23 +420,23 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             let c = eigenvectors[row * p + in_col];
             faer::c64::new(c.re * scale, c.im * scale)
         });
-        
+
         // Build X_old matrix (n × p) from vectors
         let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
             let c = vectors[col].as_slice()[row];
             faer::c64::new(c.re, c.im)
         });
-        
-        // Build M_old matrix (n × p) from mass_vectors  
+
+        // Build M_old matrix (n × p) from mass_vectors
         let m_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
             let c = mass_vectors[col].as_slice()[row];
             faer::c64::new(c.re, c.im)
         });
-        
+
         // Compute X_new = X_old * T and M_new = M_old * T using GEMM
-        let x_new = &x_mat * &t_mat;  // n × rank
-        let m_new = &m_mat * &t_mat;  // n × rank
-        
+        let x_new = &x_mat * &t_mat; // n × rank
+        let m_new = &m_mat * &t_mat; // n × rank
+
         // Copy results back to vectors
         for col in 0..rank {
             let dst = vectors[col].as_mut_slice();
@@ -452,7 +452,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 dst[row] = Complex64::new(c.re, c.im);
             }
         }
-        
+
         // Zero out unused slots
         for i in rank..p {
             zero_buffer(vectors[i].as_mut_slice());

@@ -114,7 +114,7 @@ fn test_convergence_across_band_gap() {
     // Bands 3-5 are above the gap (still converging)
     let eigenvalue_changes = vec![
         1e-10, 1e-9, 1e-8, // Below gap: very converged
-        1e-3, 1e-2, 1e-1,  // Above gap: still far
+        1e-3, 1e-2, 1e-1, // Above gap: still far
     ];
 
     let result = check_for_locking(&eigenvalue_changes, tol);

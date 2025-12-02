@@ -72,7 +72,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     bandstructure::BandStructureJob,
     bravais::LatticeType,
-    brillouin::{generate_path, BrillouinPath, PathPreset as NewPathPreset},
+    brillouin::{BrillouinPath, PathPreset as NewPathPreset, generate_path},
     dielectric::DielectricOptions,
     eigensolver::EigensolverConfig,
     geometry::Geometry2D,
@@ -205,7 +205,7 @@ impl From<JobConfig> for BandStructureJob {
         let mut k_path = value.k_path;
         if k_path.is_empty() {
             if let Some(spec) = &value.path {
-                // Use the new path generation for rectangular, 
+                // Use the new path generation for rectangular,
                 // fall back to symmetry module for others
                 match spec.preset {
                     PathPreset::Rectangular => {
@@ -236,4 +236,3 @@ impl From<JobConfig> for BandStructureJob {
         }
     }
 }
-

@@ -50,7 +50,7 @@ use std::time::Instant;
 
 use crate::{
     backend::SpectralBackend,
-    band_tracking::{apply_permutation, track_bands},
+    band_tracking::{apply_permutation, track_bands_with_frequencies},
     diagnostics::{ConvergenceStudy, PreconditionerType},
     dielectric::{Dielectric2D, DielectricOptions},
     eigensolver::{Eigensolver, EigensolverConfig, SubspaceHistory},
@@ -209,11 +209,11 @@ impl Default for RunOptions {
     fn default() -> Self {
         Self {
             precond_type: PreconditionerType::default(),
-            use_subspace_prediction: true,  // Stage 1: rotation-based warm-start
-            use_extrapolation: true,         // Stage 2: linear extrapolation
-            use_band_window_shift: false,    // Disabled by default (experimental)
-            band_window_blend: 0.5,          // Equal mix of adaptive and band-window
-            band_window_scale: 0.5,          // Conservative scaling of median eigenvalue
+            use_subspace_prediction: true, // Stage 1: rotation-based warm-start
+            use_extrapolation: true,       // Stage 2: linear extrapolation
+            use_band_window_shift: false,  // Disabled by default (experimental)
+            band_window_blend: 0.5,        // Equal mix of adaptive and band-window
+            band_window_scale: 0.5,        // Conservative scaling of median eigenvalue
         }
     }
 }
@@ -363,14 +363,15 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     let eps = dielectric.eps();
     let eps_min = eps.iter().cloned().fold(f64::INFINITY, f64::min);
     let eps_max = eps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let eps_contrast = if eps_min > 1e-15 { eps_max / eps_min } else { f64::INFINITY };
+    let eps_contrast = if eps_min > 1e-15 {
+        eps_max / eps_min
+    } else {
+        f64::INFINITY
+    };
 
     info!(
         "[bandstructure] dielectric: ε=[{:.3}, {:.3}] contrast={:.1}x precond={:?}",
-        eps_min,
-        eps_max,
-        eps_contrast,
-        precond_type,
+        eps_min, eps_max, eps_contrast, precond_type,
     );
 
     // ========================================================================
@@ -390,17 +391,20 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
             // Build preconditioner for diagnostics (always using adaptive shift)
-            let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
-                match precond_type {
-                    PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
-                    PreconditionerType::None => None,
-                    PreconditionerType::FourierDiagonalKernelCompensated => {
-                        Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                    }
-                    PreconditionerType::TransverseProjection => {
-                        Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
-                    }
-                };
+            let mut preconditioner_opt: Option<
+                Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
+            > = match precond_type {
+                PreconditionerType::Auto => {
+                    unreachable!("Auto should be resolved before this point")
+                }
+                PreconditionerType::None => None,
+                PreconditionerType::FourierDiagonalKernelCompensated => {
+                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
+                }
+                PreconditionerType::TransverseProjection => Some(Box::new(
+                    theta.build_transverse_projection_preconditioner_adaptive(),
+                )),
+            };
 
             const POWER_ITERATIONS: usize = 15;
 
@@ -415,12 +419,11 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             };
 
             // Condition number estimates
-            let (lambda_max, lambda_min, kappa) =
-                theta.estimate_condition_number(POWER_ITERATIONS);
+            let (lambda_max, lambda_min, kappa) = theta.estimate_condition_number(POWER_ITERATIONS);
 
             if let Some(ref mut precond) = preconditioner_opt {
-                let (_pm_max, _pm_min, pm_kappa) =
-                    theta.estimate_preconditioned_condition_number(&mut **precond, POWER_ITERATIONS);
+                let (_pm_max, _pm_min, pm_kappa) = theta
+                    .estimate_preconditioned_condition_number(&mut **precond, POWER_ITERATIONS);
                 let reduction = kappa / pm_kappa;
                 info!(
                     "[bandstructure] κ(A)≈{:.1} κ(M⁻¹A)≈{:.1} ({:.1}x reduction) self-adjoint={} ({:.1e})",
@@ -462,6 +465,11 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     // and can be used for warm-starting subsequent k-points.
     let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
 
+    // Storage for previous frequencies (ω) for degenerate block disambiguation
+    // These are used by track_bands_with_frequencies to break ties when
+    // singular values indicate near-degenerate bands.
+    let mut prev_omegas: Option<Vec<f64>> = None;
+
     // Storage for previous eigenvalues (ω² = λ) for band-window preconditioner shift
     // These are used to inform the preconditioner shift at the next k-point.
     let mut prev_eigenvalues: Option<Vec<f64>> = None;
@@ -470,20 +478,18 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     if options.use_band_window_shift {
         info!(
             "[bandstructure] Band-window shift enabled (blend={:.2}, scale={:.2})",
-            options.band_window_blend,
-            options.band_window_scale
+            options.band_window_blend, options.band_window_scale
         );
     }
 
     // Get dielectric epsilon for B-weighted overlaps
     // - TE mode: B = I, use standard inner product (None)
     // - TM mode (generalized): B = ε, use ε-weighted inner product
-    let eps_for_tracking: Option<Vec<f64>> =
-        if job.pol == Polarization::TM {
-            Some(dielectric.eps().to_vec())
-        } else {
-            None
-        };
+    let eps_for_tracking: Option<Vec<f64>> = if job.pol == Polarization::TM {
+        Some(dielectric.eps().to_vec())
+    } else {
+        None
+    };
 
     // Detect if we can reuse the first Γ-point result for the last k-point
     // This avoids redundant computation when the path is e.g., Γ→X→M→Γ
@@ -522,7 +528,10 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         }
 
         if is_gamma {
-            debug!("[bandstructure] k#{:03} is Γ-point: constant mode will be deflated", k_idx);
+            debug!(
+                "[bandstructure] k#{:03} is Γ-point: constant mode will be deflated",
+                k_idx
+            );
         }
 
         // Convert fractional k-point to Cartesian Bloch wavevector using the
@@ -571,36 +580,43 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         // Use band-window shift if enabled AND we have previous eigenvalues,
         // otherwise fall back to adaptive shift.
         let use_band_window = options.use_band_window_shift && prev_eigenvalues.is_some();
-        let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
-            match precond_type {
-                PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
-                PreconditionerType::None => None,
-                PreconditionerType::FourierDiagonalKernelCompensated => {
-                    if use_band_window {
-                        // Use eigenvalues from previous k-point to tune the preconditioner
-                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                        Some(Box::new(theta.build_homogeneous_preconditioner_band_window(
+        let mut preconditioner_opt: Option<
+            Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
+        > = match precond_type {
+            PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
+            PreconditionerType::None => None,
+            PreconditionerType::FourierDiagonalKernelCompensated => {
+                if use_band_window {
+                    // Use eigenvalues from previous k-point to tune the preconditioner
+                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                    Some(Box::new(
+                        theta.build_homogeneous_preconditioner_band_window(
                             eigenvalues,
                             Some(options.band_window_blend),
                             Some(options.band_window_scale),
-                        )))
-                    } else {
-                        Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                    }
+                        ),
+                    ))
+                } else {
+                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
                 }
-                PreconditionerType::TransverseProjection => {
-                    if use_band_window {
-                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                        Some(Box::new(theta.build_transverse_projection_preconditioner_band_window(
+            }
+            PreconditionerType::TransverseProjection => {
+                if use_band_window {
+                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                    Some(Box::new(
+                        theta.build_transverse_projection_preconditioner_band_window(
                             eigenvalues,
                             Some(options.band_window_blend),
                             Some(options.band_window_scale),
-                        )))
-                    } else {
-                        Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
-                    }
+                        ),
+                    ))
+                } else {
+                    Some(Box::new(
+                        theta.build_transverse_projection_preconditioner_adaptive(),
+                    ))
                 }
-            };
+            }
+        };
 
         // Create and run the eigensolver
         let mut solver = Eigensolver::new(
@@ -629,28 +645,41 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
 
         // ====================================================================
         // Band Tracking: reorder by overlap with previous k-point
+        // Uses polar decomposition + frequency continuity for degenerate blocks.
         // ====================================================================
-        if let Some(ref prev_vecs) = prev_eigenvectors {
-            let tracking_result = track_bands(
-                &backend,
+        if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
+            let tracking_result = track_bands_with_frequencies(
                 prev_vecs,
                 &eigenvectors,
+                prev_freqs,
+                &omegas,
                 eps_for_tracking.as_deref(),
+            );
+
+            // Always log σ_min for diagnostic purposes
+            let perm_str = if tracking_result.had_swaps {
+                format!("{:?}", tracking_result.permutation)
+            } else {
+                "identity".to_string()
+            };
+            let blocks_str = if tracking_result.degenerate_blocks.is_empty() {
+                String::new()
+            } else {
+                format!(" blocks={:?}", tracking_result.degenerate_blocks)
+            };
+            info!(
+                "[band_tracking] k#{:03} σ_min={:.6} perm={}{}",
+                k_idx, tracking_result.sigma_min, perm_str, blocks_str
             );
 
             if tracking_result.had_swaps {
                 apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
 
-                // Log low overlap warnings via log crate
-                if tracking_result.min_overlap < 0.1 {
+                // Log warnings for near-degenerate regions (low sigma_min)
+                if tracking_result.sigma_min < 0.1 {
                     warn!(
-                        "[bandstructure] k#{:03} band tracking: low overlap ({:.4}), may be unreliable",
-                        k_idx, tracking_result.min_overlap
-                    );
-                } else {
-                    debug!(
-                        "[bandstructure] k#{:03} band tracking: swaps applied, min_overlap={:.4}",
-                        k_idx, tracking_result.min_overlap
+                        "[bandstructure] k#{:03} band tracking: near-degeneracy (σ_min={:.4}), may be unreliable",
+                        k_idx, tracking_result.sigma_min
                     );
                 }
             }
@@ -658,6 +687,9 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
 
         // Store eigenvectors for band tracking at next k-point
         prev_eigenvectors = Some(eigenvectors.clone());
+
+        // Store frequencies (ω) for degenerate block disambiguation at next k-point
+        prev_omegas = Some(omegas.clone());
 
         // Store eigenvalues (ω²) for band-window preconditioner shift at next k-point
         // We store the raw eigenvalues (λ = ω²), not frequencies.
@@ -756,8 +788,7 @@ pub fn run_with_diagnostics<B: SpectralBackend + Clone>(
         job,
         verbosity,
         study_name,
-        RunOptions::new()
-            .with_preconditioner(precond_type),
+        RunOptions::new().with_preconditioner(precond_type),
     )
 }
 
@@ -797,10 +828,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         study_name
     );
 
-    debug!(
-        "[bandstructure] precond={:?}",
-        precond_type
-    );
+    debug!("[bandstructure] precond={:?}", precond_type);
 
     // Sample the dielectric function from geometry
     let dielectric = Dielectric2D::from_geometry(&job.geom, job.grid, &job.dielectric);
@@ -809,14 +837,15 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     let eps = dielectric.eps();
     let eps_min = eps.iter().cloned().fold(f64::INFINITY, f64::min);
     let eps_max = eps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let eps_contrast = if eps_min > 1e-15 { eps_max / eps_min } else { f64::INFINITY };
+    let eps_contrast = if eps_min > 1e-15 {
+        eps_max / eps_min
+    } else {
+        f64::INFINITY
+    };
 
     info!(
         "[bandstructure] dielectric: ε=[{:.3}, {:.3}] contrast={:.1}x precond={:?}",
-        eps_min,
-        eps_max,
-        eps_contrast,
-        precond_type,
+        eps_min, eps_max, eps_contrast, precond_type,
     );
 
     // ========================================================================
@@ -836,17 +865,20 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
             // Build preconditioner for diagnostics (always using adaptive shift)
-            let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
-                match precond_type {
-                    PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
-                    PreconditionerType::None => None,
-                    PreconditionerType::FourierDiagonalKernelCompensated => {
-                        Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                    }
-                    PreconditionerType::TransverseProjection => {
-                        Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
-                    }
-                };
+            let mut preconditioner_opt: Option<
+                Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
+            > = match precond_type {
+                PreconditionerType::Auto => {
+                    unreachable!("Auto should be resolved before this point")
+                }
+                PreconditionerType::None => None,
+                PreconditionerType::FourierDiagonalKernelCompensated => {
+                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
+                }
+                PreconditionerType::TransverseProjection => Some(Box::new(
+                    theta.build_transverse_projection_preconditioner_adaptive(),
+                )),
+            };
 
             const POWER_ITERATIONS: usize = 15;
 
@@ -861,12 +893,11 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
             };
 
             // Condition number estimates
-            let (lambda_max, lambda_min, kappa) =
-                theta.estimate_condition_number(POWER_ITERATIONS);
+            let (lambda_max, lambda_min, kappa) = theta.estimate_condition_number(POWER_ITERATIONS);
 
             if let Some(ref mut precond) = preconditioner_opt {
-                let (_pm_max, _pm_min, pm_kappa) =
-                    theta.estimate_preconditioned_condition_number(&mut **precond, POWER_ITERATIONS);
+                let (_pm_max, _pm_min, pm_kappa) = theta
+                    .estimate_preconditioned_condition_number(&mut **precond, POWER_ITERATIONS);
                 let reduction = kappa / pm_kappa;
                 info!(
                     "[bandstructure] κ(A)≈{:.1} κ(M⁻¹A)≈{:.1} ({:.1}x reduction) self-adjoint={} ({:.1e})",
@@ -915,6 +946,11 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     // and can be used for warm-starting subsequent k-points.
     let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
 
+    // Storage for previous frequencies (ω) for degenerate block disambiguation
+    // These are used by track_bands_with_frequencies to break ties when
+    // singular values indicate near-degenerate bands.
+    let mut prev_omegas: Option<Vec<f64>> = None;
+
     // Storage for previous eigenvalues (ω² = λ) for band-window preconditioner shift
     let mut prev_eigenvalues: Option<Vec<f64>> = None;
 
@@ -922,20 +958,18 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     if options.use_band_window_shift {
         info!(
             "[bandstructure] Band-window shift enabled (blend={:.2}, scale={:.2})",
-            options.band_window_blend,
-            options.band_window_scale
+            options.band_window_blend, options.band_window_scale
         );
     }
 
     // Get dielectric epsilon for B-weighted overlaps
     // - TE mode: B = I, use standard inner product (None)
     // - TM mode (generalized): B = ε, use ε-weighted inner product
-    let eps_for_tracking: Option<Vec<f64>> =
-        if job.pol == Polarization::TM {
-            Some(dielectric.eps().to_vec())
-        } else {
-            None
-        };
+    let eps_for_tracking: Option<Vec<f64>> = if job.pol == Polarization::TM {
+        Some(dielectric.eps().to_vec())
+    } else {
+        None
+    };
 
     // Detect if we can reuse the first Γ-point result for the last k-point
     // This avoids redundant computation when the path is e.g., Γ→X→M→Γ
@@ -974,7 +1008,10 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         }
 
         if is_gamma {
-            debug!("[bandstructure] k#{:03} is Γ-point: constant mode will be deflated", k_idx);
+            debug!(
+                "[bandstructure] k#{:03} is Γ-point: constant mode will be deflated",
+                k_idx
+            );
         }
 
         // Convert fractional k-point to Cartesian Bloch wavevector using the
@@ -991,7 +1028,10 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         let warm_start_used: bool;
         let warm_slice: Option<&[Field2D]> = if prev_was_gamma {
             // Skip warm-start when coming from Γ: those eigenvectors don't overlap well with k≠0
-            debug!("[bandstructure] k#{:03}: skipping warm-start (previous was Γ-point)", k_idx);
+            debug!(
+                "[bandstructure] k#{:03}: skipping warm-start (previous was Γ-point)",
+                k_idx
+            );
             predicted_vectors = None;
             warm_start_used = false;
             None
@@ -1035,35 +1075,42 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         // Use band-window shift if enabled AND we have previous eigenvalues,
         // otherwise fall back to adaptive shift.
         let use_band_window = options.use_band_window_shift && prev_eigenvalues.is_some();
-        let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
-            match precond_type {
-                PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
-                PreconditionerType::None => None,
-                PreconditionerType::FourierDiagonalKernelCompensated => {
-                    if use_band_window {
-                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                        Some(Box::new(theta.build_homogeneous_preconditioner_band_window(
+        let mut preconditioner_opt: Option<
+            Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
+        > = match precond_type {
+            PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
+            PreconditionerType::None => None,
+            PreconditionerType::FourierDiagonalKernelCompensated => {
+                if use_band_window {
+                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                    Some(Box::new(
+                        theta.build_homogeneous_preconditioner_band_window(
                             eigenvalues,
                             Some(options.band_window_blend),
                             Some(options.band_window_scale),
-                        )))
-                    } else {
-                        Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                    }
+                        ),
+                    ))
+                } else {
+                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
                 }
-                PreconditionerType::TransverseProjection => {
-                    if use_band_window {
-                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                        Some(Box::new(theta.build_transverse_projection_preconditioner_band_window(
+            }
+            PreconditionerType::TransverseProjection => {
+                if use_band_window {
+                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                    Some(Box::new(
+                        theta.build_transverse_projection_preconditioner_band_window(
                             eigenvalues,
                             Some(options.band_window_blend),
                             Some(options.band_window_scale),
-                        )))
-                    } else {
-                        Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
-                    }
+                        ),
+                    ))
+                } else {
+                    Some(Box::new(
+                        theta.build_transverse_projection_preconditioner_adaptive(),
+                    ))
                 }
-            };
+            }
+        };
 
         // Create and run the eigensolver
         let mut solver = Eigensolver::new(
@@ -1087,35 +1134,51 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
 
         // ====================================================================
         // Band Tracking: reorder by overlap with previous k-point
+        // Uses polar decomposition + frequency continuity for degenerate blocks.
         // ====================================================================
-        if let Some(ref prev_vecs) = prev_eigenvectors {
-            let tracking_result = track_bands(
-                &backend,
+        if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
+            let tracking_result = track_bands_with_frequencies(
                 prev_vecs,
                 &eigenvectors,
+                prev_freqs,
+                &omegas,
                 eps_for_tracking.as_deref(),
+            );
+
+            // Always log σ_min for diagnostic purposes
+            let perm_str = if tracking_result.had_swaps {
+                format!("{:?}", tracking_result.permutation)
+            } else {
+                "identity".to_string()
+            };
+            let blocks_str = if tracking_result.degenerate_blocks.is_empty() {
+                String::new()
+            } else {
+                format!(" blocks={:?}", tracking_result.degenerate_blocks)
+            };
+            info!(
+                "[band_tracking] k#{:03} σ_min={:.6} perm={}{}",
+                k_idx, tracking_result.sigma_min, perm_str, blocks_str
             );
 
             if tracking_result.had_swaps {
                 apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
 
-                // Log low overlap warnings via log crate
-                if tracking_result.min_overlap < 0.1 {
+                // Log warnings for near-degenerate regions (low sigma_min)
+                if tracking_result.sigma_min < 0.1 {
                     warn!(
-                        "k#{:03} band tracking: low overlap ({:.4}), tracking may be unreliable",
-                        k_idx, tracking_result.min_overlap
+                        "[bandstructure] k#{:03} band tracking: near-degeneracy (σ_min={:.4}), may be unreliable",
+                        k_idx, tracking_result.sigma_min
                     );
                 }
-
-                debug!(
-                    "[bandstructure] k#{:03} band tracking: swaps detected, min_overlap={:.4}",
-                    k_idx, tracking_result.min_overlap
-                );
             }
         }
 
         // Store eigenvectors for band tracking at next k-point
         prev_eigenvectors = Some(eigenvectors.clone());
+
+        // Store frequencies (ω) for degenerate block disambiguation at next k-point
+        prev_omegas = Some(omegas.clone());
 
         // Store eigenvalues (ω²) for band-window preconditioner shift at next k-point
         prev_eigenvalues = Some(diag_result.result.eigenvalues.clone());

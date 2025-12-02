@@ -369,7 +369,11 @@ fn test_solve_with_exact_eigenvector() {
     // With exact eigenvectors, should converge very quickly
     // (typically 2-3 iterations: to establish eigenvalues and confirm convergence)
     assert!(result.converged, "Should converge with exact eigenvectors");
-    assert!(result.iterations <= 3, "Should converge in 3 iterations or less, got {}", result.iterations);
+    assert!(
+        result.iterations <= 3,
+        "Should converge in 3 iterations or less, got {}",
+        result.iterations
+    );
 
     // Eigenvalues should be exact
     assert!(

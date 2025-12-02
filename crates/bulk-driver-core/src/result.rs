@@ -5,6 +5,10 @@
 
 use crate::expansion::JobParams;
 
+/// A complex number represented as a pair of f64 (real, imaginary).
+/// Used for serializable representation of eigenvectors.
+pub type ComplexPair = [f64; 2];
+
 // ============================================================================
 // Compact Band Result
 // ============================================================================
@@ -63,6 +67,14 @@ pub struct EAResult {
     /// Computed eigenvalues
     pub eigenvalues: Vec<f64>,
 
+    /// Computed eigenvectors as flattened complex arrays.
+    /// Each inner Vec represents one eigenvector, with complex values as [re, im] pairs.
+    /// Shape: [n_bands][grid_size], where each element is [f64; 2] (real, imag).
+    pub eigenvectors: Vec<Vec<ComplexPair>>,
+
+    /// Grid dimensions [nx, ny] for reconstructing the 2D field structure
+    pub grid_dims: [usize; 2],
+
     /// Number of iterations taken
     pub n_iterations: usize,
 
@@ -83,7 +95,14 @@ impl CompactBandResult {
                 let bands_size: usize = m.bands.iter().map(|b| b.len() * 8 + 24).sum();
                 k_path_size + distances_size + bands_size
             }
-            CompactResultType::EA(ea) => ea.eigenvalues.len() * 8 + 24,
+            CompactResultType::EA(ea) => {
+                let eigenvalues_size = ea.eigenvalues.len() * 8;
+                // Each eigenvector: n_elements * 2 floats (complex) * 8 bytes
+                let eigenvectors_size: usize = ea.eigenvectors.iter()
+                    .map(|v| v.len() * 16 + 24)
+                    .sum();
+                eigenvalues_size + eigenvectors_size + 24
+            }
         };
 
         base + params_size + result_size
@@ -195,6 +214,10 @@ mod tests {
             },
             result_type: CompactResultType::EA(EAResult {
                 eigenvalues: vec![0.1, 0.2, 0.3, 0.4, 0.5],
+                eigenvectors: (0..5)
+                    .map(|_| (0..64*64).map(|i| [i as f64 * 0.01, i as f64 * 0.001]).collect())
+                    .collect(),
+                grid_dims: [64, 64],
                 n_iterations: 50,
                 converged: true,
             }),

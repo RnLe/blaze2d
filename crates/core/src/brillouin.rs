@@ -128,9 +128,10 @@ impl BrillouinPath {
             BrillouinPath::Triangular | BrillouinPath::Hexagonal => {
                 vec![GAMMA, M_HEX, K_HEX, GAMMA]
             }
-            BrillouinPath::Custom(points) => {
-                points.iter().map(|&k| HighSymmetryPoint::new("?", k)).collect()
-            }
+            BrillouinPath::Custom(points) => points
+                .iter()
+                .map(|&k| HighSymmetryPoint::new("?", k))
+                .collect(),
         }
     }
 
@@ -405,10 +406,7 @@ mod tests {
             BrillouinPath::for_lattice_type(LatticeType::Rectangular),
             Some(BrillouinPath::Rectangular)
         );
-        assert_eq!(
-            BrillouinPath::for_lattice_type(LatticeType::Oblique),
-            None
-        );
+        assert_eq!(BrillouinPath::for_lattice_type(LatticeType::Oblique), None);
     }
 
     #[test]
@@ -416,7 +414,7 @@ mod tests {
         let lattice = BravaisLattice::square(1.0);
         let path = generate_path(&BrillouinPath::Square, 10);
         let distances = path_distances(&path, &lattice);
-        
+
         // Distances should be monotonically increasing
         for i in 1..distances.len() {
             assert!(distances[i] >= distances[i - 1]);

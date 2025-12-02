@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "blaze2d"
-version = "0.2.0"
+version = "0.3.0"
 description = "BLAZE - Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals"
 readme = "README.md"
 license = { text = "MIT" }

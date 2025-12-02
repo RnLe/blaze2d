@@ -349,7 +349,7 @@ fn integrate_circle_rect_intersection(
 /// This is a good approximation when the arc subtends a small angle.
 fn compute_circle_interface_normal(
     circle_center: [f64; 2],
-    _radius: f64,  // kept for potential future use (arc averaging)
+    _radius: f64, // kept for potential future use (arc averaging)
     rect_center: [f64; 2],
 ) -> [f64; 2] {
     // Direction from circle center to pixel center
@@ -489,7 +489,10 @@ pub fn compute_smoothed_dielectric(
 ) -> (f64, f64, [f64; 4]) {
     assert!(eps_inside > 0.0, "eps_inside must be positive");
     assert!(eps_outside > 0.0, "eps_outside must be positive");
-    assert!(fill_frac >= 0.0 && fill_frac <= 1.0, "fill_frac must be in [0, 1]");
+    assert!(
+        fill_frac >= 0.0 && fill_frac <= 1.0,
+        "fill_frac must be in [0, 1]"
+    );
 
     // Area-weighted averages
     let avg_eps = fill_frac * eps_inside + (1.0 - fill_frac) * eps_outside;
@@ -522,7 +525,7 @@ pub fn compute_smoothed_dielectric(
     // ε̃⁻¹ = P * inv_normal + (I - P) * inv_tangential
     //      = inv_tangential * I + (inv_normal - inv_tangential) * P
     let delta = inv_normal - inv_tangential;
-    
+
     // NOTE: MPB uses a swapped xx↔yy convention in its HDF5 output.
     // After extensive comparison with MPB's epsilon.h5, swapping xx↔yy
     // reduces TE eigenvalue trace error from ~0.08 to ~0.04 (50% improvement).

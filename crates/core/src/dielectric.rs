@@ -14,7 +14,7 @@
 //! This matches MPB's convention for direct comparison.
 
 use crate::{
-    analytic_geometry::{compute_smoothed_dielectric, AnalyticShape, Circle},
+    analytic_geometry::{AnalyticShape, Circle, compute_smoothed_dielectric},
     geometry::Geometry2D,
     grid::Grid2D,
 };
@@ -148,8 +148,12 @@ impl Dielectric2D {
             .collect();
 
         let (smoothed_eps, smoothed_inv, tensors) = match opts.smoothing.method {
-            SmoothingMethod::Subgrid => build_smoothed_dielectric_subgrid(geom, grid, &opts.smoothing),
-            SmoothingMethod::Analytic => build_smoothed_dielectric_analytic(geom, grid, &opts.smoothing),
+            SmoothingMethod::Subgrid => {
+                build_smoothed_dielectric_subgrid(geom, grid, &opts.smoothing)
+            }
+            SmoothingMethod::Analytic => {
+                build_smoothed_dielectric_analytic(geom, grid, &opts.smoothing)
+            }
         };
 
         Self {
@@ -451,10 +455,7 @@ fn build_smoothed_dielectric_analytic(
         // Add the atom and its periodic images
         for di in -1i32..=1 {
             for dj in -1i32..=1 {
-                let frac_pos = [
-                    atom.pos[0] + di as f64,
-                    atom.pos[1] + dj as f64,
-                ];
+                let frac_pos = [atom.pos[0] + di as f64, atom.pos[1] + dj as f64];
                 let center_cart = geom.lattice.fractional_to_cartesian(frac_pos);
                 circles.push((Circle::new(center_cart, radius_cart), atom.eps_inside));
             }
@@ -493,7 +494,8 @@ fn build_smoothed_dielectric_analytic(
                             // For fully-inside pixels, compute normal from center
                             circle.normal_at(pixel_center)
                         });
-                        best_intersection = Some((intersection.filling_fraction, normal, *eps_inside));
+                        best_intersection =
+                            Some((intersection.filling_fraction, normal, *eps_inside));
                     }
                 }
             }

@@ -85,6 +85,10 @@ impl JobResult {
 pub struct EAJobResult {
     /// Computed eigenvalues
     pub eigenvalues: Vec<f64>,
+    /// Computed eigenvectors as Field2D
+    pub eigenvectors: Vec<mpb2d_core::field::Field2D>,
+    /// Grid dimensions [nx, ny]
+    pub grid_dims: [usize; 2],
     /// Number of iterations taken
     pub n_iterations: usize,
     /// Whether convergence was achieved
@@ -944,6 +948,8 @@ impl BulkDriver {
 
             Ok::<_, String>(EAJobResult {
                 eigenvalues: solve_result.eigenvalues,
+                eigenvectors: solve_result.eigenvectors,
+                grid_dims: [nx, ny],
                 n_iterations: solve_result.iterations,
                 converged: solve_result.converged,
             })
