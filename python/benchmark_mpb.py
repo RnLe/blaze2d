@@ -11,8 +11,8 @@ using the same configuration as the Rust resolution_scaling benchmark:
 
 It also reads criterion benchmark results from the Rust backend if available.
 
-Additionally, it runs mpb2d-cli for comparison and computes relative eigenvalue
-errors between MPB and mpb2d solvers using Hungarian matching.
+Additionally, it runs blaze-cli for comparison and computes relative eigenvalue
+errors between MPB and blaze solvers using Hungarian matching.
 
 Output: CSV file with columns: resolution, polarization, source, time_ms
 """
@@ -214,11 +214,12 @@ def read_criterion_results(criterion_dir: Path, resolutions: List[int]) -> List[
         return results
     
     # Map criterion benchmark names to our source names
+    # NOTE: GPU benchmarks commented out until CUDA FFT is implemented
     source_map = {
-        "CPU_TM": ("mpb2d CPU", "TM"),
-        "CPU_TE": ("mpb2d CPU", "TE"),
-        "GPU_TM": ("mpb2d GPU", "TM"),
-        "GPU_TE": ("mpb2d GPU", "TE"),
+        "CPU_TM": ("blaze CPU", "TM"),
+        "CPU_TE": ("blaze CPU", "TE"),
+        # "GPU_TM": ("blaze GPU", "TM"),
+        # "GPU_TE": ("blaze GPU", "TE"),
     }
     
     for bench_name, (source, polarization) in source_map.items():
@@ -258,7 +259,7 @@ def read_criterion_results(criterion_dir: Path, resolutions: List[int]) -> List[
 # ============================================================================
 
 def generate_toml_config(resolution: int, polarization: str) -> str:
-    """Generate a TOML configuration file for mpb2d-cli."""
+    """Generate a TOML configuration file for blaze-cli."""
     return f"""# Auto-generated benchmark config: resolution={resolution}, polarization={polarization.upper()}
 polarization = "{polarization.upper()}"
 
@@ -291,12 +292,12 @@ tol = 1e-6
 """
 
 
-def run_mpb2d(resolution: int, polarization: str, workspace_root: Path) -> Tuple[Optional[List[List[float]]], float]:
-    """Run mpb2d-cli for a given configuration and return eigenvalues and timing.
+def run_blaze(resolution: int, polarization: str, workspace_root: Path) -> Tuple[Optional[List[List[float]]], float]:
+    """Run blaze-cli for a given configuration and return eigenvalues and timing.
     
     Returns:
         Tuple of (bands, elapsed_ms) where bands is a list of lists of frequencies,
-        or (None, 0.0) if mpb2d-cli fails.
+        or (None, 0.0) if blaze-cli fails.
         bands[k_idx][band_idx] = frequency at k-point k_idx for band band_idx.
     """
     cli_path = workspace_root / "target" / "release" / "mpb2d-cli"
@@ -304,7 +305,7 @@ def run_mpb2d(resolution: int, polarization: str, workspace_root: Path) -> Tuple
         cli_path = workspace_root / "target" / "debug" / "mpb2d-cli"
     
     if not cli_path.exists():
-        warnings.warn(f"mpb2d-cli not found at {cli_path}")
+        warnings.warn(f"blaze-cli not found at {cli_path}")
         return None, 0.0
     
     # Create temporary files for config and output
@@ -328,7 +329,7 @@ def run_mpb2d(resolution: int, polarization: str, workspace_root: Path) -> Tuple
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         
         if result.returncode != 0:
-            warnings.warn(f"mpb2d-cli failed for res={resolution} pol={polarization}: {result.stderr}")
+            warnings.warn(f"blaze-cli failed for res={resolution} pol={polarization}: {result.stderr}")
             return None, elapsed_ms
         
         # Parse output CSV
@@ -349,10 +350,10 @@ def run_mpb2d(resolution: int, polarization: str, workspace_root: Path) -> Tuple
         return bands, elapsed_ms
     
     except subprocess.TimeoutExpired:
-        warnings.warn(f"mpb2d-cli timed out for res={resolution} pol={polarization}")
+        warnings.warn(f"blaze-cli timed out for res={resolution} pol={polarization}")
         return None, 0.0
     except Exception as e:
-        warnings.warn(f"mpb2d-cli error for res={resolution} pol={polarization}: {e}")
+        warnings.warn(f"blaze-cli error for res={resolution} pol={polarization}: {e}")
         return None, 0.0
     finally:
         # Cleanup
@@ -360,15 +361,15 @@ def run_mpb2d(resolution: int, polarization: str, workspace_root: Path) -> Tuple
         output_path.unlink(missing_ok=True)
 
 
-def compute_hungarian_deviations(mpb_bands: List[List[float]], mpb2d_bands: List[List[float]]) -> List[float]:
+def compute_hungarian_deviations(mpb_bands: List[List[float]], blaze_bands: List[List[float]]) -> List[float]:
     """Compute per-band deviations using Hungarian matching algorithm.
     
-    For each k-point, finds the optimal assignment of mpb2d bands to mpb bands
+    For each k-point, finds the optimal assignment of blaze bands to mpb bands
     that minimizes total deviation, then returns all individual deviations.
     
     Args:
         mpb_bands: bands[k_idx][band_idx] = frequency for MPB reference
-        mpb2d_bands: bands[k_idx][band_idx] = frequency for mpb2d solver
+        blaze_bands: bands[k_idx][band_idx] = frequency for blaze solver
     
     Returns:
         List of all deviations |mpb2d - mpb| after optimal matching.
@@ -379,34 +380,34 @@ def compute_hungarian_deviations(mpb_bands: List[List[float]], mpb2d_bands: List
     
     all_deviations = []
     
-    for k_idx, (mpb_k, mpb2d_k) in enumerate(zip(mpb_bands, mpb2d_bands)):
+    for k_idx, (mpb_k, blaze_k) in enumerate(zip(mpb_bands, blaze_bands)):
         # Convert to numpy arrays
         mpb_vals = np.array(mpb_k, dtype=float)
-        mpb2d_vals = np.array(mpb2d_k, dtype=float)
+        blaze_vals = np.array(blaze_k, dtype=float)
         
         # Skip if any NaN
-        if np.any(np.isnan(mpb_vals)) or np.any(np.isnan(mpb2d_vals)):
+        if np.any(np.isnan(mpb_vals)) or np.any(np.isnan(blaze_vals)):
             continue
         
         # Skip if all values are near zero (Gamma point)
         if np.max(np.abs(mpb_vals)) < 1e-6:
             continue
         
-        # Build cost matrix: |mpb[i] - mpb2d[j]|
-        cost = np.abs(mpb_vals[:, None] - mpb2d_vals[None, :])
+        # Build cost matrix: |mpb[i] - blaze[j]|
+        cost = np.abs(mpb_vals[:, None] - blaze_vals[None, :])
         
         # Hungarian algorithm for optimal assignment
         row_ind, col_ind = linear_sum_assignment(cost)
         
         # Collect deviations after optimal matching
         for i, j in zip(row_ind, col_ind):
-            deviation = abs(mpb_vals[i] - mpb2d_vals[j])
+            deviation = abs(mpb_vals[i] - blaze_vals[j])
             all_deviations.append(deviation)
     
     return all_deviations
 
 
-def compute_relative_error(mpb_bands: List[List[float]], mpb2d_bands: List[List[float]], debug: bool = False) -> float:
+def compute_relative_error(mpb_bands: List[List[float]], blaze_bands: List[List[float]], debug: bool = False) -> float:
     """Compute mean relative error using trace comparison.
     
     For each k-point, computes the trace (sum of all eigenvalues) and compares.
@@ -417,24 +418,24 @@ def compute_relative_error(mpb_bands: List[List[float]], mpb2d_bands: List[List[
     """
     if debug:
         print(f"  DEBUG: mpb_bands has {len(mpb_bands)} k-points, first k-point has {len(mpb_bands[0]) if mpb_bands else 0} bands")
-        print(f"  DEBUG: mpb2d_bands has {len(mpb2d_bands)} k-points, first k-point has {len(mpb2d_bands[0]) if mpb2d_bands else 0} bands")
-        if mpb_bands and mpb2d_bands:
+        print(f"  DEBUG: blaze_bands has {len(blaze_bands)} k-points, first k-point has {len(blaze_bands[0]) if blaze_bands else 0} bands")
+        if mpb_bands and blaze_bands:
             print(f"  DEBUG: mpb_bands[0] = {mpb_bands[0][:4]}...")
-            print(f"  DEBUG: mpb2d_bands[0] = {mpb2d_bands[0][:4]}...")
+            print(f"  DEBUG: blaze_bands[0] = {blaze_bands[0][:4]}...")
     
     errors = []
     
-    for k_idx, (mpb_k, mpb2d_k) in enumerate(zip(mpb_bands, mpb2d_bands)):
+    for k_idx, (mpb_k, blaze_k) in enumerate(zip(mpb_bands, blaze_bands)):
         # Compute trace (sum of eigenvalues) at each k-point
         mpb_trace = sum(v for v in mpb_k if not (v != v))  # skip NaN
-        mpb2d_trace = sum(v for v in mpb2d_k if not (v != v))  # skip NaN
+        blaze_trace = sum(v for v in blaze_k if not (v != v))  # skip NaN
         
         if debug and k_idx < 3:
-            print(f"  DEBUG: k={k_idx}: mpb_trace={mpb_trace:.6f}, mpb2d_trace={mpb2d_trace:.6f}")
+            print(f"  DEBUG: k={k_idx}: mpb_trace={mpb_trace:.6f}, blaze_trace={blaze_trace:.6f}")
         
         # Skip if trace is too small (near Gamma point with zero modes)
         if mpb_trace > 1e-6:
-            rel_err = abs(mpb2d_trace - mpb_trace) / mpb_trace
+            rel_err = abs(blaze_trace - mpb_trace) / mpb_trace
             errors.append(rel_err)
     
     return float(np.mean(errors)) if errors else float('nan')
@@ -461,15 +462,15 @@ def create_benchmark_plot(results: List[dict], error_results: List[dict], output
     # Color scheme for each source
     color_scheme = {
         "mpb": "#1f4e79",           # Dark blue
-        "mpb2d CPU": "#2e7d32",     # Dark green
-        "mpb2d GPU": "#e65100",     # Dark orange
+        "blaze CPU": "#2e7d32",     # Dark green
+        "blaze GPU": "#e65100",     # Dark orange
     }
     
     # Marker scheme
     marker_scheme = {
         "mpb": "s",          # Square
-        "mpb2d CPU": "o",    # Circle
-        "mpb2d GPU": "^",    # Triangle
+        "blaze CPU": "o",    # Circle
+        "blaze GPU": "^",    # Triangle
     }
     
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
@@ -603,7 +604,7 @@ def create_benchmark_plot(results: List[dict], error_results: List[dict], output
         
         # Error plot - Hungarian deviation distribution
         ax_err.set_xlabel("Resolution", fontsize=12)
-        ax_err.set_ylabel("Deviation |ω_mpb2d - ω_mpb|", fontsize=12)
+        ax_err.set_ylabel("Deviation |ω_blaze - ω_mpb|", fontsize=12)
         ax_err.set_title(f"{pol_label} Polarization - Eigenvalue Deviation", fontsize=14)
         ax_err.set_yscale("log")
         ax_err.set_xticks(x_positions)
@@ -692,10 +693,10 @@ def main() -> None:
     # Workspace root for finding mpb2d-cli
     workspace_root = Path(__file__).parent.parent
     
-    # Build mpb2d-cli (CPU backend - CUDA FFT not yet implemented)
+    # Build blaze-cli (CPU backend - CUDA FFT not yet implemented)
     # NOTE: The CUDA backend has BLAS operations but FFT is not implemented yet,
     # so eigensolving doesn't work with CUDA. Using CPU backend for now.
-    print("Building mpb2d-cli (CPU backend)...")
+    print("Building blaze-cli (CPU backend)...")
     build_result = subprocess.run(
         ["cargo", "build", "--release", "-p", "mpb2d-cli"],
         cwd=workspace_root,
@@ -783,29 +784,29 @@ def main() -> None:
         )
     
     # ========================================================================
-    # Eigenvalue Error Analysis: Run mpb2d and compare with MPB
+    # Eigenvalue Error Analysis: Run blaze and compare with MPB
     # ========================================================================
     error_results = []
     
     if not args.skip_error_analysis and mpb_eigenvalues:
         print("\n" + "=" * 60)
-        print("Eigenvalue Error Analysis: mpb2d vs MPB")
+        print("Eigenvalue Error Analysis: blaze vs MPB")
         print("=" * 60)
         
-        # Build task list for mpb2d runs
-        mpb2d_tasks = [
+        # Build task list for blaze runs
+        blaze_tasks = [
             (res, pol) for res in args.resolutions for pol in args.polarizations
             if (res, pol.upper()) in mpb_eigenvalues
         ]
         
-        for resolution, polarization in mpb2d_tasks:
+        for resolution, polarization in blaze_tasks:
             pol_upper = polarization.upper()
             
-            print(f"Running mpb2d: resolution={resolution}, polarization={pol_upper}...", end=" ", flush=True)
+            print(f"Running blaze: resolution={resolution}, polarization={pol_upper}...", end=" ", flush=True)
             
-            mpb2d_bands, elapsed_ms = run_mpb2d(resolution, polarization, workspace_root)
+            blaze_bands, elapsed_ms = run_blaze(resolution, polarization, workspace_root)
             
-            if mpb2d_bands is None:
+            if blaze_bands is None:
                 print("FAILED")
                 continue
             
@@ -813,10 +814,10 @@ def main() -> None:
             
             # Compute relative error - debug first comparison
             is_first = len(error_results) == 0
-            mean_rel_error = compute_relative_error(mpb_bands, mpb2d_bands, debug=is_first)
+            mean_rel_error = compute_relative_error(mpb_bands, blaze_bands, debug=is_first)
             
             # Compute Hungarian-matched deviations for detailed analysis
-            deviations = compute_hungarian_deviations(mpb_bands, mpb2d_bands)
+            deviations = compute_hungarian_deviations(mpb_bands, blaze_bands)
             
             error_results.append({
                 "resolution": resolution,
@@ -851,7 +852,7 @@ def main() -> None:
         print("Run without --skip-mpb to enable error analysis.")
     
     # Sort results by resolution, then polarization, then source
-    source_order = {"mpb": 0, "mpb2d CPU": 1, "mpb2d GPU": 2}
+    source_order = {"mpb": 0, "blaze CPU": 1, "blaze GPU": 2}
     results.sort(key=lambda r: (r["resolution"], r["polarization"], source_order.get(r["source"], 99)))
     
     # Write CSV

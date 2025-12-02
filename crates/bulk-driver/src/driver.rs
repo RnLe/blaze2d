@@ -25,8 +25,10 @@ use mpb2d_backend_cpu::CpuBackend;
 
 use crate::adaptive::{AdaptiveConfig, AdaptiveThreadManager, AdjustmentReason};
 use crate::batch::BatchChannel;
-use crate::channel::{BatchConfig, CompactBandResult, OutputChannel, StreamConfig};
-use crate::config::{BulkConfig, OutputMode, SelectiveSpec, SolverType};
+use crate::channel::{
+    BatchConfig, CompactBandResult, CompactBandResultExt, OutputChannel, StreamConfig,
+};
+use crate::config::{BulkConfig, BulkConfigNativeExt, OutputMode, SelectiveSpec, SolverType};
 use crate::expansion::{expand_jobs, ExpandedJob, ExpandedJobType, EAJobSpec};
 use crate::output::OutputWriter;
 use crate::stream::{FilteredStreamChannel, SelectiveFilter, StreamChannel};

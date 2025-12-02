@@ -5,6 +5,7 @@ members = [
     "crates/backend-wasm",
     "crates/backend-cuda",
     "crates/cli",
+    "crates/bulk-driver-core",
     "crates/bulk-driver",
     "crates/python",
     # "crates/validation",  # Deactivated - uses eigensolver_old

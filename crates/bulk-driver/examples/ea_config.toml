@@ -1,0 +1,120 @@
+# ============================================================================
+# MPB2D Bulk Driver Configuration - EA (Envelope Approximation) Mode
+# ============================================================================
+#
+# This configuration demonstrates the EA solver for moiré lattice eigenproblems.
+# Use this for effective Hamiltonian calculations in twisted bilayer systems.
+#
+# The EA solver solves:
+#   H ψ = E ψ
+# where:
+#   H = V(R) - (η²/2)∇·M⁻¹(R)∇ - iη v_g·∇
+#
+# ============================================================================
+
+# ============================================================================
+# TOP-LEVEL FIELDS (Section-less) - Must be at the very top!
+# ============================================================================
+
+# For EA solver, polarization is not used but must be present for parsing
+polarization = "TM"
+
+# ============================================================================
+# [bulk] - Driver Configuration
+# ============================================================================
+
+[bulk]
+threads = 4
+verbose = true
+dry_run = false
+
+# ============================================================================
+# [solver] - Solver Type Selection
+# ============================================================================
+
+[solver]
+# Use EA (Envelope Approximation) solver for moiré lattices
+type = "ea"
+
+# ============================================================================
+# [ea] - Envelope Approximation Configuration (Required for EA solver)
+# ============================================================================
+
+[ea]
+# Path to potential data file V(R)
+# Binary file with Nx*Ny f64 values in row-major order
+# Physical interpretation: Local band edge variation across moiré unit cell
+potential = "data/potential.bin"
+
+# Path to inverse mass tensor data file M⁻¹(R)
+# Binary file with Nx*Ny*4 f64 values in row-major order
+# Components ordered as [m_xx, m_xy, m_yx, m_yy] at each grid point
+# Physical interpretation: Effective mass varies with position in moiré cell
+mass_inv = "data/mass_inv.bin"
+
+# Path to group velocity data file v_g(R) for drift term (optional)
+# Binary file with Nx*Ny*2 f64 values in row-major order
+# Components ordered as [vg_x, vg_y] at each grid point
+# If not provided, drift term is disabled (pure parabolic approximation)
+# vg = "data/group_velocity.bin"
+
+# Small parameter η in the envelope equation
+# This appears in both kinetic (-η²/2 ∇·M⁻¹∇) and drift (-iη v_g·∇) terms
+# Physical interpretation: Related to moiré period / atomic lattice constant
+eta = 0.1
+
+# Physical dimensions of the moiré unit cell [Lx, Ly]
+# Units should be consistent with your input data
+# For moiré systems, typically in nanometers
+domain_size = [10.0, 10.0]
+
+# Boundary conditions (currently only periodic is supported)
+periodic = true
+
+# ============================================================================
+# [grid] - Computational Grid
+# ============================================================================
+# For EA, the grid should match your input data dimensions.
+
+[grid]
+nx = 64
+ny = 64
+lx = 10.0
+ly = 10.0
+
+# ============================================================================
+# [eigensolver] - Eigensolver Configuration
+# ============================================================================
+
+[eigensolver]
+# Number of eigenvalues to compute
+# For EA, these are energy levels of the effective Hamiltonian
+n_bands = 12
+
+# Convergence tolerance
+tol = 1e-10
+
+# Maximum iterations
+max_iter = 500
+
+# ============================================================================
+# [ranges] - Parameter Sweep (Limited for EA)
+# ============================================================================
+# Currently, EA mode doesn't support parameter sweeps.
+# This will produce a single job.
+# Future versions may support sweeping eta, domain_size, etc.
+
+[ranges]
+
+# ============================================================================
+# [output] - Output Configuration
+# ============================================================================
+
+[output]
+mode = "full"
+io_mode = "stream"
+directory = "./ea_output"
+prefix = "ea_job"
+
+# Note: selective output for EA shows eigenvalues instead of bands
+# The k-path filtering doesn't apply since EA has no k-points

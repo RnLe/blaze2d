@@ -1,8 +1,22 @@
-//! WASM-oriented backend and streaming interface.
+//! WASM-oriented backend and streaming interface for MPB2D.
 //!
 //! This crate provides:
 //! - A WebAssembly-compatible spectral backend
 //! - Streaming interface for real-time band structure visualization
+//! - Unified API matching Python bindings for cross-platform consistency
+//!
+//! # Solver Types
+//!
+//! The bulk driver supports two solver types:
+//!
+//! - **Maxwell**: Photonic crystal band structure (k_path, distances, bands)
+//! - **EA**: Envelope Approximation for moiré lattices (eigenvalues only)
+//!
+//! # I/O Modes
+//!
+//! - **Stream**: Real-time emission for live visualization (primary focus)
+//! - **Selective**: Filter specific k-points and bands before emission
+//! - **Collect**: Gather all results at once
 //!
 //! # Streaming Usage (JavaScript)
 //!
@@ -10,12 +24,50 @@
 //! import init, { WasmBulkDriver } from 'mpb2d-wasm';
 //!
 //! await init();
-//! const driver = new WasmBulkDriver(configJson);
+//! const driver = new WasmBulkDriver(configToml);
 //!
+//! // Check solver type
+//! console.log(`Solver: ${driver.solverType}`);  // "maxwell" or "ea"
+//!
+//! // Stream with callback
 //! driver.runWithCallback((result) => {
-//!     // result.bands is 2D array [k_index][band_index]
-//!     updatePlot(result.distances, result.bands);
+//!     if (result.result_type === 'maxwell') {
+//!         updatePlot(result.distances, result.bands);
+//!     } else {  // EA
+//!         displayEigenvalues(result.eigenvalues);
+//!     }
 //! });
+//! ```
+//!
+//! # Selective Mode (Filtering)
+//!
+//! ```javascript
+//! // Stream only Gamma, X, M points and first 4 bands
+//! driver.runStreamingFiltered(
+//!     [0, 10, 15],  // k_indices for Γ, X, M
+//!     [0, 1, 2, 3], // band indices (0-based)
+//!     (result) => {
+//!         console.assert(result.num_k_points === 3);
+//!         console.assert(result.num_bands === 4);
+//!     }
+//! );
+//! ```
+//!
+//! # React Integration
+//!
+//! ```javascript
+//! function BandPlot() {
+//!     const [results, setResults] = useState([]);
+//!     
+//!     useEffect(() => {
+//!         const driver = new WasmBulkDriver(config);
+//!         driver.runWithCallback((result) => {
+//!             setResults(prev => [...prev, result]);
+//!         });
+//!     }, []);
+//!     
+//!     return <Plot data={results} />;
+//! }
 //! ```
 
 use mpb2d_core::backend::{SpectralBackend, SpectralBuffer};
