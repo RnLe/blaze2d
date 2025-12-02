@@ -686,3 +686,211 @@ fn te_and_tm_match_in_uniform_medium() {
         );
     }
 }
+
+// ============================================================================
+// Tests for Adaptive Shift (Band Window) Functionality
+// ============================================================================
+
+use super::preconditioners::{
+    BandWindow, SpectralStats, AdaptiveShiftConfig,
+    SHIFT_SMIN_FRACTION, DEFAULT_BAND_WINDOW_SCALE,
+    PreconditionedRQStats, compute_shift_quality_score,
+};
+
+#[test]
+fn band_window_from_eigenvalues_basic() {
+    // Test basic band window computation
+    let eigenvalues = vec![0.1, 0.2, 0.3, 0.4, 0.5];
+    let window = BandWindow::from_eigenvalues(&eigenvalues).unwrap();
+
+    assert!((window.lambda_min - 0.1).abs() < 1e-10);
+    assert!((window.lambda_max - 0.5).abs() < 1e-10);
+    assert!((window.lambda_median - 0.3).abs() < 1e-10);
+}
+
+#[test]
+fn band_window_filters_near_zero() {
+    // Band window should skip near-zero eigenvalues (spurious modes)
+    let eigenvalues = vec![1e-20, 0.0, 0.1, 0.2, 0.3];
+    let window = BandWindow::from_eigenvalues(&eigenvalues).unwrap();
+
+    // Should skip the zeros and start from 0.1
+    assert!((window.lambda_min - 0.1).abs() < 1e-10);
+}
+
+#[test]
+fn band_window_empty_returns_none() {
+    let eigenvalues: Vec<f64> = vec![];
+    assert!(BandWindow::from_eigenvalues(&eigenvalues).is_none());
+
+    // All zeros should also return None
+    let all_zeros = vec![0.0, 0.0, 1e-20];
+    assert!(BandWindow::from_eigenvalues(&all_zeros).is_none());
+}
+
+#[test]
+fn spectral_stats_with_band_window() {
+    let k_plus_g_sq = vec![0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 4.0];
+    let eigenvalues = vec![0.05, 0.1, 0.15, 0.2];
+
+    let stats = SpectralStats::compute(&k_plus_g_sq)
+        .with_band_window(&eigenvalues);
+
+    assert!(stats.band_window.is_some());
+    let window = stats.band_window.as_ref().unwrap();
+    assert!((window.lambda_min - 0.05).abs() < 1e-10);
+    assert!((window.lambda_max - 0.2).abs() < 1e-10);
+}
+
+#[test]
+fn adaptive_shift_blended_with_band_window() {
+    let k_plus_g_sq = vec![0.0, 0.1, 0.2, 0.5, 1.0];
+    let eigenvalues = vec![0.05, 0.1, 0.15, 0.2];
+
+    let stats = SpectralStats::compute(&k_plus_g_sq)
+        .with_band_window(&eigenvalues);
+
+    // Pure s_min shift (β = 1.0)
+    let shift_smin = stats.adaptive_shift();
+    let shift_blend_1 = stats.adaptive_shift_blended(1.0, DEFAULT_BAND_WINDOW_SCALE);
+    assert!((shift_smin - shift_blend_1).abs() < 1e-10,
+        "β=1.0 should give pure s_min shift");
+
+    // Pure band-window shift (β = 0.0)
+    let window = stats.band_window.as_ref().unwrap();
+    let shift_band = window.compute_shift(DEFAULT_BAND_WINDOW_SCALE);
+    let shift_blend_0 = stats.adaptive_shift_blended(0.0, DEFAULT_BAND_WINDOW_SCALE);
+    assert!((shift_band - shift_blend_0).abs() < 1e-10,
+        "β=0.0 should give pure band-window shift");
+
+    // Blended shift should be between the two extremes
+    let shift_blend_half = stats.adaptive_shift_blended(0.5, DEFAULT_BAND_WINDOW_SCALE);
+    let expected_blend = 0.5 * shift_smin + 0.5 * shift_band;
+    assert!((shift_blend_half - expected_blend).abs() < 1e-10,
+        "β=0.5 should give average of s_min and band-window shifts");
+}
+
+#[test]
+fn adaptive_shift_auto_uses_band_window_when_available() {
+    let k_plus_g_sq = vec![0.1, 0.2, 0.5, 1.0];
+    let eigenvalues = vec![0.05, 0.1, 0.15];
+
+    // Without band window: should use pure s_min
+    let stats_no_window = SpectralStats::compute(&k_plus_g_sq);
+    let shift_no_window = stats_no_window.adaptive_shift_auto();
+    let expected_smin = SHIFT_SMIN_FRACTION * stats_no_window.s_min;
+    assert!((shift_no_window - expected_smin).abs() < 1e-10);
+
+    // With band window: should use blended shift
+    let stats_with_window = SpectralStats::compute(&k_plus_g_sq)
+        .with_band_window(&eigenvalues);
+    let shift_with_window = stats_with_window.adaptive_shift_auto();
+
+    // The blended shift should be different from pure s_min when λ_median differs from s_min
+    // (unless the blend happens to equal s_min by coincidence)
+    // Just verify it's computed without error
+    assert!(shift_with_window > 0.0);
+    assert!(shift_with_window.is_finite());
+}
+
+#[test]
+fn preconditioned_rq_stats_computation() {
+    let rq_original = vec![1.0, 2.0, 3.0, 4.0];
+    let rq_preconditioned = vec![0.8, 1.0, 1.1, 1.3];
+
+    let stats = PreconditionedRQStats::compute(rq_original, rq_preconditioned);
+
+    assert!((stats.rq_min - 0.8).abs() < 1e-10);
+    assert!((stats.rq_max - 1.3).abs() < 1e-10);
+    assert!((stats.rq_mean - 1.05).abs() < 1e-10);
+    assert!(stats.rq_spread > 0.0);  // spread = (1.3 - 0.8) / 1.05 ≈ 0.476
+
+    // Check variance is reasonable
+    assert!(stats.rq_variance > 0.0);
+    assert!(stats.rq_variance < 1.0);
+}
+
+#[test]
+fn shift_quality_score() {
+    // Perfect preconditioner: mean ≈ 1, small spread
+    let perfect = PreconditionedRQStats::compute(
+        vec![1.0, 1.0, 1.0],
+        vec![0.99, 1.0, 1.01],
+    );
+
+    // Poor preconditioner: mean far from 1, large spread
+    let poor = PreconditionedRQStats::compute(
+        vec![1.0, 1.0, 1.0],
+        vec![0.1, 1.0, 5.0],
+    );
+
+    let score_perfect = compute_shift_quality_score(&perfect, true);
+    let score_poor = compute_shift_quality_score(&poor, true);
+
+    assert!(score_perfect < score_poor,
+        "Perfect preconditioner should have lower (better) score than poor one");
+    assert!(score_perfect < 0.1,
+        "Perfect preconditioner should have very low score");
+}
+
+#[test]
+fn adaptive_shift_config_gamma() {
+    let config = AdaptiveShiftConfig::for_gamma();
+
+    assert!(config.is_difficult_k);
+    assert!(config.auto_calibrate);
+    assert!(config.blend < 1.0, "Gamma config should favor band window");
+    assert!(config.min_iterations <= 2);
+}
+
+#[test]
+fn adaptive_shift_config_should_use_band_window() {
+    let config = AdaptiveShiftConfig::new()
+        .with_blend(0.5)
+        .with_min_iterations(3);
+
+    // Before min_iterations: should not use band window
+    assert!(!config.should_use_band_window(0));
+    assert!(!config.should_use_band_window(2));
+
+    // At or after min_iterations: should use band window
+    assert!(config.should_use_band_window(3));
+    assert!(config.should_use_band_window(10));
+
+    // With blend = 1.0, never use band window
+    let config_no_blend = AdaptiveShiftConfig::new()
+        .with_blend(1.0)
+        .with_min_iterations(0);
+    assert!(!config_no_blend.should_use_band_window(100));
+}
+
+#[test]
+fn theta_operator_band_window_preconditioner() {
+    // Test that ThetaOperator can build preconditioner with band window
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let eps_const = 4.0;
+    let dielectric = uniform_dielectric(grid, eps_const);
+    let backend = TestBackend;
+    let bloch = [0.1 * PI, 0.1 * PI];
+
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+
+    // Simulate eigenvalue estimates from a few LOBPCG iterations
+    let eigenvalues = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+
+    // Build preconditioner with band window
+    let precond = theta.build_homogeneous_preconditioner_band_window(
+        &eigenvalues,
+        Some(0.3),  // Favor band window
+        Some(0.5),  // Default scale
+    );
+
+    // Just verify it builds without error and has correct size
+    assert_eq!(precond.inverse_diagonal().len(), grid.len());
+
+    // All values should be positive (except possibly DC which is zeroed)
+    let positive_count = precond.inverse_diagonal().iter()
+        .filter(|&&v| v > 0.0)
+        .count();
+    assert!(positive_count > grid.len() / 2);
+}

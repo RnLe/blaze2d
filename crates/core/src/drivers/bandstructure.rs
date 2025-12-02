@@ -180,6 +180,29 @@ pub struct RunOptions {
     ///
     /// This is automatically disabled at k-path corners and near degeneracies.
     pub use_extrapolation: bool,
+    /// Enable band-window-based preconditioner shift.
+    ///
+    /// When enabled, uses eigenvalues from the previous k-point to compute a
+    /// band-window-informed shift σ² for the preconditioner. This can improve
+    /// convergence by tuning the preconditioner to the actual spectral range
+    /// of the bands being computed.
+    ///
+    /// The shift is computed as:
+    ///   σ² = β · σ²_adaptive + (1-β) · c · λ_median
+    /// where λ_median is the median eigenvalue from the previous k-point,
+    /// c is a band-scale factor (default 0.5), and β is the blend factor (default 0.5).
+    ///
+    /// For the first k-point (no previous eigenvalues), falls back to adaptive shift.
+    pub use_band_window_shift: bool,
+    /// Blend factor β for band-window shift (0.0 = pure band-window, 1.0 = pure adaptive).
+    ///
+    /// Only used when `use_band_window_shift` is enabled.
+    pub band_window_blend: f64,
+    /// Scale factor c for band-window eigenvalue contribution.
+    ///
+    /// The band-window shift component is c × λ_median. Default is 0.5.
+    /// Only used when `use_band_window_shift` is enabled.
+    pub band_window_scale: f64,
 }
 
 impl Default for RunOptions {
@@ -188,6 +211,9 @@ impl Default for RunOptions {
             precond_type: PreconditionerType::default(),
             use_subspace_prediction: true,  // Stage 1: rotation-based warm-start
             use_extrapolation: true,         // Stage 2: linear extrapolation
+            use_band_window_shift: false,    // Disabled by default (experimental)
+            band_window_blend: 0.5,          // Equal mix of adaptive and band-window
+            band_window_scale: 0.5,          // Conservative scaling of median eigenvalue
         }
     }
 }
@@ -219,6 +245,38 @@ impl RunOptions {
     /// Automatically disabled at corners and near degeneracies.
     pub fn with_extrapolation(mut self, enabled: bool) -> Self {
         self.use_extrapolation = enabled;
+        self
+    }
+
+    /// Enable band-window-based preconditioner shift (experimental).
+    ///
+    /// When enabled, uses eigenvalues from the previous k-point to tune the
+    /// preconditioner shift to the spectral range of the bands being computed.
+    pub fn with_band_window_shift(mut self, enabled: bool) -> Self {
+        self.use_band_window_shift = enabled;
+        self
+    }
+
+    /// Set the blend factor for band-window shift.
+    ///
+    /// The blend factor β controls how much weight is given to the adaptive shift
+    /// versus the band-window shift: σ² = β·σ²_adaptive + (1-β)·σ²_band_window.
+    ///
+    /// - β = 0.0: Pure band-window shift (uses eigenvalue median)
+    /// - β = 1.0: Pure adaptive shift (uses smin²)
+    /// - β = 0.5 (default): Equal blend
+    pub fn with_band_window_blend(mut self, blend: f64) -> Self {
+        self.band_window_blend = blend.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the scale factor for band-window eigenvalue contribution.
+    ///
+    /// The band-window shift component is c × λ_median, where c is this scale factor.
+    /// Lower values (e.g., 0.25) are more conservative, higher values (e.g., 1.0)
+    /// give more weight to the eigenvalue spectrum.
+    pub fn with_band_window_scale(mut self, scale: f64) -> Self {
+        self.band_window_scale = scale.max(0.0);
         self
     }
 }
@@ -404,6 +462,19 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     // and can be used for warm-starting subsequent k-points.
     let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
 
+    // Storage for previous eigenvalues (ω² = λ) for band-window preconditioner shift
+    // These are used to inform the preconditioner shift at the next k-point.
+    let mut prev_eigenvalues: Option<Vec<f64>> = None;
+
+    // Log if band-window shift is enabled
+    if options.use_band_window_shift {
+        info!(
+            "[bandstructure] Band-window shift enabled (blend={:.2}, scale={:.2})",
+            options.band_window_blend,
+            options.band_window_scale
+        );
+    }
+
     // Get dielectric epsilon for B-weighted overlaps
     // - TE mode: B = I, use standard inner product (None)
     // - TM mode (generalized): B = ε, use ε-weighted inner product
@@ -496,16 +567,38 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         // Construct the Maxwell operator Θ for this k-point
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
-        // Build preconditioner for this operator (always using adaptive shift)
+        // Build preconditioner for this operator
+        // Use band-window shift if enabled AND we have previous eigenvalues,
+        // otherwise fall back to adaptive shift.
+        let use_band_window = options.use_band_window_shift && prev_eigenvalues.is_some();
         let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
             match precond_type {
                 PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
                 PreconditionerType::None => None,
                 PreconditionerType::FourierDiagonalKernelCompensated => {
-                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
+                    if use_band_window {
+                        // Use eigenvalues from previous k-point to tune the preconditioner
+                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                        Some(Box::new(theta.build_homogeneous_preconditioner_band_window(
+                            eigenvalues,
+                            Some(options.band_window_blend),
+                            Some(options.band_window_scale),
+                        )))
+                    } else {
+                        Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
+                    }
                 }
                 PreconditionerType::TransverseProjection => {
-                    Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
+                    if use_band_window {
+                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                        Some(Box::new(theta.build_transverse_projection_preconditioner_band_window(
+                            eigenvalues,
+                            Some(options.band_window_blend),
+                            Some(options.band_window_scale),
+                        )))
+                    } else {
+                        Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
+                    }
                 }
             };
 
@@ -565,6 +658,10 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
 
         // Store eigenvectors for band tracking at next k-point
         prev_eigenvectors = Some(eigenvectors.clone());
+
+        // Store eigenvalues (ω²) for band-window preconditioner shift at next k-point
+        // We store the raw eigenvalues (λ = ω²), not frequencies.
+        prev_eigenvalues = Some(result.eigenvalues.clone());
 
         // Update subspace history or warm-start store for next k-point
         if let Some(ref mut history) = subspace_history {
@@ -818,6 +915,18 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     // and can be used for warm-starting subsequent k-points.
     let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
 
+    // Storage for previous eigenvalues (ω² = λ) for band-window preconditioner shift
+    let mut prev_eigenvalues: Option<Vec<f64>> = None;
+
+    // Log if band-window shift is enabled
+    if options.use_band_window_shift {
+        info!(
+            "[bandstructure] Band-window shift enabled (blend={:.2}, scale={:.2})",
+            options.band_window_blend,
+            options.band_window_scale
+        );
+    }
+
     // Get dielectric epsilon for B-weighted overlaps
     // - TE mode: B = I, use standard inner product (None)
     // - TM mode (generalized): B = ε, use ε-weighted inner product
@@ -922,16 +1031,37 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         let mut eigensolver_config = job.eigensolver.clone();
         eigensolver_config.record_diagnostics = true;
 
-        // Build preconditioner (always using adaptive shift)
+        // Build preconditioner
+        // Use band-window shift if enabled AND we have previous eigenvalues,
+        // otherwise fall back to adaptive shift.
+        let use_band_window = options.use_band_window_shift && prev_eigenvalues.is_some();
         let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
             match precond_type {
                 PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
                 PreconditionerType::None => None,
                 PreconditionerType::FourierDiagonalKernelCompensated => {
-                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
+                    if use_band_window {
+                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                        Some(Box::new(theta.build_homogeneous_preconditioner_band_window(
+                            eigenvalues,
+                            Some(options.band_window_blend),
+                            Some(options.band_window_scale),
+                        )))
+                    } else {
+                        Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
+                    }
                 }
                 PreconditionerType::TransverseProjection => {
-                    Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
+                    if use_band_window {
+                        let eigenvalues = prev_eigenvalues.as_ref().unwrap();
+                        Some(Box::new(theta.build_transverse_projection_preconditioner_band_window(
+                            eigenvalues,
+                            Some(options.band_window_blend),
+                            Some(options.band_window_scale),
+                        )))
+                    } else {
+                        Some(Box::new(theta.build_transverse_projection_preconditioner_adaptive()))
+                    }
                 }
             };
 
@@ -986,6 +1116,9 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
 
         // Store eigenvectors for band tracking at next k-point
         prev_eigenvectors = Some(eigenvectors.clone());
+
+        // Store eigenvalues (ω²) for band-window preconditioner shift at next k-point
+        prev_eigenvalues = Some(diag_result.result.eigenvalues.clone());
 
         // Update subspace history or warm-start store for next k-point
         if let Some(ref mut history) = subspace_history {

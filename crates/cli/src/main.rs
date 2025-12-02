@@ -142,6 +142,28 @@ struct Cli {
     /// causes instability.
     #[arg(long)]
     no_extrapolation: bool,
+
+    /// Enable band-window-based preconditioner shift (experimental)
+    ///
+    /// Uses eigenvalues from the previous k-point to tune the preconditioner
+    /// shift to the spectral range of the bands being computed. This can
+    /// improve convergence, especially near the Γ-point.
+    #[arg(long)]
+    band_window_shift: bool,
+
+    /// Blend factor for band-window shift (0.0 = pure band-window, 1.0 = pure adaptive)
+    ///
+    /// Controls how much weight is given to the adaptive shift vs the
+    /// band-window shift. Default is 0.5 (equal blend).
+    #[arg(long, default_value = "0.5")]
+    band_window_blend: f64,
+
+    /// Scale factor for band-window eigenvalue contribution
+    ///
+    /// The band-window shift component is c × λ_median, where c is this scale.
+    /// Lower values are more conservative. Default is 0.5.
+    #[arg(long, default_value = "0.5")]
+    band_window_scale: f64,
 }
 
 /// CLI path argument supporting all four lattice types.
@@ -421,7 +443,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_options = RunOptions::new()
         .with_preconditioner(precond_type)
         .with_subspace_prediction(use_subspace_pred)
-        .with_extrapolation(use_extrapolation);
+        .with_extrapolation(use_extrapolation)
+        .with_band_window_shift(cli.band_window_shift)
+        .with_band_window_blend(cli.band_window_blend)
+        .with_band_window_scale(cli.band_window_scale);
 
     if !cli.quiet && use_subspace_pred {
         if use_extrapolation {

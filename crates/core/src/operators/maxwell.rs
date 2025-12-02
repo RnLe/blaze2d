@@ -205,6 +205,64 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         self.build_homogeneous_preconditioner_with_shift(shift)
     }
 
+    /// Build homogeneous preconditioner with band-window-aware adaptive shift.
+    ///
+    /// This uses eigenvalue estimates from current LOBPCG iterations to compute
+    /// a more targeted shift that focuses on the actual band window rather than
+    /// the full geometric spectral range.
+    ///
+    /// # Arguments
+    ///
+    /// - `eigenvalues`: Current eigenvalue estimates from LOBPCG (λ = ω²).
+    /// - `blend`: Blending factor β ∈ [0, 1]. β=1 uses only s_min, β=0 uses only band window.
+    ///            Use `None` for the default value (0.5).
+    /// - `band_scale`: Scaling factor c for band-window shift.
+    ///            Use `None` for the default value (0.5).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // After first few LOBPCG iterations, refine the preconditioner:
+    /// let eigenvalues = solver.eigenvalues();
+    /// let precond = theta.build_homogeneous_preconditioner_band_window(
+    ///     eigenvalues,
+    ///     Some(0.3),  // Favor band window (less s_min influence)
+    ///     None,       // Use default band scale
+    /// );
+    /// ```
+    pub fn build_homogeneous_preconditioner_band_window(
+        &self,
+        eigenvalues: &[f64],
+        blend: Option<f64>,
+        band_scale: Option<f64>,
+    ) -> FourierDiagonalPreconditioner {
+        let mut stats = self.spectral_stats();
+        stats.set_band_window(eigenvalues);
+
+        let blend = blend.unwrap_or(crate::preconditioners::DEFAULT_BAND_WINDOW_BLEND);
+        let band_scale = band_scale.unwrap_or(crate::preconditioners::DEFAULT_BAND_WINDOW_SCALE);
+        let shift = stats.adaptive_shift_blended(blend, band_scale);
+
+        if let Some(ref window) = stats.band_window {
+            log::debug!(
+                "preconditioner: band-window shift σ(k)={:.2e} (blend={:.2}, scale={:.2}, λ=[{:.2e}..{:.2e}], s_min={:.2e})",
+                shift,
+                blend,
+                band_scale,
+                window.lambda_min,
+                window.lambda_max,
+                stats.s_min
+            );
+        } else {
+            log::debug!(
+                "preconditioner: band-window fallback (no valid eigenvalues) σ(k)={:.2e}",
+                shift
+            );
+        }
+
+        self.build_homogeneous_preconditioner_with_shift(shift)
+    }
+
     /// Build homogeneous preconditioner with a specific shift value.
     fn build_homogeneous_preconditioner_with_shift(
         &self,
@@ -248,6 +306,34 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             "transverse-projection preconditioner: adaptive shift σ(k)={:.2e}",
             shift
         );
+        self.build_transverse_projection_preconditioner_with_shift(shift)
+    }
+
+    /// Build the transverse-projection preconditioner with band-window-aware adaptive shift.
+    ///
+    /// Similar to `build_homogeneous_preconditioner_band_window`, but for the
+    /// MPB-style transverse-projection preconditioner.
+    pub fn build_transverse_projection_preconditioner_band_window(
+        &self,
+        eigenvalues: &[f64],
+        blend: Option<f64>,
+        band_scale: Option<f64>,
+    ) -> TransverseProjectionPreconditioner<B> {
+        let mut stats = self.spectral_stats();
+        stats.set_band_window(eigenvalues);
+
+        let blend = blend.unwrap_or(crate::preconditioners::DEFAULT_BAND_WINDOW_BLEND);
+        let band_scale = band_scale.unwrap_or(crate::preconditioners::DEFAULT_BAND_WINDOW_SCALE);
+        let shift = stats.adaptive_shift_blended(blend, band_scale);
+
+        if let Some(ref window) = stats.band_window {
+            log::debug!(
+                "transverse-projection preconditioner: band-window shift σ(k)={:.2e} (λ_med={:.2e})",
+                shift,
+                window.lambda_median
+            );
+        }
+
         self.build_transverse_projection_preconditioner_with_shift(shift)
     }
 

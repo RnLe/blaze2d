@@ -124,6 +124,43 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
         }
     }
 
+    /// Update the regularization shift σ² in-place.
+    ///
+    /// This recomputes the `inverse_k_sq` diagonal without reallocating
+    /// the gradient buffers. Useful for band-window-based shift refinement
+    /// during LOBPCG iteration.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_shift` - The new regularization shift σ²
+    pub fn update_shift(&mut self, new_shift: f64) {
+        self.shift = new_shift;
+
+        // Recompute 1/(|k+G|² + σ²)
+        for ((inv_k_sq, &k_sq), &is_near_zero) in self.inverse_k_sq
+            .iter_mut()
+            .zip(self.k_plus_g_sq.iter())
+            .zip(self.near_zero_mask.iter())
+        {
+            if is_near_zero {
+                *inv_k_sq = 0.0;
+            } else {
+                let denom = k_sq + new_shift;
+                *inv_k_sq = if denom > 1e-15 { 1.0 / denom } else { 0.0 };
+            }
+        }
+    }
+
+    /// Get the current regularization shift σ².
+    pub fn shift(&self) -> f64 {
+        self.shift
+    }
+
+    /// Get a reference to the inverse k-squared values.
+    pub fn inverse_k_sq(&self) -> &[f64] {
+        &self.inverse_k_sq
+    }
+
     /// Apply the full transverse-projection preconditioner.
     fn apply_transverse_projection(&mut self, backend: &B, buffer: &mut B::Buffer) {
         // Step 1: FFT the input residual
