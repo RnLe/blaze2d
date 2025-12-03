@@ -1,0 +1,31 @@
+# Test configuration for single EA solve with progress bar
+
+[bulk]
+threads = 1
+verbose = true
+
+[solver]
+type = "ea"
+
+[ea]
+potential = "data/potential_24x24.bin"
+mass_inv = "data/mass_inv_24x24.bin"
+eta = 0.1
+domain_size = [10.0, 10.0]
+periodic = true
+
+[grid]
+nx = 24
+ny = 24
+lx = 10.0
+ly = 10.0
+
+[eigensolver]
+n_bands = 8
+max_iter = 100
+tol = 1e-6
+
+[output]
+mode = "full"
+directory = "./test_ea_output"
+prefix = "ea_test"

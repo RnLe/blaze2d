@@ -127,6 +127,21 @@ fn result_to_py_dict(py: Python<'_>, result: &CompactBandResult) -> PyResult<Py<
             // Eigenvalues
             dict.set_item("eigenvalues", ea.eigenvalues.clone())?;
 
+            // Eigenvectors as 3D list: [band_index][grid_index][re, im]
+            // Each eigenvector is a flattened 2D grid of complex values
+            let eigenvectors_py = PyList::empty(py);
+            for ev in &ea.eigenvectors {
+                let band_vec = PyList::empty(py);
+                for &[re, im] in ev {
+                    band_vec.append((re, im))?;
+                }
+                eigenvectors_py.append(band_vec)?;
+            }
+            dict.set_item("eigenvectors", eigenvectors_py)?;
+
+            // Grid dimensions for reshaping eigenvectors to 2D
+            dict.set_item("grid_dims", (ea.grid_dims[0], ea.grid_dims[1]))?;
+
             // Solver info
             dict.set_item("n_iterations", ea.n_iterations)?;
             dict.set_item("converged", ea.converged)?;
@@ -395,6 +410,8 @@ impl BulkDriverPy {
     ///
     /// EA-specific fields (result_type == "ea"):
     ///   - eigenvalues: list of floats
+    ///   - eigenvectors: 3D list [band_index][grid_index][(re, im)]
+    ///   - grid_dims: tuple (nx, ny) for reshaping eigenvectors to 2D
     ///   - n_iterations: int
     ///   - converged: bool
     ///   - num_eigenvalues: int

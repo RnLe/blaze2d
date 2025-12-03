@@ -61,8 +61,8 @@ def build_k_path_square(density: int):
     return interpolate_path(nodes, density)
 
 def build_k_path_hex(density: int):
-    """Γ → K → M → Γ for triangular/hex lattice"""
-    nodes = [(0.0, 0.0), (1/3, 1/3), (0.5, 0.0), (0.0, 0.0)]
+    """Γ → M → K → Γ for triangular/hex lattice (60° convention)"""
+    nodes = [(0.0, 0.0), (0.5, 0.0), (1/3, 1/3), (0.0, 0.0)]
     return interpolate_path(nodes, density)
 
 def interpolate_path(nodes, density):

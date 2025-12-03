@@ -78,6 +78,9 @@ pub use operators::{LinearOperator, ThetaOperator};
 /// Re-export of the bandstructure driver for backwards compatibility.
 pub use drivers::bandstructure;
 
+/// Re-export of eigensolver progress reporting types.
+pub use eigensolver::ProgressInfo;
+
 #[cfg(test)]
 mod _tests_backend;
 #[cfg(test)]
