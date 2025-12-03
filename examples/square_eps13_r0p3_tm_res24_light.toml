@@ -1,5 +1,4 @@
-# Square lattice eps_bg=13, r/a=0.3, low-res grid for TM
-# Light version: fewer bands and k-points for quick testing
+# Lightweight test: square lattice, eps=13, r=0.3, TM, low-res
 
 polarization = "TM"
 
@@ -7,8 +6,8 @@ polarization = "TM"
 eps_bg = 13.0
 
 [geometry.lattice]
-a1 = [1.0, 0.0]
-a2 = [0.0, 1.0]
+type = "square"
+a = 1.0
 
 [[geometry.atoms]]
 pos = [0.5, 0.5]
@@ -23,9 +22,9 @@ ly = 1.0
 
 [path]
 preset = "square"
-segments_per_leg = 2
+segments_per_leg = 4
 
 [eigensolver]
 n_bands = 4
-max_iter = 5
-tol = 1e-6
+max_iter = 100
+tol = 1e-5

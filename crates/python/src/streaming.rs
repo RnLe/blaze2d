@@ -63,7 +63,7 @@ use pyo3::types::{PyDict, PyList};
 use mpb2d_bulk_driver::{
     BatchConfig, BulkConfig, BulkDriver, CompactBandResult, CompactResultType, DriverError,
     DriverStats, FilteredStreamChannel, OutputChannel, SelectiveFilter, StreamChannel,
-    StreamConfig,
+    StreamConfig, SweepValue,
 };
 
 // ============================================================================
@@ -101,6 +101,22 @@ fn result_to_py_dict(py: Python<'_>, result: &CompactBandResult) -> PyResult<Py<
     }
     params.set_item("atoms", atoms_list)?;
     dict.set_item("params", params)?;
+
+    // Sweep values (ordered parameter sweep tracking)
+    let sweep_values = PyDict::new(py);
+    for (name, value) in &result.params.sweep_values {
+        // Convert SweepValue to Python-compatible type
+        let py_value: PyObject = match value {
+            SweepValue::Float(f) => f.into_pyobject(py)?.into_any().unbind(),
+            SweepValue::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
+            SweepValue::String(s) => s.into_pyobject(py)?.into_any().unbind(),
+        };
+        sweep_values.set_item(name.as_str(), py_value)?;
+    }
+    dict.set_item("sweep_values", sweep_values)?;
+
+    // Sweep order string for convenience
+    dict.set_item("sweep_order", result.params.sweep_order_string())?;
 
     // Result type discriminator
     match &result.result_type {

@@ -1,16 +1,31 @@
-# ==============================================================================
-# Selective Output Example for Band Gap Studies
-# ==============================================================================
-# This example outputs only specific k-points and bands to a single merged file.
-# Ideal for studying band gap evolution with parameter changes.
+# Selective output: only high-symmetry points and gap bands
+# Outputs single merged CSV for band gap analysis
+# Total: 3 eps × 3 radii = 9 jobs
 
 [bulk]
-threads = 4
 verbose = true
 
-[geometry]
-eps_bg = 13.0
+[solver]
+type = "maxwell"
 
+[defaults]
+eps_bg = 12.0
+resolution = 32
+polarization = "TM"
+
+[[sweeps]]
+parameter = "eps_bg"
+min = 10.0
+max = 14.0
+step = 2.0
+
+[[sweeps]]
+parameter = "atom0.radius"
+min = 0.2
+max = 0.4
+step = 0.1
+
+[geometry]
 [geometry.lattice]
 type = "square"
 a = 1.0
@@ -26,8 +41,6 @@ ny = 32
 lx = 1.0
 ly = 1.0
 
-polarization = "TM"
-
 [path]
 preset = "square"
 segments_per_leg = 10
@@ -37,35 +50,11 @@ n_bands = 8
 max_iter = 200
 tol = 1e-6
 
-[dielectric.smoothing]
-mesh_size = 4
-
-# ============================================================================
-# Parameter Ranges
-# ============================================================================
-
-[ranges]
-# Small sweep: eps_bg × radius
-eps_bg = { min = 10.0, max = 14.0, step = 2.0 }
-
-[[ranges.atoms]]
-radius = { min = 0.2, max = 0.4, step = 0.1 }
-
-# ============================================================================
-# Selective Output Configuration
-# ============================================================================
-
 [output]
 mode = "selective"
 filename = "./band_gap_analysis.csv"
 
 [output.selective]
-# High-symmetry points for square lattice (with segments_per_leg = 10):
-#   Γ = index 0
-#   X = index 10
-#   M = index 20
-#   Γ = index 30
+# High-symmetry points: Γ=0, X=10, M=20
 k_indices = [0, 10, 20]
-
-# First 5 bands (for TM gap between bands 1 and 2)
 bands = [1, 2, 3, 4, 5]

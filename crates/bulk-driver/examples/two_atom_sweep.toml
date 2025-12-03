@@ -1,0 +1,225 @@
+# ============================================================================
+# MPB2D Bulk Driver - Two-Atom Basis Sweep Example
+# ============================================================================
+#
+# Complete example for photonic crystal band structure sweeps with a 2-atom
+# basis. Demonstrates sweeping:
+#   - Second atom position (first atom fixed at origin)
+#   - Atom radius
+#   - Background dielectric
+#
+# TOML RULE: Top-level fields (no [section]) must appear first.
+# ============================================================================
+
+polarization = "TM"    # "TM" (E_z polarization) or "TE" (H_z polarization)
+
+# ============================================================================
+# DRIVER CONFIGURATION
+# ============================================================================
+
+[bulk]
+threads = 4            # null = all cores
+verbose = false
+dry_run = false        # Set true to count jobs without running
+
+[solver]
+type = "maxwell"
+
+# ============================================================================
+# GEOMETRY - Two-Atom Basis
+# ============================================================================
+#
+# Fractional coordinates: [x, y] where x,y ∈ [0, 1)
+# Position [0.5, 0.5] = center of unit cell
+# Position [0.0, 0.0] = corner of unit cell
+#
+# For honeycomb/graphene-like: atoms at [1/3, 1/3] and [2/3, 2/3]
+# For dimers: atoms at [0.25, 0.5] and [0.75, 0.5]
+# ============================================================================
+
+[geometry]
+eps_bg = 12.0          # Background dielectric (silicon/GaAs)
+
+[geometry.lattice]
+type = "triangular"    # 60° convention: a₁=[a,0], a₂=[a/2, a√3/2]
+a = 1.0
+
+# Atom 0: Fixed at origin (will NOT be swept)
+[[geometry.atoms]]
+pos = [0.0, 0.0]
+radius = 0.15
+eps_inside = 1.0       # Air hole
+
+# Atom 1: Mobile atom (position will be swept)
+[[geometry.atoms]]
+pos = [0.5, 0.5]       # Base position (overridden by sweep)
+radius = 0.15
+eps_inside = 1.0
+
+# ============================================================================
+# COMPUTATIONAL GRID & PATH
+# ============================================================================
+
+[grid]
+nx = 32
+ny = 32
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "triangular"  # Γ→M→K→Γ (matches triangular lattice)
+segments_per_leg = 10
+
+[eigensolver]
+n_bands = 8
+tol = 1e-8
+max_iter = 200
+
+[dielectric]
+smoothing_radius = 0.5
+
+# ============================================================================
+# PARAMETER SWEEPS
+# ============================================================================
+#
+# Sweeps are nested for-loops in TOML order:
+#   First [[sweeps]]  = outermost loop
+#   Last [[sweeps]]   = innermost loop
+#
+# Parameters:
+#   "atomN.pos_x"     - Atom N x-position (fractional)
+#   "atomN.pos_y"     - Atom N y-position (fractional)
+#   "atomN.radius"    - Atom N radius (units of a)
+#   "atomN.eps_inside"- Atom N dielectric
+#   "eps_bg"          - Background dielectric
+#   "resolution"      - Grid resolution (nx=ny)
+#   "polarization"    - ["TM", "TE"]
+#   "lattice_type"    - ["square", "triangular", ...]
+#
+# Range format: { min, max, step } or { min, max, count }
+# List format:  values = [...]
+# ============================================================================
+
+# Outermost: Background dielectric (3 values: 10, 11, 12)
+[[sweeps]]
+parameter = "eps_bg"
+min = 10.0
+max = 12.0
+step = 1.0
+
+# Middle: Radius of both atoms (3 values: 0.10, 0.15, 0.20)
+[[sweeps]]
+parameter = "atom0.radius"
+min = 0.10
+max = 0.20
+step = 0.05
+
+[[sweeps]]
+parameter = "atom1.radius"
+min = 0.10
+max = 0.20
+step = 0.05
+
+# Inner: Second atom position (3×3 = 9 positions)
+[[sweeps]]
+parameter = "atom1.pos_x"
+min = 0.3
+max = 0.5
+step = 0.1
+
+[[sweeps]]
+parameter = "atom1.pos_y"
+min = 0.3
+max = 0.5
+step = 0.1
+
+# Total jobs: 3 × 3 × 3 × 3 × 3 = 243
+
+# ============================================================================
+# OUTPUT
+# ============================================================================
+
+[output]
+mode = "full"          # One CSV per job
+io_mode = "stream"     # Real-time emission
+directory = "./two_atom_output"
+prefix = "job"
+
+# ============================================================================
+# RESULT STRUCTURE
+# ============================================================================
+#
+# Each result contains the complete band structure for one parameter combination.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ RESULT DICT STRUCTURE                                                   │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │                                                                         │
+# │  job_index     : int        Completion order (not sweep order!)         │
+# │  result_type   : "maxwell"  Solver used                                 │
+# │                                                                         │
+# │  k_path        : [[kx, ky], ...]   K-points in fractional coords        │
+# │  distances     : [d₀, d₁, ...]     Cumulative path distance (for x-axis)│
+# │  bands         : [[ω₁, ω₂, ...],   Frequencies at each k-point          │
+# │                   [ω₁, ω₂, ...],   Shape: [num_k_points][num_bands]     │
+# │                   ...]             Units: ω/2π (normalized to c/a=1)    │
+# │                                                                         │
+# │  num_k_points  : int        Length of k_path                            │
+# │  num_bands     : int        Number of bands per k-point                 │
+# │                                                                         │
+# │  params : {                 Full configuration snapshot                 │
+# │    eps_bg       : 12.0                                                  │
+# │    resolution   : 32                                                    │
+# │    polarization : "TM"                                                  │
+# │    lattice_type : "triangular"                                          │
+# │    atoms : [                                                            │
+# │      { pos: [0.0, 0.0], radius: 0.15, eps_inside: 1.0 },               │
+# │      { pos: [0.4, 0.4], radius: 0.15, eps_inside: 1.0 }                │
+# │    ]                                                                    │
+# │  }                                                                      │
+# │                                                                         │
+# │  sweep_values : {           Current sweep parameter values              │
+# │    "eps_bg"       : 12.0                                                │
+# │    "atom0.radius" : 0.15                                                │
+# │    "atom1.radius" : 0.15                                                │
+# │    "atom1.pos_x"  : 0.4                                                 │
+# │    "atom1.pos_y"  : 0.4                                                 │
+# │  }                                                                      │
+# │                                                                         │
+# │  sweep_order : str          For sorting/grouping results                │
+# │    "eps_bg=12.0|atom0.radius=0.15|atom1.radius=0.15|..."               │
+# │                                                                         │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# ============================================================================
+# INTERPRETING BAND DATA
+# ============================================================================
+#
+# Frequencies are normalized: ω_norm = ωa/(2πc)
+# To convert to physical frequency: f = ω_norm × (c/a)
+#
+# Example: If a = 500nm and ω_norm = 0.3:
+#   f = 0.3 × (3×10⁸ m/s) / (500×10⁻⁹ m) = 1.8×10¹⁴ Hz ≈ 180 THz
+#   λ = c/f = 1.67 μm
+#
+# Band gaps appear as frequency ranges with no bands:
+#   - Look for gaps between bands[k][n] and bands[k][n+1]
+#   - Gap exists if min(band_n+1) > max(band_n) across all k-points
+#
+# ============================================================================
+# PYTHON USAGE
+# ============================================================================
+#
+#   from blaze2d import BulkDriver
+#
+#   driver = BulkDriver("two_atom_sweep.toml")
+#   print(f"Total jobs: {driver.job_count}")
+#
+#   for result in driver.run_streaming():
+#       sv = result["sweep_values"]
+#       bands = result["bands"]
+#       print(f"eps={sv['eps_bg']}, r={sv['atom0.radius']}, "
+#             f"pos=({sv['atom1.pos_x']}, {sv['atom1.pos_y']})")
+#       print(f"  Band 1 at Γ: {bands[0][0]:.4f}")
+#
+# ============================================================================

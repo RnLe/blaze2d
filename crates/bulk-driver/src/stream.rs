@@ -726,6 +726,7 @@ mod tests {
                     radius: 0.3,
                     eps_inside: 1.0,
                 }],
+                sweep_values: vec![],
             },
             result_type: CompactResultType::Maxwell(MaxwellResult {
                 k_path: vec![[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]],

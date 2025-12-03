@@ -1,30 +1,48 @@
-# ==============================================================================
-# Multi-Atom Basis Position Sweep
-# ==============================================================================
-# This example sweeps the position of a second atom in a two-atom basis.
-# Useful for studying how basis atom displacement affects band structure.
-#
-# Example: A square lattice with two atoms, sweeping the second atom's position
-# to study band gap opening/closing behavior.
+# Two-atom basis position sweep
+# Sweeps second atom position to study band gap vs displacement
+# Total: 2 pol × 7 pos_x × 7 pos_y = 98 jobs
 
 [bulk]
 threads = 8
 verbose = true
 
+[solver]
+type = "maxwell"
+
+[defaults]
+eps_bg = 11.9
+resolution = 48
+
+[[sweeps]]
+parameter = "polarization"
+values = ["TM", "TE"]
+
+[[sweeps]]
+parameter = "atom1.pos_x"
+min = 0.1
+max = 0.4
+step = 0.05
+
+[[sweeps]]
+parameter = "atom1.pos_y"
+min = 0.1
+max = 0.4
+step = 0.05
+
 [geometry]
-eps_bg = 11.9  # Silicon
+eps_bg = 11.9
 
 [geometry.lattice]
 type = "square"
 a = 1.0
 
-# First atom: fixed at center
+# Atom 0: fixed at center
 [[geometry.atoms]]
 pos = [0.5, 0.5]
 radius = 0.15
 eps_inside = 1.0
 
-# Second atom: position will be swept
+# Atom 1: position swept
 [[geometry.atoms]]
 pos = [0.25, 0.25]
 radius = 0.15
@@ -36,8 +54,6 @@ ny = 48
 lx = 1.0
 ly = 1.0
 
-polarization = "TM"
-
 [path]
 preset = "square"
 segments_per_leg = 12
@@ -47,42 +63,10 @@ n_bands = 10
 max_iter = 200
 tol = 1e-6
 
-[dielectric.smoothing]
-mesh_size = 4
-
-# ============================================================================
-# Parameter Ranges: Sweep second atom position
-# ============================================================================
-
-[ranges]
-# Sweep both polarizations
-polarization = ["TM", "TE"]
-
-# No ranges for first atom (fixed)
-[[ranges.atoms]]
-# Empty: first atom has no ranges
-
-# Sweep second atom position diagonally
-[[ranges.atoms]]
-# Sweep x-position from 0.1 to 0.4 (moving along x)
-pos_x = { min = 0.1, max = 0.4, step = 0.05 }
-# Sweep y-position from 0.1 to 0.4 (moving along y)
-pos_y = { min = 0.1, max = 0.4, step = 0.05 }
-
-# Total: 2 pol × 7 pos_x × 7 pos_y = 98 jobs
-
-# ============================================================================
-# Output Configuration
-# ============================================================================
-
 [output]
 mode = "selective"
 filename = "./two_atom_basis_sweep.csv"
 
 [output.selective]
-# High-symmetry points for square lattice (segments_per_leg = 12):
-#   Γ = 0, X = 12, M = 24, Γ' = 36
 k_indices = [0, 12, 24]
-
-# Bands around typical gap region
 bands = [1, 2, 3, 4, 5, 6, 7, 8]

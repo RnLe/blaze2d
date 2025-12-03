@@ -80,7 +80,7 @@ pub use channel::{
 // Re-export configuration
 pub use config::{
     BatchSettings, BulkConfig, BulkConfigNativeExt, EAConfig, IoMode, OutputConfig, OutputMode,
-    ParameterRange, RangeSpec, SelectiveSpec, SolverSection, SolverType,
+    ParameterRange, RangeSpec, SelectiveSpec, SolverSection, SolverType, SweepSpec, SweepValue,
 };
 
 // Re-export driver

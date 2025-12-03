@@ -1,23 +1,22 @@
-# Hexagonal lattice of air holes in a high-epsilon background
-# TE polarization - good for demonstrating band gaps
+# Hexagonal lattice with air hole (same as triangular, 60° convention)
 
-polarization = "TE"
+polarization = "TM"
 
 [geometry]
-eps_bg = 12.0
+eps_bg = 13.0
 
 [geometry.lattice]
-a1 = [1.0, 0.0]
-a2 = [0.5, 0.8660254037844386]  # 60° angle for hexagonal
+type = "hexagonal"
+a = 1.0
 
 [[geometry.atoms]]
-pos = [0.5, 0.5]
+pos = [0.0, 0.0]
 radius = 0.3
 eps_inside = 1.0
 
 [grid]
-nx = 48
-ny = 48
+nx = 32
+ny = 32
 lx = 1.0
 ly = 1.0
 
@@ -26,6 +25,6 @@ preset = "hexagonal"
 segments_per_leg = 12
 
 [eigensolver]
-n_bands = 8
+n_bands = 10
 max_iter = 200
-tol = 1e-6
+tol = 1e-8

@@ -1,16 +1,26 @@
-# ==============================================================================
-# Simple Bulk Parameter Sweep Example
-# ==============================================================================
-# A minimal example sweeping radius and polarization.
-# Total configurations: 5 radii × 2 polarizations = 10 jobs
+# Minimal bulk sweep: radius × polarization = 10 jobs
 
 [bulk]
-threads = 4
 verbose = true
 
-[geometry]
-eps_bg = 13.0
+[solver]
+type = "maxwell"
 
+[defaults]
+eps_bg = 13.0
+resolution = 32
+
+[[sweeps]]
+parameter = "atom0.radius"
+min = 0.2
+max = 0.4
+step = 0.05
+
+[[sweeps]]
+parameter = "polarization"
+values = ["TM", "TE"]
+
+[geometry]
 [geometry.lattice]
 type = "square"
 a = 1.0
@@ -26,8 +36,6 @@ ny = 32
 lx = 1.0
 ly = 1.0
 
-polarization = "TM"
-
 [path]
 preset = "square"
 segments_per_leg = 10
@@ -36,24 +44,6 @@ segments_per_leg = 10
 n_bands = 8
 max_iter = 200
 tol = 1e-6
-
-[dielectric.smoothing]
-mesh_size = 4
-
-# ============================================================================
-# Parameter Ranges
-# ============================================================================
-
-[ranges]
-# Sweep radius from 0.2 to 0.4
-polarization = ["TM", "TE"]
-
-[[ranges.atoms]]
-radius = { min = 0.2, max = 0.4, step = 0.05 }
-
-# ============================================================================
-# Output Configuration
-# ============================================================================
 
 [output]
 mode = "full"
