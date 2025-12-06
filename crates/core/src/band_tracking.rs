@@ -38,6 +38,7 @@
 
 use crate::eigensolver::subspace_prediction::{
     compute_complex_overlap_matrix, polar_decomposition, polar_decomposition_with_singular_values,
+    RotationMatrix,
 };
 use crate::field::Field2D;
 use log::debug;
@@ -193,7 +194,7 @@ fn hungarian_assignment(weights: &[Vec<f64>]) -> Vec<usize> {
 /// # Returns
 /// A permutation vector where permutation[i] = j means curr band at index j
 /// should be reordered into position i (matching prev band i).
-fn extract_permutation_from_rotation(rotation: &faer::Mat<faer::c64>) -> Vec<usize> {
+fn extract_permutation_from_rotation(rotation: &RotationMatrix) -> Vec<usize> {
     let m = rotation.ncols();
     if m == 0 {
         return Vec::new();
@@ -382,7 +383,7 @@ pub fn track_bands_with_frequencies(
 }
 
 /// Build weight matrix |U[i,j]| from the rotation matrix.
-fn build_weight_matrix(rotation: &faer::Mat<faer::c64>) -> Vec<Vec<f64>> {
+fn build_weight_matrix(rotation: &RotationMatrix) -> Vec<Vec<f64>> {
     let m = rotation.ncols();
     (0..m)
         .map(|i| {
@@ -403,7 +404,7 @@ fn build_weight_matrix(rotation: &faer::Mat<faer::c64>) -> Vec<Vec<f64>> {
 /// 2. There are multiple columns with similar overlap values
 ///
 /// Returns blocks of contiguous band indices that form degenerate subspaces.
-fn detect_degenerate_bands_from_rotation(rotation: &faer::Mat<faer::c64>) -> Vec<(usize, usize)> {
+fn detect_degenerate_bands_from_rotation(rotation: &RotationMatrix) -> Vec<(usize, usize)> {
     let m = rotation.ncols();
     if m < 2 {
         return Vec::new();

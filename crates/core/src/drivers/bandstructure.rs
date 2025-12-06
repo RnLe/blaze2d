@@ -203,6 +203,15 @@ pub struct RunOptions {
     /// The band-window shift component is c × λ_median. Default is 0.5.
     /// Only used when `use_band_window_shift` is enabled.
     pub band_window_scale: f64,
+    /// Disable band tracking after eigensolver convergence.
+    ///
+    /// When enabled, skips the polar decomposition + Hungarian algorithm band
+    /// tracking step that reorders bands based on eigenvector overlap. This is
+    /// useful for irregular k-paths (e.g., 5×5 grids around Γ) where there's no
+    /// natural "previous" k-point and band tracking can cause spurious band hopping.
+    ///
+    /// Default: false (band tracking is enabled)
+    pub disable_band_tracking: bool,
 }
 
 impl Default for RunOptions {
@@ -214,6 +223,7 @@ impl Default for RunOptions {
             use_band_window_shift: false,  // Disabled by default (experimental)
             band_window_blend: 0.5,        // Equal mix of adaptive and band-window
             band_window_scale: 0.5,        // Conservative scaling of median eigenvalue
+            disable_band_tracking: false,  // Band tracking enabled by default
         }
     }
 }
@@ -277,6 +287,16 @@ impl RunOptions {
     /// give more weight to the eigenvalue spectrum.
     pub fn with_band_window_scale(mut self, scale: f64) -> Self {
         self.band_window_scale = scale.max(0.0);
+        self
+    }
+
+    /// Disable band tracking after eigensolver convergence.
+    ///
+    /// When enabled, skips the polar decomposition + Hungarian algorithm that
+    /// reorders bands based on eigenvector overlap. Useful for irregular k-paths
+    /// (e.g., 5×5 grids around Γ) where band tracking can cause spurious hopping.
+    pub fn with_disable_band_tracking(mut self, disabled: bool) -> Self {
+        self.disable_band_tracking = disabled;
         self
     }
 }
@@ -374,6 +394,10 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         eps_min, eps_max, eps_contrast, precond_type,
     );
 
+    if options.disable_band_tracking {
+        warn!("[bandstructure] Band tracking DISABLED - bands will be sorted by eigenvalue only");
+    }
+
     // ========================================================================
     // Operator Diagnostics (one-time, before k-point loop)
     // ========================================================================
@@ -404,6 +428,9 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
                 PreconditionerType::TransverseProjection => Some(Box::new(
                     theta.build_transverse_projection_preconditioner_adaptive(),
                 )),
+                PreconditionerType::Multigrid => {
+                    unimplemented!("Multigrid preconditioner not yet implemented")
+                }
             };
 
             const POWER_ITERATIONS: usize = 15;
@@ -616,6 +643,9 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
                     ))
                 }
             }
+            PreconditionerType::Multigrid => {
+                unimplemented!("Multigrid preconditioner not yet implemented")
+            }
         };
 
         // Create and run the eigensolver
@@ -647,40 +677,42 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         // Band Tracking: reorder by overlap with previous k-point
         // Uses polar decomposition + frequency continuity for degenerate blocks.
         // ====================================================================
-        if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
-            let tracking_result = track_bands_with_frequencies(
-                prev_vecs,
-                &eigenvectors,
-                prev_freqs,
-                &omegas,
-                eps_for_tracking.as_deref(),
-            );
+        if !options.disable_band_tracking {
+            if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
+                let tracking_result = track_bands_with_frequencies(
+                    prev_vecs,
+                    &eigenvectors,
+                    prev_freqs,
+                    &omegas,
+                    eps_for_tracking.as_deref(),
+                );
 
-            // Always log σ_min for diagnostic purposes
-            let perm_str = if tracking_result.had_swaps {
-                format!("{:?}", tracking_result.permutation)
-            } else {
-                "identity".to_string()
-            };
-            let blocks_str = if tracking_result.degenerate_blocks.is_empty() {
-                String::new()
-            } else {
-                format!(" blocks={:?}", tracking_result.degenerate_blocks)
-            };
-            info!(
-                "[band_tracking] k#{:03} σ_min={:.6} perm={}{}",
-                k_idx, tracking_result.sigma_min, perm_str, blocks_str
-            );
+                // Always log σ_min for diagnostic purposes
+                let perm_str = if tracking_result.had_swaps {
+                    format!("{:?}", tracking_result.permutation)
+                } else {
+                    "identity".to_string()
+                };
+                let blocks_str = if tracking_result.degenerate_blocks.is_empty() {
+                    String::new()
+                } else {
+                    format!(" blocks={:?}", tracking_result.degenerate_blocks)
+                };
+                info!(
+                    "[band_tracking] k#{:03} σ_min={:.6} perm={}{}",
+                    k_idx, tracking_result.sigma_min, perm_str, blocks_str
+                );
 
-            if tracking_result.had_swaps {
-                apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
+                if tracking_result.had_swaps {
+                    apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
 
-                // Log warnings for near-degenerate regions (low sigma_min)
-                if tracking_result.sigma_min < 0.1 {
-                    warn!(
-                        "[bandstructure] k#{:03} band tracking: near-degeneracy (σ_min={:.4}), may be unreliable",
-                        k_idx, tracking_result.sigma_min
-                    );
+                    // Log warnings for near-degenerate regions (low sigma_min)
+                    if tracking_result.sigma_min < 0.1 {
+                        warn!(
+                            "[bandstructure] k#{:03} band tracking: near-degeneracy (σ_min={:.4}), may be unreliable",
+                            k_idx, tracking_result.sigma_min
+                        );
+                    }
                 }
             }
         }
@@ -848,6 +880,10 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         eps_min, eps_max, eps_contrast, precond_type,
     );
 
+    if options.disable_band_tracking {
+        warn!("[bandstructure] Band tracking DISABLED - bands will be sorted by eigenvalue only");
+    }
+
     // ========================================================================
     // Operator Diagnostics (one-time, before k-point loop)
     // ========================================================================
@@ -878,6 +914,9 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
                 PreconditionerType::TransverseProjection => Some(Box::new(
                     theta.build_transverse_projection_preconditioner_adaptive(),
                 )),
+                PreconditionerType::Multigrid => {
+                    unimplemented!("Multigrid preconditioner not yet implemented")
+                }
             };
 
             const POWER_ITERATIONS: usize = 15;
@@ -1110,6 +1149,9 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
                     ))
                 }
             }
+            PreconditionerType::Multigrid => {
+                unimplemented!("Multigrid preconditioner not yet implemented")
+            }
         };
 
         // Create and run the eigensolver
@@ -1136,40 +1178,42 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         // Band Tracking: reorder by overlap with previous k-point
         // Uses polar decomposition + frequency continuity for degenerate blocks.
         // ====================================================================
-        if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
-            let tracking_result = track_bands_with_frequencies(
-                prev_vecs,
-                &eigenvectors,
-                prev_freqs,
-                &omegas,
-                eps_for_tracking.as_deref(),
-            );
+        if !options.disable_band_tracking {
+            if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
+                let tracking_result = track_bands_with_frequencies(
+                    prev_vecs,
+                    &eigenvectors,
+                    prev_freqs,
+                    &omegas,
+                    eps_for_tracking.as_deref(),
+                );
 
-            // Always log σ_min for diagnostic purposes
-            let perm_str = if tracking_result.had_swaps {
-                format!("{:?}", tracking_result.permutation)
-            } else {
-                "identity".to_string()
-            };
-            let blocks_str = if tracking_result.degenerate_blocks.is_empty() {
-                String::new()
-            } else {
-                format!(" blocks={:?}", tracking_result.degenerate_blocks)
-            };
-            info!(
-                "[band_tracking] k#{:03} σ_min={:.6} perm={}{}",
-                k_idx, tracking_result.sigma_min, perm_str, blocks_str
-            );
+                // Always log σ_min for diagnostic purposes
+                let perm_str = if tracking_result.had_swaps {
+                    format!("{:?}", tracking_result.permutation)
+                } else {
+                    "identity".to_string()
+                };
+                let blocks_str = if tracking_result.degenerate_blocks.is_empty() {
+                    String::new()
+                } else {
+                    format!(" blocks={:?}", tracking_result.degenerate_blocks)
+                };
+                info!(
+                    "[band_tracking] k#{:03} σ_min={:.6} perm={}{}",
+                    k_idx, tracking_result.sigma_min, perm_str, blocks_str
+                );
 
-            if tracking_result.had_swaps {
-                apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
+                if tracking_result.had_swaps {
+                    apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
 
-                // Log warnings for near-degenerate regions (low sigma_min)
-                if tracking_result.sigma_min < 0.1 {
-                    warn!(
-                        "[bandstructure] k#{:03} band tracking: near-degeneracy (σ_min={:.4}), may be unreliable",
-                        k_idx, tracking_result.sigma_min
-                    );
+                    // Log warnings for near-degenerate regions (low sigma_min)
+                    if tracking_result.sigma_min < 0.1 {
+                        warn!(
+                            "[bandstructure] k#{:03} band tracking: near-degeneracy (σ_min={:.4}), may be unreliable",
+                            k_idx, tracking_result.sigma_min
+                        );
+                    }
                 }
             }
         }

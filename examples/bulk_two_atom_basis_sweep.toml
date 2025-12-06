@@ -1,72 +1,150 @@
 # Two-atom basis position sweep
 # Sweeps second atom position to study band gap vs displacement
 # Total: 2 pol × 7 pos_x × 7 pos_y = 98 jobs
+#
+# Sweep Ordering:
+#   The [[sweeps]] array defines a nested loop structure:
+#   - First sweep = outermost loop (polarization)
+#   - Last sweep = innermost loop (atom1.pos_y)
+#
+# K-path:
+#   Using "square" preset with 12 segments per leg:
+#   Γ(0,0) → X(0.5,0) → M(0.5,0.5) → Γ(0,0)
+#   Total k-points: 12 × 3 + 1 = 37 points
+#
+# Output:
+#   Selective mode extracts only high-symmetry points and specified bands,
+#   producing one merged CSV file.
+
+# =============================================================================
+# BULK SECTION - Identifies this as a parameter sweep
+# =============================================================================
 
 [bulk]
-threads = 8
-verbose = true
+threads = 8                    # Number of parallel threads (0 = all cores)
+verbose = true                 # Print progress messages
+# dry_run = false              # Set true to just count jobs without running
+# skip_final_gamma = false     # Set true to copy initial Γ instead of recalculating
+
+# =============================================================================
+# SOLVER TYPE
+# =============================================================================
 
 [solver]
-type = "maxwell"
+type = "maxwell"               # "maxwell" for photonic crystals, "ea" for envelope approx
+
+# =============================================================================
+# DEFAULTS - Base values for parameters that can be swept
+# =============================================================================
 
 [defaults]
-eps_bg = 11.9
-resolution = 48
+eps_bg = 11.9                  # Background dielectric constant
+resolution = 48                # Grid resolution (nx = ny = resolution)
+polarization = "TM"            # Base polarization (overridden by sweep)
+# lattice_type = "square"      # Can be swept: "square", "rectangular", "triangular", "hexagonal"
 
+# =============================================================================
+# ORDERED SWEEPS - First = outermost loop, last = innermost loop
+# =============================================================================
+
+# Sweep 1 (outer): Polarization
 [[sweeps]]
 parameter = "polarization"
 values = ["TM", "TE"]
 
+# Sweep 2 (middle): Second atom x-position
 [[sweeps]]
 parameter = "atom1.pos_x"
 min = 0.1
 max = 0.4
 step = 0.05
 
+# Sweep 3 (inner): Second atom y-position
 [[sweeps]]
 parameter = "atom1.pos_y"
 min = 0.1
 max = 0.4
 step = 0.05
 
+# =============================================================================
+# GEOMETRY - Lattice and atoms
+# =============================================================================
+
 [geometry]
-eps_bg = 11.9
+eps_bg = 11.9                  # Overrides defaults.eps_bg for geometry setup
 
 [geometry.lattice]
-type = "square"
-a = 1.0
+type = "square"                # Lattice type: square, rectangular, triangular, hexagonal, oblique
+a = 1.0                        # Primary lattice constant
+# b = 1.0                      # Secondary lattice constant (required for rectangular/oblique)
+# angle = 90.0                 # Angle in degrees (required for oblique)
 
-# Atom 0: fixed at center
+# Atom 0: fixed at unit cell center
 [[geometry.atoms]]
-pos = [0.5, 0.5]
+pos = [0.5, 0.5]               # Position in fractional coordinates [0, 1)
+radius = 0.15                  # Radius in units of lattice constant
+eps_inside = 1.0               # Dielectric inside atom (air hole)
+
+# Atom 1: position swept via atom1.pos_x and atom1.pos_y
+[[geometry.atoms]]
+pos = [0.25, 0.25]             # Base position (overridden by sweeps)
 radius = 0.15
 eps_inside = 1.0
 
-# Atom 1: position swept
-[[geometry.atoms]]
-pos = [0.25, 0.25]
-radius = 0.15
-eps_inside = 1.0
+# =============================================================================
+# COMPUTATIONAL GRID
+# =============================================================================
 
 [grid]
-nx = 48
-ny = 48
-lx = 1.0
-ly = 1.0
+nx = 48                        # Grid points in x (should match resolution for consistency)
+ny = 48                        # Grid points in y
+lx = 1.0                       # Supercell size x (in units of lattice constant)
+ly = 1.0                       # Supercell size y
+
+# =============================================================================
+# K-PATH SPECIFICATION
+# =============================================================================
 
 [path]
-preset = "square"
-segments_per_leg = 12
+preset = "square"              # Preset: "square", "rectangular", "triangular", "hexagonal"
+segments_per_leg = 12          # Points per high-symmetry segment (default: 8)
+
+# Alternative: explicit k-path (use INSTEAD of preset, not with it)
+# [path]
+# k_path = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.0]]
+
+# =============================================================================
+# EIGENSOLVER CONFIGURATION
+# =============================================================================
 
 [eigensolver]
-n_bands = 10
-max_iter = 200
-tol = 1e-6
+n_bands = 10                   # Number of bands to compute
+max_iter = 200                 # Maximum LOBPCG iterations
+tol = 1e-6                     # Convergence tolerance
+# block_size = 0               # LOBPCG block size (0 = auto = n_bands)
+# record_diagnostics = false   # Record per-iteration diagnostics
+
+# =============================================================================
+# DIELECTRIC SMOOTHING - MPB-style interface smoothing
+# =============================================================================
+
+[dielectric.smoothing]
+mesh_size = 3                  # Subgrid mesh size for smoothing (1 = no smoothing)
+# method = "analytic"          # "analytic" (default, MPB-style) or "subgrid"
+# interface_tolerance = 1e-6   # Tolerance for detecting material interfaces
+
+# =============================================================================
+# OUTPUT CONFIGURATION
+# =============================================================================
 
 [output]
-mode = "selective"
-filename = "./two_atom_basis_sweep.csv"
+mode = "selective"             # "full" (one CSV per job) or "selective" (merged CSV)
+filename = "./two_atom_basis_sweep.csv"  # Output filename for selective mode
+# directory = "./bulk_output"  # Output directory for full mode
+# prefix = "job"               # Filename prefix for full mode
+# io_mode = "sync"             # "sync", "batch", or "stream"
 
 [output.selective]
-k_indices = [0, 12, 24]
-bands = [1, 2, 3, 4, 5, 6, 7, 8]
+k_indices = [0, 12, 24]        # K-point indices to include (0-based)
+bands = [1, 2, 3, 4, 5, 6, 7, 8]  # Band indices to include (1-based, matches band1, band2, ...)
+# k_labels = ["Gamma", "X", "M"]  # Alternative: use high-symmetry labels

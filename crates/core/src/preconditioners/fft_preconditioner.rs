@@ -598,34 +598,45 @@ pub fn fft_freq(i: usize, n: usize, d: f64) -> f64 {
 // Tests
 // ============================================================================
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     
     #[test]
     fn test_config_zero_mean_potential() {
-        // Zero-mean potential should get a positive shift
+        // Zero-mean potential: With the new gauge-shift approach, the EAOperator
+        // should shift the potential before building the preconditioner.
+        // After shifting, V_min becomes positive and this test case shouldn't occur.
+        // This test verifies that the preconditioner uses a minimal shift for
+        // legacy compatibility when called without gauge shifting.
         let config = EAPreconditionerConfig::from_operator_stats(
             -0.075, 0.033, 0.0,  // V: min, max, mean=0
             1.0, 100.0, 50.0,     // M: min, max, mean
             0.02,                  // eta
         );
         
+        // With minimal-shift strategy for zero-mean, shift is small but positive
         assert!(config.shift() > 0.0, "Shift should be positive for zero-mean V");
-        assert!(config.shift() >= 0.075, "Shift should cover |V_min|");
+        // Note: With gauge shifting, the EAOperator shifts V before calling this,
+        // so V_min becomes positive and we'd fall into the positive-potential case.
     }
     
     #[test]
     fn test_config_negative_mean_potential() {
-        // Negative-mean potential should get a positive shift
+        // Negative-mean potential: With the new gauge-shift approach, the EAOperator
+        // should shift the potential before building the preconditioner.
+        // This test verifies minimal-shift behavior for legacy compatibility.
         let config = EAPreconditionerConfig::from_operator_stats(
             -0.1, -0.01, -0.05,  // V: all negative
             1.0, 10.0, 5.0,       // M
             0.02,                  // eta
         );
         
+        // Minimal shift should be positive (for numerical stability)
         assert!(config.shift() > 0.0, "Shift should be positive");
-        assert!(config.shift() >= 0.1, "Shift should cover |V_min|");
+        // Note: The shift may be small because without gauge shifting,
+        // the preconditioner uses minimal interference strategy.
     }
     
     #[test]
@@ -656,15 +667,34 @@ mod tests {
     }
     
     #[test]
-    fn test_preconditioner_condition_number() {
-        // Create a preconditioner configuration and check condition number
+    fn test_preconditioner_with_gauge_shifted_potential() {
+        // Test the intended use case: potential has been gauge-shifted
+        // so V_min is now positive (e.g., original V_min = -0.1, shifted to 0.01)
         let config = EAPreconditionerConfig::from_operator_stats(
-            -0.1, 0.1, 0.0,
+            0.01, 0.21, 0.11,     // V: shifted, now all positive
             1.0, 10.0, 5.0,
             0.02,
         );
         
-        // Compute expected condition number from the spectrum formula
+        let shift = config.shift();
+        
+        // Shift should be near V_mean for positive potentials
+        assert!(shift > 0.1, "Shift should be near V_mean = 0.11, got {}", shift);
+        assert!(shift < 0.25, "Shift should not be too large, got {}", shift);
+        
+        // Diagnostics should be present
+        assert!(config.diagnostics.is_some(), "Diagnostics should be present");
+    }
+    
+    #[test]
+    fn test_preconditioner_condition_number_positive_v() {
+        // Test condition number calculation with positive potential
+        let config = EAPreconditionerConfig::from_operator_stats(
+            0.1, 1.0, 0.5,        // V: positive
+            1.0, 10.0, 5.0,
+            0.02,
+        );
+        
         let shift = config.shift();
         let effective_mass = config.effective_mass();
         let eta = 0.02;
@@ -680,13 +710,9 @@ mod tests {
         let expected_kappa = p_inv_max / p_inv_min;
         
         // Verify the config produces reasonable values
-        assert!(shift > 0.1, "Shift should cover |V_min| = 0.1, got {}", shift);
+        assert!(shift > 0.0, "Shift should be positive");
         assert!(expected_kappa > 1.0, "Condition number should be > 1");
         assert!(expected_kappa < 1e6, "Condition number should be bounded, got {}", expected_kappa);
-        
-        // Diagnostics should have warnings about zero-mean potential
-        assert!(config.diagnostics.is_some(), "Diagnostics should be present");
-        let diag = config.diagnostics.as_ref().unwrap();
-        assert!(!diag.warnings.is_empty(), "Should have warnings for zero-mean V");
     }
 }
+

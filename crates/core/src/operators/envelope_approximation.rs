@@ -112,6 +112,16 @@ pub struct EAOperator<B: SpectralBackend> {
     vg: Option<Vec<f64>>,
     /// Reference frequency (for reconstructing absolute ω)
     omega_ref: f64,
+    /// Gauge shift applied to potential to ensure positive eigenvalues.
+    ///
+    /// When the original potential V(R) has negative regions, the lowest
+    /// eigenvalues can be negative, which breaks the FFT preconditioner.
+    /// By shifting V(R) → V(R) + σ where σ > |V_min|, all eigenvalues
+    /// become positive. The raw eigenvalues from the solver must then
+    /// be corrected: λ_physical = λ_solver - gauge_shift.
+    ///
+    /// This is mathematically exact: H' = H + σI implies λ'_i = λ_i + σ.
+    gauge_shift: f64,
     /// Scratch buffer for intermediate computations
     #[allow(dead_code)]
     scratch: B::Buffer,
@@ -168,6 +178,7 @@ impl<B: SpectralBackend> EAOperator<B> {
             mass_inv,
             vg,
             omega_ref,
+            gauge_shift: 0.0,
             scratch,
             scratch2,
         }
@@ -181,6 +192,76 @@ impl<B: SpectralBackend> EAOperator<B> {
     /// Get the twist parameter η.
     pub fn eta(&self) -> f64 {
         self.eta
+    }
+
+    /// Get the gauge shift applied to the potential.
+    ///
+    /// When computing physical eigenvalues, subtract this from solver eigenvalues:
+    /// `λ_physical = λ_solver - gauge_shift`
+    pub fn gauge_shift(&self) -> f64 {
+        self.gauge_shift
+    }
+
+    /// Apply a gauge shift to the potential to ensure positive eigenvalues.
+    ///
+    /// This shifts V(R) → V(R) + σ so that V_min + σ > margin, ensuring
+    /// the lowest eigenvalues are positive. This allows the FFT preconditioner
+    /// to work effectively.
+    ///
+    /// # Arguments
+    ///
+    /// * `margin` - Safety margin above zero (recommended: 0.01 * |V_min|)
+    ///
+    /// # Returns
+    ///
+    /// The applied gauge shift σ. Subtract from solver eigenvalues to get physical values.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Before: potential has V_min = -0.1, eigenvalues can be negative
+    /// let shift = operator.apply_gauge_shift_for_positive_spectrum(0.01);
+    ///
+    /// // Solve with preconditioner (now works correctly)
+    /// let result = solve(&mut operator, Some(&mut precond), &job);
+    ///
+    /// // Correct eigenvalues
+    /// let physical_eigenvalues: Vec<f64> = result.eigenvalues
+    ///     .iter()
+    ///     .map(|&e| e - shift)
+    ///     .collect();
+    /// ```
+    pub fn apply_gauge_shift_for_positive_spectrum(&mut self, margin: f64) -> f64 {
+        let (v_min, _, _) = self.potential_stats();
+        
+        if v_min >= margin {
+            // Already positive, no shift needed
+            log::debug!("Potential already positive (V_min = {:.4e}), no gauge shift applied", v_min);
+            return 0.0;
+        }
+        
+        // Shift so that V_min + σ = margin
+        let shift = -v_min + margin;
+        
+        log::info!(
+            "Applying gauge shift σ = {:.4e} to potential (V_min was {:.4e}, now {:.4e})",
+            shift, v_min, v_min + shift
+        );
+        
+        // Apply shift to all potential values
+        for v in &mut self.potential {
+            *v += shift;
+        }
+        
+        self.gauge_shift = shift;
+        shift
+    }
+
+    /// Correct raw solver eigenvalues by subtracting the gauge shift.
+    ///
+    /// Call this after solving to get physical eigenvalues.
+    pub fn correct_eigenvalues(&self, raw_eigenvalues: &[f64]) -> Vec<f64> {
+        raw_eigenvalues.iter().map(|&e| e - self.gauge_shift).collect()
     }
 
     /// Check if the drift term (v_g) is present.
@@ -1363,6 +1444,111 @@ mod tests {
             result.iterations
         );
     }
+
+    #[test]
+    fn test_gauge_shift_for_negative_potential() {
+        // Test that gauge shift correctly handles negative potentials
+        let nx = 8;
+        let ny = 8;
+        let n = nx * ny;
+        let dx = 1.0;
+        let dy = 1.0;
+        let eta = 0.1;
+
+        // Create a potential with negative values (centered around 0)
+        let mut potential = vec![0.0; n];
+        for i in 0..n {
+            potential[i] = (i as f64 / n as f64) - 0.5;  // Range: [-0.5, 0.5)
+        }
+        let v_min_orig = potential.iter().cloned().fold(f64::INFINITY, f64::min);
+        let v_max = potential.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        let mass_inv: Vec<f64> = (0..n).flat_map(|_| [1.0, 0.0, 0.0, 1.0]).collect();
+
+        let mut op = EAOperator::new(
+            TestBackend,
+            nx, ny,
+            dx, dy,
+            eta,
+            potential,
+            mass_inv,
+            None,
+            0.0,
+        );
+
+        // Initially, no gauge shift
+        assert_eq!(op.gauge_shift(), 0.0);
+
+        // Check potential stats before shift
+        let (v_min_before, _, _) = op.potential_stats();
+        assert!(v_min_before < 0.0, "V_min should be negative before shift");
+
+        // Apply gauge shift
+        let margin = 0.01;
+        let shift = op.apply_gauge_shift_for_positive_spectrum(margin);
+
+        // Verify shift was applied
+        assert!(shift > 0.0, "Gauge shift should be positive");
+        assert_eq!(op.gauge_shift(), shift);
+
+        // Check potential stats after shift
+        let (v_min_after, _, _) = op.potential_stats();
+        assert!(v_min_after >= margin, 
+            "V_min after shift should be >= margin: {} >= {}", v_min_after, margin);
+
+        // Verify shift amount: shift = -v_min_orig + margin
+        let expected_shift = -v_min_orig + margin;
+        assert!((shift - expected_shift).abs() < 1e-10,
+            "Shift should be -V_min + margin = {}, got {}", expected_shift, shift);
+
+        // Test eigenvalue correction
+        let raw_eigenvalues = vec![0.5, 1.0, 1.5, 2.0];
+        let corrected = op.correct_eigenvalues(&raw_eigenvalues);
+        
+        for (i, (&raw, &corrected_ev)) in raw_eigenvalues.iter().zip(corrected.iter()).enumerate() {
+            let expected = raw - shift;
+            assert!((corrected_ev - expected).abs() < 1e-10,
+                "Corrected eigenvalue {} should be {} - {} = {}, got {}",
+                i, raw, shift, expected, corrected_ev);
+        }
+    }
+
+    #[test]
+    fn test_gauge_shift_not_applied_for_positive_potential() {
+        // Test that gauge shift is not applied when potential is already positive
+        let nx = 8;
+        let ny = 8;
+        let n = nx * ny;
+        let dx = 1.0;
+        let dy = 1.0;
+        let eta = 0.1;
+
+        // Create a positive potential
+        let potential = vec![1.0; n];
+        let mass_inv: Vec<f64> = (0..n).flat_map(|_| [1.0, 0.0, 0.0, 1.0]).collect();
+
+        let mut op = EAOperator::new(
+            TestBackend,
+            nx, ny,
+            dx, dy,
+            eta,
+            potential,
+            mass_inv,
+            None,
+            0.0,
+        );
+
+        // Apply gauge shift - should return 0 since potential is already positive
+        let shift = op.apply_gauge_shift_for_positive_spectrum(0.01);
+        
+        assert_eq!(shift, 0.0, "No shift needed for positive potential");
+        assert_eq!(op.gauge_shift(), 0.0);
+
+        // Potential should be unchanged
+        let (v_min, v_max, _) = op.potential_stats();
+        assert!((v_min - 1.0).abs() < 1e-10);
+        assert!((v_max - 1.0).abs() < 1e-10);
+    }
 }
 
 // ============================================================================
@@ -1437,6 +1623,7 @@ impl<B: SpectralBackend> EAOperatorBuilder<B> {
         self
     }
 
+
     /// Build the EAOperator.
     ///
     /// Uses uniform potential V=0 and identity mass M=I if not specified.
@@ -1461,4 +1648,39 @@ impl<B: SpectralBackend> EAOperatorBuilder<B> {
             self.omega_ref,
         )
     }
+
+    /// Build the EAOperator with automatic gauge shift for positive eigenvalues.
+    ///
+    /// If the potential has negative regions (V_min < 0), this automatically
+    /// shifts the potential so that all eigenvalues are positive. This enables
+    /// effective FFT preconditioning.
+    ///
+    /// The returned operator tracks the applied shift. After solving, use
+    /// `operator.correct_eigenvalues(&result.eigenvalues)` to get physical values.
+    ///
+    /// # Arguments
+    ///
+    /// * `margin` - Safety margin above zero (recommended: 0.01 or 1% of |V_scale|)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut operator = EAOperatorBuilder::new(backend, nx, ny)
+    ///     .with_potential(potential)
+    ///     .with_mass_inv(mass_inv)
+    ///     .with_eta(0.02)
+    ///     .build_with_auto_gauge_shift(0.01);
+    ///
+    /// let mut precond = operator.build_preconditioner();
+    /// let result = solve(&mut operator, Some(&mut precond), &job);
+    ///
+    /// // Get physical eigenvalues
+    /// let eigenvalues = operator.correct_eigenvalues(&result.eigenvalues);
+    /// ```
+    pub fn build_with_auto_gauge_shift(self, margin: f64) -> EAOperator<B> {
+        let mut operator = self.build();
+        operator.apply_gauge_shift_for_positive_spectrum(margin);
+        operator
+    }
 }
+

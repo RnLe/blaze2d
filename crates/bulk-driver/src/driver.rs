@@ -878,13 +878,17 @@ impl BulkDriver {
         #[cfg(not(feature = "cuda"))]
         let backend = CpuBackend::new();
 
+        // Build run options from config
+        let run_options = RunOptions::default()
+            .with_disable_band_tracking(self.config.bulk.disable_band_tracking);
+
         // Run the solver
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             bandstructure::run_with_options(
                 backend,
                 job,
                 Verbosity::Quiet,
-                RunOptions::default(),
+                run_options,
             )
         }));
 
@@ -954,11 +958,23 @@ impl BulkDriver {
 
             let mut operator = builder.build();
 
-            // Run the solve
-            let solve_result = single_solve::solve(&mut operator, None, &spec.solve_config);
+            // Apply gauge shift if potential has negative values
+            let (v_min, v_max, _) = operator.potential_stats();
+            if v_min < 0.0 {
+                let v_scale = (v_max - v_min).max(v_max.abs()).max(v_min.abs()).max(1e-10);
+                let margin = 0.01 * v_scale;
+                operator.apply_gauge_shift_for_positive_spectrum(margin);
+            }
+
+            // Run the solve with preconditioner
+            let mut precond = operator.build_preconditioner();
+            let solve_result = single_solve::solve(&mut operator, Some(&mut precond), &spec.solve_config);
+
+            // Correct eigenvalues by removing gauge shift
+            let corrected_eigenvalues = operator.correct_eigenvalues(&solve_result.eigenvalues);
 
             Ok::<_, String>(EAJobResult {
-                eigenvalues: solve_result.eigenvalues,
+                eigenvalues: corrected_eigenvalues,
                 eigenvectors: solve_result.eigenvectors,
                 grid_dims: [nx, ny],
                 n_iterations: solve_result.iterations,
@@ -1049,22 +1065,27 @@ impl BulkDriver {
 
         let mut operator = builder.build();
 
-        // Estimate spectral properties (15 power iterations)
-        let (lambda_max, v_min, spectral_spread) = operator.estimate_condition_number(15);
+        // Check if potential has negative values that would cause negative eigenvalues
+        let (v_min_orig, v_max, _v_mean) = operator.potential_stats();
+        let needs_gauge_shift = v_min_orig < 0.0;
+        
+        // Apply gauge shift if needed to ensure positive eigenvalues
+        // This allows the FFT preconditioner to work effectively
+        let gauge_shift = if needs_gauge_shift {
+            // Use a margin of 1% of the potential scale
+            let v_scale = (v_max - v_min_orig).max(v_max.abs()).max(v_min_orig.abs()).max(1e-10);
+            let margin = 0.01 * v_scale;
+            operator.apply_gauge_shift_for_positive_spectrum(margin)
+        } else {
+            0.0
+        };
 
-        // Build adaptive FFT preconditioner (for display only)
+        // Estimate spectral properties (15 power iterations)
+        let (lambda_max, v_min_shifted, spectral_spread) = operator.estimate_condition_number(15);
+
+        // Build adaptive FFT preconditioner
         let preconditioner = operator.build_preconditioner();
         let precond_summary = preconditioner.format_summary();
-
-        // Decide whether to use preconditioner based on eigenvalue sign
-        // For negative eigenvalue problems (v_min < 0), the FFT preconditioner
-        // doesn't help and may hurt convergence. Skip it.
-        let use_preconditioner = v_min >= 0.0;
-        let precond_note = if use_preconditioner {
-            "(enabled)"
-        } else {
-            "(disabled for negative eigenvalue problem)"
-        };
 
         // Print header with spectral info
         println!("╭─────────────────────────────────────────────────╮");
@@ -1076,8 +1097,12 @@ impl BulkDriver {
         println!("  n_bands: {}", spec.solve_config.n_bands);
         println!("  max_iter: {}", spec.solve_config.max_iterations);
         println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
-        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min, spectral_spread);
-        println!("  {} {}", precond_summary, precond_note);
+        if needs_gauge_shift {
+            println!("  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})", 
+                gauge_shift, v_min_orig, v_min_orig + gauge_shift);
+        }
+        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min_shifted, spectral_spread);
+        println!("  {}", precond_summary);
         println!();
 
         let start_time = Instant::now();
@@ -1092,48 +1117,30 @@ impl BulkDriver {
                 .progress_chars("█▓░"),
         );
 
-        // Run the solve
-        // Use preconditioner only for positive eigenvalue problems
-        let solve_result = if use_preconditioner {
-            let mut precond = operator.build_preconditioner();
-            single_solve::solve_with_progress(
-                &mut operator,
-                Some(&mut precond),
-                &spec.solve_config,
-                |progress: &ProgressInfo| {
-                    pb.set_position((progress.iteration + 1) as u64);
-                    let trace_str = match progress.trace_rel_change {
-                        Some(change) if change < f64::INFINITY => {
-                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
-                        }
-                        _ => format!("{:.6}", progress.trace),
-                    };
-                    pb.set_message(trace_str);
-                },
-            )
-        } else {
-            // For negative eigenvalue problems, use solve without preconditioner
-            // (still get progress via the progress bar based on iterations)
-            single_solve::solve_with_progress(
-                &mut operator,
-                None,
-                &spec.solve_config,
-                |progress: &ProgressInfo| {
-                    pb.set_position((progress.iteration + 1) as u64);
-                    let trace_str = match progress.trace_rel_change {
-                        Some(change) if change < f64::INFINITY => {
-                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
-                        }
-                        _ => format!("{:.6}", progress.trace),
-                    };
-                    pb.set_message(trace_str);
-                },
-            )
-        };
+        // Run the solve with preconditioner (now always works due to gauge shift)
+        let mut precond = operator.build_preconditioner();
+        let solve_result = single_solve::solve_with_progress(
+            &mut operator,
+            Some(&mut precond),
+            &spec.solve_config,
+            |progress: &ProgressInfo| {
+                pb.set_position((progress.iteration + 1) as u64);
+                let trace_str = match progress.trace_rel_change {
+                    Some(change) if change < f64::INFINITY => {
+                        format!("{:.6} (Δ={:.2e})", progress.trace, change)
+                    }
+                    _ => format!("{:.6}", progress.trace),
+                };
+                pb.set_message(trace_str);
+            },
+        );
 
         pb.finish_and_clear();
 
         let elapsed = start_time.elapsed();
+
+        // Correct eigenvalues by removing gauge shift
+        let corrected_eigenvalues = operator.correct_eigenvalues(&solve_result.eigenvalues);
 
         // Print result summary
         println!();
@@ -1152,9 +1159,13 @@ impl BulkDriver {
         }
 
         println!();
-        println!("Eigenvalues:");
-        for (i, &ev) in solve_result.eigenvalues.iter().enumerate() {
+        println!("Eigenvalues (physical, gauge-corrected):");
+        for (i, &ev) in corrected_eigenvalues.iter().enumerate() {
             println!("  band {:>2}: {:.10}", i + 1, ev);
+        }
+        if gauge_shift != 0.0 {
+            println!();
+            println!("  (raw solver eigenvalues were shifted by +{:.6})", gauge_shift);
         }
 
         // Setup output writer and write result
@@ -1165,7 +1176,7 @@ impl BulkDriver {
         let job_result = JobResult {
             index: expanded.index,
             result: JobResultType::EA(EAJobResult {
-                eigenvalues: solve_result.eigenvalues,
+                eigenvalues: corrected_eigenvalues,  // Store corrected eigenvalues
                 eigenvectors: solve_result.eigenvectors,
                 grid_dims: [nx, ny],
                 n_iterations: solve_result.iterations,
@@ -1243,22 +1254,27 @@ impl BulkDriver {
 
         let mut operator = builder.build();
 
-        // Estimate spectral properties (15 power iterations)
-        let (lambda_max, v_min, spectral_spread) = operator.estimate_condition_number(15);
+        // Check if potential has negative values that would cause negative eigenvalues
+        let (v_min_orig, v_max, _v_mean) = operator.potential_stats();
+        let needs_gauge_shift = v_min_orig < 0.0;
+        
+        // Apply gauge shift if needed to ensure positive eigenvalues
+        // This allows the FFT preconditioner to work effectively
+        let gauge_shift = if needs_gauge_shift {
+            // Use a margin of 1% of the potential scale
+            let v_scale = (v_max - v_min_orig).max(v_max.abs()).max(v_min_orig.abs()).max(1e-10);
+            let margin = 0.01 * v_scale;
+            operator.apply_gauge_shift_for_positive_spectrum(margin)
+        } else {
+            0.0
+        };
 
-        // Build adaptive FFT preconditioner (for display only)
+        // Estimate spectral properties (15 power iterations)
+        let (lambda_max, v_min_shifted, spectral_spread) = operator.estimate_condition_number(15);
+
+        // Build adaptive FFT preconditioner
         let preconditioner = operator.build_preconditioner();
         let precond_summary = preconditioner.format_summary();
-
-        // Decide whether to use preconditioner based on eigenvalue sign
-        // For negative eigenvalue problems (v_min < 0), the FFT preconditioner
-        // doesn't help and may hurt convergence. Skip it.
-        let use_preconditioner = v_min >= 0.0;
-        let precond_note = if use_preconditioner {
-            "(enabled)"
-        } else {
-            "(disabled for negative eigenvalue problem)"
-        };
 
         // Print header with spectral info
         println!("╭─────────────────────────────────────────────────╮");
@@ -1270,8 +1286,12 @@ impl BulkDriver {
         println!("  n_bands: {}", spec.solve_config.n_bands);
         println!("  max_iter: {}", spec.solve_config.max_iterations);
         println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
-        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min, spectral_spread);
-        println!("  {} {}", precond_summary, precond_note);
+        if needs_gauge_shift {
+            println!("  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})", 
+                gauge_shift, v_min_orig, v_min_orig + gauge_shift);
+        }
+        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min_shifted, spectral_spread);
+        println!("  {}", precond_summary);
         println!();
 
         let start_time = Instant::now();
@@ -1286,47 +1306,30 @@ impl BulkDriver {
                 .progress_chars("█▓░"),
         );
 
-        // Run the solve
-        // Use preconditioner only for positive eigenvalue problems
-        let solve_result = if use_preconditioner {
-            let mut precond = operator.build_preconditioner();
-            single_solve::solve_with_progress(
-                &mut operator,
-                Some(&mut precond),
-                &spec.solve_config,
-                |progress: &ProgressInfo| {
-                    pb.set_position((progress.iteration + 1) as u64);
-                    let trace_str = match progress.trace_rel_change {
-                        Some(change) if change < f64::INFINITY => {
-                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
-                        }
-                        _ => format!("{:.6}", progress.trace),
-                    };
-                    pb.set_message(trace_str);
-                },
-            )
-        } else {
-            // For negative eigenvalue problems, use solve without preconditioner
-            single_solve::solve_with_progress(
-                &mut operator,
-                None,
-                &spec.solve_config,
-                |progress: &ProgressInfo| {
-                    pb.set_position((progress.iteration + 1) as u64);
-                    let trace_str = match progress.trace_rel_change {
-                        Some(change) if change < f64::INFINITY => {
-                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
-                        }
-                        _ => format!("{:.6}", progress.trace),
-                    };
-                    pb.set_message(trace_str);
-                },
-            )
-        };
+        // Run the solve with preconditioner (now always works due to gauge shift)
+        let mut precond = operator.build_preconditioner();
+        let solve_result = single_solve::solve_with_progress(
+            &mut operator,
+            Some(&mut precond),
+            &spec.solve_config,
+            |progress: &ProgressInfo| {
+                pb.set_position((progress.iteration + 1) as u64);
+                let trace_str = match progress.trace_rel_change {
+                    Some(change) if change < f64::INFINITY => {
+                        format!("{:.6} (Δ={:.2e})", progress.trace, change)
+                    }
+                    _ => format!("{:.6}", progress.trace),
+                };
+                pb.set_message(trace_str);
+            },
+        );
 
         pb.finish_and_clear();
 
         let elapsed = start_time.elapsed();
+
+        // Correct eigenvalues by removing gauge shift
+        let corrected_eigenvalues = operator.correct_eigenvalues(&solve_result.eigenvalues);
 
         // Print result summary
         println!();
@@ -1348,7 +1351,7 @@ impl BulkDriver {
         let job_result = JobResult {
             index: expanded.index,
             result: JobResultType::EA(EAJobResult {
-                eigenvalues: solve_result.eigenvalues,
+                eigenvalues: corrected_eigenvalues,  // Store corrected eigenvalues
                 eigenvectors: solve_result.eigenvectors,
                 grid_dims: [nx, ny],
                 n_iterations: solve_result.iterations,

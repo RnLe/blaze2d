@@ -767,17 +767,25 @@ fn create_maxwell_job(
     let k_path = if !config.k_path.is_empty() {
         config.k_path.clone()
     } else if let Some(ref spec) = config.path {
-        // Use path preset with appropriate mapping for lattice type
-        let path_type = match spec.preset {
-            mpb2d_core::io::PathPreset::Square => PathType::Square,
-            mpb2d_core::io::PathPreset::Hexagonal | mpb2d_core::io::PathPreset::Triangular => {
-                PathType::Hexagonal
-            }
-            mpb2d_core::io::PathPreset::Rectangular => {
-                PathType::Custom(mpb2d_core::brillouin::BrillouinPath::Rectangular.raw_k_points())
-            }
-        };
-        symmetry::standard_path(&geometry.lattice, path_type, spec.segments_per_leg)
+        // First check for explicit k_path in path spec
+        if !spec.k_path.is_empty() {
+            spec.k_path.clone()
+        } else if let Some(ref preset) = spec.preset {
+            // Use path preset with appropriate mapping for lattice type
+            let path_type = match preset {
+                mpb2d_core::io::PathPreset::Square => PathType::Square,
+                mpb2d_core::io::PathPreset::Hexagonal | mpb2d_core::io::PathPreset::Triangular => {
+                    PathType::Hexagonal
+                }
+                mpb2d_core::io::PathPreset::Rectangular => {
+                    PathType::Custom(mpb2d_core::brillouin::BrillouinPath::Rectangular.raw_k_points())
+                }
+            };
+            symmetry::standard_path(&geometry.lattice, path_type, spec.segments_per_leg)
+        } else {
+            // No preset specified in path spec, use default square path
+            symmetry::standard_path(&geometry.lattice, PathType::Square, 12)
+        }
     } else {
         // Default: use square path
         symmetry::standard_path(&geometry.lattice, PathType::Square, 12)
@@ -856,8 +864,9 @@ mod tests {
             grid: Grid2D::new(32, 32, 1.0, 1.0),
             polarization: Polarization::TM,
             path: Some(PathSpec {
-                preset: mpb2d_core::io::PathPreset::Square,
+                preset: Some(mpb2d_core::io::PathPreset::Square),
                 segments_per_leg: 12,
+                k_path: vec![],
             }),
             k_path: vec![],
             eigensolver: EigensolverConfig::default(),

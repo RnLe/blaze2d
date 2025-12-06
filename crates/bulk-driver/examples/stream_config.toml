@@ -54,8 +54,9 @@ n_bands = 8
 tol = 1e-8
 max_iter = 200
 
-[dielectric]
-smoothing_radius = 0.5  # Subpixel averaging (0=sharp, 0.5-1.0=smooth)
+[dielectric.smoothing]
+mesh_size = 3  # Subgrid mesh size (1=no smoothing, 3=default)
+method = "analytic"  # MPB-style analytic smoothing
 
 # ----------------------------------------------------------------------------
 # SWEEPS - Ordered parameter variations

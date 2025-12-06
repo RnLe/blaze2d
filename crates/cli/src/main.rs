@@ -164,6 +164,24 @@ struct Cli {
     /// Lower values are more conservative. Default is 0.5.
     #[arg(long, default_value = "0.5")]
     band_window_scale: f64,
+
+    /// Skip calculating the final Γ-point (copy from initial Γ instead)
+    ///
+    /// When the k-path loops back to Γ (e.g., Γ→X→M→Γ), by default the final
+    /// Γ-point is fully calculated. Use this flag to copy the initial Γ-point
+    /// result instead, which is faster but may miss eigenvector differences.
+    #[arg(long)]
+    skip_final_gamma: bool,
+
+    /// Disable band tracking between k-points
+    ///
+    /// Skips the polar decomposition + Hungarian algorithm band tracking step.
+    /// Bands will be output in the order the eigensolver produces them (typically
+    /// sorted by eigenvalue). Use this for non-sequential k-paths (e.g., 2D grids
+    /// around a k-point) where the tracking algorithm may incorrectly swap bands
+    /// due to large jumps or direction changes in k-space.
+    #[arg(long)]
+    no_band_tracking: bool,
 }
 
 /// CLI path argument supporting all four lattice types.
@@ -446,7 +464,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_extrapolation(use_extrapolation)
         .with_band_window_shift(cli.band_window_shift)
         .with_band_window_blend(cli.band_window_blend)
-        .with_band_window_scale(cli.band_window_scale);
+        .with_band_window_scale(cli.band_window_scale)
+        .with_disable_band_tracking(cli.no_band_tracking);
 
     if !cli.quiet && use_subspace_pred {
         if use_extrapolation {
@@ -454,6 +473,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             info!("subspace prediction enabled (rotation-only)");
         }
+    }
+
+    if !cli.quiet && cli.no_band_tracking {
+        info!("band tracking disabled (bands output in eigensolver order)");
     }
 
     // Select backend: use CUDA if available, otherwise CPU

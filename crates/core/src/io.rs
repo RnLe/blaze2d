@@ -148,14 +148,37 @@ impl From<PathPreset> for NewPathPreset {
     }
 }
 
-/// Specification for a k-path using a preset.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Specification for a k-path.
+///
+/// Supports two modes:
+/// 1. **Preset path**: Use `preset` to select a standard high-symmetry path
+/// 2. **Explicit path**: Use `k_path` to specify arbitrary k-points
+///
+/// When both are provided, `k_path` takes precedence.
+///
+/// # Examples
+///
+/// ```toml
+/// # Using a preset
+/// [path]
+/// preset = "square"
+/// segments_per_leg = 12
+///
+/// # Using an explicit path
+/// [path]
+/// k_path = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.0]]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PathSpec {
-    /// Which preset path to use.
-    pub preset: PathPreset,
+    /// Which preset path to use (optional if k_path is provided).
+    #[serde(default)]
+    pub preset: Option<PathPreset>,
     /// Number of k-points per segment between high-symmetry points.
     #[serde(default = "default_segments_per_leg")]
     pub segments_per_leg: usize,
+    /// Explicit k-path (overrides preset if provided).
+    #[serde(default)]
+    pub k_path: Vec<[f64; 2]>,
 }
 
 fn default_segments_per_leg() -> usize {
@@ -164,8 +187,25 @@ fn default_segments_per_leg() -> usize {
 
 impl PathSpec {
     /// Generate the k-path from this specification.
+    ///
+    /// If `k_path` is non-empty, returns it directly.
+    /// Otherwise, generates a path from the preset with densification.
     pub fn generate(&self) -> Vec<[f64; 2]> {
-        generate_path(&self.preset.to_brillouin_path(), self.segments_per_leg)
+        if !self.k_path.is_empty() {
+            // Explicit k-path provided - use as-is
+            self.k_path.clone()
+        } else if let Some(preset) = &self.preset {
+            // Generate from preset with densification
+            generate_path(&preset.to_brillouin_path(), self.segments_per_leg)
+        } else {
+            // No path specified - return empty (caller should handle this)
+            Vec::new()
+        }
+    }
+
+    /// Check if this path spec is valid (has either k_path or preset).
+    pub fn is_valid(&self) -> bool {
+        !self.k_path.is_empty() || self.preset.is_some()
     }
 }
 
@@ -205,18 +245,23 @@ impl From<JobConfig> for BandStructureJob {
         let mut k_path = value.k_path;
         if k_path.is_empty() {
             if let Some(spec) = &value.path {
-                // Use the new path generation for rectangular,
-                // fall back to symmetry module for others
-                match spec.preset {
-                    PathPreset::Rectangular => {
-                        k_path = spec.generate();
-                    }
-                    _ => {
-                        k_path = symmetry::standard_path(
-                            &value.geometry.lattice,
-                            spec.preset.clone().into(),
-                            spec.segments_per_leg,
-                        );
+                // First check if spec has explicit k_path
+                if !spec.k_path.is_empty() {
+                    k_path = spec.k_path.clone();
+                } else if let Some(preset) = &spec.preset {
+                    // Use the new path generation for rectangular,
+                    // fall back to symmetry module for others
+                    match preset {
+                        PathPreset::Rectangular => {
+                            k_path = spec.generate();
+                        }
+                        _ => {
+                            k_path = symmetry::standard_path(
+                                &value.geometry.lattice,
+                                preset.clone().into(),
+                                spec.segments_per_leg,
+                            );
+                        }
                     }
                 }
             }

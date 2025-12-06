@@ -50,9 +50,8 @@
 //! }
 //! ```
 
-use js_sys::{Array, Function, Object, Reflect};
+use js_sys::{Array, Date, Function, Object, Reflect};
 use wasm_bindgen::prelude::*;
-use std::time::Instant;
 
 use mpb2d_bulk_driver_core::{
     config::{BulkConfig, SolverType},
@@ -318,6 +317,125 @@ fn run_maxwell_job(
     })
 }
 
+/// Run a single Maxwell job with k-point streaming, calling callback for each k-point.
+fn run_maxwell_job_with_k_streaming(
+    job: &mpb2d_core::bandstructure::BandStructureJob,
+    params: &mpb2d_bulk_driver_core::expansion::JobParams,
+    job_index: usize,
+    callback: &Function,
+) -> Result<CompactBandResult, String> {
+    use mpb2d_core::drivers::bandstructure::{run_with_k_streaming, RunOptions, KPointResult};
+    
+    let backend = CpuBackend::new();
+    
+    // Clone params for use in closure
+    let params_clone = params.clone();
+    
+    // Accumulate all k-point results for the final CompactBandResult
+    let accumulated_bands: std::cell::RefCell<Vec<Vec<f64>>> = std::cell::RefCell::new(Vec::new());
+    
+    let band_result = run_with_k_streaming(
+        backend,
+        job,
+        Verbosity::Quiet,
+        RunOptions::default(),
+        |k_result: KPointResult| {
+            // Convert KPointResult to JS object and emit
+            if let Ok(js_obj) = k_result_to_js(&k_result, job_index, &params_clone) {
+                let _ = callback.call1(&JsValue::NULL, &js_obj);
+            }
+            
+            // Accumulate bands for final result
+            // Normalize frequencies (divide by 2π)
+            let normalized: Vec<f64> = k_result.omegas.iter()
+                .map(|omega| omega / (2.0 * std::f64::consts::PI))
+                .collect();
+            accumulated_bands.borrow_mut().push(normalized);
+        },
+    );
+    
+    // Build final CompactBandResult
+    let bands: Vec<Vec<f64>> = band_result
+        .bands
+        .iter()
+        .map(|k_bands: &Vec<f64>| {
+            k_bands
+                .iter()
+                .map(|omega| omega / (2.0 * std::f64::consts::PI))
+                .collect()
+        })
+        .collect();
+    
+    Ok(CompactBandResult {
+        job_index,
+        params: params.clone(),
+        result_type: CompactResultType::Maxwell(MaxwellResult {
+            k_path: band_result.k_path.clone(),
+            distances: band_result.distances.clone(),
+            bands,
+        }),
+    })
+}
+
+/// Convert a KPointResult to a JavaScript object for streaming.
+fn k_result_to_js(
+    result: &mpb2d_core::drivers::bandstructure::KPointResult,
+    job_index: usize,
+    params: &mpb2d_bulk_driver_core::expansion::JobParams,
+) -> Result<JsValue, JsValue> {
+    let obj = Object::new();
+    
+    // Streaming type identifier
+    Reflect::set(&obj, &"stream_type".into(), &JsValue::from_str("k_point"))?;
+    
+    // Job context
+    Reflect::set(&obj, &"job_index".into(), &JsValue::from(job_index as u32))?;
+    
+    // K-point info
+    Reflect::set(&obj, &"k_index".into(), &JsValue::from(result.k_index as u32))?;
+    Reflect::set(&obj, &"total_k_points".into(), &JsValue::from(result.total_k_points as u32))?;
+    
+    // K-point coordinates
+    let k_point = Array::new();
+    k_point.push(&JsValue::from(result.k_point[0]));
+    k_point.push(&JsValue::from(result.k_point[1]));
+    Reflect::set(&obj, &"k_point".into(), &k_point)?;
+    
+    // Distance along path
+    Reflect::set(&obj, &"distance".into(), &JsValue::from(result.distance))?;
+    
+    // Frequencies (normalized by 2π)
+    let omegas = Array::new();
+    for omega in &result.omegas {
+        omegas.push(&JsValue::from(omega / (2.0 * std::f64::consts::PI)));
+    }
+    Reflect::set(&obj, &"omegas".into(), &omegas)?;
+    
+    // Convenience: also provide as "bands" for consistency
+    Reflect::set(&obj, &"bands".into(), &omegas)?;
+    
+    // Metadata
+    Reflect::set(&obj, &"iterations".into(), &JsValue::from(result.iterations as u32))?;
+    Reflect::set(&obj, &"is_gamma".into(), &JsValue::from(result.is_gamma))?;
+    Reflect::set(&obj, &"num_bands".into(), &JsValue::from(result.omegas.len() as u32))?;
+    
+    // Progress (0.0 to 1.0)
+    let progress = (result.k_index + 1) as f64 / result.total_k_points as f64;
+    Reflect::set(&obj, &"progress".into(), &JsValue::from(progress))?;
+    
+    // Parameters for context
+    let params_obj = Object::new();
+    Reflect::set(&params_obj, &"eps_bg".into(), &JsValue::from(params.eps_bg))?;
+    Reflect::set(&params_obj, &"resolution".into(), &JsValue::from(params.resolution as u32))?;
+    Reflect::set(&params_obj, &"polarization".into(), &JsValue::from_str(&format!("{:?}", params.polarization)))?;
+    if let Some(ref lt) = params.lattice_type {
+        Reflect::set(&params_obj, &"lattice_type".into(), &JsValue::from_str(lt))?;
+    }
+    Reflect::set(&obj, &"params".into(), &params_obj)?;
+    
+    Ok(obj.into())
+}
+
 /// Run a single EA job and convert to CompactBandResult.
 fn run_ea_job(
     _job: &mpb2d_bulk_driver_core::expansion::EAJobSpec,
@@ -437,12 +555,56 @@ impl WasmBulkDriver {
         self.run_internal(Some(filter), callback)
     }
 
+    /// Run with K-POINT STREAMING: callback is called after EACH k-point is solved.
+    ///
+    /// This is the preferred mode for real-time visualization of band structure
+    /// computation. The callback receives incremental results as each k-point
+    /// completes, enabling smooth progressive rendering of the band diagram.
+    ///
+    /// @param callback - Function(kPointResult) called after each k-point solve
+    /// @returns Statistics object with completion info
+    ///
+    /// The callback receives an object with:
+    /// - `stream_type`: "k_point" (to distinguish from job-level streaming)
+    /// - `k_index`: Index of this k-point (0-based)
+    /// - `total_k_points`: Total number of k-points
+    /// - `k_point`: [kx, ky] in fractional coordinates
+    /// - `distance`: Cumulative path distance to this k-point
+    /// - `omegas`: Array of frequencies for all bands at this k-point
+    /// - `bands`: Same as omegas (alias for convenience)
+    /// - `iterations`: Number of LOBPCG iterations for this k-point
+    /// - `is_gamma`: Whether this is a Γ-point
+    /// - `progress`: Completion fraction (0.0 to 1.0)
+    /// - `params`: Job parameters (eps_bg, resolution, polarization, etc.)
+    #[wasm_bindgen(js_name = "runWithKPointStreaming")]
+    pub fn run_with_k_point_streaming(&self, callback: Function) -> Result<JsValue, JsValue> {
+        let start = Date::now();
+        let mut stats = WasmDriverStats {
+            total_jobs: self.jobs.len(),
+            ..Default::default()
+        };
+        
+        for job in &self.jobs {
+            match self.execute_job_with_k_streaming(job, &callback) {
+                Ok(_result) => {
+                    stats.completed += 1;
+                }
+                Err(_) => {
+                    stats.failed += 1;
+                }
+            }
+        }
+        
+        stats.total_time_ms = (Date::now() - start) as u128;
+        stats_to_js(&stats)
+    }
+
     /// Run and return all results as an array (COLLECT mode).
     ///
     /// @returns Object with `results` (array) and `stats`
     #[wasm_bindgen(js_name = "runCollect")]
     pub fn run_collect(&self) -> Result<JsValue, JsValue> {
-        let start = Instant::now();
+        let start = Date::now();
         let mut results = Vec::new();
         let mut stats = WasmDriverStats {
             total_jobs: self.jobs.len(),
@@ -461,7 +623,7 @@ impl WasmBulkDriver {
             }
         }
         
-        stats.total_time_ms = start.elapsed().as_millis();
+        stats.total_time_ms = (Date::now() - start) as u128;
         
         // Convert results to JS array
         let js_results = Array::new();
@@ -491,7 +653,7 @@ impl WasmBulkDriver {
             band_indices.unwrap_or_default(),
         );
         
-        let start = Instant::now();
+        let start = Date::now();
         let mut results = Vec::new();
         let mut stats = WasmDriverStats {
             total_jobs: self.jobs.len(),
@@ -511,7 +673,7 @@ impl WasmBulkDriver {
             }
         }
         
-        stats.total_time_ms = start.elapsed().as_millis();
+        stats.total_time_ms = (Date::now() - start) as u128;
         
         // Convert results to JS array
         let js_results = Array::new();
@@ -614,7 +776,7 @@ impl WasmBulkDriver {
         filter: Option<SelectiveFilter>,
         callback: Function,
     ) -> Result<JsValue, JsValue> {
-        let start = Instant::now();
+        let start = Date::now();
         let mut stats = WasmDriverStats {
             total_jobs: self.jobs.len(),
             ..Default::default()
@@ -640,7 +802,7 @@ impl WasmBulkDriver {
             }
         }
         
-        stats.total_time_ms = start.elapsed().as_millis();
+        stats.total_time_ms = (Date::now() - start) as u128;
         stats_to_js(&stats)
     }
 
@@ -652,6 +814,23 @@ impl WasmBulkDriver {
             }
             ExpandedJobType::EA(ea_job) => {
                 run_ea_job(ea_job, &job.params, job.index)
+            }
+        }
+    }
+
+    /// Execute a single expanded job with k-point streaming.
+    fn execute_job_with_k_streaming(
+        &self,
+        job: &ExpandedJob,
+        callback: &Function,
+    ) -> Result<CompactBandResult, String> {
+        match &job.job_type {
+            ExpandedJobType::Maxwell(maxwell_job) => {
+                run_maxwell_job_with_k_streaming(maxwell_job, &job.params, job.index, callback)
+            }
+            ExpandedJobType::EA(_ea_job) => {
+                // EA doesn't have k-points, so k-streaming doesn't apply
+                Err("K-point streaming is not supported for EA solver".to_string())
             }
         }
     }
@@ -745,6 +924,17 @@ impl Default for WasmSelectiveFilter {
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+/// Initialize the WASM module with proper panic handling.
+/// Call this once at the start of your application.
+/// 
+/// This sets up the panic hook so that Rust panics are printed
+/// to the browser console with full stack traces instead of
+/// just showing "RuntimeError: unreachable".
+#[wasm_bindgen(js_name = "initPanicHook")]
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
+}
 
 /// Get the library version.
 #[wasm_bindgen(js_name = "getVersion")]

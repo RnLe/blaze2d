@@ -18,12 +18,22 @@
 //! 3. Dropping directions with small singular values (rank revelation)
 //! 4. Rescaling to produce B-orthonormal output
 //!
+//! # Backend Selection
+//!
+//! - `native-linalg` feature: Uses faer's optimized GEMM and eigensolver
+//! - `wasm-linalg` feature: Uses nalgebra (WASM-compatible)
+//!
 //! # References
 //!
 //! - Duersch & Shao, "A Robust and Efficient Implementation of LOBPCG" (2018)
 //! - Hetmaniuk & Lehoucq, "Basis selection in LOBPCG" (2006)
 
+#[cfg(feature = "native-linalg")]
 use faer::{Mat, Side};
+
+#[cfg(feature = "wasm-linalg")]
+use nalgebra::{DMatrix, Complex as NaComplex};
+
 use num_complex::Complex64;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
@@ -409,47 +419,95 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
 
     #[cfg(not(feature = "cuda"))]
     {
-        // CPU path: use faer GEMM for matrix multiplication
+        // CPU path: use GEMM for matrix multiplication
         // X_new = X_old * T where X_old is n×p and T is p×rank
         let n = vectors[0].as_slice().len();
 
-        // Build transformation matrix T directly in faer format (p × rank)
-        let t_mat = Mat::<faer::c64>::from_fn(p, rank, |row, col| {
-            let in_col = kept_indices[col];
-            let scale = 1.0 / eigenvalues[in_col].max(1e-30).sqrt();
-            let c = eigenvectors[row * p + in_col];
-            faer::c64::new(c.re * scale, c.im * scale)
-        });
+        #[cfg(feature = "native-linalg")]
+        {
+            // faer GEMM path
+            // Build transformation matrix T directly in faer format (p × rank)
+            let t_mat = Mat::<faer::c64>::from_fn(p, rank, |row, col| {
+                let in_col = kept_indices[col];
+                let scale = 1.0 / eigenvalues[in_col].max(1e-30).sqrt();
+                let c = eigenvectors[row * p + in_col];
+                faer::c64::new(c.re * scale, c.im * scale)
+            });
 
-        // Build X_old matrix (n × p) from vectors
-        let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
-            let c = vectors[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
-        });
+            // Build X_old matrix (n × p) from vectors
+            let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
+                let c = vectors[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
 
-        // Build M_old matrix (n × p) from mass_vectors
-        let m_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
-            let c = mass_vectors[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
-        });
+            // Build M_old matrix (n × p) from mass_vectors
+            let m_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
+                let c = mass_vectors[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
 
-        // Compute X_new = X_old * T and M_new = M_old * T using GEMM
-        let x_new = &x_mat * &t_mat; // n × rank
-        let m_new = &m_mat * &t_mat; // n × rank
+            // Compute X_new = X_old * T and M_new = M_old * T using GEMM
+            let x_new = &x_mat * &t_mat; // n × rank
+            let m_new = &m_mat * &t_mat; // n × rank
 
-        // Copy results back to vectors
-        for col in 0..rank {
-            let dst = vectors[col].as_mut_slice();
-            for row in 0..n {
-                let c = x_new.get(row, col);
-                dst[row] = Complex64::new(c.re, c.im);
+            // Copy results back to vectors
+            for col in 0..rank {
+                let dst = vectors[col].as_mut_slice();
+                for row in 0..n {
+                    let c = x_new.get(row, col);
+                    dst[row] = Complex64::new(c.re, c.im);
+                }
+            }
+            for col in 0..rank {
+                let dst = mass_vectors[col].as_mut_slice();
+                for row in 0..n {
+                    let c = m_new.get(row, col);
+                    dst[row] = Complex64::new(c.re, c.im);
+                }
             }
         }
-        for col in 0..rank {
-            let dst = mass_vectors[col].as_mut_slice();
-            for row in 0..n {
-                let c = m_new.get(row, col);
-                dst[row] = Complex64::new(c.re, c.im);
+
+        #[cfg(feature = "wasm-linalg")]
+        {
+            // nalgebra GEMM path
+            // Build transformation matrix T (p × rank)
+            let t_mat = DMatrix::<NaComplex<f64>>::from_fn(p, rank, |row, col| {
+                let in_col = kept_indices[col];
+                let scale = 1.0 / eigenvalues[in_col].max(1e-30).sqrt();
+                let c = eigenvectors[row * p + in_col];
+                NaComplex::new(c.re * scale, c.im * scale)
+            });
+
+            // Build X_old matrix (n × p) from vectors
+            let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
+                let c = vectors[col].as_slice()[row];
+                NaComplex::new(c.re, c.im)
+            });
+
+            // Build M_old matrix (n × p) from mass_vectors
+            let m_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
+                let c = mass_vectors[col].as_slice()[row];
+                NaComplex::new(c.re, c.im)
+            });
+
+            // Compute X_new = X_old * T and M_new = M_old * T using GEMM
+            let x_new = &x_mat * &t_mat; // n × rank
+            let m_new = &m_mat * &t_mat; // n × rank
+
+            // Copy results back to vectors
+            for col in 0..rank {
+                let dst = vectors[col].as_mut_slice();
+                for row in 0..n {
+                    let c = x_new[(row, col)];
+                    dst[row] = Complex64::new(c.re, c.im);
+                }
+            }
+            for col in 0..rank {
+                let dst = mass_vectors[col].as_mut_slice();
+                for row in 0..n {
+                    let c = m_new[(row, col)];
+                    dst[row] = Complex64::new(c.re, c.im);
+                }
             }
         }
 
@@ -547,13 +605,14 @@ pub fn zero_buffer(data: &mut [Complex64]) {
     data.fill(Complex64::ZERO);
 }
 
-/// Compute eigendecomposition of a Hermitian matrix using faer.
+/// Compute eigendecomposition of a Hermitian matrix.
 ///
 /// Returns (eigenvalues, eigenvectors) where eigenvalues are sorted in descending order
 /// and eigenvectors[row*n + col] is the row-th component of the col-th eigenvector.
 ///
-/// Uses faer's optimized self-adjoint eigensolver which is significantly faster
-/// than hand-rolled Jacobi for all matrix sizes.
+/// # Backend Selection
+/// - `native-linalg`: Uses faer's optimized self-adjoint eigensolver
+/// - `wasm-linalg`: Uses nalgebra's symmetric eigensolver
 fn hermitian_eigendecomposition(matrix: &[Complex64], n: usize) -> (Vec<f64>, Vec<Complex64>) {
     if n == 0 {
         return (vec![], vec![]);
@@ -563,6 +622,23 @@ fn hermitian_eigendecomposition(matrix: &[Complex64], n: usize) -> (Vec<f64>, Ve
         return (vec![matrix[0].re], vec![Complex64::ONE]);
     }
 
+    #[cfg(feature = "native-linalg")]
+    {
+        hermitian_eigendecomposition_faer(matrix, n)
+    }
+
+    #[cfg(feature = "wasm-linalg")]
+    {
+        hermitian_eigendecomposition_nalgebra(matrix, n)
+    }
+}
+
+// ============================================================================
+// faer backend (native-linalg)
+// ============================================================================
+
+#[cfg(feature = "native-linalg")]
+fn hermitian_eigendecomposition_faer(matrix: &[Complex64], n: usize) -> (Vec<f64>, Vec<Complex64>) {
     // Convert to faer Mat<c64>
     // Input matrix[i*n + j] is element (i, j) in row-major
     // faer uses column-major but from_fn(rows, cols, |i, j|) handles this
@@ -596,4 +672,45 @@ fn hermitian_eigendecomposition(matrix: &[Complex64], n: usize) -> (Vec<f64>, Ve
     }
 
     (eigenvalues, eigenvectors)
+}
+
+// ============================================================================
+// nalgebra backend (wasm-linalg)
+// ============================================================================
+
+#[cfg(feature = "wasm-linalg")]
+fn hermitian_eigendecomposition_nalgebra(matrix: &[Complex64], n: usize) -> (Vec<f64>, Vec<Complex64>) {
+    // Convert to nalgebra DMatrix<Complex<f64>>
+    // Input matrix[i*n + j] is element (i, j) in row-major
+    let a_na = DMatrix::<NaComplex<f64>>::from_fn(n, n, |i, j| {
+        let c = matrix[i * n + j];
+        NaComplex::new(c.re, c.im)
+    });
+
+    // Compute eigendecomposition
+    let eigen = a_na.symmetric_eigen();
+    
+    // Extract eigenvalues (already real for Hermitian matrices)
+    let eigenvalues: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
+    
+    // Sort indices by eigenvalue in descending order
+    let mut indices: Vec<usize> = (0..n).collect();
+    indices.sort_by(|&i, &j| {
+        eigenvalues[j].partial_cmp(&eigenvalues[i]).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    // Apply sorting to eigenvalues
+    let sorted_eigenvalues: Vec<f64> = indices.iter().map(|&i| eigenvalues[i]).collect();
+    
+    // Extract eigenvectors in sorted order
+    // output[row * n + col] = component row of eigenvector col
+    let mut eigenvectors = vec![Complex64::ZERO; n * n];
+    for (new_col, &old_col) in indices.iter().enumerate() {
+        for row in 0..n {
+            let c = eigen.eigenvectors[(row, old_col)];
+            eigenvectors[row * n + new_col] = Complex64::new(c.re, c.im);
+        }
+    }
+
+    (sorted_eigenvalues, eigenvectors)
 }
