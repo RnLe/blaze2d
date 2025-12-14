@@ -28,6 +28,7 @@ fn bench_cpu_fft(c: &mut Criterion) {
     ];
     let sizes = [16usize, 24, 32, 48, 64, 96, 128, 192, 256];
     let mut group = c.benchmark_group("cpu_fft_forward_inverse");
+    group.sample_size(10);
     for &size in &sizes {
         let grid = Grid2D::new(size, size, 1.0, 1.0);
         let template = seeded_field(grid);

@@ -6,7 +6,9 @@ use num_complex::Complex64;
 
 use super::backend::SpectralBackend;
 use super::bandstructure::{BandStructureJob, Verbosity, run};
-use super::eigensolver::EigenOptions;
+#[cfg(test)]
+use super::bandstructure::{RunDebugProbe, run_with_debug};
+use super::eigensolver::{EigenOptions, PreconditionerKind};
 use super::field::Field2D;
 use super::geometry::Geometry2D;
 use super::grid::Grid2D;
@@ -147,4 +149,22 @@ fn verbose_run_matches_quiet_output() {
     assert_eq!(quiet.k_path, verbose.k_path);
     assert_eq!(quiet.distances, verbose.distances);
     assert_eq!(quiet.bands, verbose.bands);
+}
+
+#[test]
+fn run_engages_warm_start_and_theta_cache() {
+    let backend = DeterministicBackend;
+    let mut job = small_job(vec![[0.0, 0.0], [0.0, 0.0], [0.25, 0.25]]);
+    job.eigensolver.preconditioner = PreconditionerKind::FourierDiagonal;
+    job.eigensolver.deflation.enabled = true;
+    job.eigensolver.deflation.max_vectors = 2;
+    job.eigensolver.warm_start.enabled = true;
+    job.eigensolver.warm_start.max_vectors = 2;
+    job.eigensolver.gamma.enabled = true;
+    let mut probe = RunDebugProbe::default();
+    let result = run_with_debug(backend, &job, Verbosity::Quiet, &mut probe);
+    assert_eq!(result.k_path.len(), job.k_path.len());
+    assert_eq!(result.bands.len(), job.k_path.len());
+    assert_eq!(probe.theta_instances, job.k_path.len());
+    assert_eq!(probe.warm_start_hits, job.k_path.len() - 1);
 }

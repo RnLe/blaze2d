@@ -7,12 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::{SpectralBackend, SpectralBuffer},
+    field::Field2D,
     operator::LinearOperator,
     preconditioner::OperatorPreconditioner,
+    symmetry::{SymmetryOptions, SymmetryProjector},
 };
 
-const MIN_KRYLOV_EXCESS: usize = 4;
-const JACOBI_EPS: f64 = 1e-12;
+const MIN_RR_TOL: f64 = 1e-12;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -20,10 +21,17 @@ pub struct EigenOptions {
     pub n_bands: usize,
     pub max_iter: usize,
     pub tol: f64,
+    pub block_size: usize,
     #[serde(default)]
     pub preconditioner: PreconditionerKind,
     #[serde(default)]
     pub gamma: GammaHandling,
+    #[serde(default)]
+    pub deflation: DeflationOptions,
+    #[serde(default)]
+    pub symmetry: SymmetryOptions,
+    #[serde(default)]
+    pub warm_start: WarmStartOptions,
 }
 
 impl Default for EigenOptions {
@@ -32,8 +40,81 @@ impl Default for EigenOptions {
             n_bands: 8,
             max_iter: 200,
             tol: 1e-8,
-            preconditioner: PreconditionerKind::None,
+            block_size: 0,
+            preconditioner: PreconditionerKind::default(),
             gamma: GammaHandling::default(),
+            deflation: DeflationOptions::default(),
+            symmetry: SymmetryOptions::default(),
+            warm_start: WarmStartOptions::default(),
+        }
+    }
+}
+
+impl EigenOptions {
+    fn effective_block_size(&self) -> usize {
+        let required = self.n_bands.max(1);
+        if self.block_size == 0 {
+            required
+        } else {
+            self.block_size.max(required)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeflationOptions {
+    pub enabled: bool,
+    pub max_vectors: usize,
+}
+
+impl Default for DeflationOptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_vectors: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WarmStartOptions {
+    pub enabled: bool,
+    pub max_vectors: usize,
+}
+
+impl Default for WarmStartOptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_vectors: 0,
+        }
+    }
+}
+
+impl WarmStartOptions {
+    pub fn effective_limit(&self, fallback: usize) -> usize {
+        if !self.enabled {
+            return 0;
+        }
+        if self.max_vectors == 0 {
+            fallback.max(1)
+        } else {
+            self.max_vectors
+        }
+    }
+}
+
+impl DeflationOptions {
+    pub fn effective_limit(&self, fallback: usize) -> usize {
+        if !self.enabled {
+            return 0;
+        }
+        if self.max_vectors == 0 {
+            fallback.max(1)
+        } else {
+            self.max_vectors
         }
     }
 }
@@ -75,12 +156,13 @@ impl GammaContext {
 #[serde(rename_all = "snake_case")]
 pub enum PreconditionerKind {
     None,
-    RealSpaceJacobi,
+    #[serde(alias = "real_space_jacobi")]
+    FourierDiagonal,
 }
 
 impl Default for PreconditionerKind {
     fn default() -> Self {
-        PreconditionerKind::None
+        PreconditionerKind::FourierDiagonal
     }
 }
 
@@ -89,6 +171,133 @@ pub struct EigenResult {
     pub omegas: Vec<f64>,
     pub iterations: usize,
     pub gamma_deflated: bool,
+    pub modes: Vec<Field2D>,
+    pub diagnostics: EigenDiagnostics,
+}
+
+#[derive(Debug, Clone)]
+pub struct EigenDiagnostics {
+    pub freq_tolerance: f64,
+    pub duplicate_modes_skipped: usize,
+    pub negative_modes_skipped: usize,
+    pub max_residual: f64,
+    pub modes: Vec<ModeDiagnostics>,
+    pub iterations: Vec<IterationDiagnostics>,
+}
+
+impl EigenDiagnostics {
+    pub fn new(freq_tolerance: f64) -> Self {
+        Self {
+            freq_tolerance,
+            duplicate_modes_skipped: 0,
+            negative_modes_skipped: 0,
+            max_residual: 0.0,
+            modes: Vec::new(),
+            iterations: Vec::new(),
+        }
+    }
+
+    pub fn avg_residual(&self) -> f64 {
+        if self.modes.is_empty() {
+            return 0.0;
+        }
+        let sum: f64 = self.modes.iter().map(|m| m.residual_norm).sum();
+        sum / self.modes.len() as f64
+    }
+
+    pub fn max_mass_error(&self) -> f64 {
+        self.modes
+            .iter()
+            .map(|m| (m.mass_norm - 1.0).abs())
+            .fold(0.0, f64::max)
+    }
+}
+
+impl Default for EigenDiagnostics {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModeDiagnostics {
+    pub omega: f64,
+    pub lambda: f64,
+    pub residual_norm: f64,
+    pub mass_norm: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct IterationDiagnostics {
+    pub iteration: usize,
+    pub max_residual: f64,
+    pub avg_residual: f64,
+    pub block_size: usize,
+    pub new_directions: usize,
+}
+
+pub struct DeflationWorkspace<B: SpectralBackend> {
+    entries: Vec<DeflationVector<B>>,
+}
+
+impl<B: SpectralBackend> DeflationWorkspace<B> {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn project(&self, backend: &B, vector: &mut B::Buffer, mass_vector: &mut B::Buffer) {
+        for entry in &self.entries {
+            let coeff = backend.dot(&entry.mass_vector, vector);
+            backend.axpy(-coeff, &entry.vector, vector);
+            backend.axpy(-coeff, &entry.mass_vector, mass_vector);
+        }
+    }
+
+    pub fn push(&mut self, vector: B::Buffer, mass_vector: B::Buffer) {
+        self.entries.push(DeflationVector {
+            vector,
+            mass_vector,
+        });
+    }
+}
+
+struct DeflationVector<B: SpectralBackend> {
+    vector: B::Buffer,
+    mass_vector: B::Buffer,
+}
+
+pub fn build_deflation_workspace<'a, O, B>(
+    operator: &mut O,
+    fields: impl IntoIterator<Item = &'a Field2D>,
+) -> DeflationWorkspace<B>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut workspace = DeflationWorkspace::new();
+    for field in fields {
+        let mut vector = operator.alloc_field();
+        vector.as_mut_slice().copy_from_slice(field.as_slice());
+        let mut mass_vector = operator.alloc_field();
+        operator.apply_mass(&vector, &mut mass_vector);
+        let norm =
+            normalize_with_mass_precomputed(operator.backend(), &mut vector, &mut mass_vector);
+        if norm == 0.0 {
+            continue;
+        }
+        workspace.push(vector, mass_vector);
+    }
+    workspace
 }
 
 pub fn solve_lowest_eigenpairs<O, B>(
@@ -96,101 +305,121 @@ pub fn solve_lowest_eigenpairs<O, B>(
     opts: &EigenOptions,
     mut preconditioner: Option<&mut dyn OperatorPreconditioner<B>>,
     gamma: GammaContext,
+    warm_start: Option<&[Field2D]>,
+    deflation: Option<&DeflationWorkspace<B>>,
 ) -> EigenResult
 where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
     let target_bands = opts.n_bands.max(1);
-    let krylov_dim = opts.max_iter.max(target_bands + MIN_KRYLOV_EXCESS);
-    let mut q_prev = operator.alloc_field();
-    zero_buffer(q_prev.as_mut_slice());
-    let mut mass_q_prev = operator.alloc_field();
-    zero_buffer(mass_q_prev.as_mut_slice());
-    let mut q = operator.alloc_field();
-    seed_vector(q.as_mut_slice());
-    let mut mass_q = operator.alloc_field();
+    let block_size = opts.effective_block_size();
     let gamma_mode = if gamma.is_gamma {
         build_gamma_mode(operator)
     } else {
         None
     };
     let gamma_deflated = gamma_mode.is_some();
-    operator.apply_mass(&q, &mut mass_q);
-    if let Some(ref mode) = gamma_mode {
-        reorthogonalize_with_mass(operator.backend(), &mut q, &mode.vector, &mode.mass_vector);
-        operator.apply_mass(&q, &mut mass_q);
-    }
-    normalize_with_mass_precomputed(operator.backend(), &mut q, &mut mass_q);
-    let mut w = operator.alloc_field();
-    let mut mass_w = operator.alloc_field();
-    let mut alphas = Vec::new();
-    let mut betas = Vec::new();
-    let mut last_beta = 0.0;
+    let symmetry_projector = SymmetryProjector::from_options(&opts.symmetry);
 
-    for step in 0..krylov_dim {
-        operator.apply(&q, &mut w);
-        if step > 0 {
-            operator
-                .backend()
-                .axpy(Complex64::new(-last_beta, 0.0), &mass_q_prev, &mut w);
-        }
-        let alpha = operator.backend().dot(&mass_q, &w).re;
-        alphas.push(alpha);
-        operator
-            .backend()
-            .axpy(Complex64::new(-alpha, 0.0), &mass_q, &mut w);
-        if step > 0 {
-            reorthogonalize_with_mass(operator.backend(), &mut w, &q_prev, &mass_q_prev);
-        }
-        reorthogonalize_with_mass(operator.backend(), &mut w, &q, &mass_q);
-        if let Some(ref mode) = gamma_mode {
-            reorthogonalize_with_mass(operator.backend(), &mut w, &mode.vector, &mode.mass_vector);
-        }
-        if let Some(precond) = preconditioner.as_deref_mut() {
-            precond.apply(operator.backend(), &mut w);
-        }
-        operator.apply_mass(&w, &mut mass_w);
-        let beta = mass_norm(operator.backend(), &w, &mass_w);
-        let converged = beta < opts.tol || step + 1 == krylov_dim;
-        if converged {
-            break;
-        }
-        betas.push(beta);
-        last_beta = beta;
-        operator
-            .backend()
-            .scale(Complex64::new(1.0 / beta, 0.0), &mut w);
-        operator
-            .backend()
-            .scale(Complex64::new(1.0 / beta, 0.0), &mut mass_w);
-        std::mem::swap(&mut q_prev, &mut q);
-        std::mem::swap(&mut mass_q_prev, &mut mass_q);
-        std::mem::swap(&mut q, &mut w);
-        std::mem::swap(&mut mass_q, &mut mass_w);
-    }
-
-    if alphas.is_empty() {
+    let mut x_entries = initialize_block(
+        operator,
+        block_size,
+        gamma_mode.as_ref(),
+        deflation,
+        symmetry_projector.as_ref(),
+        warm_start,
+    );
+    if x_entries.is_empty() {
         return EigenResult {
             omegas: Vec::new(),
             iterations: 0,
             gamma_deflated,
+            modes: Vec::new(),
+            diagnostics: EigenDiagnostics::default(),
         };
     }
 
-    let dense_tridiag = build_tridiagonal_dense(&alphas, &betas);
-    let evals = jacobi_eigenvalues(dense_tridiag, alphas.len(), opts.tol.max(JACOBI_EPS));
-    let mut omegas: Vec<f64> = evals
-        .into_iter()
-        .filter(|&val| val >= 0.0)
-        .map(|val| val.sqrt())
-        .collect();
-    omegas.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-    omegas.truncate(target_bands);
+    let mut eigenvalues;
+    {
+        let subspace = build_subspace_entries(&x_entries, &[], &[]);
+        let (vals, new_entries) = rayleigh_ritz(
+            operator,
+            &subspace,
+            x_entries.len(),
+            opts.tol.max(MIN_RR_TOL),
+        );
+        eigenvalues = vals;
+        x_entries = new_entries;
+    }
+
+    let mut w_entries: Vec<BlockEntry<B>> = Vec::new();
+    let mut iterations = 0usize;
+    let mut iteration_stats: Vec<IterationDiagnostics> = Vec::new();
+
+    loop {
+        let (residual_stats, mut p_entries) = compute_preconditioned_residuals(
+            operator,
+            &eigenvalues,
+            &x_entries,
+            &w_entries,
+            gamma_mode.as_ref(),
+            deflation,
+            symmetry_projector.as_ref(),
+            &mut preconditioner,
+            opts.tol,
+        );
+        iteration_stats.push(IterationDiagnostics {
+            iteration: iterations,
+            max_residual: residual_stats.max_residual,
+            avg_residual: residual_stats.avg_residual,
+            block_size: x_entries.len(),
+            new_directions: residual_stats.accepted,
+        });
+        if residual_stats.max_residual <= opts.tol
+            || p_entries.is_empty()
+            || iterations >= opts.max_iter
+        {
+            break;
+        }
+
+        reorthogonalize_block(operator, &mut p_entries, &x_entries);
+        reorthogonalize_block(operator, &mut p_entries, &w_entries);
+        reorthogonalize_block(operator, &mut w_entries, &x_entries);
+        while w_entries.len() > x_entries.len() {
+            w_entries.pop();
+        }
+
+        let subspace = build_subspace_entries(&x_entries, &p_entries, &w_entries);
+        let (vals, new_entries) = rayleigh_ritz(
+            operator,
+            &subspace,
+            x_entries.len(),
+            opts.tol.max(MIN_RR_TOL),
+        );
+        eigenvalues = vals;
+        x_entries = new_entries;
+        w_entries = p_entries;
+        iterations += 1;
+    }
+
+    let (omegas, modes, mut diagnostics) =
+        finalize_modes(operator, &x_entries, &eigenvalues, target_bands, opts.tol);
+    diagnostics.iterations = iteration_stats;
+    if let Some(iter_max) = diagnostics
+        .iterations
+        .iter()
+        .map(|info| info.max_residual)
+        .reduce(f64::max)
+    {
+        diagnostics.max_residual = diagnostics.max_residual.max(iter_max);
+    }
     EigenResult {
         omegas,
-        iterations: alphas.len(),
+        iterations,
         gamma_deflated,
+        modes,
+        diagnostics,
     }
 }
 
@@ -293,6 +522,24 @@ struct GammaMode<B: SpectralBackend> {
     mass_vector: B::Buffer,
 }
 
+struct BlockEntry<B: SpectralBackend> {
+    vector: B::Buffer,
+    mass: B::Buffer,
+    applied: B::Buffer,
+}
+
+struct SubspaceEntry<'a, B: SpectralBackend> {
+    vector: &'a B::Buffer,
+    mass: &'a B::Buffer,
+    applied: &'a B::Buffer,
+}
+
+struct ResidualComputation {
+    max_residual: f64,
+    avg_residual: f64,
+    accepted: usize,
+}
+
 fn build_gamma_mode<O, B>(operator: &mut O) -> Option<GammaMode<B>>
 where
     O: LinearOperator<B>,
@@ -314,10 +561,17 @@ where
     })
 }
 
-fn seed_vector(data: &mut [Complex64]) {
-    for (idx, value) in data.iter_mut().enumerate() {
-        let angle = (idx as f64 + 1.0).sin();
-        *value = Complex64::new(angle, 0.0);
+fn seed_block_vector(data: &mut [Complex64], phase: f64) {
+    let mut state = phase.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    if state == 0 {
+        state = 0xDEAD_BEEF_CAFE_BABE;
+    }
+    for value in data.iter_mut() {
+        state = state ^ (state << 13);
+        state = state ^ (state >> 7);
+        state = state ^ (state << 17);
+        let real = ((state >> 12) as f64) / ((1u64 << 52) as f64) * 2.0 - 1.0;
+        *value = Complex64::new(real, 0.0);
     }
 }
 
@@ -327,25 +581,15 @@ fn zero_buffer(data: &mut [Complex64]) {
     }
 }
 
-fn build_tridiagonal_dense(alpha: &[f64], beta: &[f64]) -> Vec<f64> {
-    let n = alpha.len();
-    let mut mat = vec![0.0; n * n];
-    for i in 0..n {
-        mat[i * n + i] = alpha[i];
-        if i + 1 < n {
-            let b = beta.get(i).copied().unwrap_or(0.0);
-            mat[i * n + i + 1] = b;
-            mat[(i + 1) * n + i] = b;
-        }
-    }
-    mat
-}
-
-fn jacobi_eigenvalues(mut matrix: Vec<f64>, n: usize, tol: f64) -> Vec<f64> {
+fn jacobi_eigendecomposition(mut matrix: Vec<f64>, n: usize, tol: f64) -> (Vec<f64>, Vec<f64>) {
     if n == 1 {
-        return vec![matrix[0]];
+        return (vec![matrix[0]], vec![1.0]);
     }
     let max_sweeps = n * n * 8;
+    let mut eigenvectors = vec![0.0; n * n];
+    for i in 0..n {
+        eigenvectors[i * n + i] = 1.0;
+    }
     for _ in 0..max_sweeps {
         let mut max_off = 0.0;
         let mut p = 0;
@@ -397,6 +641,594 @@ fn jacobi_eigenvalues(mut matrix: Vec<f64>, n: usize, tol: f64) -> Vec<f64> {
         matrix[idx(q, q)] = new_aqq;
         matrix[idx(p, q)] = 0.0;
         matrix[idx(q, p)] = 0.0;
+
+        for i in 0..n {
+            let vip = eigenvectors[i * n + p];
+            let viq = eigenvectors[i * n + q];
+            eigenvectors[i * n + p] = c * vip - s * viq;
+            eigenvectors[i * n + q] = s * vip + c * viq;
+        }
     }
-    (0..n).map(|i| matrix[i * n + i]).collect()
+    let eigenvalues = (0..n).map(|i| matrix[i * n + i]).collect();
+    (eigenvalues, eigenvectors)
+}
+
+fn enforce_constraints<O, B>(
+    operator: &mut O,
+    vector: &mut B::Buffer,
+    mass_vector: &mut B::Buffer,
+    gamma_mode: Option<&GammaMode<B>>,
+    deflation: Option<&DeflationWorkspace<B>>,
+    symmetry: Option<&SymmetryProjector>,
+) where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    if let Some(sym) = symmetry {
+        sym.apply(vector);
+        operator.apply_mass(vector, mass_vector);
+    }
+    if let Some(mode) = gamma_mode {
+        reorthogonalize_with_mass(operator.backend(), vector, &mode.vector, &mode.mass_vector);
+        operator.apply_mass(vector, mass_vector);
+    }
+    if let Some(space) = deflation {
+        space.project(operator.backend(), vector, mass_vector);
+    }
+}
+
+fn initialize_block<O, B>(
+    operator: &mut O,
+    count: usize,
+    gamma_mode: Option<&GammaMode<B>>,
+    deflation: Option<&DeflationWorkspace<B>>,
+    symmetry: Option<&SymmetryProjector>,
+    warm_start: Option<&[Field2D]>,
+) -> Vec<BlockEntry<B>>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut entries = Vec::with_capacity(count);
+    if let Some(seeds) = warm_start {
+        for field in seeds.iter().take(count) {
+            if let Some(entry) =
+                build_entry_from_field(operator, field, gamma_mode, deflation, symmetry, &entries)
+            {
+                entries.push(entry);
+            }
+            if entries.len() == count {
+                break;
+            }
+        }
+    }
+    let mut attempts = 0usize;
+    let max_attempts = count.max(1) * 8;
+    let mut phase = 1.0;
+    while entries.len() < count && attempts < max_attempts {
+        let mut vector = operator.alloc_field();
+        seed_block_vector(vector.as_mut_slice(), phase);
+        phase += 1.0;
+        match build_entry_from_buffer(operator, vector, gamma_mode, deflation, symmetry, &entries) {
+            Some(entry) => entries.push(entry),
+            None => {
+                attempts += 1;
+            }
+        }
+    }
+    entries
+}
+
+fn build_entry_from_field<O, B>(
+    operator: &mut O,
+    field: &Field2D,
+    gamma_mode: Option<&GammaMode<B>>,
+    deflation: Option<&DeflationWorkspace<B>>,
+    symmetry: Option<&SymmetryProjector>,
+    basis: &[BlockEntry<B>],
+) -> Option<BlockEntry<B>>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut vector = operator.alloc_field();
+    vector.as_mut_slice().copy_from_slice(field.as_slice());
+    build_entry_from_buffer(operator, vector, gamma_mode, deflation, symmetry, basis)
+}
+
+fn build_entry_from_buffer<O, B>(
+    operator: &mut O,
+    mut vector: B::Buffer,
+    gamma_mode: Option<&GammaMode<B>>,
+    deflation: Option<&DeflationWorkspace<B>>,
+    symmetry: Option<&SymmetryProjector>,
+    basis: &[BlockEntry<B>],
+) -> Option<BlockEntry<B>>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut mass = operator.alloc_field();
+    operator.apply_mass(&vector, &mut mass);
+    enforce_constraints(
+        operator,
+        &mut vector,
+        &mut mass,
+        gamma_mode,
+        deflation,
+        symmetry,
+    );
+    project_against_entries(operator.backend(), &mut vector, &mut mass, basis);
+    let norm = mass_norm(operator.backend(), &vector, &mass);
+    if norm <= 1e-12 {
+        return None;
+    }
+    let scale = Complex64::new(1.0 / norm, 0.0);
+    operator.backend().scale(scale, &mut vector);
+    operator.backend().scale(scale, &mut mass);
+    let mut applied = operator.alloc_field();
+    operator.apply(&vector, &mut applied);
+    Some(BlockEntry {
+        vector,
+        mass,
+        applied,
+    })
+}
+
+fn project_against_entries<B: SpectralBackend>(
+    backend: &B,
+    vector: &mut B::Buffer,
+    mass: &mut B::Buffer,
+    basis: &[BlockEntry<B>],
+) {
+    for entry in basis {
+        let coeff = backend.dot(&entry.mass, vector);
+        backend.axpy(-coeff, &entry.vector, vector);
+        backend.axpy(-coeff, &entry.mass, mass);
+    }
+}
+
+fn build_subspace_entries<'a, B: SpectralBackend>(
+    primary: &'a [BlockEntry<B>],
+    p: &'a [BlockEntry<B>],
+    w: &'a [BlockEntry<B>],
+) -> Vec<SubspaceEntry<'a, B>> {
+    let mut entries = Vec::with_capacity(primary.len() + p.len() + w.len());
+    for entry in primary {
+        entries.push(SubspaceEntry {
+            vector: &entry.vector,
+            mass: &entry.mass,
+            applied: &entry.applied,
+        });
+    }
+    for entry in p {
+        entries.push(SubspaceEntry {
+            vector: &entry.vector,
+            mass: &entry.mass,
+            applied: &entry.applied,
+        });
+    }
+    for entry in w {
+        entries.push(SubspaceEntry {
+            vector: &entry.vector,
+            mass: &entry.mass,
+            applied: &entry.applied,
+        });
+    }
+    entries
+}
+
+fn rayleigh_ritz<O, B>(
+    operator: &mut O,
+    subspace: &[SubspaceEntry<'_, B>],
+    want: usize,
+    tol: f64,
+) -> (Vec<f64>, Vec<BlockEntry<B>>)
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let dim = subspace.len();
+    let (op_proj, mass_proj) = build_projected_matrices(operator.backend(), subspace);
+    let (values, eigenvectors) = generalized_eigen(op_proj, mass_proj, dim, tol)
+        .expect("generalized eigen solve failed in block solver");
+    let mut order: Vec<usize> = (0..values.len()).collect();
+    order.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap_or(Ordering::Equal));
+    let mut new_entries = Vec::with_capacity(want.min(dim));
+    let mut selected_values = Vec::with_capacity(want.min(dim));
+    for idx in order {
+        if new_entries.len() == want {
+            break;
+        }
+        selected_values.push(values[idx]);
+        let coeffs = extract_column(&eigenvectors, dim, idx);
+        let entry = combine_entries(operator, subspace, &coeffs);
+        new_entries.push(entry);
+    }
+    (selected_values, new_entries)
+}
+
+fn extract_column(matrix: &[f64], dim: usize, col: usize) -> Vec<f64> {
+    (0..dim).map(|row| matrix[row * dim + col]).collect()
+}
+
+fn build_projected_matrices<B: SpectralBackend>(
+    backend: &B,
+    subspace: &[SubspaceEntry<'_, B>],
+) -> (Vec<f64>, Vec<f64>) {
+    let dim = subspace.len();
+    let mut op_proj = vec![0.0; dim * dim];
+    let mut mass_proj = vec![0.0; dim * dim];
+    for i in 0..dim {
+        for j in i..dim {
+            let mass_val = backend.dot(subspace[i].vector, subspace[j].mass).re;
+            let op_val = backend.dot(subspace[i].vector, subspace[j].applied).re;
+            let idx = i * dim + j;
+            mass_proj[idx] = mass_val;
+            op_proj[idx] = op_val;
+            if i != j {
+                mass_proj[j * dim + i] = mass_val;
+                op_proj[j * dim + i] = op_val;
+            }
+        }
+    }
+    (op_proj, mass_proj)
+}
+
+fn combine_entries<O, B>(
+    operator: &mut O,
+    subspace: &[SubspaceEntry<'_, B>],
+    coeffs: &[f64],
+) -> BlockEntry<B>
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut vector = operator.alloc_field();
+    zero_buffer(vector.as_mut_slice());
+    let mut mass = operator.alloc_field();
+    zero_buffer(mass.as_mut_slice());
+    let mut applied = operator.alloc_field();
+    zero_buffer(applied.as_mut_slice());
+    for (entry, &coeff) in subspace.iter().zip(coeffs.iter()) {
+        if coeff.abs() < 1e-12 {
+            continue;
+        }
+        let c = Complex64::new(coeff, 0.0);
+        operator.backend().axpy(c, entry.vector, &mut vector);
+        operator.backend().axpy(c, entry.mass, &mut mass);
+        operator.backend().axpy(c, entry.applied, &mut applied);
+    }
+    let norm = mass_norm(operator.backend(), &vector, &mass);
+    if norm > 0.0 {
+        let scale = Complex64::new(1.0 / norm, 0.0);
+        operator.backend().scale(scale, &mut vector);
+        operator.backend().scale(scale, &mut mass);
+        operator.backend().scale(scale, &mut applied);
+    }
+    BlockEntry {
+        vector,
+        mass,
+        applied,
+    }
+}
+
+fn compute_preconditioned_residuals<O, B>(
+    operator: &mut O,
+    eigenvalues: &[f64],
+    x_entries: &[BlockEntry<B>],
+    w_entries: &[BlockEntry<B>],
+    gamma_mode: Option<&GammaMode<B>>,
+    deflation: Option<&DeflationWorkspace<B>>,
+    symmetry: Option<&SymmetryProjector>,
+    preconditioner: &mut Option<&mut dyn OperatorPreconditioner<B>>,
+    tol: f64,
+) -> (ResidualComputation, Vec<BlockEntry<B>>)
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut max_residual: f64 = 0.0;
+    let mut sum_residual: f64 = 0.0;
+    let mut evaluated: usize = 0;
+    let mut accepted: usize = 0;
+    let mut p_entries = Vec::new();
+    for (idx, entry) in x_entries.iter().enumerate() {
+        let lambda = *eigenvalues.get(idx).unwrap_or(&0.0);
+        let mut vector = operator.alloc_field();
+        vector
+            .as_mut_slice()
+            .copy_from_slice(entry.applied.as_slice());
+        operator
+            .backend()
+            .axpy(Complex64::new(-lambda, 0.0), &entry.mass, &mut vector);
+        let mut mass = operator.alloc_field();
+        operator.apply_mass(&vector, &mut mass);
+        enforce_constraints(
+            operator,
+            &mut vector,
+            &mut mass,
+            gamma_mode,
+            deflation,
+            symmetry,
+        );
+        project_against_entries(operator.backend(), &mut vector, &mut mass, x_entries);
+        project_against_entries(operator.backend(), &mut vector, &mut mass, &p_entries);
+        project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
+        let mut norm = mass_norm(operator.backend(), &vector, &mass);
+        max_residual = max_residual.max(norm);
+        sum_residual += norm;
+        evaluated += 1;
+        if norm <= tol {
+            continue;
+        }
+        if let Some(precond) = preconditioner.as_mut() {
+            let backend = operator.backend();
+            (**precond).apply(backend, &mut vector);
+        }
+        operator.apply_mass(&vector, &mut mass);
+        enforce_constraints(
+            operator,
+            &mut vector,
+            &mut mass,
+            gamma_mode,
+            deflation,
+            symmetry,
+        );
+        project_against_entries(operator.backend(), &mut vector, &mut mass, x_entries);
+        project_against_entries(operator.backend(), &mut vector, &mut mass, &p_entries);
+        project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
+        norm = mass_norm(operator.backend(), &vector, &mass);
+        if norm <= 1e-12 {
+            continue;
+        }
+        accepted += 1;
+        let scale = Complex64::new(1.0 / norm, 0.0);
+        operator.backend().scale(scale, &mut vector);
+        operator.backend().scale(scale, &mut mass);
+        let mut applied = operator.alloc_field();
+        operator.apply(&vector, &mut applied);
+        p_entries.push(BlockEntry {
+            vector,
+            mass,
+            applied,
+        });
+    }
+    let avg_residual = if evaluated > 0 {
+        sum_residual / evaluated as f64
+    } else {
+        0.0
+    };
+    (
+        ResidualComputation {
+            max_residual,
+            avg_residual,
+            accepted,
+        },
+        p_entries,
+    )
+}
+
+fn reorthogonalize_block<O, B>(
+    operator: &mut O,
+    block: &mut Vec<BlockEntry<B>>,
+    reference: &[BlockEntry<B>],
+) where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut idx = 0;
+    while idx < block.len() {
+        let mut remove = false;
+        {
+            let backend = operator.backend();
+            let entry = &mut block[idx];
+            project_against_entries(backend, &mut entry.vector, &mut entry.mass, reference);
+            let norm = mass_norm(backend, &entry.vector, &entry.mass);
+            if norm <= 1e-12 {
+                remove = true;
+            } else {
+                let scale = Complex64::new(1.0 / norm, 0.0);
+                backend.scale(scale, &mut entry.vector);
+                backend.scale(scale, &mut entry.mass);
+            }
+        }
+        if remove {
+            block.remove(idx);
+            continue;
+        }
+        {
+            let entry = &mut block[idx];
+            operator.apply(&entry.vector, &mut entry.applied);
+        }
+        idx += 1;
+    }
+}
+
+fn finalize_modes<O, B>(
+    operator: &mut O,
+    entries: &[BlockEntry<B>],
+    eigenvalues: &[f64],
+    target: usize,
+    tol: f64,
+) -> (Vec<f64>, Vec<Field2D>, EigenDiagnostics)
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut omegas = Vec::new();
+    let mut modes = Vec::new();
+    let mut diagnostics = EigenDiagnostics::new(tol.max(1e-9));
+    let grid = operator.grid();
+    let freq_tol = diagnostics.freq_tolerance;
+    let mut last_kept: Option<f64> = None;
+    for (entry, &lambda) in entries.iter().zip(eigenvalues.iter()) {
+        if lambda < 0.0 {
+            diagnostics.negative_modes_skipped += 1;
+            continue;
+        }
+        let omega = lambda.sqrt();
+        if let Some(prev) = last_kept {
+            if (omega - prev).abs() <= freq_tol {
+                diagnostics.duplicate_modes_skipped += 1;
+                continue;
+            }
+        }
+        let mass_norm = mass_norm(operator.backend(), &entry.vector, &entry.mass);
+        let residual_norm = compute_residual_norm(operator, entry, lambda);
+        diagnostics.max_residual = diagnostics.max_residual.max(residual_norm);
+        diagnostics.modes.push(ModeDiagnostics {
+            omega,
+            lambda,
+            residual_norm,
+            mass_norm,
+        });
+
+        let data = entry.vector.as_slice().to_vec();
+        modes.push(Field2D::from_vec(grid, data));
+        omegas.push(omega);
+        last_kept = Some(omega);
+        if omegas.len() == target {
+            break;
+        }
+    }
+    (omegas, modes, diagnostics)
+}
+
+fn compute_residual_norm<O, B>(operator: &mut O, entry: &BlockEntry<B>, lambda: f64) -> f64
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let mut residual = operator.alloc_field();
+    residual
+        .as_mut_slice()
+        .copy_from_slice(entry.applied.as_slice());
+    operator
+        .backend()
+        .axpy(Complex64::new(-lambda, 0.0), &entry.mass, &mut residual);
+    let mut residual_mass = operator.alloc_field();
+    operator.apply_mass(&residual, &mut residual_mass);
+    mass_norm(operator.backend(), &residual, &residual_mass)
+}
+
+fn generalized_eigen(
+    op_matrix: Vec<f64>,
+    mass_matrix: Vec<f64>,
+    dim: usize,
+    tol: f64,
+) -> Option<(Vec<f64>, Vec<f64>)> {
+    let l = cholesky_decompose(&mass_matrix, dim)?;
+    let temp = solve_lower_triangular(&l, &op_matrix, dim)?;
+    let c = solve_upper_triangular_right(&l, &temp, dim)?;
+    let (values, eigenvectors) = jacobi_eigendecomposition(c, dim, tol);
+    let coeffs = solve_upper_triangular(&l, &eigenvectors, dim)?;
+    Some((values, coeffs))
+}
+
+fn cholesky_decompose(matrix: &[f64], dim: usize) -> Option<Vec<f64>> {
+    let mut l = vec![0.0; dim * dim];
+    for i in 0..dim {
+        for j in 0..=i {
+            let mut sum = matrix[i * dim + j];
+            for k in 0..j {
+                sum -= l[i * dim + k] * l[j * dim + k];
+            }
+            if i == j {
+                if sum <= 0.0 {
+                    return None;
+                }
+                l[i * dim + j] = sum.sqrt();
+            } else {
+                let diag = l[j * dim + j];
+                if diag.abs() < 1e-12 {
+                    return None;
+                }
+                l[i * dim + j] = sum / diag;
+            }
+        }
+    }
+    Some(l)
+}
+
+fn solve_lower_triangular(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<f64>> {
+    let mut x = vec![0.0; dim * dim];
+    for col in 0..dim {
+        for row in 0..dim {
+            let mut sum = b[row * dim + col];
+            for k in 0..row {
+                sum -= l[row * dim + k] * x[k * dim + col];
+            }
+            let diag = l[row * dim + row];
+            if diag.abs() < 1e-12 {
+                return None;
+            }
+            x[row * dim + col] = sum / diag;
+        }
+    }
+    Some(x)
+}
+
+fn solve_upper_triangular(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<f64>> {
+    let mut x = vec![0.0; dim * dim];
+    for col in 0..dim {
+        for rev_row in 0..dim {
+            let row = dim - 1 - rev_row;
+            let mut sum = b[row * dim + col];
+            for k in (row + 1)..dim {
+                sum -= l[k * dim + row] * x[k * dim + col];
+            }
+            let diag = l[row * dim + row];
+            if diag.abs() < 1e-12 {
+                return None;
+            }
+            x[row * dim + col] = sum / diag;
+        }
+    }
+    Some(x)
+}
+
+fn solve_upper_triangular_right(l: &[f64], b: &[f64], dim: usize) -> Option<Vec<f64>> {
+    let mut x = vec![0.0; dim * dim];
+    for row in 0..dim {
+        for rev_col in 0..dim {
+            let col = dim - 1 - rev_col;
+            let mut sum = b[row * dim + col];
+            for k in (col + 1)..dim {
+                sum -= x[row * dim + k] * l[k * dim + col];
+            }
+            let diag = l[col * dim + col];
+            if diag.abs() < 1e-12 {
+                return None;
+            }
+            x[row * dim + col] = sum / diag;
+        }
+    }
+    Some(x)
+}
+
+#[cfg(test)]
+mod eigensolver_internal_tests {
+    use super::generalized_eigen;
+
+    #[test]
+    fn generalized_eigen_matches_diagonal_inputs() {
+        let diag = [0.25, 1.0, 4.0];
+        let dim = diag.len();
+        let mut op = vec![0.0; dim * dim];
+        let mut mass = vec![0.0; dim * dim];
+        for i in 0..dim {
+            op[i * dim + i] = diag[i];
+            mass[i * dim + i] = 1.0;
+        }
+        let (vals, _) = generalized_eigen(op, mass, dim, 1e-12).expect("generalized eigen solve");
+        for (i, want) in diag.iter().enumerate() {
+            assert!(
+                (vals[i] - want).abs() < 1e-9,
+                "eigenvalue mismatch at {i}: got {}, want {}",
+                vals[i],
+                want
+            );
+        }
+    }
 }

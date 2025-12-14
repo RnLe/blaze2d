@@ -9,7 +9,7 @@ use crate::{
     dielectric::Dielectric2D,
     grid::Grid2D,
     polarization::Polarization,
-    preconditioner::RealSpaceJacobi,
+    preconditioner::{FOURIER_DIAGONAL_SHIFT, FourierDiagonalPreconditioner},
 };
 
 pub trait LinearOperator<B: SpectralBackend> {
@@ -25,10 +25,10 @@ pub struct ThetaOperator<B: SpectralBackend> {
     backend: B,
     dielectric: Dielectric2D,
     polarization: Polarization,
-    bloch_k: [f64; 2],
     grid: Grid2D,
-    kx: Vec<f64>,
-    ky: Vec<f64>,
+    kx_shifted: Vec<f64>,
+    ky_shifted: Vec<f64>,
+    k_plus_g_sq: Vec<f64>,
     scratch: B::Buffer,
     grad_x: B::Buffer,
     grad_y: B::Buffer,
@@ -44,6 +44,9 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let grid = dielectric.grid;
         let kx = build_k_vector(grid.nx, grid.lx);
         let ky = build_k_vector(grid.ny, grid.ly);
+        let kx_shifted = shift_k_vector(&kx, bloch_k[0]);
+        let ky_shifted = shift_k_vector(&ky, bloch_k[1]);
+        let k_plus_g_sq = build_k_plus_g_squares(&kx_shifted, &ky_shifted, grid);
         let scratch = backend.alloc_field(grid);
         let grad_x = backend.alloc_field(grid);
         let grad_y = backend.alloc_field(grid);
@@ -51,10 +54,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             backend,
             dielectric,
             polarization,
-            bloch_k,
             grid,
-            kx,
-            ky,
+            kx_shifted,
+            ky_shifted,
+            k_plus_g_sq,
             scratch,
             grad_x,
             grad_y,
@@ -73,8 +76,26 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         &mut self.backend
     }
 
-    pub fn build_real_space_jacobi_preconditioner(&self) -> RealSpaceJacobi {
-        RealSpaceJacobi::from_dielectric(&self.dielectric)
+    pub fn build_fourier_diagonal_preconditioner(&self) -> FourierDiagonalPreconditioner {
+        let shift = FOURIER_DIAGONAL_SHIFT;
+        let inverse_diagonal = match self.polarization {
+            Polarization::TE => self
+                .k_plus_g_sq
+                .iter()
+                .copied()
+                .map(|k| 1.0 / (k + shift))
+                .collect(),
+            Polarization::TM => {
+                let eps_eff = self.effective_tm_epsilon();
+                let denom = eps_eff.max(1e-12);
+                self.k_plus_g_sq
+                    .iter()
+                    .copied()
+                    .map(|k| 1.0 / (k / denom + shift))
+                    .collect()
+            }
+        };
+        FourierDiagonalPreconditioner::new(inverse_diagonal)
     }
 
     fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
@@ -87,9 +108,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         apply_gradient_factors(
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
-            &self.kx,
-            &self.ky,
-            self.bloch_k,
+            &self.kx_shifted,
+            &self.ky_shifted,
         );
 
         self.backend.inverse_fft_2d(&mut self.grad_x);
@@ -108,9 +128,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             self.grad_x.as_slice(),
             self.grad_y.as_slice(),
             self.scratch.as_mut_slice(),
-            &self.kx,
-            &self.ky,
-            self.bloch_k,
+            &self.kx_shifted,
+            &self.ky_shifted,
         );
 
         self.backend.inverse_fft_2d(&mut self.scratch);
@@ -121,20 +140,22 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
         let data = self.scratch.as_mut_slice();
-        let nx = self.grid.nx;
-        let ny = self.grid.ny;
-        for iy in 0..ny {
-            let ky_shift = self.ky[iy] + self.bloch_k[1];
-            let ky_sq = ky_shift * ky_shift;
-            for ix in 0..nx {
-                let idx = iy * nx + ix;
-                let kx_shift = self.kx[ix] + self.bloch_k[0];
-                let k_sq = kx_shift * kx_shift + ky_sq;
-                data[idx] *= k_sq;
-            }
+        for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
+            *value *= k_sq;
         }
         self.backend.inverse_fft_2d(&mut self.scratch);
         copy_buffer(output, &self.scratch);
+    }
+}
+
+impl<B: SpectralBackend> ThetaOperator<B> {
+    fn effective_tm_epsilon(&self) -> f64 {
+        let inv_eps = self.dielectric.inv_eps();
+        if inv_eps.is_empty() {
+            return 1.0;
+        }
+        let avg_inv = inv_eps.iter().copied().sum::<f64>() / inv_eps.len() as f64;
+        if avg_inv <= 0.0 { 1.0 } else { 1.0 / avg_inv }
     }
 }
 
@@ -273,6 +294,21 @@ fn build_k_vector(n: usize, length: f64) -> Vec<f64> {
         .collect()
 }
 
+fn build_k_plus_g_squares(kx_shifted: &[f64], ky_shifted: &[f64], grid: Grid2D) -> Vec<f64> {
+    let nx = grid.nx;
+    let ny = grid.ny;
+    let mut values = vec![0.0; grid.len()];
+    for iy in 0..ny {
+        let ky_shift = ky_shifted[iy];
+        for ix in 0..nx {
+            let idx = iy * nx + ix;
+            let kx_shift = kx_shifted[ix];
+            values[idx] = kx_shift * kx_shift + ky_shift * ky_shift;
+        }
+    }
+    values
+}
+
 fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
     dst.as_mut_slice().copy_from_slice(src.as_slice());
 }
@@ -280,18 +316,17 @@ fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
 fn apply_gradient_factors(
     grad_x: &mut [Complex64],
     grad_y: &mut [Complex64],
-    kx: &[f64],
-    ky: &[f64],
-    bloch_k: [f64; 2],
+    kx_shifted: &[f64],
+    ky_shifted: &[f64],
 ) {
-    let nx = kx.len();
-    let ny = ky.len();
+    let nx = kx_shifted.len();
+    let ny = ky_shifted.len();
     for iy in 0..ny {
-        let ky_shift = ky[iy] + bloch_k[1];
+        let ky_shift = ky_shifted[iy];
         let factor_y = Complex64::new(0.0, ky_shift);
         for ix in 0..nx {
             let idx = iy * nx + ix;
-            let kx_shift = kx[ix] + bloch_k[0];
+            let kx_shift = kx_shifted[ix];
             let factor_x = Complex64::new(0.0, kx_shift);
             grad_x[idx] *= factor_x;
             grad_y[idx] *= factor_y;
@@ -316,21 +351,24 @@ fn assemble_divergence(
     grad_x: &[Complex64],
     grad_y: &[Complex64],
     output: &mut [Complex64],
-    kx: &[f64],
-    ky: &[f64],
-    bloch_k: [f64; 2],
+    kx_shifted: &[f64],
+    ky_shifted: &[f64],
 ) {
-    let nx = kx.len();
-    let ny = ky.len();
+    let nx = kx_shifted.len();
+    let ny = ky_shifted.len();
     for iy in 0..ny {
-        let ky_shift = ky[iy] + bloch_k[1];
+        let ky_shift = ky_shifted[iy];
         let factor_y = Complex64::new(0.0, ky_shift);
         for ix in 0..nx {
             let idx = iy * nx + ix;
-            let kx_shift = kx[ix] + bloch_k[0];
+            let kx_shift = kx_shifted[ix];
             let factor_x = Complex64::new(0.0, kx_shift);
             let div = factor_x * grad_x[idx] + factor_y * grad_y[idx];
             output[idx] = -div;
         }
     }
+}
+
+fn shift_k_vector(base: &[f64], shift: f64) -> Vec<f64> {
+    base.iter().map(|&k| k + shift).collect()
 }

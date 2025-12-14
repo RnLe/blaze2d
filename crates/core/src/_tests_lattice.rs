@@ -42,6 +42,18 @@ fn characteristic_length_matches_a1_norm() {
 }
 
 #[test]
+fn classify_distinguishes_basic_lattices() {
+    let square = Lattice2D::square(1.0);
+    assert_eq!(square.classify(), super::lattice::LatticeClass::Square);
+    let rect = Lattice2D::rectangular(1.0, 2.0);
+    assert_eq!(rect.classify(), super::lattice::LatticeClass::Rectangular);
+    let tri = Lattice2D::hexagonal(1.0);
+    assert_eq!(tri.classify(), super::lattice::LatticeClass::Triangular);
+    let oblique = Lattice2D::oblique([1.0, 0.2], [0.3, 0.9]);
+    assert_eq!(oblique.classify(), super::lattice::LatticeClass::Oblique);
+}
+
+#[test]
 #[should_panic(expected = "primitive vectors are linearly dependent")]
 fn reciprocal_panics_for_linearly_dependent_vectors() {
     let lattice = Lattice2D::oblique([1.0, 0.0], [2.0, 0.0]);

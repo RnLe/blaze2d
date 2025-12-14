@@ -2,6 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 
+const CLASSIFICATION_TOL: f64 = 1e-6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LatticeClass {
+    Square,
+    Rectangular,
+    Triangular,
+    Oblique,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Lattice2D {
     pub a1: [f64; 2],
@@ -76,6 +86,32 @@ impl Lattice2D {
         (self.a1[0] * self.a1[0] + self.a1[1] * self.a1[1]).sqrt()
     }
 
+    pub fn classify(&self) -> LatticeClass {
+        self.classify_with_tolerance(CLASSIFICATION_TOL)
+    }
+
+    pub fn classify_with_tolerance(&self, tol: f64) -> LatticeClass {
+        let len1 = vector_norm(self.a1);
+        let len2 = vector_norm(self.a2);
+        if len1 <= f64::EPSILON || len2 <= f64::EPSILON {
+            return LatticeClass::Oblique;
+        }
+        let dot = self.a1[0] * self.a2[0] + self.a1[1] * self.a2[1];
+        let cos = (dot / (len1 * len2)).clamp(-1.0, 1.0);
+        let len_diff = (len1 - len2).abs() / len1.max(len2);
+        let is_orthogonal = cos.abs() <= tol;
+        if len_diff <= tol && is_orthogonal {
+            return LatticeClass::Square;
+        }
+        if is_orthogonal {
+            return LatticeClass::Rectangular;
+        }
+        if len_diff <= tol && (cos - 0.5).abs() <= tol {
+            return LatticeClass::Triangular;
+        }
+        LatticeClass::Oblique
+    }
+
     fn determinant(&self) -> f64 {
         self.a1[0] * self.a2[1] - self.a1[1] * self.a2[0]
     }
@@ -85,4 +121,8 @@ impl Lattice2D {
 pub struct ReciprocalLattice2D {
     pub b1: [f64; 2],
     pub b2: [f64; 2],
+}
+
+fn vector_norm(v: [f64; 2]) -> f64 {
+    (v[0] * v[0] + v[1] * v[1]).sqrt()
 }
