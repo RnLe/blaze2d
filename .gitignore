@@ -1,2 +1,7 @@
 # Ignore Rust build targets
 /target/
+
+**.csv
+**.json
+**.jsonl
+**.txt

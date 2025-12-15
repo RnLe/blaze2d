@@ -5,12 +5,14 @@ use std::f64::consts::PI;
 use num_complex::Complex64;
 
 use super::backend::SpectralBackend;
-use super::dielectric::Dielectric2D;
+use super::dielectric::{Dielectric2D, DielectricOptions};
 use super::field::Field2D;
 use super::geometry::{BasisAtom, Geometry2D};
 use super::grid::Grid2D;
 use super::lattice::Lattice2D;
-use super::operator::{LinearOperator, ThetaOperator, ToyLaplacian};
+use super::operator::{
+    LinearOperator, STRUCTURED_WEIGHT_MAX, STRUCTURED_WEIGHT_MIN, ThetaOperator, ToyLaplacian,
+};
 use super::polarization::Polarization;
 use super::preconditioner::{FOURIER_DIAGONAL_SHIFT, OperatorPreconditioner};
 
@@ -99,7 +101,7 @@ fn uniform_dielectric(grid: Grid2D, eps: f64) -> Dielectric2D {
         eps_bg: eps,
         atoms: Vec::new(),
     };
-    Dielectric2D::from_geometry(&geom, grid)
+    Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default())
 }
 
 fn patterned_dielectric(grid: Grid2D) -> Dielectric2D {
@@ -119,7 +121,7 @@ fn patterned_dielectric(grid: Grid2D) -> Dielectric2D {
             },
         ],
     };
-    Dielectric2D::from_geometry(&geom, grid)
+    Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default())
 }
 
 fn deterministic_field(grid: Grid2D, seed: u64) -> Field2D {
@@ -139,6 +141,15 @@ fn inner_product(a: &Field2D, b: &Field2D) -> Complex64 {
         .zip(b.as_slice())
         .map(|(lhs, rhs)| lhs.conj() * rhs)
         .sum()
+}
+
+fn field_norm(field: &Field2D) -> f64 {
+    field
+        .as_slice()
+        .iter()
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        .sqrt()
 }
 
 fn shifted_eigenvalue(grid: Grid2D, bloch_k: [f64; 2], mx: i32, my: i32) -> f64 {
@@ -336,17 +347,19 @@ fn theta_tm_mass_is_identity() {
 }
 
 #[test]
-fn fourier_preconditioner_scales_te_plane_wave() {
+fn jacobi_preconditioner_scales_te_plane_wave() {
     let grid = Grid2D::new(5, 4, 1.3, 0.9);
     let dielectric = uniform_dielectric(grid, 2.0);
     let backend = TestBackend;
     let bloch = [0.25 * PI, -0.1 * PI];
     let theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
-    let mut preconditioner = theta.build_fourier_diagonal_preconditioner();
+    let mut preconditioner = theta.build_homogeneous_preconditioner();
     let mut field = plane_wave(grid, 1, -1);
     let backend_ref = theta.backend();
     preconditioner.apply(backend_ref, &mut field);
-    let expected_scale = 1.0 / (shifted_eigenvalue(grid, bloch, 1, -1) + FOURIER_DIAGONAL_SHIFT);
+    let eps_eff = 2.0;
+    let expected_scale =
+        eps_eff / (shifted_eigenvalue(grid, bloch, 1, -1) + FOURIER_DIAGONAL_SHIFT * eps_eff);
     let mut expected = plane_wave(grid, 1, -1);
     for value in expected.as_mut_slice() {
         *value *= expected_scale;
@@ -355,25 +368,68 @@ fn fourier_preconditioner_scales_te_plane_wave() {
 }
 
 #[test]
-fn fourier_preconditioner_uses_tm_effective_epsilon() {
+fn jacobi_preconditioner_uses_tm_effective_epsilon() {
     let grid = Grid2D::new(4, 4, 1.1, 1.0);
     let dielectric = patterned_dielectric(grid);
     let dielectric_clone = dielectric.clone();
     let backend = TestBackend;
     let bloch = [0.0, 0.3 * PI];
     let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
-    let mut preconditioner = theta.build_fourier_diagonal_preconditioner();
+    let mut preconditioner = theta.build_homogeneous_preconditioner();
     let mut field = plane_wave(grid, 0, 1);
     let backend_ref = theta.backend();
     preconditioner.apply(backend_ref, &mut field);
-    let inv_eps = dielectric_clone.inv_eps();
-    let avg_inv = inv_eps.iter().copied().sum::<f64>() / inv_eps.len() as f64;
-    let eps_eff = if avg_inv <= 0.0 { 1.0 } else { 1.0 / avg_inv };
+    let eps = dielectric_clone.eps();
+    let avg_eps = eps.iter().copied().sum::<f64>() / eps.len() as f64;
+    let eps_eff = if avg_eps <= 0.0 { 1.0 } else { avg_eps };
     let expected_scale =
-        1.0 / (shifted_eigenvalue(grid, bloch, 0, 1) / eps_eff + FOURIER_DIAGONAL_SHIFT);
+        eps_eff / (shifted_eigenvalue(grid, bloch, 0, 1) + FOURIER_DIAGONAL_SHIFT * eps_eff);
     let mut expected = plane_wave(grid, 0, 1);
     for value in expected.as_mut_slice() {
         *value *= expected_scale;
     }
     assert_fields_close(&field, &expected, 1e-9);
+}
+
+#[test]
+fn fourier_preconditioner_crushes_residual_norm() {
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let dielectric = uniform_dielectric(grid, 2.5);
+    let backend = TestBackend;
+    let bloch = [0.15 * PI, -0.1 * PI];
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+    let mut preconditioner = theta.build_homogeneous_preconditioner();
+    let mut residual = plane_wave(grid, 3, -2);
+    let before_norm = field_norm(&residual);
+    let backend_ref = theta.backend();
+    preconditioner.apply(backend_ref, &mut residual);
+    let after_norm = field_norm(&residual);
+    let reduction = before_norm / after_norm;
+    assert!(
+        reduction >= 10.0,
+        "expected ≥10x reduction, got {reduction}"
+    );
+}
+
+#[test]
+fn structured_preconditioner_exposes_dielectric_weights() {
+    let grid = Grid2D::new(3, 3, 1.0, 1.0);
+    let dielectric = patterned_dielectric(grid);
+    let dielectric_clone = dielectric.clone();
+    let backend = TestBackend;
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TE, [0.0, 0.0]);
+    let preconditioner = theta.build_structured_preconditioner();
+    let weights = preconditioner
+        .spatial_weights()
+        .expect("structured preconditioner should have weights");
+    let eps = dielectric_clone.eps();
+    let inv_eps = dielectric_clone.inv_eps();
+    let avg_inv = inv_eps.iter().copied().sum::<f64>() / inv_eps.len() as f64;
+    let eps_eff = if avg_inv <= 0.0 { 1.0 } else { 1.0 / avg_inv };
+    for (w, &eps_val) in weights.iter().zip(eps.iter()) {
+        let expected = (eps_val / eps_eff)
+            .max(STRUCTURED_WEIGHT_MIN)
+            .min(STRUCTURED_WEIGHT_MAX);
+        assert!((*w - expected).abs() < 1e-9, "weight mismatch");
+    }
 }

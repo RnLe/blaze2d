@@ -45,6 +45,8 @@ fn job_config_with_explicit_k_path_converts_directly() {
         path: None,
         eigensolver: Default::default(),
         metrics: Default::default(),
+        inspection: Default::default(),
+        dielectric: Default::default(),
     };
     let job: BandStructureJob = config.into();
     assert_eq!(job.k_path.len(), 2);
@@ -64,6 +66,8 @@ fn job_config_uses_path_preset_when_k_path_missing() {
         }),
         eigensolver: Default::default(),
         metrics: Default::default(),
+        inspection: Default::default(),
+        dielectric: Default::default(),
     };
     let job: BandStructureJob = config.into();
     assert_eq!(job.k_path.first().copied(), Some([0.0, 0.0]));
@@ -82,6 +86,8 @@ fn job_config_panics_without_k_path_or_preset() {
         path: None,
         eigensolver: Default::default(),
         metrics: Default::default(),
+        inspection: Default::default(),
+        dielectric: Default::default(),
     };
     let _: BandStructureJob = config.into();
 }

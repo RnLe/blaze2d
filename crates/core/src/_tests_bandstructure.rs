@@ -5,13 +5,15 @@ use std::f64::consts::PI;
 use num_complex::Complex64;
 
 use super::backend::SpectralBackend;
-use super::bandstructure::{BandStructureJob, Verbosity, run};
+use super::bandstructure::{BandStructureJob, InspectionOptions, Verbosity, run};
 #[cfg(test)]
 use super::bandstructure::{RunDebugProbe, run_with_debug};
+use super::dielectric::DielectricOptions;
 use super::eigensolver::{EigenOptions, PreconditionerKind};
 use super::field::Field2D;
 use super::geometry::Geometry2D;
 use super::grid::Grid2D;
+use super::io::JobConfig;
 use super::lattice::Lattice2D;
 use super::polarization::Polarization;
 
@@ -101,6 +103,8 @@ fn small_job(k_path: Vec<[f64; 2]>) -> BandStructureJob {
             tol: 1e-8,
             ..Default::default()
         },
+        dielectric: DielectricOptions::default(),
+        inspection: InspectionOptions::default(),
     }
 }
 
@@ -155,7 +159,7 @@ fn verbose_run_matches_quiet_output() {
 fn run_engages_warm_start_and_theta_cache() {
     let backend = DeterministicBackend;
     let mut job = small_job(vec![[0.0, 0.0], [0.0, 0.0], [0.25, 0.25]]);
-    job.eigensolver.preconditioner = PreconditionerKind::FourierDiagonal;
+    job.eigensolver.preconditioner = PreconditionerKind::HomogeneousJacobi;
     job.eigensolver.deflation.enabled = true;
     job.eigensolver.deflation.max_vectors = 2;
     job.eigensolver.warm_start.enabled = true;
@@ -167,4 +171,35 @@ fn run_engages_warm_start_and_theta_cache() {
     assert_eq!(result.bands.len(), job.k_path.len());
     assert_eq!(probe.theta_instances, job.k_path.len());
     assert_eq!(probe.warm_start_hits, job.k_path.len() - 1);
+}
+
+#[test]
+fn job_config_enforces_solver_defaults() {
+    let config = JobConfig {
+        geometry: uniform_geometry(),
+        grid: Grid2D::new(2, 2, 1.0, 1.0),
+        polarization: Polarization::TE,
+        k_path: vec![[0.0, 0.0], [0.5, 0.0]],
+        path: None,
+        eigensolver: EigenOptions {
+            n_bands: 4,
+            block_size: 1,
+            preconditioner: PreconditionerKind::None,
+            ..Default::default()
+        },
+        metrics: Default::default(),
+        inspection: Default::default(),
+        dielectric: Default::default(),
+    };
+    let job: BandStructureJob = config.clone().into();
+    assert_eq!(
+        job.eigensolver.preconditioner,
+        PreconditionerKind::StructuredDiagonal,
+        "config conversion should force structured preconditioning",
+    );
+    assert_eq!(
+        job.eigensolver.block_size,
+        job.eigensolver.n_bands + 2,
+        "block size should retain the n_bands+2 slack",
+    );
 }

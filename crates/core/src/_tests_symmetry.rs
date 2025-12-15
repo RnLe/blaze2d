@@ -60,6 +60,7 @@ fn projector_from_reflection(axis: ReflectionAxis, parity: Parity) -> SymmetryPr
     let opts = SymmetryOptions {
         reflections: vec![ReflectionConstraint { axis, parity }],
         auto: None,
+        ..SymmetryOptions::default()
     };
     SymmetryProjector::from_options(&opts).expect("projector should exist")
 }
@@ -120,20 +121,13 @@ fn auto_symmetry_populates_reflections_for_rectangular() {
         reflections: Vec::new(),
         auto: Some(AutoSymmetry {
             parity: Parity::Even,
+            ..Default::default()
         }),
+        ..SymmetryOptions::default()
     };
     opts.resolve_with_lattice(&lattice);
-    assert_eq!(opts.reflections.len(), 2);
-    assert!(
-        opts.reflections
-            .iter()
-            .any(|r| matches!(r.axis, ReflectionAxis::X))
-    );
-    assert!(
-        opts.reflections
-            .iter()
-            .any(|r| matches!(r.axis, ReflectionAxis::Y))
-    );
+    let selection = opts.selection_for_bloch([0.0, 0.0]);
+    assert_eq!(selection.applied_count(), 2);
 }
 
 #[test]
@@ -143,18 +137,21 @@ fn auto_symmetry_skips_oblique() {
         reflections: Vec::new(),
         auto: Some(AutoSymmetry {
             parity: Parity::Odd,
+            ..Default::default()
         }),
+        ..SymmetryOptions::default()
     };
     opts.resolve_with_lattice(&lattice);
-    assert!(opts.reflections.is_empty());
+    let selection = opts.selection_for_bloch([0.1, 0.2]);
+    assert_eq!(selection.applied_count(), 0);
 }
 
 #[test]
-fn symmetry_defaults_enable_auto_inference() {
+fn symmetry_defaults_disable_auto_inference() {
     let opts = SymmetryOptions::default();
     assert!(
-        opts.auto.is_some(),
-        "auto inference should be enabled by default"
+        opts.auto.is_none(),
+        "auto inference should be opt-in by default"
     );
     assert!(
         opts.reflections.is_empty(),
@@ -165,11 +162,46 @@ fn symmetry_defaults_enable_auto_inference() {
 #[test]
 fn default_auto_populates_supported_lattice_reflections() {
     let lattice = Lattice2D::square(1.0);
-    let mut opts = SymmetryOptions::default();
+    let mut opts = SymmetryOptions {
+        auto: Some(AutoSymmetry::default()),
+        ..SymmetryOptions::default()
+    };
     opts.resolve_with_lattice(&lattice);
+    let selection = opts.selection_for_bloch([0.0, 0.0]);
     assert_eq!(
-        opts.reflections.len(),
+        selection.applied_count(),
         2,
         "square lattice should add two reflection axes by default"
     );
+}
+
+#[test]
+fn auto_symmetry_skips_off_axis_points() {
+    let lattice = Lattice2D::square(1.0);
+    let mut opts = SymmetryOptions {
+        auto: Some(AutoSymmetry::default()),
+        ..SymmetryOptions::default()
+    };
+    opts.resolve_with_lattice(&lattice);
+    let selection = opts.selection_for_bloch([0.25, 0.3]);
+    assert_eq!(
+        selection.applied_count(),
+        0,
+        "off-axis k-points should not enforce auto reflections"
+    );
+    assert_eq!(selection.skipped_count(), 2);
+}
+
+#[test]
+fn manual_reflections_apply_even_off_axis() {
+    let lattice = Lattice2D::square(1.0);
+    let mut opts = SymmetryOptions::default();
+    opts.reflections = vec![ReflectionConstraint {
+        axis: ReflectionAxis::X,
+        parity: Parity::Even,
+    }];
+    opts.resolve_with_lattice(&lattice);
+    let selection = opts.selection_for_bloch([0.3, 0.2]);
+    assert_eq!(selection.applied_count(), 1);
+    assert_eq!(selection.skipped_count(), 0);
 }

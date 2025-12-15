@@ -11,6 +11,7 @@ pub mod io;
 pub mod lattice;
 pub mod metrics;
 pub mod operator;
+pub mod operator_inspection;
 pub mod polarization;
 pub mod preconditioner;
 pub mod reference;

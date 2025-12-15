@@ -1,4 +1,4 @@
-# Hexagonal lattice eps_bg=13, r/a=0.3, low-res grid for TE
+# Square lattice eps_bg=13, r/a=0.3, low-res grid for TE
 
 polarization = "TE"
 
@@ -7,7 +7,7 @@ eps_bg = 13.0
 
 [geometry.lattice]
 a1 = [1.0, 0.0]
-a2 = [0.5, 0.8660254037844386]
+a2 = [0.0, 1.0]
 
 [[geometry.atoms]]
 pos = [0.0, 0.0]
@@ -21,7 +21,7 @@ lx = 1.0
 ly = 1.0
 
 [path]
-preset = "hexagonal"
+preset = "square"
 segments_per_leg = 8
 
 [eigensolver]
@@ -31,4 +31,4 @@ tol = 1e-6
 
 [metrics]
 enabled = true
-output = "reference-data/hex_te_eps13_r0p3_res24_k6_b8_mpb2d_metrics.jsonl"
+output = "reference-data/square_te_eps13_r0p3_res24_k6_b8_mpb2d_metrics.jsonl"

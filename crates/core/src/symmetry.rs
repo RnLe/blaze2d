@@ -85,21 +85,56 @@ pub struct ReflectionConstraint {
 pub struct SymmetryOptions {
     pub reflections: Vec<ReflectionConstraint>,
     pub auto: Option<AutoSymmetry>,
+    #[serde(skip)]
+    pub(crate) auto_reflections: Vec<ReflectionConstraint>,
 }
 
 impl Default for SymmetryOptions {
     fn default() -> Self {
         Self {
             reflections: Vec::new(),
-            auto: Some(AutoSymmetry::default()),
+            auto: None,
+            auto_reflections: Vec::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+fn default_bloch_tolerance() -> f64 {
+    1e-6
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AutoSymmetry {
     #[serde(default)]
     pub parity: Parity,
+    #[serde(default = "default_bloch_tolerance")]
+    pub bloch_tolerance: f64,
+}
+
+impl Default for AutoSymmetry {
+    fn default() -> Self {
+        Self {
+            parity: Parity::Even,
+            bloch_tolerance: default_bloch_tolerance(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SymmetrySelection {
+    pub reflections: Vec<ReflectionConstraint>,
+    pub skipped_auto: usize,
+}
+
+impl SymmetrySelection {
+    pub fn applied_count(&self) -> usize {
+        self.reflections.len()
+    }
+
+    pub fn skipped_count(&self) -> usize {
+        self.skipped_auto
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -108,18 +143,27 @@ pub struct SymmetryProjector {
 }
 
 impl SymmetryProjector {
-    pub fn from_options(opts: &SymmetryOptions) -> Option<Self> {
-        if opts.reflections.is_empty() {
+    pub fn from_reflections(reflections: &[ReflectionConstraint]) -> Option<Self> {
+        if reflections.is_empty() {
             None
         } else {
             Some(Self {
-                reflections: opts.reflections.clone(),
+                reflections: reflections.to_vec(),
             })
         }
     }
 
+    pub fn from_options(opts: &SymmetryOptions) -> Option<Self> {
+        let resolved = opts.all_reflections();
+        Self::from_reflections(&resolved)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.reflections.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.reflections.len()
     }
 
     pub fn apply<B: SpectralBuffer>(&self, buffer: &mut B) {
@@ -158,14 +202,70 @@ fn mirror_index(len: usize, idx: usize) -> usize {
 }
 
 impl SymmetryOptions {
+    pub fn disable_auto(&mut self) {
+        self.auto = None;
+        self.auto_reflections.clear();
+    }
+
     pub fn resolve_with_lattice(&mut self, lattice: &Lattice2D) {
+        self.auto_reflections.clear();
         if !self.reflections.is_empty() {
             return;
         }
         if let Some(auto) = &self.auto {
-            self.reflections = reflections_for_lattice(lattice, auto.parity.clone());
+            self.auto_reflections = reflections_for_lattice(lattice, auto.parity.clone());
         }
     }
+
+    pub fn all_reflections(&self) -> Vec<ReflectionConstraint> {
+        let mut refs = self.reflections.clone();
+        refs.extend(self.auto_reflections.iter().cloned());
+        refs
+    }
+
+    pub fn selection_for_bloch(&self, bloch: [f64; 2]) -> SymmetrySelection {
+        let mut refs = self.reflections.clone();
+        let mut skipped_auto = 0usize;
+        if let Some(auto) = &self.auto {
+            let tol = auto.bloch_tolerance.max(0.0);
+            for reflection in &self.auto_reflections {
+                if should_apply_reflection(reflection, bloch, tol) {
+                    refs.push(reflection.clone());
+                } else {
+                    skipped_auto += 1;
+                }
+            }
+        } else {
+            skipped_auto = self.auto_reflections.len();
+        }
+        SymmetrySelection {
+            reflections: refs,
+            skipped_auto,
+        }
+    }
+}
+
+fn should_apply_reflection(reflection: &ReflectionConstraint, bloch: [f64; 2], tol: f64) -> bool {
+    if tol <= 0.0 {
+        return true;
+    }
+    let (component, other) = match reflection.axis {
+        ReflectionAxis::X => (bloch[0], bloch[1]),
+        ReflectionAxis::Y => (bloch[1], bloch[0]),
+    };
+    near_axis(component, other, tol)
+}
+
+fn near_axis(component: f64, other: f64, tol: f64) -> bool {
+    let comp_abs = component.abs();
+    if comp_abs <= tol {
+        return true;
+    }
+    let other_abs = other.abs();
+    if other_abs <= tol {
+        return comp_abs <= tol;
+    }
+    (comp_abs / other_abs) <= tol
 }
 
 pub fn reflections_for_lattice(lattice: &Lattice2D, parity: Parity) -> Vec<ReflectionConstraint> {

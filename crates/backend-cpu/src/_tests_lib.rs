@@ -2,7 +2,7 @@
 
 use crate::CpuBackend;
 use mpb2d_core::backend::SpectralBackend;
-use mpb2d_core::dielectric::Dielectric2D;
+use mpb2d_core::dielectric::{Dielectric2D, DielectricOptions};
 use mpb2d_core::eigensolver::{
     EigenOptions, GammaContext, PowerIterationOptions, power_iteration, solve_lowest_eigenpairs,
 };
@@ -60,7 +60,7 @@ fn validate_uniform_reference(mpb_file: &str, polarization: Polarization) {
         atoms: Vec::new(),
     };
     let grid = Grid2D::new(48, 48, 1.0, 1.0);
-    let dielectric = Dielectric2D::from_geometry(&geom, grid);
+    let dielectric = Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default());
     let reference_unique = reference
         .bands
         .get(0)
@@ -84,8 +84,15 @@ fn validate_uniform_reference(mpb_file: &str, polarization: Polarization) {
         let gamma_context = GammaContext::new(eigen_opts.gamma.should_deflate(bloch_norm));
         let mut theta =
             ThetaOperator::new(CpuBackend::new(), dielectric.clone(), polarization, bloch);
-        let result =
-            solve_lowest_eigenpairs(&mut theta, &eigen_opts, None, gamma_context, None, None);
+        let result = solve_lowest_eigenpairs(
+            &mut theta,
+            &eigen_opts,
+            None,
+            gamma_context,
+            None,
+            None,
+            None,
+        );
         let expected = dedup_sorted(&reference.bands[idx]);
         let scaled_omegas: Vec<f64> = result
             .omegas
@@ -246,6 +253,7 @@ fn gamma_deflation_removes_constant_mode() {
         GammaContext::default(),
         None,
         None,
+        None,
     );
     assert!(
         baseline.omegas[0] < 5e-5,
@@ -259,6 +267,7 @@ fn gamma_deflation_removes_constant_mode() {
         &opts,
         None,
         GammaContext::new(true),
+        None,
         None,
         None,
     );
@@ -285,7 +294,7 @@ fn tm_operator_matches_uniform_medium_limit() {
         atoms: Vec::new(),
     };
     let grid = Grid2D::new(8, 8, 1.0, 1.0);
-    let dielectric = Dielectric2D::from_geometry(&geom, grid);
+    let dielectric = Dielectric2D::from_geometry(&geom, grid, &DielectricOptions::default());
     let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
     let mut vec = theta.alloc_field();
     let nx = grid.nx;

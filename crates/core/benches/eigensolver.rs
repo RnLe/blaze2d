@@ -49,7 +49,7 @@ fn scenario_from_example(
         job.k_path.len() > segments * 2,
         "k-path must cover Gamma-M-K"
     );
-    let dielectric = Dielectric2D::from_geometry(&job.geom, job.grid);
+    let dielectric = Dielectric2D::from_geometry(&job.geom, job.grid, &job.dielectric);
     let samples = [0usize, segments, segments * 2];
     let k_points = samples
         .into_iter()
@@ -83,8 +83,12 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
     group.sample_size(10);
     for scenario in &scenarios {
         let base_opts = scenario.eigensolver.clone();
-        let fourier_opts = EigenOptions {
-            preconditioner: PreconditionerKind::FourierDiagonal,
+        let structured_opts = EigenOptions {
+            preconditioner: PreconditionerKind::StructuredDiagonal,
+            ..base_opts.clone()
+        };
+        let homogeneous_opts = EigenOptions {
+            preconditioner: PreconditionerKind::HomogeneousJacobi,
             ..base_opts.clone()
         };
         let none_opts = EigenOptions {
@@ -97,7 +101,8 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
             let bloch_norm = (bloch[0] * bloch[0] + bloch[1] * bloch[1]).sqrt();
             for &(defl_label, defl_enabled) in &deflation_variants {
                 let variants = [
-                    ("fourier", fourier_opts.clone()),
+                    ("structured", structured_opts.clone()),
+                    ("homog", homogeneous_opts.clone()),
                     ("none", none_opts.clone()),
                 ];
                 for (variant, mut eigen_opts) in variants {
@@ -124,15 +129,30 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                                     gamma_context,
                                     None,
                                     None,
+                                    None,
                                 ),
-                                PreconditionerKind::FourierDiagonal => {
+                                PreconditionerKind::HomogeneousJacobi => {
                                     let mut preconditioner =
-                                        theta.build_fourier_diagonal_preconditioner();
+                                        theta.build_homogeneous_preconditioner();
                                     solve_lowest_eigenpairs(
                                         &mut theta,
                                         &eigen_opts,
                                         Some(&mut preconditioner),
                                         gamma_context,
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                }
+                                PreconditionerKind::StructuredDiagonal => {
+                                    let mut preconditioner =
+                                        theta.build_structured_preconditioner();
+                                    solve_lowest_eigenpairs(
+                                        &mut theta,
+                                        &eigen_opts,
+                                        Some(&mut preconditioner),
+                                        gamma_context,
+                                        None,
                                         None,
                                         None,
                                     )
@@ -145,7 +165,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
             }
 
             let mut everything_opts = scenario.eigensolver.clone();
-            everything_opts.preconditioner = PreconditionerKind::FourierDiagonal;
+            everything_opts.preconditioner = PreconditionerKind::StructuredDiagonal;
             everything_opts.deflation.enabled = true;
             everything_opts.deflation.max_vectors = everything_opts.n_bands;
             everything_opts.warm_start.enabled = true;
@@ -162,12 +182,13 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                     scenario.polarization,
                     bloch,
                 );
-                let mut preconditioner = theta.build_fourier_diagonal_preconditioner();
+                let mut preconditioner = theta.build_structured_preconditioner();
                 let primer = solve_lowest_eigenpairs(
                     &mut theta,
                     &everything_opts,
                     Some(&mut preconditioner),
                     everything_gamma,
+                    None,
                     None,
                     None,
                 );
@@ -217,6 +238,7 @@ fn bench_cpu_eigensolver_real(c: &mut Criterion) {
                         everything_gamma,
                         Some(warm_slice),
                         workspace_ref,
+                        None,
                     );
                     black_box((result.iterations, result.gamma_deflated));
                 });

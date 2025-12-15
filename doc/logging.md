@@ -7,8 +7,8 @@
 - Startup summary: backend type, grid dimensions, polarization, eigensolver knobs, k-point count, and lattice vectors.
 - Dielectric/FFT prep: real-space sampling duration plus a note when spectral workspaces/buffers come online.
 - Per k-point line: index, `(kx, ky)`, polarization, Lanczos iteration count, number of bands returned, elapsed wall time, and a compact frequency range (`frequencies=[min..max]`) so the console stays readable even when solving dozens of bands.
-- Solver state changes such as Γ deflation, deflation store usage, or warm-start counts are captured via metrics rather than inline console tags to keep the human-readable output minimal.
-- When metrics are enabled, every k-point still emits `k_point_solve`, and now each solver iteration also triggers an `eigen_iteration` event carrying `(max_residual, avg_residual, block_size, new_directions)` for downstream dashboards. Those events (plus the `EigenDiagnostics` payload) retain the detailed Rayleigh/residual/mass data that was removed from the human log.
+- A `[proj]` line is printed per k-point in verbose mode, reporting whether the Γ constant mode is being deflated along with warm-start seed count, deflation workspace size, and the number of symmetry reflections—in other words, a quick proof that every convergence aid actually kicked in.
+- When metrics are enabled, every k-point still emits `k_point_solve` (now augmented with the same projection stats and a `gamma_deflated` flag), and each solver iteration also triggers an `eigen_iteration` event carrying `(max_residual, avg_residual, block_size, new_directions)` for downstream dashboards. Those events (plus the `EigenDiagnostics` payload) retain the detailed Rayleigh/residual/mass data that was removed from the human log.
 - Final recap: total time and aggregate iteration count across the sweep.
 
 All messages go to stderr via `eprintln!`, leaving stdout free for CSV/structured output.
