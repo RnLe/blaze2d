@@ -92,6 +92,7 @@ fn validate_uniform_reference(mpb_file: &str, polarization: Polarization) {
             None,
             None,
             None,
+            None,
         );
         let expected = dedup_sorted(&reference.bands[idx]);
         let scaled_omegas: Vec<f64> = result
@@ -254,6 +255,7 @@ fn gamma_deflation_removes_constant_mode() {
         None,
         None,
         None,
+        None,
     );
     assert!(
         baseline.omegas[0] < 5e-5,
@@ -267,6 +269,7 @@ fn gamma_deflation_removes_constant_mode() {
         &opts,
         None,
         GammaContext::new(true),
+        None,
         None,
         None,
         None,

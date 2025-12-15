@@ -16,6 +16,7 @@ use crate::{
 const MIN_RR_TOL: f64 = 1e-12;
 const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
 const BLOCK_SIZE_SLACK: usize = 2;
+const W_HISTORY_FACTOR: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -34,6 +35,8 @@ pub struct EigenOptions {
     pub symmetry: SymmetryOptions,
     #[serde(default)]
     pub warm_start: WarmStartOptions,
+    #[serde(default)]
+    pub debug: SolverDebugOptions,
 }
 
 impl Default for EigenOptions {
@@ -48,6 +51,7 @@ impl Default for EigenOptions {
             deflation: DeflationOptions::default(),
             symmetry: SymmetryOptions::default(),
             warm_start: WarmStartOptions::default(),
+            debug: SolverDebugOptions::default(),
         }
     }
 }
@@ -122,6 +126,28 @@ impl WarmStartOptions {
         } else {
             self.max_vectors
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SolverDebugOptions {
+    pub disable_deflation: bool,
+    pub history_multiplier: Option<usize>,
+}
+
+impl Default for SolverDebugOptions {
+    fn default() -> Self {
+        Self {
+            disable_deflation: false,
+            history_multiplier: None,
+        }
+    }
+}
+
+impl SolverDebugOptions {
+    pub fn history_factor(&self) -> usize {
+        self.history_multiplier.unwrap_or(W_HISTORY_FACTOR).max(1)
     }
 }
 
@@ -208,8 +234,12 @@ pub struct EigenDiagnostics {
     pub negative_modes_skipped: usize,
     pub max_residual: f64,
     pub max_relative_residual: f64,
+    pub max_relative_scale: f64,
     pub modes: Vec<ModeDiagnostics>,
     pub iterations: Vec<IterationDiagnostics>,
+    pub residual_snapshots: Vec<ResidualSnapshot>,
+    pub deflation_vectors: usize,
+    pub deflation_disabled: bool,
 }
 
 impl EigenDiagnostics {
@@ -220,8 +250,12 @@ impl EigenDiagnostics {
             negative_modes_skipped: 0,
             max_residual: 0.0,
             max_relative_residual: 0.0,
+            max_relative_scale: 0.0,
             modes: Vec::new(),
             iterations: Vec::new(),
+            residual_snapshots: Vec::new(),
+            deflation_vectors: 0,
+            deflation_disabled: false,
         }
     }
 
@@ -271,11 +305,133 @@ pub struct IterationDiagnostics {
     pub avg_residual: f64,
     pub max_relative_residual: f64,
     pub avg_relative_residual: f64,
+    pub max_relative_scale: f64,
+    pub avg_relative_scale: f64,
     pub block_size: usize,
     pub new_directions: usize,
     pub preconditioner_trials: usize,
     pub preconditioner_avg_before: f64,
     pub preconditioner_avg_after: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResidualSnapshot {
+    pub iteration: usize,
+    pub band_index: usize,
+    pub stage: ResidualSnapshotStage,
+    pub field: Field2D,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResidualSnapshotStage {
+    Raw,
+    Projected,
+    Preconditioned,
+}
+
+impl ResidualSnapshotStage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ResidualSnapshotStage::Raw => "raw",
+            ResidualSnapshotStage::Projected => "projected",
+            ResidualSnapshotStage::Preconditioned => "preconditioned",
+        }
+    }
+}
+
+impl std::fmt::Display for ResidualSnapshotStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResidualSnapshotRequest {
+    max_snapshots: usize,
+    capture_raw: bool,
+    capture_projected: bool,
+    capture_preconditioned: bool,
+}
+
+impl ResidualSnapshotRequest {
+    pub fn new(max_snapshots: usize) -> Self {
+        Self {
+            max_snapshots,
+            capture_raw: true,
+            capture_projected: true,
+            capture_preconditioned: true,
+        }
+    }
+
+    pub fn with_stages(
+        max_snapshots: usize,
+        capture_raw: bool,
+        capture_projected: bool,
+        capture_preconditioned: bool,
+    ) -> Self {
+        Self {
+            max_snapshots,
+            capture_raw,
+            capture_projected,
+            capture_preconditioned,
+        }
+    }
+
+    pub fn allows_stage(&self, stage: ResidualSnapshotStage) -> bool {
+        match stage {
+            ResidualSnapshotStage::Raw => self.capture_raw,
+            ResidualSnapshotStage::Projected => self.capture_projected,
+            ResidualSnapshotStage::Preconditioned => self.capture_preconditioned,
+        }
+    }
+
+    pub fn max_snapshots(&self) -> usize {
+        self.max_snapshots
+    }
+}
+
+struct ResidualSnapshotManager {
+    request: ResidualSnapshotRequest,
+    captured: usize,
+}
+
+impl ResidualSnapshotManager {
+    fn new(request: ResidualSnapshotRequest) -> Self {
+        Self {
+            request,
+            captured: 0,
+        }
+    }
+
+    fn can_capture(&self) -> bool {
+        self.request.max_snapshots > 0 && self.captured < self.request.max_snapshots
+    }
+
+    fn capture<O, B>(
+        &mut self,
+        operator: &O,
+        iteration: usize,
+        band_index: usize,
+        stage: ResidualSnapshotStage,
+        buffer: &B::Buffer,
+        store: &mut Vec<ResidualSnapshot>,
+    ) where
+        O: LinearOperator<B>,
+        B: SpectralBackend,
+    {
+        if !self.can_capture() || !self.request.allows_stage(stage) {
+            return;
+        }
+        let grid = operator.grid();
+        let data = buffer.as_slice().to_vec();
+        store.push(ResidualSnapshot {
+            iteration,
+            band_index,
+            stage,
+            field: Field2D::from_vec(grid, data),
+        });
+        self.captured += 1;
+    }
 }
 
 pub struct DeflationWorkspace<B: SpectralBackend> {
@@ -350,6 +506,7 @@ pub fn solve_lowest_eigenpairs<O, B>(
     warm_start: Option<&[Field2D]>,
     deflation: Option<&DeflationWorkspace<B>>,
     symmetry_override: Option<&SymmetryProjector>,
+    residual_request: Option<ResidualSnapshotRequest>,
 ) -> EigenResult
 where
     O: LinearOperator<B>,
@@ -363,6 +520,12 @@ where
         None
     };
     let gamma_deflated = gamma_mode.is_some();
+    let deflation_vectors = deflation.map_or(0, |space| space.len());
+    let deflation_active = if opts.debug.disable_deflation {
+        None
+    } else {
+        deflation
+    };
     let mut fallback_symmetry = None;
     let symmetry_projector = if let Some(custom) = symmetry_override {
         Some(custom)
@@ -370,12 +533,14 @@ where
         fallback_symmetry = SymmetryProjector::from_options(&opts.symmetry);
         fallback_symmetry.as_ref()
     };
+    let mut residual_snapshots = Vec::new();
+    let mut snapshot_manager = residual_request.map(ResidualSnapshotManager::new);
 
     let (mut x_entries, warm_start_hits) = initialize_block(
         operator,
         block_size,
         gamma_mode.as_ref(),
-        deflation,
+        deflation_active,
         symmetry_projector,
         warm_start,
     );
@@ -414,10 +579,13 @@ where
             &x_entries,
             &w_entries,
             gamma_mode.as_ref(),
-            deflation,
+            deflation_active,
             symmetry_projector,
             &mut preconditioner,
             opts.tol,
+            iterations,
+            snapshot_manager.as_mut(),
+            &mut residual_snapshots,
         );
         iteration_stats.push(IterationDiagnostics {
             iteration: iterations,
@@ -425,6 +593,8 @@ where
             avg_residual: residual_stats.avg_residual,
             max_relative_residual: residual_stats.max_relative_residual,
             avg_relative_residual: residual_stats.avg_relative_residual,
+            max_relative_scale: residual_stats.max_relative_scale,
+            avg_relative_scale: residual_stats.avg_relative_scale,
             block_size: x_entries.len(),
             new_directions: residual_stats.accepted,
             preconditioner_trials: residual_stats.preconditioner_trials,
@@ -441,7 +611,12 @@ where
         reorthogonalize_block(operator, &mut p_entries, &x_entries);
         reorthogonalize_block(operator, &mut p_entries, &w_entries);
         reorthogonalize_block(operator, &mut w_entries, &x_entries);
-        while w_entries.len() > x_entries.len() {
+        let history_limit = opts
+            .debug
+            .history_factor()
+            .saturating_mul(x_entries.len())
+            .max(1);
+        while w_entries.len() > history_limit {
             w_entries.pop();
         }
 
@@ -461,6 +636,9 @@ where
     let (omegas, modes, mut diagnostics) =
         finalize_modes(operator, &x_entries, &eigenvalues, target_bands, opts.tol);
     diagnostics.iterations = iteration_stats;
+    diagnostics.residual_snapshots = residual_snapshots;
+    diagnostics.deflation_vectors = deflation_vectors;
+    diagnostics.deflation_disabled = opts.debug.disable_deflation;
     if let Some(iter_max) = diagnostics
         .iterations
         .iter()
@@ -468,6 +646,14 @@ where
         .reduce(f64::max)
     {
         diagnostics.max_residual = diagnostics.max_residual.max(iter_max);
+    }
+    if let Some(scale_max) = diagnostics
+        .iterations
+        .iter()
+        .map(|info| info.max_relative_scale)
+        .reduce(f64::max)
+    {
+        diagnostics.max_relative_scale = diagnostics.max_relative_scale.max(scale_max);
     }
     EigenResult {
         omegas,
@@ -595,6 +781,8 @@ struct ResidualComputation {
     avg_residual: f64,
     max_relative_residual: f64,
     avg_relative_residual: f64,
+    max_relative_scale: f64,
+    avg_relative_scale: f64,
     accepted: usize,
     preconditioner_trials: usize,
     preconditioner_avg_before: f64,
@@ -608,14 +796,32 @@ fn residual_relative_scale<B: SpectralBackend>(
 ) -> f64 {
     let vector_norm = mass_norm(backend, &entry.vector, &entry.mass);
     let rayleigh_scale = lambda.abs() * vector_norm.max(1e-12);
-    if rayleigh_scale > 1e-12 {
-        return rayleigh_scale;
+    let op_norm = backend
+        .dot(&entry.applied, &entry.applied)
+        .re
+        .max(0.0)
+        .sqrt();
+    let combined = rayleigh_scale.max(op_norm);
+    if combined > 0.0 {
+        combined
+    } else {
+        vector_norm
     }
-    let op_norm_sq = backend.dot(&entry.applied, &entry.applied).re.max(0.0);
-    if op_norm_sq > 0.0 {
-        return op_norm_sq.sqrt();
-    }
-    0.0
+}
+
+fn compute_relative_residual_with_scale<B: SpectralBackend>(
+    backend: &B,
+    entry: &BlockEntry<B>,
+    lambda: f64,
+    residual_norm: f64,
+) -> (f64, f64) {
+    let scale = residual_relative_scale(backend, entry, lambda);
+    let relative = if scale > 0.0 {
+        residual_norm / scale
+    } else {
+        residual_norm
+    };
+    (relative, scale)
 }
 
 fn compute_relative_residual<B: SpectralBackend>(
@@ -624,12 +830,7 @@ fn compute_relative_residual<B: SpectralBackend>(
     lambda: f64,
     residual_norm: f64,
 ) -> f64 {
-    let scale = residual_relative_scale(backend, entry, lambda);
-    if scale > 0.0 {
-        residual_norm / scale
-    } else {
-        residual_norm
-    }
+    compute_relative_residual_with_scale(backend, entry, lambda, residual_norm).0
 }
 
 fn build_gamma_mode<O, B>(operator: &mut O) -> Option<GammaMode<B>>
@@ -1017,15 +1218,21 @@ fn compute_preconditioned_residuals<O, B>(
     symmetry: Option<&SymmetryProjector>,
     preconditioner: &mut Option<&mut dyn OperatorPreconditioner<B>>,
     tol: f64,
+    iteration_index: usize,
+    snapshot_manager: Option<&mut ResidualSnapshotManager>,
+    snapshot_store: &mut Vec<ResidualSnapshot>,
 ) -> (ResidualComputation, Vec<BlockEntry<B>>)
 where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
+    let mut snapshot_manager = snapshot_manager;
     let mut max_residual: f64 = 0.0;
     let mut sum_residual: f64 = 0.0;
     let mut max_relative: f64 = 0.0;
     let mut sum_relative: f64 = 0.0;
+    let mut max_scale: f64 = 0.0;
+    let mut sum_scale: f64 = 0.0;
     let mut evaluated: usize = 0;
     let mut accepted: usize = 0;
     let mut preconditioner_trials = 0usize;
@@ -1043,6 +1250,16 @@ where
             .axpy(Complex64::new(-lambda, 0.0), &entry.mass, &mut vector);
         let mut mass = operator.alloc_field();
         operator.apply_mass(&vector, &mut mass);
+        if let Some(manager) = snapshot_manager.as_deref_mut() {
+            manager.capture(
+                operator,
+                iteration_index,
+                idx,
+                ResidualSnapshotStage::Raw,
+                &vector,
+                snapshot_store,
+            );
+        }
         enforce_constraints(
             operator,
             &mut vector,
@@ -1054,12 +1271,25 @@ where
         project_against_entries(operator.backend(), &mut vector, &mut mass, x_entries);
         project_against_entries(operator.backend(), &mut vector, &mut mass, &p_entries);
         project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
+        if let Some(manager) = snapshot_manager.as_deref_mut() {
+            manager.capture(
+                operator,
+                iteration_index,
+                idx,
+                ResidualSnapshotStage::Projected,
+                &vector,
+                snapshot_store,
+            );
+        }
         let mut norm = mass_norm(operator.backend(), &vector, &mass);
         max_residual = max_residual.max(norm);
-        let mut relative = compute_relative_residual(operator.backend(), entry, lambda, norm);
+        let (mut relative, scale) =
+            compute_relative_residual_with_scale(operator.backend(), entry, lambda, norm);
         max_relative = max_relative.max(relative);
+        max_scale = max_scale.max(scale);
         sum_residual += norm;
         sum_relative += relative;
+        sum_scale += scale;
         evaluated += 1;
         if relative <= tol || norm <= ABSOLUTE_RESIDUAL_GUARD {
             continue;
@@ -1084,11 +1314,27 @@ where
         project_against_entries(operator.backend(), &mut vector, &mut mass, x_entries);
         project_against_entries(operator.backend(), &mut vector, &mut mass, &p_entries);
         project_against_entries(operator.backend(), &mut vector, &mut mass, w_entries);
+        if preconditioned {
+            if let Some(manager) = snapshot_manager.as_deref_mut() {
+                manager.capture(
+                    operator,
+                    iteration_index,
+                    idx,
+                    ResidualSnapshotStage::Preconditioned,
+                    &vector,
+                    snapshot_store,
+                );
+            }
+        }
         norm = mass_norm(operator.backend(), &vector, &mass);
         if preconditioned {
             preconditioner_sum_after += norm;
         }
-        relative = compute_relative_residual(operator.backend(), entry, lambda, norm);
+        if scale > 0.0 {
+            relative = norm / scale;
+        } else {
+            relative = norm;
+        }
         if norm <= 1e-12 {
             continue;
         }
@@ -1117,12 +1363,19 @@ where
     } else {
         0.0
     };
+    let avg_scale = if evaluated > 0 {
+        sum_scale / evaluated as f64
+    } else {
+        0.0
+    };
     (
         ResidualComputation {
             max_residual,
             avg_residual,
             max_relative_residual: max_relative,
             avg_relative_residual: avg_relative,
+            max_relative_scale: max_scale,
+            avg_relative_scale: avg_scale,
             accepted,
             preconditioner_trials,
             preconditioner_avg_before: if preconditioner_trials > 0 {

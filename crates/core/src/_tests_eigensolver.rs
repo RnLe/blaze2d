@@ -153,6 +153,7 @@ fn diagonal_operator_recovers_sorted_bands() {
         None,
         None,
         None,
+        None,
     );
     approx_eq(&result.omegas, &[0.5, 1.0, 2.0], 1e-9);
     assert!(result.iterations <= opts.max_iter);
@@ -173,6 +174,7 @@ fn degenerate_spectrum_preserves_duplicates() {
         &opts,
         None,
         GammaContext::default(),
+        None,
         None,
         None,
         None,
@@ -203,6 +205,7 @@ fn negative_modes_are_filtered_out() {
         None,
         None,
         None,
+        None,
     );
     approx_eq(&result.omegas, &[1.0, 2.0], 1e-9);
 }
@@ -222,6 +225,7 @@ fn krylov_limit_caps_iterations_and_band_count() {
         &opts,
         None,
         GammaContext::default(),
+        None,
         None,
         None,
         None,
@@ -245,6 +249,7 @@ fn off_diagonal_coupling_matches_expected_modes() {
         &opts,
         None,
         GammaContext::default(),
+        None,
         None,
         None,
         None,
@@ -303,6 +308,7 @@ fn deflation_prevents_refinding_lowest_mode() {
         None,
         None,
         None,
+        None,
     );
     assert_eq!(initial.omegas.len(), 1);
     let refs: Vec<&Field2D> = initial.modes.iter().collect();
@@ -326,6 +332,7 @@ fn deflation_prevents_refinding_lowest_mode() {
         GammaContext::default(),
         None,
         Some(&workspace),
+        None,
         None,
     );
     assert_eq!(second.omegas.len(), 2);
@@ -352,6 +359,7 @@ fn symmetry_constraints_enforce_odd_parity() {
         &opts,
         None,
         GammaContext::default(),
+        None,
         None,
         None,
         None,
@@ -400,6 +408,7 @@ fn warm_start_reuses_previous_modes() {
         None,
         None,
         None,
+        None,
     );
     assert_eq!(initial.omegas.len(), 3);
     let seeds = initial.modes.clone();
@@ -413,6 +422,7 @@ fn warm_start_reuses_previous_modes() {
         None,
         GammaContext::default(),
         Some(seeds.as_slice()),
+        None,
         None,
         None,
     );

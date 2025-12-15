@@ -33,6 +33,8 @@ pub struct ThetaOperator<B: SpectralBackend> {
     bloch: [f64; 2],
     kx_shifted: Vec<f64>,
     ky_shifted: Vec<f64>,
+    k_plus_g_x: Vec<f64>,
+    k_plus_g_y: Vec<f64>,
     k_plus_g_sq: Vec<f64>,
     #[allow(dead_code)]
     k_plus_g_sq_min: f64,
@@ -43,6 +45,7 @@ pub struct ThetaOperator<B: SpectralBackend> {
     scratch: B::Buffer,
     grad_x: B::Buffer,
     grad_y: B::Buffer,
+    k_plus_g_was_clamped: Vec<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,8 +79,15 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let ky = build_k_vector(grid.ny, grid.ly);
         let kx_shifted = shift_k_vector(&kx, bloch_k[0]);
         let ky_shifted = shift_k_vector(&ky, bloch_k[1]);
-        let (k_plus_g_sq, k_plus_g_sq_min_raw, k_plus_g_sq_min, k_plus_g_floor_count) =
-            build_k_plus_g_squares(&kx_shifted, &ky_shifted, grid);
+        let (
+            k_plus_g_x,
+            k_plus_g_y,
+            k_plus_g_sq,
+            k_plus_g_sq_min_raw,
+            k_plus_g_sq_min,
+            k_plus_g_floor_count,
+            k_plus_g_was_clamped,
+        ) = build_k_plus_g_tables(&kx_shifted, &ky_shifted, grid);
         let scratch = backend.alloc_field(grid);
         let grad_x = backend.alloc_field(grid);
         let grad_y = backend.alloc_field(grid);
@@ -89,6 +99,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             bloch: bloch_k,
             kx_shifted,
             ky_shifted,
+            k_plus_g_x,
+            k_plus_g_y,
             k_plus_g_sq,
             k_plus_g_sq_min,
             k_plus_g_sq_min_raw,
@@ -96,6 +108,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             scratch,
             grad_x,
             grad_y,
+            k_plus_g_was_clamped,
         }
     }
 
@@ -165,11 +178,20 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         &self.k_plus_g_sq
     }
 
+    pub(crate) fn k_plus_g_components(&self) -> (&[f64], &[f64]) {
+        (&self.k_plus_g_x, &self.k_plus_g_y)
+    }
+
+    pub(crate) fn k_plus_g_clamp_mask(&self) -> &[bool] {
+        &self.k_plus_g_was_clamped
+    }
+
     #[allow(dead_code)]
     pub(crate) fn k_plus_g_sq_min(&self) -> f64 {
         self.k_plus_g_sq_min
     }
 
+    #[allow(dead_code)]
     pub(crate) fn k_plus_g_sq_min_raw(&self) -> f64 {
         self.k_plus_g_sq_min_raw
     }
@@ -196,8 +218,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         apply_gradient_factors(
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
-            &self.kx_shifted,
-            &self.ky_shifted,
+            &self.k_plus_g_x,
+            &self.k_plus_g_y,
         );
 
         self.backend.inverse_fft_2d(&mut self.grad_x);
@@ -216,8 +238,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             self.grad_x.as_slice(),
             self.grad_y.as_slice(),
             self.scratch.as_mut_slice(),
-            &self.kx_shifted,
-            &self.ky_shifted,
+            &self.k_plus_g_x,
+            &self.k_plus_g_y,
         );
 
         self.backend.inverse_fft_2d(&mut self.scratch);
@@ -246,8 +268,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         apply_gradient_factors(
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
-            &self.kx_shifted,
-            &self.ky_shifted,
+            &self.k_plus_g_x,
+            &self.k_plus_g_y,
         );
 
         self.backend.inverse_fft_2d(&mut self.grad_x);
@@ -270,8 +292,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             self.grad_x.as_slice(),
             self.grad_y.as_slice(),
             self.scratch.as_mut_slice(),
-            &self.kx_shifted,
-            &self.ky_shifted,
+            &self.k_plus_g_x,
+            &self.k_plus_g_y,
         );
         let theta_fourier = self.scratch.as_slice().to_vec();
 
@@ -302,8 +324,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         apply_gradient_factors(
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
-            &self.kx_shifted,
-            &self.ky_shifted,
+            &self.k_plus_g_x,
+            &self.k_plus_g_y,
         );
 
         self.backend.inverse_fft_2d(&mut self.grad_x);
@@ -483,32 +505,38 @@ fn build_k_vector(n: usize, length: f64) -> Vec<f64> {
         .collect()
 }
 
-fn build_k_plus_g_squares(
+fn build_k_plus_g_tables(
     kx_shifted: &[f64],
     ky_shifted: &[f64],
     grid: Grid2D,
-) -> (Vec<f64>, f64, f64, usize) {
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, usize, Vec<bool>) {
     let nx = grid.nx;
     let ny = grid.ny;
-    let mut values = vec![0.0; grid.len()];
+    let len = grid.len();
+    let mut k_plus_g_x = vec![0.0; len];
+    let mut k_plus_g_y = vec![0.0; len];
+    let mut squares = vec![0.0; len];
+    let mut clamp_mask = vec![false; len];
     let mut raw_min = f64::INFINITY;
     let mut clamped_min = f64::INFINITY;
     let mut floor_count = 0usize;
     for iy in 0..ny {
-        let ky_shift = ky_shifted[iy];
+        let raw_ky = ky_shifted[iy];
         for ix in 0..nx {
             let idx = iy * nx + ix;
-            let kx_shift = kx_shifted[ix];
-            let raw = kx_shift * kx_shift + ky_shift * ky_shift;
-            raw_min = raw_min.min(raw);
-            let clamped = if raw <= K_PLUS_G_NEAR_ZERO_FLOOR {
+            let raw_kx = kx_shifted[ix];
+            let raw_sq = raw_kx * raw_kx + raw_ky * raw_ky;
+            raw_min = raw_min.min(raw_sq);
+            let (clamped_kx, clamped_ky) = clamp_gradient_components(raw_kx, raw_ky);
+            let clamped_sq = clamped_kx * clamped_kx + clamped_ky * clamped_ky;
+            clamped_min = clamped_min.min(clamped_sq);
+            if raw_sq <= K_PLUS_G_NEAR_ZERO_FLOOR {
                 floor_count += 1;
-                K_PLUS_G_NEAR_ZERO_FLOOR
-            } else {
-                raw
-            };
-            clamped_min = clamped_min.min(clamped);
-            values[idx] = clamped;
+                clamp_mask[idx] = true;
+            }
+            k_plus_g_x[idx] = clamped_kx;
+            k_plus_g_y[idx] = clamped_ky;
+            squares[idx] = clamped_sq;
         }
     }
     if raw_min == f64::INFINITY {
@@ -517,7 +545,15 @@ fn build_k_plus_g_squares(
     if clamped_min == f64::INFINITY {
         clamped_min = 0.0;
     }
-    (values, raw_min, clamped_min, floor_count)
+    (
+        k_plus_g_x,
+        k_plus_g_y,
+        squares,
+        raw_min,
+        clamped_min,
+        floor_count,
+        clamp_mask,
+    )
 }
 
 fn inverse_scale(k_sq: f64, shift: f64, eps_eff: f64) -> f64 {
@@ -536,22 +572,19 @@ fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
 fn apply_gradient_factors(
     grad_x: &mut [Complex64],
     grad_y: &mut [Complex64],
-    kx_shifted: &[f64],
-    ky_shifted: &[f64],
+    k_plus_g_x: &[f64],
+    k_plus_g_y: &[f64],
 ) {
-    let nx = kx_shifted.len();
-    let ny = ky_shifted.len();
-    for iy in 0..ny {
-        for ix in 0..nx {
-            let idx = iy * nx + ix;
-            let kx_shift = kx_shifted[ix];
-            let ky_shift = ky_shifted[iy];
-            let (kx_clamped, ky_clamped) = clamp_gradient_components(kx_shift, ky_shift);
-            let factor_x = Complex64::new(0.0, kx_clamped);
-            let factor_y = Complex64::new(0.0, ky_clamped);
-            grad_x[idx] *= factor_x;
-            grad_y[idx] *= factor_y;
-        }
+    for (((gx, gy), &kx), &ky) in grad_x
+        .iter_mut()
+        .zip(grad_y.iter_mut())
+        .zip(k_plus_g_x.iter())
+        .zip(k_plus_g_y.iter())
+    {
+        let factor_x = Complex64::new(0.0, kx);
+        let factor_y = Complex64::new(0.0, ky);
+        *gx *= factor_x;
+        *gy *= factor_y;
     }
 }
 
@@ -587,22 +620,20 @@ fn assemble_divergence(
     grad_x: &[Complex64],
     grad_y: &[Complex64],
     output: &mut [Complex64],
-    kx_shifted: &[f64],
-    ky_shifted: &[f64],
+    k_plus_g_x: &[f64],
+    k_plus_g_y: &[f64],
 ) {
-    let nx = kx_shifted.len();
-    let ny = ky_shifted.len();
-    for iy in 0..ny {
-        for ix in 0..nx {
-            let idx = iy * nx + ix;
-            let kx_shift = kx_shifted[ix];
-            let ky_shift = ky_shifted[iy];
-            let (kx_clamped, ky_clamped) = clamp_gradient_components(kx_shift, ky_shift);
-            let factor_x = Complex64::new(0.0, kx_clamped);
-            let factor_y = Complex64::new(0.0, ky_clamped);
-            let div = factor_x * grad_x[idx] + factor_y * grad_y[idx];
-            output[idx] = -div;
-        }
+    for ((((out, &gx), &gy), &kx), &ky) in output
+        .iter_mut()
+        .zip(grad_x.iter())
+        .zip(grad_y.iter())
+        .zip(k_plus_g_x.iter())
+        .zip(k_plus_g_y.iter())
+    {
+        let factor_x = Complex64::new(0.0, kx);
+        let factor_y = Complex64::new(0.0, ky);
+        let div = factor_x * gx + factor_y * gy;
+        *out = -div;
     }
 }
 

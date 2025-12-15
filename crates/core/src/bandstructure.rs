@@ -15,14 +15,15 @@ use crate::{
     backend::{SpectralBackend, SpectralBuffer},
     dielectric::{Dielectric2D, DielectricOptions},
     eigensolver::{
-        DeflationWorkspace, EigenOptions, GammaContext, PreconditionerKind, solve_lowest_eigenpairs,
+        DeflationWorkspace, EigenOptions, GammaContext, PreconditionerKind,
+        ResidualSnapshotRequest, solve_lowest_eigenpairs,
     },
     field::Field2D,
     geometry::Geometry2D,
     grid::Grid2D,
     metrics::{MetricsEvent, MetricsRecorder},
-    operator::{K_PLUS_G_NEAR_ZERO_FLOOR, ThetaOperator},
-    operator_inspection::{dump_iteration_trace, dump_operator_snapshots},
+    operator::ThetaOperator,
+    operator_inspection::{dump_iteration_trace, dump_operator_snapshots, dump_residual_snapshots},
     polarization::Polarization,
     preconditioner::FourierDiagonalPreconditioner,
     symmetry::SymmetryProjector,
@@ -73,6 +74,8 @@ pub struct OperatorInspectionOptions {
     pub dump_iteration_traces: bool,
     pub snapshot_k_limit: usize,
     pub snapshot_mode_limit: usize,
+    pub dump_residual_snapshots: bool,
+    pub residual_snapshot_limit: usize,
 }
 
 impl Default for OperatorInspectionOptions {
@@ -82,6 +85,8 @@ impl Default for OperatorInspectionOptions {
             dump_iteration_traces: false,
             snapshot_k_limit: 1,
             snapshot_mode_limit: 2,
+            dump_residual_snapshots: false,
+            residual_snapshot_limit: 4,
         }
     }
 }
@@ -90,6 +95,7 @@ impl OperatorInspectionOptions {
     pub fn is_enabled(&self) -> bool {
         (self.dump_snapshots && self.snapshot_k_limit > 0 && self.snapshot_mode_limit > 0)
             || self.dump_iteration_traces
+            || (self.dump_residual_snapshots && self.residual_snapshot_limit > 0)
     }
 
     pub fn should_dump_snapshots(&self, k_index: usize) -> bool {
@@ -97,6 +103,14 @@ impl OperatorInspectionOptions {
             && self.snapshot_k_limit > 0
             && self.snapshot_mode_limit > 0
             && k_index < self.snapshot_k_limit
+    }
+
+    pub fn residual_snapshot_request(&self) -> Option<ResidualSnapshotRequest> {
+        if self.dump_residual_snapshots && self.residual_snapshot_limit > 0 {
+            Some(ResidualSnapshotRequest::new(self.residual_snapshot_limit))
+        } else {
+            None
+        }
     }
 }
 
@@ -137,10 +151,10 @@ fn dump_dielectric_artifacts<B: SpectralBackend>(
 
 fn dump_fft_workspace_raw(
     grid: Grid2D,
-    kx_shifted: &[f64],
-    ky_shifted: &[f64],
+    k_plus_g_x: &[f64],
+    k_plus_g_y: &[f64],
     k_plus_g_sq: &[f64],
-    clamp_floor: f64,
+    clamp_mask: &[bool],
     opts: &InspectionOptions,
     k_index: usize,
 ) -> io::Result<Option<PathBuf>> {
@@ -149,14 +163,7 @@ fn dump_fft_workspace_raw(
     };
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("fft_workspace_raw_k{k_index:03}.csv"));
-    write_fft_workspace_raw(
-        &path,
-        grid,
-        kx_shifted,
-        ky_shifted,
-        k_plus_g_sq,
-        clamp_floor,
-    )?;
+    write_fft_workspace_raw(&path, grid, k_plus_g_x, k_plus_g_y, k_plus_g_sq, clamp_mask)?;
     Ok(Some(path))
 }
 
@@ -234,10 +241,10 @@ fn write_eps_fourier_csv<B: SpectralBackend>(
 fn write_fft_workspace_raw(
     path: &Path,
     grid: Grid2D,
-    kx_shifted: &[f64],
-    ky_shifted: &[f64],
+    k_plus_g_x: &[f64],
+    k_plus_g_y: &[f64],
     k_plus_g_sq: &[f64],
-    clamp_floor: f64,
+    clamp_mask: &[bool],
 ) -> io::Result<()> {
     let mut writer = BufWriter::new(File::create(path)?);
     writeln!(
@@ -245,14 +252,20 @@ fn write_fft_workspace_raw(
         "ix,iy,kx_plus_g,ky_plus_g,k_plus_g_sq_raw,k_plus_g_sq,clamped"
     )?;
     for iy in 0..grid.ny {
-        let ky = ky_shifted.get(iy).copied().unwrap_or(0.0);
         for ix in 0..grid.nx {
-            let kx = kx_shifted.get(ix).copied().unwrap_or(0.0);
             let idx = grid.idx(ix, iy);
+            let kx = k_plus_g_x.get(idx).copied().unwrap_or(0.0);
+            let ky = k_plus_g_y.get(idx).copied().unwrap_or(0.0);
             let clamped = k_plus_g_sq.get(idx).copied().unwrap_or(0.0);
-            let raw = kx * kx + ky * ky;
-            let clamped_flag = if raw <= clamp_floor { 1 } else { 0 };
-            writeln!(writer, "{ix},{iy},{kx},{ky},{raw},{clamped},{clamped_flag}")?;
+            let clamped_flag = if clamp_mask.get(idx).copied().unwrap_or(false) {
+                1
+            } else {
+                0
+            };
+            writeln!(
+                writer,
+                "{ix},{iy},{kx},{ky},{clamped},{clamped},{clamped_flag}"
+            )?;
         }
     }
     writer.flush()
@@ -559,12 +572,13 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
             );
         }
         if job.inspection.dump_fft_workspace_raw && !fft_workspace_raw_dumped {
+            let (k_plus_g_x, k_plus_g_y) = theta.k_plus_g_components();
             match dump_fft_workspace_raw(
                 job.grid,
-                theta.kx_shifted(),
-                theta.ky_shifted(),
+                k_plus_g_x,
+                k_plus_g_y,
                 theta.k_plus_g_squares(),
-                K_PLUS_G_NEAR_ZERO_FLOOR,
+                theta.k_plus_g_clamp_mask(),
                 &job.inspection,
                 idx,
             ) {
@@ -630,6 +644,7 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
             .unwrap_or(0);
         let symmetry_skipped = symmetry_selection.skipped_count();
         let mut preconditioner_storage: FourierDiagonalPreconditioner;
+        let residual_request = job.inspection.operator.residual_snapshot_request();
         let eig = match job.eigensolver.preconditioner {
             PreconditionerKind::None => solve_lowest_eigenpairs(
                 &mut theta,
@@ -639,6 +654,7 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
                 warm_slice,
                 workspace_ref,
                 symmetry_projector.as_ref(),
+                residual_request.clone(),
             ),
             PreconditionerKind::HomogeneousJacobi => {
                 preconditioner_storage = theta.build_homogeneous_preconditioner();
@@ -650,6 +666,7 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
                     warm_slice,
                     workspace_ref,
                     symmetry_projector.as_ref(),
+                    residual_request.clone(),
                 )
             }
             PreconditionerKind::StructuredDiagonal => {
@@ -662,6 +679,7 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
                     warm_slice,
                     workspace_ref,
                     symmetry_projector.as_ref(),
+                    residual_request,
                 )
             }
         };
@@ -694,6 +712,17 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
                 &eig.diagnostics.iterations,
             ) {
                 eprintln!("[inspect] failed to dump iteration trace: {err}");
+            }
+        }
+        if job.inspection.operator.dump_residual_snapshots {
+            if let Err(err) = dump_residual_snapshots(
+                &job.inspection,
+                job.pol,
+                idx,
+                *kp,
+                &eig.diagnostics.residual_snapshots,
+            ) {
+                eprintln!("[inspect] failed to dump residual snapshots: {err}");
             }
         }
         total_iters += eig.iterations;
