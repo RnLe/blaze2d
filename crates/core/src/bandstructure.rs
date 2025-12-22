@@ -809,6 +809,14 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
                     preconditioner_avg_before: iter_info.preconditioner_avg_before,
                     preconditioner_avg_after: iter_info.preconditioner_avg_after,
                     preconditioner_accepted: iter_info.new_directions,
+                    projection_original_dim: iter_info.projection.original_dim,
+                    projection_reduced_dim: iter_info.projection.reduced_dim,
+                    projection_requested_dim: iter_info.projection.requested_dim,
+                    projection_history_dim: iter_info.projection.history_dim,
+                    projection_min_mass_eigenvalue: iter_info.projection.min_mass_eigenvalue,
+                    projection_max_mass_eigenvalue: iter_info.projection.max_mass_eigenvalue,
+                    projection_condition_estimate: iter_info.projection.condition_estimate,
+                    projection_fallback_used: iter_info.projection.fallback_used,
                 });
             }
         }

@@ -244,7 +244,7 @@ fn gamma_deflation_removes_constant_mode() {
     let opts = EigenOptions {
         n_bands: 2,
         max_iter: 120,
-        tol: 1e-10,
+        tol: 1e-12,
         ..Default::default()
     };
     let baseline = solve_lowest_eigenpairs(
