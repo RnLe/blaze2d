@@ -642,7 +642,7 @@ fn assemble_divergence(
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_gradient_components, inverse_scale, K_PLUS_G_NEAR_ZERO_FLOOR};
+    use super::{K_PLUS_G_NEAR_ZERO_FLOOR, clamp_gradient_components, inverse_scale};
 
     #[test]
     fn clamp_gradient_handles_zero_and_nan() {
