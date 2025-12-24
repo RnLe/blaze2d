@@ -11,7 +11,8 @@ use super::geometry::{BasisAtom, Geometry2D};
 use super::grid::Grid2D;
 use super::lattice::Lattice2D;
 use super::operator::{
-    LinearOperator, STRUCTURED_WEIGHT_MAX, STRUCTURED_WEIGHT_MIN, ThetaOperator, ToyLaplacian,
+    LinearOperator, STRUCTURED_WEIGHT_MAX, STRUCTURED_WEIGHT_MIN, ThetaOperator,
+    TE_PRECONDITIONER_MASS_FRACTION, ToyLaplacian,
 };
 use super::polarization::Polarization;
 use super::preconditioner::{FOURIER_DIAGONAL_SHIFT, OperatorPreconditioner};
@@ -358,8 +359,9 @@ fn jacobi_preconditioner_scales_te_plane_wave() {
     let backend_ref = theta.backend();
     preconditioner.apply(backend_ref, &mut field);
     let eps_eff = 2.0;
-    let expected_scale =
-        eps_eff / (shifted_eigenvalue(grid, bloch, 1, -1) + FOURIER_DIAGONAL_SHIFT * eps_eff);
+    let mass_floor = eps_eff * TE_PRECONDITIONER_MASS_FRACTION;
+    let expected_scale = eps_eff
+        / (shifted_eigenvalue(grid, bloch, 1, -1) + FOURIER_DIAGONAL_SHIFT * eps_eff + mass_floor);
     let mut expected = plane_wave(grid, 1, -1);
     for value in expected.as_mut_slice() {
         *value *= expected_scale;
