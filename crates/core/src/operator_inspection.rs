@@ -34,12 +34,12 @@ pub(crate) fn dump_iteration_trace(
     let mut writer = BufWriter::new(File::create(&path)?);
     writeln!(
         writer,
-        "k_index,kx,ky,iteration,max_residual,avg_residual,max_relative_residual,avg_relative_residual,max_relative_scale,avg_relative_scale,block_size,new_directions,preconditioner_trials,preconditioner_avg_before,preconditioner_avg_after"
+        "k_index,kx,ky,iteration,max_residual,avg_residual,max_relative_residual,avg_relative_residual,max_relative_scale,avg_relative_scale,block_size,new_directions,preconditioner_trials,preconditioner_avg_before,preconditioner_avg_after,projection_original_dim,projection_reduced_dim,projection_requested_dim,projection_history_dim,projection_min_mass_eigenvalue,projection_max_mass_eigenvalue,projection_condition_estimate,projection_fallback_used"
     )?;
     for info in iterations {
         writeln!(
             writer,
-            "{k_index},{kx},{ky},{iter},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{},{},{},{:.6e},{:.6e}",
+            "{k_index},{kx},{ky},{iter},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{},{},{},{:.6e},{:.6e},{},{},{},{},{:.6e},{:.6e},{:.6e},{}",
             info.max_residual,
             info.avg_residual,
             info.max_relative_residual,
@@ -51,6 +51,14 @@ pub(crate) fn dump_iteration_trace(
             info.preconditioner_trials,
             info.preconditioner_avg_before,
             info.preconditioner_avg_after,
+            info.projection.original_dim,
+            info.projection.reduced_dim,
+            info.projection.requested_dim,
+            info.projection.history_dim,
+            info.projection.min_mass_eigenvalue,
+            info.projection.max_mass_eigenvalue,
+            info.projection.condition_estimate,
+            info.projection.fallback_used,
             kx = k_frac[0],
             ky = k_frac[1],
             iter = info.iteration,
