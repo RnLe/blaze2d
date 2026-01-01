@@ -17,7 +17,7 @@ const MIN_RR_TOL: f64 = 1e-12;
 const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
 const BLOCK_SIZE_SLACK: usize = 2;
 const W_HISTORY_FACTOR: usize = 2;
-const PROJECTION_CONDITION_LIMIT: f64 = 1e8;
+const PROJECTION_CONDITION_LIMIT: f64 = 1e12;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -469,7 +469,7 @@ impl<B: SpectralBackend> DeflationWorkspace<B> {
 
     pub fn project(&self, backend: &B, vector: &mut B::Buffer, mass_vector: &mut B::Buffer) {
         for entry in &self.entries {
-            let coeff = backend.dot(vector, &entry.mass_vector).conj();
+            let coeff = backend.dot(vector, &entry.mass_vector);
             backend.axpy(-coeff, &entry.vector, vector);
             backend.axpy(-coeff, &entry.mass_vector, mass_vector);
         }
@@ -527,7 +527,13 @@ where
     B: SpectralBackend,
 {
     let target_bands = opts.n_bands.max(1);
-    let block_size = opts.effective_block_size();
+    let block_size = if opts.max_iter == 0 {
+        warm_start
+            .map(|seeds| seeds.len().max(target_bands))
+            .unwrap_or_else(|| opts.effective_block_size())
+    } else {
+        opts.effective_block_size()
+    };
     let gamma_mode = if gamma.is_gamma {
         build_gamma_mode(operator)
     } else {
@@ -564,6 +570,34 @@ where
             gamma_deflated,
             modes: Vec::new(),
             diagnostics: EigenDiagnostics::default(),
+            warm_start_hits,
+        };
+    }
+
+    if opts.max_iter == 0 && warm_start.is_some() {
+        let subspace = build_subspace_entries(&x_entries, &[], &[]);
+        let (eigenvalues, new_entries) = solve_raw_projected_system(
+            operator,
+            &subspace,
+            block_size,
+            opts.tol.max(MIN_RR_TOL),
+        );
+        let (omegas, modes, mut diagnostics) = finalize_modes(
+            operator,
+            &new_entries,
+            &eigenvalues,
+            target_bands,
+            opts.tol,
+            gamma_deflated,
+        );
+        diagnostics.deflation_vectors = deflation_vectors;
+        diagnostics.deflation_disabled = deflation.is_some() && deflation_active.is_none();
+        return EigenResult {
+            omegas,
+            iterations: 0,
+            gamma_deflated,
+            modes,
+            diagnostics,
             warm_start_hits,
         };
     }
@@ -781,7 +815,7 @@ fn reorthogonalize_with_mass<B: SpectralBackend>(
     basis: &B::Buffer,
     mass_basis: &B::Buffer,
 ) {
-    let coeff = backend.dot(target, mass_basis).conj();
+    let coeff = backend.dot(target, mass_basis);
     backend.axpy(-coeff, basis, target);
 }
 
@@ -1103,7 +1137,7 @@ fn project_against_entries<B: SpectralBackend>(
     basis: &[BlockEntry<B>],
 ) {
     for entry in basis {
-        let coeff = backend.dot(vector, &entry.mass).conj();
+        let coeff = backend.dot(vector, &entry.mass);
         backend.axpy(-coeff, &entry.vector, vector);
         backend.axpy(-coeff, &entry.mass, mass);
     }
@@ -1170,25 +1204,41 @@ where
         requested_dim: want,
         ..ProjectionStats::default()
     };
-    let mut require_fallback = false;
+    let mut require_fallback;
     if let Some((values, entries, stats)) = attempt_projection(operator, subspace, want, tol) {
         require_fallback = projection_guard_triggered(&stats);
         final_values = values;
         final_entries = entries;
         final_stats = stats;
-    } else if history_dim > 0 {
+    } else {
         require_fallback = true;
     }
-    if require_fallback && history_dim > 0 {
-        let trimmed_len = dim.saturating_sub(history_dim);
-        if trimmed_len > 0 {
-            if let Some((values, entries, stats)) =
-                attempt_projection(operator, &subspace[..trimmed_len], want, tol)
-            {
+
+    if require_fallback {
+        if history_dim > 0 {
+            let trimmed_len = dim.saturating_sub(history_dim);
+            if trimmed_len > 0 {
+                if let Some((values, entries, stats)) =
+                    attempt_projection(operator, &subspace[..trimmed_len], want, tol)
+                {
+                    fallback_used = true;
+                    final_values = values;
+                    final_entries = entries;
+                    final_stats = stats;
+                    require_fallback = projection_guard_triggered(&final_stats);
+                }
+            }
+        }
+
+        if require_fallback {
+            let (raw_values, raw_entries) = solve_raw_projected_system(operator, subspace, want, tol);
+            if !raw_values.is_empty() && raw_entries.len() == raw_values.len() {
                 fallback_used = true;
-                final_values = values;
-                final_entries = entries;
-                final_stats = stats;
+                final_values = raw_values;
+                final_entries = raw_entries;
+                final_stats.reduced_dim = final_entries.len();
+                final_stats.min_mass_eigenvalue = 0.0;
+                final_stats.max_mass_eigenvalue = 0.0;
             }
         }
     }
@@ -1983,8 +2033,8 @@ where
         }
         let omega = lambda.sqrt();
         if gamma_deflated {
-            let zero_floor = freq_tol.max(1e-4);
-            if omega <= zero_floor {
+            let gamma_floor = freq_tol.max(1.0);
+            if omega <= gamma_floor {
                 log_finalize_skip("gamma_zero", lambda);
                 diagnostics.duplicate_modes_skipped += 1;
                 continue;
@@ -2124,6 +2174,7 @@ fn log_eigen_failure(_stage: &str, _dim: usize) {}
 
 fn cholesky_decompose_hermitian(matrix: &[Complex64], dim: usize) -> Option<Vec<Complex64>> {
     let mut l = vec![Complex64::default(); dim * dim];
+    const NEG_TOL: f64 = 1e-10;
     for i in 0..dim {
         for j in 0..=i {
             let mut sum = matrix[i * dim + j];
@@ -2133,6 +2184,10 @@ fn cholesky_decompose_hermitian(matrix: &[Complex64], dim: usize) -> Option<Vec<
             if i == j {
                 let diag = sum.re;
                 if diag <= 0.0 {
+                    if diag > -NEG_TOL {
+                        l[i * dim + j] = Complex64::new(NEG_TOL.sqrt(), 0.0);
+                        continue;
+                    }
                     log_cholesky_diag(diag, i);
                     return None;
                 }
