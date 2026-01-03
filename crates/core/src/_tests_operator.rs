@@ -11,8 +11,8 @@ use super::geometry::{BasisAtom, Geometry2D};
 use super::grid::Grid2D;
 use super::lattice::Lattice2D;
 use super::operator::{
-    LinearOperator, STRUCTURED_WEIGHT_MAX, STRUCTURED_WEIGHT_MIN, ThetaOperator,
-    TE_PRECONDITIONER_MASS_FRACTION, ToyLaplacian,
+    LinearOperator, STRUCTURED_WEIGHT_MAX, STRUCTURED_WEIGHT_MIN, TE_PRECONDITIONER_MASS_FRACTION,
+    ThetaOperator, ToyLaplacian,
 };
 use super::polarization::Polarization;
 use super::preconditioner::{FOURIER_DIAGONAL_SHIFT, OperatorPreconditioner};

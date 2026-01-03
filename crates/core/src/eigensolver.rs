@@ -16,7 +16,7 @@ use crate::{
 const MIN_RR_TOL: f64 = 1e-12;
 const ABSOLUTE_RESIDUAL_GUARD: f64 = 1e-8;
 const BLOCK_SIZE_SLACK: usize = 2;
-const W_HISTORY_FACTOR: usize = 2;
+const W_HISTORY_FACTOR: usize = 1;
 const PROJECTION_CONDITION_LIMIT: f64 = 1e12;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -576,12 +576,8 @@ where
 
     if opts.max_iter == 0 && warm_start.is_some() {
         let subspace = build_subspace_entries(&x_entries, &[], &[]);
-        let (eigenvalues, new_entries) = solve_raw_projected_system(
-            operator,
-            &subspace,
-            block_size,
-            opts.tol.max(MIN_RR_TOL),
-        );
+        let (eigenvalues, new_entries) =
+            solve_raw_projected_system(operator, &subspace, block_size, opts.tol.max(MIN_RR_TOL));
         let (omegas, modes, mut diagnostics) = finalize_modes(
             operator,
             &new_entries,
@@ -1231,7 +1227,8 @@ where
         }
 
         if require_fallback {
-            let (raw_values, raw_entries) = solve_raw_projected_system(operator, subspace, want, tol);
+            let (raw_values, raw_entries) =
+                solve_raw_projected_system(operator, subspace, want, tol);
             if !raw_values.is_empty() && raw_entries.len() == raw_values.len() {
                 fallback_used = true;
                 final_values = raw_values;
@@ -1982,26 +1979,24 @@ fn reorthogonalize_block<O, B>(
         let mut remove = false;
         {
             let backend = operator.backend();
-            let entry = &mut block[idx];
+            let (earlier, rest) = block.split_at_mut(idx);
+            let entry = &mut rest[0];
+
             project_against_entries(backend, &mut entry.vector, &mut entry.mass, reference);
-            let norm = mass_norm(backend, &entry.vector, &entry.mass);
+            project_against_entries(backend, &mut entry.vector, &mut entry.mass, earlier);
+            let norm = normalize_with_mass_precomputed(backend, &mut entry.vector, &mut entry.mass);
             if norm <= 1e-12 {
                 remove = true;
             } else {
-                let scale = Complex64::new(1.0 / norm, 0.0);
-                backend.scale(scale, &mut entry.vector);
-                backend.scale(scale, &mut entry.mass);
+                zero_buffer(entry.applied.as_mut_slice());
+                operator.apply(&entry.vector, &mut entry.applied);
             }
         }
         if remove {
             block.remove(idx);
-            continue;
+        } else {
+            idx += 1;
         }
-        {
-            let entry = &mut block[idx];
-            operator.apply(&entry.vector, &mut entry.applied);
-        }
-        idx += 1;
     }
 }
 
