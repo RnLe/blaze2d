@@ -1,0 +1,6 @@
+# Un-ignore files that are ignored in the root .gitignore
+# These are needed for the website
+!*.png
+!*.bin
+!**/*.png
+!**/*.bin
