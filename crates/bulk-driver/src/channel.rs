@@ -16,7 +16,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 // Re-export result types from core
-pub use mpb2d_bulk_driver_core::result::{
+pub use blaze2d_bulk_driver_core::result::{
     CompactBandResult, CompactResultType, EAResult, MaxwellResult,
 };
 
@@ -374,7 +374,7 @@ impl Clone for OutputChannel {
 mod tests {
     use super::*;
     use crate::expansion::{AtomParams, JobParams};
-    use mpb2d_core::polarization::Polarization;
+    use blaze2d_core::polarization::Polarization;
 
     fn make_test_result(index: usize) -> CompactBandResult {
         CompactBandResult {

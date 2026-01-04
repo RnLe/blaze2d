@@ -74,7 +74,7 @@ async function initWasm() {
     
     // Import the WASM module
     // Adjust path based on your deployment
-    const mod = await import('/wasm/mpb2d_backend_wasm.js');
+    const mod = await import('/wasm/blaze2d_backend_wasm.js');
     await mod.default();
     wasmModule = mod;
     return mod;

@@ -1,6 +1,6 @@
 //! Configuration types for bulk parameter sweeps.
 //!
-//! This module re-exports types from `mpb2d-bulk-driver-core` and adds
+//! This module re-exports types from `blaze2d-bulk-driver-core` and adds
 //! native-specific functionality (e.g., CPU thread detection).
 //!
 //! # Solver Types
@@ -15,7 +15,7 @@
 //!   mass tensor, and optionally group velocity for drift terms.
 
 // Re-export all types from core
-pub use mpb2d_bulk_driver_core::config::*;
+pub use blaze2d_bulk_driver_core::config::*;
 
 // ============================================================================
 // Native-specific Extensions

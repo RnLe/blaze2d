@@ -705,7 +705,7 @@ pub fn shared_stream(config: StreamConfig) -> SharedStreamChannel {
 mod tests {
     use super::*;
     use crate::expansion::{AtomParams, JobParams};
-    use mpb2d_core::polarization::Polarization;
+    use blaze2d_core::polarization::Polarization;
     use std::sync::atomic::AtomicUsize;
     use std::thread;
     use std::time::Duration;

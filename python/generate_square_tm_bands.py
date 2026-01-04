@@ -203,7 +203,7 @@ def run_solver(args: argparse.Namespace) -> Tuple[dict, Any]:
 
 
 def export_epsilon_csv(solver: Any, output_path: Path, resolution: int) -> None:
-    """Export MPB's epsilon grid to CSV format matching mpb2d output."""
+    """Export MPB's epsilon grid to CSV format matching blaze output."""
     # Get epsilon array from MPB (this is the smoothed/effective epsilon)
     eps_data = solver.get_epsilon()
     
@@ -217,7 +217,7 @@ def export_epsilon_csv(solver: Any, output_path: Path, resolution: int) -> None:
     
     ny, nx = eps_array.shape
     
-    # NOTE: mpb2d samples at cell centers while MPB reports epsilon on a grid that
+    # NOTE: blaze samples at cell centers while MPB reports epsilon on a grid that
     # behaves as if it were offset by half a pixel. We continue to export the data
     # using center-based coordinates (i + 0.5) / n so downstream tooling can treat
     # both files consistently, and apply the necessary shift during analysis.
@@ -234,7 +234,7 @@ def export_epsilon_csv(solver: Any, output_path: Path, resolution: int) -> None:
 
 
 def export_epsilon_inverse_csv(solver: Any, output_path: Path, resolution: int) -> None:
-    """Export MPB's inverse epsilon tensor grid to CSV format matching mpb2d output.
+    """Export MPB's inverse epsilon tensor grid to CSV format matching blaze output.
     
     MPB uses get_epsilon_inverse_tensor_point(r) to get the 3x3 inverse epsilon
     tensor at each point. For 2D, we extract the 2x2 in-plane components:

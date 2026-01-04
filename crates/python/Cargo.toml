@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "BLAZE - Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals"
-repository = "https://github.com/RnLe/mpb-gpu-2D"
+repository = "https://github.com/RnLe/blaze2d"
 keywords = ["photonic-crystals", "band-structure", "eigensolver", "physics"]
 categories = ["science", "simulation"]
 
@@ -20,9 +20,9 @@ bindings = ["dep:pyo3"]
 
 [dependencies]
 log.workspace = true
-mpb2d-core = { path = "../core" }
-mpb2d-bulk-driver = { path = "../bulk-driver" }
-mpb2d-backend-cpu = { path = "../backend-cpu" }
+blaze2d-core = { path = "../core" }
+blaze2d-bulk-driver = { path = "../bulk-driver" }
+blaze2d-backend-cpu = { path = "../backend-cpu" }
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 crossbeam-channel = "0.5"
 parking_lot = "0.12"

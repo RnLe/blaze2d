@@ -34,7 +34,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use mpb2d_core::operators::envelope_approximation::EAOperator;
+//! use blaze2d_core::operators::envelope_approximation::EAOperator;
 //!
 //! let ea = EAOperator::new(
 //!     backend,
@@ -1366,7 +1366,7 @@ mod tests {
     /// Note: This test requires the real CPU backend since the eigensolver
     /// initialization uses FFT operations internally.
     #[test]
-    #[ignore] // Requires mpb2d-backend-cpu; run with `cargo test -p mpb2d-core -- --ignored`
+    #[ignore] // Requires blaze2d-backend-cpu; run with `cargo test -p blaze2d-core -- --ignored`
     fn test_single_solve_integration() {
         use crate::drivers::single_solve::{SingleSolveJob, solve};
 

@@ -39,7 +39,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use mpb2d_core::bandstructure::{run, BandStructureJob, Verbosity};
+//! use blaze2d_core::bandstructure::{run, BandStructureJob, Verbosity};
 //!
 //! let result = run(backend, &job, Verbosity::Verbose);
 //! // result.bands[k_index][band_index] gives ω for each (k, band) pair

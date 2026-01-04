@@ -16,8 +16,8 @@
 //! # Usage
 //!
 //! ```ignore
-//! use mpb2d_core::diagnostics::{ConvergenceRecorder, RunConfig};
-//! use mpb2d_core::eigensolver::EigensolverConfig;
+//! use blaze2d_core::diagnostics::{ConvergenceRecorder, RunConfig};
+//! use blaze2d_core::eigensolver::EigensolverConfig;
 //!
 //! // Create a recorder with configuration metadata
 //! let config = RunConfig::new("experiment_1")

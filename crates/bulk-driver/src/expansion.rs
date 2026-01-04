@@ -1,6 +1,6 @@
 //! Job expansion from parameter ranges.
 //!
-//! This module re-exports the core expansion logic from `mpb2d_bulk_driver_core`
+//! This module re-exports the core expansion logic from `blaze2d_bulk_driver_core`
 //! and provides any native-specific extensions.
 //!
 //! # Expansion Modes
@@ -21,7 +21,7 @@
 //! - **EA**: Currently produces a single job (parameter sweeps TBD).
 
 // Re-export everything from core
-pub use mpb2d_bulk_driver_core::expansion::{
+pub use blaze2d_bulk_driver_core::expansion::{
     expand_jobs, AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams,
 };
 
@@ -36,9 +36,9 @@ mod tests {
         BaseAtom, BaseGeometry, BulkSection, DefaultsConfig, EAConfig, LatticeTypeSpec,
         OutputConfig, ParameterRange, RangeSpec, SolverSection, SolverType, SweepSpec,
     };
-    use mpb2d_core::grid::Grid2D;
-    use mpb2d_core::polarization::Polarization;
-    use mpb2d_core::{dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec};
+    use blaze2d_core::grid::Grid2D;
+    use blaze2d_core::polarization::Polarization;
+    use blaze2d_core::{dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec};
 
     fn make_test_config() -> crate::config::BulkConfig {
         crate::config::BulkConfig {
@@ -66,7 +66,7 @@ mod tests {
             grid: Grid2D::new(32, 32, 1.0, 1.0),
             polarization: Polarization::TM,
             path: Some(PathSpec {
-                preset: Some(mpb2d_core::io::PathPreset::Square),
+                preset: Some(blaze2d_core::io::PathPreset::Square),
                 segments_per_leg: 12,
                 k_path: vec![],
             }),

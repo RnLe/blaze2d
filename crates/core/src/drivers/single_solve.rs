@@ -22,8 +22,8 @@
 //! ## Basic Usage
 //!
 //! ```ignore
-//! use mpb2d_core::drivers::single_solve::{solve, SingleSolveJob};
-//! use mpb2d_core::operators::EAOperator;
+//! use blaze2d_core::drivers::single_solve::{solve, SingleSolveJob};
+//! use blaze2d_core::operators::EAOperator;
 //!
 //! let job = SingleSolveJob::new(8).with_tolerance(1e-8);
 //! let result = solve(&mut operator, None, &job);
@@ -33,7 +33,7 @@
 //! ## With Diagnostics
 //!
 //! ```ignore
-//! use mpb2d_core::drivers::single_solve::{solve_with_diagnostics, SingleSolveJob};
+//! use blaze2d_core::drivers::single_solve::{solve_with_diagnostics, SingleSolveJob};
 //!
 //! let job = SingleSolveJob::new(8).with_diagnostics();
 //! let result = solve_with_diagnostics(&mut operator, None, &job, "my_solve");
@@ -45,7 +45,7 @@
 //! ## Parameter Sweep with Warm-Start
 //!
 //! ```ignore
-//! use mpb2d_core::drivers::single_solve::{solve, solve_with_warmstart, SingleSolveJob};
+//! use blaze2d_core::drivers::single_solve::{solve, solve_with_warmstart, SingleSolveJob};
 //!
 //! let job = SingleSolveJob::new(8);
 //!
@@ -282,7 +282,7 @@ pub struct OperatorDiagnostics {
 /// # Example
 ///
 /// ```ignore
-/// use mpb2d_core::drivers::single_solve::{solve, SingleSolveJob};
+/// use blaze2d_core::drivers::single_solve::{solve, SingleSolveJob};
 ///
 /// let job = SingleSolveJob::new(8).with_tolerance(1e-10);
 /// let result = solve(&mut operator, Some(&mut preconditioner), &job);
@@ -358,7 +358,7 @@ where
 /// # Example
 ///
 /// ```ignore
-/// use mpb2d_core::drivers::single_solve::{solve_with_progress, SingleSolveJob};
+/// use blaze2d_core::drivers::single_solve::{solve_with_progress, SingleSolveJob};
 ///
 /// let job = SingleSolveJob::new(8).with_tolerance(1e-10);
 /// let result = solve_with_progress(&mut operator, None, &job, |progress| {

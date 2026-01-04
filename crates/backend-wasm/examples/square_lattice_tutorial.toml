@@ -29,7 +29,7 @@
 # preferred mode for React/web visualizations.
 #
 # ```typescript
-# import init, { WasmBulkDriver } from '/wasm/mpb2d_backend_wasm.js';
+# import init, { WasmBulkDriver } from '/wasm/blaze2d_backend_wasm.js';
 #
 # async function computeWithStreaming() {
 #     await init();

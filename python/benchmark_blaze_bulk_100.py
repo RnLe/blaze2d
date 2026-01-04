@@ -96,7 +96,7 @@ def build_bulk_driver(workspace: Path, quiet: bool = False) -> Path:
     print("Building blaze-bulk (release mode)...")
     
     result = subprocess.run(
-        ["cargo", "build", "--release", "-p", "mpb2d-bulk-driver"],
+        ["cargo", "build", "--release", "-p", "blaze2d-bulk-driver"],
         cwd=workspace,
         capture_output=True,
         text=True,
@@ -106,7 +106,7 @@ def build_bulk_driver(workspace: Path, quiet: bool = False) -> Path:
         print(f"Build failed:\n{result.stderr}")
         raise SystemExit(1)
     
-    cli_path = workspace / "target" / "release" / "mpb2d-bulk-driver"
+    cli_path = workspace / "target" / "release" / "blaze2d-bulk-driver"
     if not cli_path.exists():
         raise RuntimeError(f"Built binary not found: {cli_path}")
     
@@ -182,7 +182,7 @@ def main():
     
     # Build or find binary
     if args.skip_build:
-        cli_path = workspace / "target" / "release" / "mpb2d-bulk-driver"
+        cli_path = workspace / "target" / "release" / "blaze2d-bulk-driver"
         if not cli_path.exists():
             print(f"Binary not found: {cli_path}")
             print("Run without --skip-build to build first.")

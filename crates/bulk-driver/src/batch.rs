@@ -693,7 +693,7 @@ mod tests {
     use super::*;
     use crate::channel::{CompactResultType, MaxwellResult};
     use crate::expansion::{AtomParams, JobParams};
-    use mpb2d_core::polarization::Polarization;
+    use blaze2d_core::polarization::Polarization;
     use std::fs;
     use tempfile::tempdir;
 

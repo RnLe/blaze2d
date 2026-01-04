@@ -1,0 +1,353 @@
+# =============================================================================
+# Blaze2D WASM Tutorial: Square Lattice Photonic Crystal Band Structure
+# =============================================================================
+#
+# This configuration computes the band structure for a classic 2D photonic
+# crystal: dielectric rods in air arranged on a square lattice.
+#
+# IMPORTANT: The [bulk] section is REQUIRED for the WASM driver to recognize
+# this as a valid configuration. Even for single calculations (no parameter
+# sweeps), you must include an empty [bulk] section.
+#
+# WASM MODULE SETUP
+# -----------------
+#
+# 1. Build the WASM module:
+#    $ make wasm
+#
+# 2. Copy wasm-dist/ to your Next.js public folder:
+#    $ cp -r wasm-dist/* my-nextjs-app/public/wasm/
+#
+# 3. Or use in a plain web project by serving the files from any static host.
+#
+# =============================================================================
+# K-POINT STREAMING (RECOMMENDED FOR REAL-TIME VISUALIZATION)
+# =============================================================================
+#
+# K-point streaming provides real-time updates as EACH k-point is solved,
+# enabling smooth progressive rendering of band diagrams. This is the 
+# preferred mode for React/web visualizations.
+#
+# ```typescript
+# import init, { WasmBulkDriver } from '/wasm/blaze2d_backend_wasm.js';
+#
+# async function computeWithStreaming() {
+#     await init();
+#     
+#     const configToml = await fetch('/examples/square_lattice_tutorial.toml')
+#         .then(res => res.text());
+#     
+#     const driver = new WasmBulkDriver(configToml);
+#     
+#     // Accumulate k-points progressively
+#     const distances: number[] = [];
+#     const bandsData: number[][] = [];  // bandsData[k_index] = frequencies at k
+#     
+#     // K-POINT STREAMING: callback fires after EACH k-point solve
+#     const stats = driver.runWithKPointStreaming((kResult) => {
+#         // kResult.stream_type === 'k_point'
+#         // kResult.k_index: which k-point (0 to total_k_points-1)
+#         // kResult.progress: 0.0 to 1.0
+#         // kResult.distance: path distance to this k-point
+#         // kResult.omegas: array of frequencies for all bands at this k
+#         
+#         distances.push(kResult.distance);
+#         bandsData.push([...kResult.omegas]);
+#         
+#         // Update your plot progressively!
+#         console.log(`k-point ${kResult.k_index + 1}/${kResult.total_k_points} (${(kResult.progress * 100).toFixed(0)}%)`);
+#         updatePlotProgressive(distances, bandsData);
+#     });
+#     
+#     console.log(`Complete in ${stats.total_time_ms}ms`);
+# }
+# ```
+#
+# =============================================================================
+# REACT HOOK FOR K-POINT STREAMING
+# =============================================================================
+#
+# ```tsx
+# 'use client';
+# 
+# import { useEffect, useState, useRef, useCallback } from 'react';
+# import init, { WasmBulkDriver } from '/wasm/blaze2d_backend_wasm.js';
+#
+# interface KPointData {
+#     k_index: number;
+#     total_k_points: number;
+#     distance: number;
+#     omegas: number[];
+#     progress: number;
+# }
+#
+# interface BandData {
+#     distances: number[];
+#     bands: number[][];  // [k_index][band_index]
+# }
+#
+# export function useBandStructureStreaming(configToml: string | null) {
+#     const [data, setData] = useState<BandData>({ distances: [], bands: [] });
+#     const [progress, setProgress] = useState(0);
+#     const [isRunning, setIsRunning] = useState(false);
+#     const [error, setError] = useState<string | null>(null);
+#     const wasmInitialized = useRef(false);
+#
+#     useEffect(() => {
+#         if (!configToml) return;
+#         
+#         async function run() {
+#             try {
+#                 if (!wasmInitialized.current) {
+#                     await init();
+#                     wasmInitialized.current = true;
+#                 }
+#
+#                 setIsRunning(true);
+#                 setError(null);
+#                 setData({ distances: [], bands: [] });
+#                 setProgress(0);
+#
+#                 const driver = new WasmBulkDriver(configToml);
+#                 
+#                 // Use K-POINT STREAMING for real-time updates
+#                 driver.runWithKPointStreaming((kResult: KPointData) => {
+#                     setProgress(kResult.progress);
+#                     
+#                     // Append new k-point data (immutable update for React)
+#                     setData(prev => ({
+#                         distances: [...prev.distances, kResult.distance],
+#                         bands: [...prev.bands, [...kResult.omegas]]
+#                     }));
+#                 });
+#
+#                 setIsRunning(false);
+#             } catch (e) {
+#                 setError(e instanceof Error ? e.message : 'Computation failed');
+#                 setIsRunning(false);
+#             }
+#         }
+#
+#         run();
+#     }, [configToml]);
+#
+#     return { data, progress, isRunning, error };
+# }
+#
+# // Usage in a component:
+# function BandDiagram({ configToml }: { configToml: string }) {
+#     const { data, progress, isRunning, error } = useBandStructureStreaming(configToml);
+#     
+#     if (error) return <div>Error: {error}</div>;
+#     
+#     return (
+#         <div>
+#             {isRunning && <div>Computing: {(progress * 100).toFixed(0)}%</div>}
+#             <BandPlot distances={data.distances} bands={data.bands} />
+#         </div>
+#     );
+# }
+# ```
+#
+# =============================================================================
+# JOB-LEVEL STREAMING (FOR PARAMETER SWEEPS)
+# =============================================================================
+#
+# Use `runWithCallback` when sweeping multiple parameter configurations.
+# The callback is called once per job (entire band structure), not per k-point.
+#
+# ```typescript
+# // Job-level streaming: callback after EACH JOB (full band structure)
+# const stats = driver.runWithCallback((result) => {
+#     // result.result_type === 'maxwell' for photonic crystals
+#     console.log(`Job ${result.job_index}: ${result.num_k_points} k-points, ${result.num_bands} bands`);
+#     
+#     // result.distances: Array<number> - full k-path distances
+#     // result.bands: Array<Array<number>> - complete bands[k_index][band_index]
+#     updatePlot(result.distances, result.bands);
+# });
+# ```
+#
+# =============================================================================
+# BATCH MODE (COLLECT ALL AT ONCE)
+# =============================================================================
+#
+# If you don't need real-time updates:
+#
+# ```typescript
+# const { results, stats } = driver.runCollect();
+# console.log(`Computed ${results.length} jobs in ${stats.total_time_ms}ms`);
+# ```
+#
+# =============================================================================
+# DATA FORMATS
+# =============================================================================
+#
+# K-POINT STREAMING (runWithKPointStreaming) result object:
+# {
+#     stream_type: 'k_point',      // Identifies this as k-point streaming data
+#     job_index: 0,                // Which job this belongs to
+#     k_index: 5,                  // Index of this k-point (0-based)
+#     total_k_points: 37,          // Total k-points in the path
+#     k_point: [0.5, 0],           // [kx, ky] in fractional coordinates
+#     distance: 0.5,               // Cumulative path distance
+#     omegas: [0.0, 0.15, 0.32],   // Frequencies (normalized: ωa/2πc)
+#     bands: [0.0, 0.15, 0.32],    // Same as omegas (alias)
+#     iterations: 45,              // LOBPCG iterations for this k-point
+#     is_gamma: false,             // Whether this is a Γ-point
+#     progress: 0.162,             // Completion fraction (0.0 to 1.0)
+#     num_bands: 8,                // Number of bands
+#     params: { ... }              // Job parameters
+# }
+#
+# JOB-LEVEL STREAMING (runWithCallback) result object:
+# {
+#     result_type: 'maxwell',
+#     job_index: 0,
+#     k_path: [[0, 0], [0.5, 0], ...],    // All k-points
+#     distances: [0.0, 0.5, 1.0, ...],    // Full path distances
+#     bands: [                             // All frequencies
+#         [0.0, 0.2, 0.35, ...],          // k-point 0 frequencies
+#         [0.1, 0.25, 0.4, ...],          // k-point 1 frequencies
+#         ...
+#     ],
+#     num_k_points: 37,
+#     num_bands: 8,
+#     params: { eps_bg, resolution, polarization, lattice_type, atoms }
+# }
+#
+# =============================================================================
+# PLOTTING WITH PLOTLY (STREAMING-FRIENDLY)
+# =============================================================================
+#
+# ```typescript
+# import Plot from 'react-plotly.js';
+#
+# // For progressive updates with k-point streaming
+# function BandPlot({ distances, bands }: { distances: number[], bands: number[][] }) {
+#     if (distances.length === 0) return <div>No data yet...</div>;
+#     
+#     // Transpose bands: bands[k][band] -> traces for each band
+#     const numBands = bands[0]?.length || 0;
+#     const traces = [];
+#     
+#     for (let b = 0; b < numBands; b++) {
+#         traces.push({
+#             x: distances,
+#             y: bands.map(k => k[b]),
+#             type: 'scatter',
+#             mode: 'lines+markers',
+#             name: `Band ${b + 1}`,
+#             line: { color: `hsl(${(b * 360) / numBands}, 70%, 50%)` }
+#         });
+#     }
+#     
+#     return (
+#         <Plot
+#             data={traces}
+#             layout={{
+#                 title: 'Photonic Band Structure',
+#                 xaxis: { title: 'k-path distance' },
+#                 yaxis: { title: 'Frequency (ωa/2πc)' },
+#                 showlegend: true
+#             }}
+#         />
+#     );
+# }
+# ```
+#
+# =============================================================================
+# ADVANCED: SELECTIVE FILTERING
+# =============================================================================
+#
+# For large calculations, filter to specific k-points or bands:
+#
+# ```typescript
+# // Only get Γ (index 0), X (index 12), M (index 24) points and first 4 bands
+# driver.runStreamingFiltered(
+#     [0, 12, 24],    // k-point indices (null for all)
+#     [0, 1, 2, 3],   // band indices (null for all)
+#     (result) => {
+#         console.log(`Filtered: ${result.num_k_points} k-points, ${result.num_bands} bands`);
+#     }
+# );
+# ```
+#
+# =============================================================================
+# Polarization: TM (E-field out of plane) or TE (H-field out of plane)
+# TM modes show the classic band gap for dielectric rods in air
+# NEEDS to be top-level
+polarization = "TM"
+
+# =============================================================================
+# REQUIRED: Bulk Section
+# =============================================================================
+# The [bulk] section is REQUIRED for the WasmBulkDriver to parse this config.
+# For single calculations without parameter sweeps, use an empty section.
+[bulk]
+
+# Solver type: "maxwell" for photonic crystals, "ea" for envelope approximation
+[solver]
+type = "maxwell"
+
+
+# =============================================================================
+# Geometry Configuration
+# =============================================================================
+[geometry]
+# Background permittivity (air = 1.0)
+eps_bg = 1.0
+
+[geometry.lattice]
+# Lattice type: "square", "hexagonal", "rectangular", "oblique"
+type = "square"
+# Lattice constant (sets the length scale, typically a = 1.0)
+a = 1.0
+
+# Atoms in the unit cell (can have multiple [[geometry.atoms]] sections)
+[[geometry.atoms]]
+# Position in fractional coordinates [0, 1]
+# [0.5, 0.5] = center of unit cell
+pos = [0.5, 0.5]
+# Radius as fraction of lattice constant
+radius = 0.2
+# Permittivity inside the cylinder (Si ≈ 12, GaAs ≈ 13)
+eps_inside = 12.0
+
+# =============================================================================
+# Grid Configuration
+# =============================================================================
+[grid]
+# Resolution in each direction
+# Higher = more accurate but slower
+# 32 is good for quick tests, 64-128 for production
+nx = 32
+ny = 32
+# Physical dimensions (match lattice constant)
+lx = 1.0
+ly = 1.0
+
+# =============================================================================
+# K-Path Configuration
+# =============================================================================
+[path]
+# Use a preset path for common lattice types:
+# - "square": Γ → X → M → Γ
+# - "hexagonal": Γ → M → K → Γ
+# - "rectangular": Γ → X → S → Y → Γ
+preset = "square"
+# Number of k-points per path segment
+# Total points = segments_per_leg * (number of legs)
+# For square: 3 legs → 36 total k-points
+segments_per_leg = 12
+
+# =============================================================================
+# Eigensolver Configuration
+# =============================================================================
+[eigensolver]
+# Number of bands to compute (lowest frequencies)
+n_bands = 8
+# Maximum LOBPCG iterations
+max_iter = 200
+# Convergence tolerance (relative eigenvalue change)
+tol = 1e-6

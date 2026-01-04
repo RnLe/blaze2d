@@ -1,8 +1,8 @@
-# MPB-GPU-2D Makefile
+# Blaze2D Makefile
 # Build targets for WASM and other artifacts
 
 # Configuration
-WASM_CRATE := mpb2d-backend-wasm
+WASM_CRATE := blaze2d-backend-wasm
 WASM_OUT := wasm-dist
 WASM_FEATURES := streaming
 
@@ -35,7 +35,7 @@ wasm:
 	@echo "  1. Copy $(WASM_OUT)/ contents to public/wasm/"
 	@echo "  2. Import in your component:"
 	@echo ""
-	@echo "     import init, { WasmBulkDriver } from '/wasm/mpb2d_backend_wasm.js';"
+	@echo "     import init, { WasmBulkDriver } from '/wasm/blaze2d_backend_wasm.js';"
 	@echo ""
 	@echo "     async function run() {"
 	@echo "       await init();"
@@ -68,7 +68,7 @@ wasm-clean:
 
 ## Show this help
 help:
-	@echo "MPB-GPU-2D Build System"
+	@echo "Blaze2D Build System"
 	@echo ""
 	@echo "WASM Targets:"
 	@echo "  make wasm        Build production WASM (./$(WASM_OUT)/)"

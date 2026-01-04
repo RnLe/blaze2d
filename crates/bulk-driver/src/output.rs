@@ -259,7 +259,7 @@ impl OutputWriter {
         let n_bands = ea_result.eigenvectors.len() as u64;
         let grid = ea_result.eigenvectors.first()
             .map(|f| f.grid())
-            .unwrap_or_else(|| mpb2d_core::grid::Grid2D::new(1, 1, 1.0, 1.0));
+            .unwrap_or_else(|| blaze2d_core::grid::Grid2D::new(1, 1, 1.0, 1.0));
         let nx = grid.nx as u64;
         let ny = grid.ny as u64;
 

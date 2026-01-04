@@ -10,9 +10,9 @@
 //! # Example
 //!
 //! ```
-//! use mpb2d_core::crystal::PhotonicCrystal;
-//! use mpb2d_core::bravais::BravaisLattice;
-//! use mpb2d_core::basis::{AtomicBasis, BasisAtom};
+//! use blaze2d_core::crystal::PhotonicCrystal;
+//! use blaze2d_core::bravais::BravaisLattice;
+//! use blaze2d_core::basis::{AtomicBasis, BasisAtom};
 //!
 //! // Create a square lattice photonic crystal with air holes in silicon
 //! let crystal = PhotonicCrystal::builder()

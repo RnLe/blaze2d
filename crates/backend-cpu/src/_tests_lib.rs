@@ -7,9 +7,9 @@
 #![cfg(test)]
 
 use crate::CpuBackend;
-use mpb2d_core::backend::SpectralBackend;
-use mpb2d_core::field::Field2D;
-use mpb2d_core::grid::Grid2D;
+use blaze2d_core::backend::SpectralBackend;
+use blaze2d_core::field::Field2D;
+use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 use std::f64::consts::PI;
 
@@ -304,8 +304,8 @@ fn combined_operations_maintain_consistency() {
 /// - CpuBackend provides working FFT and linear algebra
 #[test]
 fn ea_operator_single_solve_integration() {
-    use mpb2d_core::drivers::single_solve::{solve, SingleSolveJob};
-    use mpb2d_core::operators::EAOperator;
+    use blaze2d_core::drivers::single_solve::{solve, SingleSolveJob};
+    use blaze2d_core::operators::EAOperator;
 
     let backend = CpuBackend::new();
     let nx = 16;

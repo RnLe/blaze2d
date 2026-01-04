@@ -14,15 +14,15 @@ use log::{debug, error, warn};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-use mpb2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
-use mpb2d_core::drivers::ProgressInfo;
-use mpb2d_core::profiler::print_profile;
+use blaze2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
+use blaze2d_core::drivers::ProgressInfo;
+use blaze2d_core::profiler::print_profile;
 
 #[cfg(feature = "cuda")]
-use mpb2d_backend_cuda::CudaBackend;
+use blaze2d_backend_cuda::CudaBackend;
 
 #[cfg(not(feature = "cuda"))]
-use mpb2d_backend_cpu::CpuBackend;
+use blaze2d_backend_cpu::CpuBackend;
 
 use crate::adaptive::{AdaptiveConfig, AdaptiveThreadManager, AdjustmentReason};
 use crate::batch::BatchChannel;
@@ -87,7 +87,7 @@ pub struct EAJobResult {
     /// Computed eigenvalues
     pub eigenvalues: Vec<f64>,
     /// Computed eigenvectors as Field2D
-    pub eigenvectors: Vec<mpb2d_core::field::Field2D>,
+    pub eigenvectors: Vec<blaze2d_core::field::Field2D>,
     /// Grid dimensions [nx, ny]
     pub grid_dims: [usize; 2],
     /// Number of iterations taken
@@ -122,7 +122,7 @@ impl PreRunReport {
 
         // Header
         lines.push(String::from("╭─────────────────────────────────────────────────╮"));
-        lines.push(String::from("│            MPB2D Bulk Driver                    │"));
+        lines.push(String::from("│              Blaze Bulk Driver                  │"));
         lines.push(String::from("╰─────────────────────────────────────────────────╯"));
         lines.push(String::new());
 
@@ -869,7 +869,7 @@ impl BulkDriver {
     }
 
     /// Execute a Maxwell band structure job.
-    fn execute_maxwell_job(&self, index: usize, job: &mpb2d_core::bandstructure::BandStructureJob) -> Result<JobResult, JobError> {
+    fn execute_maxwell_job(&self, index: usize, job: &blaze2d_core::bandstructure::BandStructureJob) -> Result<JobResult, JobError> {
         let start = Instant::now();
 
         // Select backend
@@ -917,8 +917,8 @@ impl BulkDriver {
 
     /// Execute an EA eigenvalue problem.
     fn execute_ea_job(&self, index: usize, spec: &EAJobSpec) -> Result<JobResult, JobError> {
-        use mpb2d_core::drivers::single_solve;
-        use mpb2d_core::operators::EAOperatorBuilder;
+        use blaze2d_core::drivers::single_solve;
+        use blaze2d_core::operators::EAOperatorBuilder;
 
         let start = Instant::now();
 
@@ -1021,8 +1021,8 @@ impl BulkDriver {
     /// and a detailed progress bar shows iteration count, trace, and relative
     /// trace change.
     fn run_single_ea_with_progress(&self) -> Result<DriverStats, DriverError> {
-        use mpb2d_core::drivers::single_solve;
-        use mpb2d_core::operators::EAOperatorBuilder;
+        use blaze2d_core::drivers::single_solve;
+        use blaze2d_core::operators::EAOperatorBuilder;
 
         let expanded = &self.jobs[0];
         let spec = match &expanded.job_type {
@@ -1089,7 +1089,7 @@ impl BulkDriver {
 
         // Print header with spectral info
         println!("╭─────────────────────────────────────────────────╮");
-        println!("│      MPB2D Single EA Solve (with progress)     │");
+        println!("│      Blaze Single EA Solve (with progress)     │");
         println!("╰─────────────────────────────────────────────────╯");
         println!();
         println!("  Grid: {}×{}", spec.grid.nx, spec.grid.ny);
@@ -1210,8 +1210,8 @@ impl BulkDriver {
     ///
     /// This combines the detailed progress display with streaming/batch output.
     fn run_single_ea_with_channel(&self, channel: OutputChannel) -> Result<DriverStats, DriverError> {
-        use mpb2d_core::drivers::single_solve;
-        use mpb2d_core::operators::EAOperatorBuilder;
+        use blaze2d_core::drivers::single_solve;
+        use blaze2d_core::operators::EAOperatorBuilder;
 
         let expanded = &self.jobs[0];
         let spec = match &expanded.job_type {
@@ -1278,7 +1278,7 @@ impl BulkDriver {
 
         // Print header with spectral info
         println!("╭─────────────────────────────────────────────────╮");
-        println!("│      MPB2D Single EA Solve (with progress)     │");
+        println!("│      Blaze Single EA Solve (with progress)     │");
         println!("╰─────────────────────────────────────────────────╯");
         println!();
         println!("  Grid: {}×{}", spec.grid.nx, spec.grid.ny);

@@ -1,4 +1,4 @@
-# Evaluation harness for MPB vs. mpb2d runs.
+# Evaluation harness for MPB vs. blaze runs.
 # Usage:
 #   make                          # runs default config (compare_hex_lowres)
 #   make CONFIG=config/foo.mk run # run arbitrary config file
@@ -40,12 +40,12 @@ endif
 
 SKIP_REFERENCE_WIPE ?= 0
 
-.PHONY: all run mpb mpb2d mpb2d-benchmark list-config clean prepare_reference_data help \
+.PHONY: all run mpb blaze blaze-benchmark list-config clean prepare_reference_data help \
         export-epsilon export-epsilon-tensor export-epsilon-all export-iterations \
         export-epsilon-mpb export-epsilon-inverse-mpb export-epsilon-compare benchmark $(EVAL_TARGETS)
 
 help:
-	@echo "Evaluation harness for MPB vs. mpb2d runs."
+	@echo "Evaluation harness for MPB vs. blaze runs."
 	@echo ""
 	@echo "Usage:"
 	@echo "  make                               # run default config (compare_hex_lowres)"
@@ -81,15 +81,15 @@ all:
 run:
 	@$(MAKE) --no-print-directory prepare_reference_data
 	@$(MAKE) --no-print-directory mpb
-	@$(MAKE) --no-print-directory mpb2d
+	@$(MAKE) --no-print-directory blaze
 
-# Special target for compare_square_lowres: use benchmark-enabled mpb2d
+# Special target for compare_square_lowres: use benchmark-enabled blaze
 compare_square_lowres:
 	@echo "[evaluation] launching 'compare_square_lowres' with benchmark tracking"
 	@$(MAKE) --no-print-directory SKIP_REFERENCE_WIPE=$(SKIP_REFERENCE_WIPE) prepare_reference_data CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 	@$(MAKE) --no-print-directory mpb CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
-	@$(MAKE) --no-print-directory mpb2d-benchmark CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
-	@$(MAKE) --no-print-directory mpb2d-cuda CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
+	@$(MAKE) --no-print-directory blaze-benchmark CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
+	@$(MAKE) --no-print-directory blaze-cuda CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 	@$(MAKE) --no-print-directory export-epsilon-compare CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 	@$(MAKE) --no-print-directory export-iterations CONFIG=$(CONFIG_DIR)/compare_square_lowres.mk
 
@@ -97,7 +97,7 @@ $(EVAL_TARGETS):
 	@echo "[evaluation] launching '$@' via $(CONFIG_DIR)/$@.mk"
 	@$(MAKE) --no-print-directory SKIP_REFERENCE_WIPE=$(SKIP_REFERENCE_WIPE) prepare_reference_data CONFIG=$(CONFIG_DIR)/$@.mk
 	@$(MAKE) --no-print-directory mpb CONFIG=$(CONFIG_DIR)/$@.mk
-	@$(MAKE) --no-print-directory mpb2d CONFIG=$(CONFIG_DIR)/$@.mk
+	@$(MAKE) --no-print-directory blaze CONFIG=$(CONFIG_DIR)/$@.mk
 	@$(MAKE) --no-print-directory export-epsilon-compare CONFIG=$(CONFIG_DIR)/$@.mk
 	@$(MAKE) --no-print-directory export-iterations CONFIG=$(CONFIG_DIR)/$@.mk
 
@@ -109,61 +109,61 @@ mpb:
 	@echo "[evaluation] running MPB for $(EVAL_NAME)"
 	$(MPB_COMMAND)
 
-mpb2d:
-	@if [ -z "$(strip $(MPB2D_COMMAND))" ]; then \
-		echo "MPB2D_COMMAND is empty in $(CONFIG)"; \
+blaze:
+	@if [ -z "$(strip $(BLAZE_COMMAND))" ]; then \
+		echo "BLAZE_COMMAND is empty in $(CONFIG)"; \
 		exit 1; \
 	fi
-	@echo "[evaluation] running mpb2d for $(EVAL_NAME)"
-	$(MPB2D_COMMAND)
+	@echo "[evaluation] running blaze for $(EVAL_NAME)"
+	$(BLAZE_COMMAND)
 
-# mpb2d with CUDA acceleration
-mpb2d-cuda:
-	@if [ -z "$(strip $(MPB2D_CUDA_COMMAND))" ]; then \
-		echo "MPB2D_CUDA_COMMAND is empty in $(CONFIG)"; \
+# blaze with CUDA acceleration
+blaze-cuda:
+	@if [ -z "$(strip $(BLAZE_CUDA_COMMAND))" ]; then \
+		echo "BLAZE_CUDA_COMMAND is empty in $(CONFIG)"; \
 		exit 1; \
 	fi
-	@echo "[evaluation] running mpb2d (CUDA) for $(EVAL_NAME)"
-	$(MPB2D_CUDA_COMMAND)
+	@echo "[evaluation] running blaze (CUDA) for $(EVAL_NAME)"
+	$(BLAZE_CUDA_COMMAND)
 
-# mpb2d with benchmark logging (for compare_square_lowres)
+# blaze with benchmark logging (for compare_square_lowres)
 # Uses script -q to preserve TTY for colored output while logging
-mpb2d-benchmark:
-	@if [ -z "$(strip $(MPB2D_TE_CMD))" ] || [ -z "$(strip $(BENCHMARK_YAML))" ]; then \
+blaze-benchmark:
+	@if [ -z "$(strip $(BLAZE_TE_CMD))" ] || [ -z "$(strip $(BENCHMARK_YAML))" ]; then \
 		echo "Error: This config does not support benchmarking."; \
 		exit 1; \
 	fi
-	@echo "[evaluation] running mpb2d for $(EVAL_NAME) with benchmark tracking"
+	@echo "[evaluation] running blaze for $(EVAL_NAME) with benchmark tracking"
 	@echo "[benchmark] running TE..."
-	@script -q -c "$(MPB2D_TE_CMD)" $(BENCHMARK_LOG_TE)
+	@script -q -c "$(BLAZE_TE_CMD)" $(BENCHMARK_LOG_TE)
 	@$(EVAL_ROOT)/append_benchmark.sh $(BENCHMARK_YAML) TE $(BENCHMARK_LOG_TE)
 	@echo "[benchmark] running TM..."
-	@script -q -c "$(MPB2D_TM_CMD)" $(BENCHMARK_LOG_TM)
+	@script -q -c "$(BLAZE_TM_CMD)" $(BENCHMARK_LOG_TM)
 	@$(EVAL_ROOT)/append_benchmark.sh $(BENCHMARK_YAML) TM $(BENCHMARK_LOG_TM)
 	@echo "[benchmark] results appended to $(BENCHMARK_YAML)"
 
 # ============================================================================
 # Benchmark Tracking Target
 # ============================================================================
-# Runs mpb2d with logging and appends metrics to a YAML file for tracking
+# Runs blaze with logging and appends metrics to a YAML file for tracking
 # solver performance over time. Only works with configs that define
-# MPB2D_TE_CMD, MPB2D_TM_CMD, BENCHMARK_YAML, BENCHMARK_LOG_TE, BENCHMARK_LOG_TM.
+# BLAZE_TE_CMD, BLAZE_TM_CMD, BENCHMARK_YAML, BENCHMARK_LOG_TE, BENCHMARK_LOG_TM.
 #
 # Usage:
 #   make benchmark CONFIG=config/compare_square_lowres.mk
 
 benchmark:
-	@if [ -z "$(strip $(MPB2D_TE_CMD))" ] || [ -z "$(strip $(BENCHMARK_YAML))" ]; then \
+	@if [ -z "$(strip $(BLAZE_TE_CMD))" ] || [ -z "$(strip $(BENCHMARK_YAML))" ]; then \
 		echo "Error: This config does not support benchmarking."; \
-		echo "Required: MPB2D_TE_CMD, MPB2D_TM_CMD, BENCHMARK_YAML, BENCHMARK_LOG_TE, BENCHMARK_LOG_TM"; \
+		echo "Required: BLAZE_TE_CMD, BLAZE_TM_CMD, BENCHMARK_YAML, BENCHMARK_LOG_TE, BENCHMARK_LOG_TM"; \
 		exit 1; \
 	fi
 	@$(MAKE) --no-print-directory prepare_reference_data
 	@echo "[benchmark] running TE..."
-	@$(MPB2D_TE_CMD) 2>&1 | tee $(BENCHMARK_LOG_TE)
+	@$(BLAZE_TE_CMD) 2>&1 | tee $(BENCHMARK_LOG_TE)
 	@$(EVAL_ROOT)/append_benchmark.sh $(BENCHMARK_YAML) TE $(BENCHMARK_LOG_TE)
 	@echo "[benchmark] running TM..."
-	@$(MPB2D_TM_CMD) 2>&1 | tee $(BENCHMARK_LOG_TM)
+	@$(BLAZE_TM_CMD) 2>&1 | tee $(BENCHMARK_LOG_TM)
 	@$(EVAL_ROOT)/append_benchmark.sh $(BENCHMARK_YAML) TM $(BENCHMARK_LOG_TM)
 	@echo "[benchmark] done. Results in $(BENCHMARK_YAML)"
 
@@ -171,7 +171,7 @@ list-config:
 	@echo "Loaded evaluation: $(EVAL_NAME)"
 	@echo "Config file: $(CONFIG)"
 	@echo "MPB command: $(MPB_COMMAND)"
-	@echo "mpb2d command: $(MPB2D_COMMAND)"
+	@echo "blaze command: $(BLAZE_COMMAND)"
 
 # ============================================================================
 # Epsilon Export Targets
@@ -187,7 +187,7 @@ list-config:
 # which toml configuration to use for epsilon export.
 
 # Default epsilon config - configs can override this
-EPSILON_TOML ?= $(firstword $(shell echo "$(MPB2D_COMMAND)" | grep -oP '(?<=--config )\S+'))
+EPSILON_TOML ?= $(firstword $(shell echo "$(BLAZE_COMMAND)" | grep -oP '(?<=--config )\S+'))
 EPSILON_OUTPUT_PREFIX ?= $(REFERENCE_DIR)/$(EVAL_NAME)
 
 export-epsilon:
@@ -199,7 +199,7 @@ export-epsilon:
 	@echo "[evaluation] exporting epsilon(r) for $(EVAL_NAME)"
 	@echo "  config: $(EPSILON_TOML)"
 	@echo "  output: $(EPSILON_OUTPUT_PREFIX)_epsilon.csv"
-	cargo run --release -p mpb2d-cli -- \
+	cargo run --release -p blaze2d-cli -- \
 		--config $(EPSILON_TOML) \
 		$(SMOOTHING_ARGS) \
 		--export-epsilon $(EPSILON_OUTPUT_PREFIX)_epsilon.csv \
@@ -214,7 +214,7 @@ export-epsilon-tensor:
 	@echo "[evaluation] exporting inverse epsilon tensor for $(EVAL_NAME)"
 	@echo "  config: $(EPSILON_TOML)"
 	@echo "  output: $(EPSILON_OUTPUT_PREFIX)_epsilon_tensor.csv"
-	cargo run --release -p mpb2d-cli -- \
+	cargo run --release -p blaze2d-cli -- \
 		--config $(EPSILON_TOML) \
 		$(SMOOTHING_ARGS) \
 		--export-epsilon-tensor $(EPSILON_OUTPUT_PREFIX)_epsilon_tensor.csv \
@@ -227,7 +227,7 @@ export-epsilon-all:
 # ============================================================================
 # MPB Epsilon Export
 # ============================================================================
-# Export epsilon(r) from MPB for comparison with mpb2d.
+# Export epsilon(r) from MPB for comparison with blaze.
 # This uses the generate_square_tm_bands.py script with --export-epsilon.
 #
 # Usage:
@@ -308,16 +308,16 @@ export-epsilon-compare:
 
 ITERATION_OUTPUT_PREFIX ?= $(REFERENCE_DIR)/$(EVAL_NAME)
 
-# Extract TE and TM config paths from MPB2D_COMMAND
-TE_TOML ?= $(shell echo "$(MPB2D_COMMAND)" | grep -oP '(?<=--config )\S+te\S*\.toml' | head -1)
-TM_TOML ?= $(shell echo "$(MPB2D_COMMAND)" | grep -oP '(?<=--config )\S+tm\S*\.toml' | head -1)
+# Extract TE and TM config paths from BLAZE_COMMAND
+TE_TOML ?= $(shell echo "$(BLAZE_COMMAND)" | grep -oP '(?<=--config )\S+te\S*\.toml' | head -1)
+TM_TOML ?= $(shell echo "$(BLAZE_COMMAND)" | grep -oP '(?<=--config )\S+tm\S*\.toml' | head -1)
 
 export-iterations:
 	@echo "[evaluation] exporting iteration traces for $(EVAL_NAME)"
 	@if [ -n "$(strip $(TE_TOML))" ]; then \
 		echo "  TE config: $(TE_TOML)"; \
 		echo "  TE output: $(ITERATION_OUTPUT_PREFIX)_te_iterations.csv"; \
-		cargo run --release -p mpb2d-cli -- \
+		cargo run --release -p blaze2d-cli -- \
 			--config $(TE_TOML) \
 			$(SMOOTHING_ARGS) \
 			--record-diagnostics \
@@ -327,12 +327,12 @@ export-iterations:
 			--segments-per-leg 2 \
 			--quiet; \
 	else \
-		echo "  No TE config found in MPB2D_COMMAND"; \
+		echo "  No TE config found in BLAZE_COMMAND"; \
 	fi
 	@if [ -n "$(strip $(TM_TOML))" ]; then \
 		echo "  TM config: $(TM_TOML)"; \
 		echo "  TM output: $(ITERATION_OUTPUT_PREFIX)_tm_iterations.csv"; \
-		cargo run --release -p mpb2d-cli -- \
+		cargo run --release -p blaze2d-cli -- \
 			--config $(TM_TOML) \
 			$(SMOOTHING_ARGS) \
 			--record-diagnostics \
@@ -342,7 +342,7 @@ export-iterations:
 			--segments-per-leg 2 \
 			--quiet; \
 	else \
-		echo "  No TM config found in MPB2D_COMMAND"; \
+		echo "  No TM config found in BLAZE_COMMAND"; \
 	fi
 
 clean:

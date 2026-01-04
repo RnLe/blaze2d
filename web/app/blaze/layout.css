@@ -1,0 +1,26 @@
+/* Hide Nextra footer, navbar, and sidebar for this route */
+.blaze-layout {
+  /* Ensure full viewport */
+  min-height: 100vh;
+  width: 100%;
+}
+
+/* Hide Nextra chrome when inside blaze */
+.blaze-layout ~ footer,
+.blaze-layout ~ nav,
+body:has(.blaze-layout) footer,
+body:has(.blaze-layout) > div > footer,
+body:has(.blaze-layout) .nextra-sidebar-footer,
+body:has(.blaze-layout) [class*="nextra-nav"],
+body:has(.blaze-layout) header,
+body:has(.blaze-layout) aside,
+body:has(.blaze-layout) nav.nextra-toc {
+  display: none !important;
+}
+
+/* Remove Nextra container constraints */
+body:has(.blaze-layout) main {
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}

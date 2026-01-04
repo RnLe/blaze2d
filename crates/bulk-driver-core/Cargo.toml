@@ -1,16 +1,16 @@
 [package]
-name = "mpb2d-bulk-driver-core"
+name = "blaze2d-bulk-driver-core"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Platform-agnostic core types and logic for MPB2D bulk driver"
+description = "Platform-agnostic core types and logic for Blaze bulk driver"
 
 [features]
 default = ["native-linalg"]
-native-linalg = ["mpb2d-core/native-linalg"]
-wasm-linalg = ["mpb2d-core/wasm-linalg"]
+native-linalg = ["blaze2d-core/native-linalg"]
+wasm-linalg = ["blaze2d-core/wasm-linalg"]
 
 [dependencies]
 # Workspace dependencies (platform-agnostic only)
@@ -20,4 +20,4 @@ thiserror.workspace = true
 log.workspace = true
 
 # Internal crates (core types only)
-mpb2d-core = { path = "../core", default-features = false }
+blaze2d-core = { path = "../core", default-features = false }

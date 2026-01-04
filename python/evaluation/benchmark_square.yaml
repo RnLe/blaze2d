@@ -1,4 +1,4 @@
-# Benchmark tracking for mpb2d solver optimization
+# Benchmark tracking for blaze solver optimization
 # Square lattice, ε_bg=13.0, r=0.3, 8 bands, 31 k-points, 24x24 grid
 
 runs:

@@ -175,7 +175,7 @@ impl CompactBandResult {
 mod tests {
     use super::*;
     use crate::expansion::AtomParams;
-    use mpb2d_core::polarization::Polarization;
+    use blaze2d_core::polarization::Polarization;
 
     fn make_test_maxwell_result(index: usize) -> CompactBandResult {
         CompactBandResult {

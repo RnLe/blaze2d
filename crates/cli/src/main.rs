@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, ValueEnum};
 use env_logger::Builder;
 use log::{error, info, warn};
-use mpb2d_core::{
+use blaze2d_core::{
     brillouin::{generate_path, BrillouinPath},
     diagnostics::PreconditionerType,
     dielectric::Dielectric2D,
@@ -19,17 +19,17 @@ use mpb2d_core::{
 };
 
 #[cfg(feature = "cuda")]
-use mpb2d_backend_cuda::CudaBackend;
+use blaze2d_backend_cuda::CudaBackend;
 
 #[cfg(not(feature = "cuda"))]
-use mpb2d_backend_cpu::CpuBackend;
+use blaze2d_backend_cpu::CpuBackend;
 
 // ============================================================================
 // CLI Arguments
 // ============================================================================
 
 #[derive(Parser, Debug)]
-#[command(name = "mpb2d-lite", about = "MPB-like 2D solver CLI")]
+#[command(name = "blaze", about = "Blaze 2D photonic crystal band structure solver CLI")]
 struct Cli {
     /// Path to a TOML configuration file
     #[arg(short, long)]

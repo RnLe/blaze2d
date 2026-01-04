@@ -1,4 +1,4 @@
-//! MPB2D Bulk Driver - Smart multi-threaded parameter sweep driver.
+//! Blaze Bulk Driver - Smart multi-threaded parameter sweep driver.
 //!
 //! This crate provides a high-performance driver for running many photonic crystal
 //! band structure calculations in parallel, as well as Envelope Approximation (EA)
@@ -38,7 +38,7 @@
 //! # Example: Batch Mode
 //!
 //! ```ignore
-//! use mpb2d_bulk_driver::{BulkDriver, BatchConfig, OutputChannel};
+//! use blaze2d_bulk_driver::{BulkDriver, BatchConfig, OutputChannel};
 //! use std::sync::Arc;
 //!
 //! let driver = BulkDriver::new(config, None);

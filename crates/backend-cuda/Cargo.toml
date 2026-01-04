@@ -1,5 +1,5 @@
 [package]
-name = "mpb2d-backend-cuda"
+name = "blaze2d-backend-cuda"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,10 @@ authors.workspace = true
 default = []
 # CUDA backend uses cuBLAS for linear algebra but CPU FFT (rustfft) for transforms.
 # Benchmarks showed cuFFT has too much overhead for typical photonic crystal grid sizes.
-cuda = ["dep:cudarc", "dep:rustfft", "mpb2d-core/cuda"]
+cuda = ["dep:cudarc", "dep:rustfft", "blaze2d-core/cuda"]
 
 [dependencies]
-mpb2d-core = { path = "../core" }
+blaze2d-core = { path = "../core" }
 num-complex.workspace = true
 cudarc = { version = "0.18", optional = true, features = ["cuda-version-from-build-system", "cublas", "driver", "nvrtc"] }
 log = "0.4"

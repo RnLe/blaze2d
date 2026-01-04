@@ -1,0 +1,111 @@
+/* Import Tailwind CSS v4 */
+@import "tailwindcss";
+
+/* ============================================
+   NEXTRA LAYOUT - FULL WIDTH
+   ============================================ */
+
+:root {
+  /* Use 90% of viewport width */
+  --nextra-content-width: 90%;
+}
+
+/* ============================================
+   SIDEBAR CUSTOMIZATION
+   ============================================ */
+
+/* Left sidebar (aside element) - back to default 16rem */
+aside[class*="x:w-64"],
+aside[class*="md:w-64"] {
+  width: 16rem !important;
+  min-width: 16rem !important;
+  max-width: 16rem !important;
+}
+
+/* Collapsed sidebar state */
+aside[class*="x:w-20"] {
+  width: 5rem !important;
+}
+
+/* Placeholder div for sidebar spacing */
+div[class*="x:w-64"][class*="x:shrink-0"] {
+  width: 16rem !important;
+}
+
+/* Right sidebar TOC (nav element) - back to default 16rem */
+nav.nextra-toc {
+  width: 16rem !important;
+  min-width: 16rem !important;
+}
+
+/* Fix inner TOC content to use full width */
+nav.nextra-toc > div {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* ============================================
+   FULL WIDTH LAYOUT OVERRIDES
+   ============================================ */
+
+/* Remove all max-width constraints on main containers */
+.x\:max-w-\(--nextra-content-width\),
+[class*="max-w-(--nextra-content-width)"],
+[class*="x:max-w"] {
+  max-width: 100% !important;
+}
+
+/* Main flex container - full width */
+body > div,
+#__next,
+main {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+
+/* Navbar full width */
+nav[class*="x:sticky"],
+header {
+  max-width: 100% !important;
+}
+
+/* Footer full width */
+footer {
+  max-width: 100% !important;
+}
+
+/* Content article - fill remaining space */
+article[class*="x:w-full"] {
+  flex-grow: 1 !important;
+  max-width: none !important;
+  width: 100% !important;
+}
+
+/* ============================================
+   MAIN CONTENT WIDTH CONTROL
+   ============================================ */
+
+/* Constrain the prose/content area within the article */
+article[class*="x:w-full"] > .prose,
+article[class*="x:w-full"] > div > .prose {
+  max-width: 65ch !important;  /* ~65 characters wide - classic readable width */
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* Hide TOC on smaller screens */
+@media (max-width: 1280px) {
+  nav.nextra-toc {
+    display: none;
+  }
+}
+
+/* ============================================
+   EXISTING STYLES
+   ============================================ */
+
+/* Custom styles for code blocks in prose */
+.prose code::before,
+.prose code::after {
+  content: none !important;
+}

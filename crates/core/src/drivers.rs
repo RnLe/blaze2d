@@ -27,7 +27,7 @@
 //! ## Band Structure
 //!
 //! ```ignore
-//! use mpb2d_core::drivers::bandstructure::{run, BandStructureJob, Verbosity};
+//! use blaze2d_core::drivers::bandstructure::{run, BandStructureJob, Verbosity};
 //!
 //! let result = run(backend, &job, Verbosity::Verbose);
 //! // result.bands[k_index][band_index] gives ω for each (k, band) pair
@@ -36,8 +36,8 @@
 //! ## Single Solve (Envelope Approximation)
 //!
 //! ```ignore
-//! use mpb2d_core::drivers::single_solve::{solve, SingleSolveJob};
-//! use mpb2d_core::operators::EAOperator;
+//! use blaze2d_core::drivers::single_solve::{solve, SingleSolveJob};
+//! use blaze2d_core::operators::EAOperator;
 //!
 //! let job = SingleSolveJob::new(10).with_tolerance(1e-10);
 //! let result = solve(&mut ea_operator, Some(&mut preconditioner), &job);

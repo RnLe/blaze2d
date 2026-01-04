@@ -1,4 +1,4 @@
-//! MPB2D Bulk Driver - Multi-threaded parameter sweep CLI.
+//! Blaze Bulk Driver - Multi-threaded parameter sweep CLI.
 //!
 //! This tool reads a bulk configuration TOML file and executes many band structure
 //! calculations in parallel, ideal for parameter studies.
@@ -6,8 +6,8 @@
 //! # Usage
 //!
 //! ```bash
-//! mpb2d-bulk --config sweep.toml
-//! mpb2d-bulk --config sweep.toml --threads -1  # Adaptive threading
+//! blaze-bulk --config sweep.toml
+//! blaze-bulk --config sweep.toml --threads -1  # Adaptive threading
 //! ```
 //!
 //! Use `--dry-run` to see how many jobs would be executed without running them.
@@ -20,7 +20,7 @@ use clap::Parser;
 use env_logger::Builder;
 use log::{error, warn};
 
-use mpb2d_bulk_driver::{BulkConfig, BulkDriver};
+use blaze2d_bulk_driver::{BulkConfig, BulkDriver};
 
 // ============================================================================
 // CLI Arguments
@@ -28,8 +28,8 @@ use mpb2d_bulk_driver::{BulkConfig, BulkDriver};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "mpb2d-bulk",
-    about = "Multi-threaded parameter sweep driver for MPB2D",
+    name = "blaze-bulk",
+    about = "Multi-threaded parameter sweep driver for Blaze",
     version
 )]
 struct Cli {
@@ -106,8 +106,8 @@ fn init_logging(verbose: bool, quiet: bool) {
     };
 
     Builder::new()
-        .filter_module("mpb2d_bulk_driver", our_level)
-        .filter_module("mpb2d_core", lib_level)
+        .filter_module("blaze2d_bulk_driver", our_level)
+        .filter_module("blaze2d_core", lib_level)
         .filter_level(lib_level)
         .format(|buf, record| {
             use std::io::Write;
