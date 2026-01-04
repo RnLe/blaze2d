@@ -1,8 +1,8 @@
 {
-  "name": "msl-website",
+  "name": "blaze2d-website",
   "private": true,
   "version": "0.1.0",
-  "description": "MSL - Moiré Superlattice Framework Website",
+  "description": "Blaze 2D - A lightweight 2D Maxwell solver for photonic band structures",
   "author": "Rene-Marcel Lehner",
   "license": "MIT",
   "type": "module",

@@ -6,18 +6,18 @@ import 'katex/dist/katex.min.css'
 import './global.css'
 
 export const metadata = {
-  title: 'MSL Framework',
-  description: 'Documentation for the Moiré Lattice (MSL) framework',
+  title: 'Blaze 2D',
+  description: 'A lightweight 2D Maxwell solver for photonic band structures',
 }
  
-const banner = <Banner storageKey="msl-v1">MSL v1.0 Documentation 📚</Banner>
+const banner = <Banner storageKey="blaze2d-v1">Blaze 2D Documentation 📚</Banner>
 const navbar = (
   <Navbar
-    logo={<b>MSL</b>}
+    logo={<b>Blaze 2D</b>}
     // Additional navbar options can be added here
   />
 )
-const footer = <Footer>MIT {new Date().getFullYear()} © MSL Framework.</Footer>
+const footer = <Footer>MIT {new Date().getFullYear()} © Blaze 2D.</Footer>
  
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -39,7 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           banner={banner}
           navbar={navbar}
           pageMap={await getPageMap()}
-          docsRepositoryBase="https://github.com/RnLe/msl/web/apps/website/app/content"
+          docsRepositoryBase="https://github.com/RnLe/blaze2d/tree/main/web/content"
           footer={footer}
           // Additional layout options
         >
