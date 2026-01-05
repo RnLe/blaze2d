@@ -98,6 +98,7 @@ Significant performance gains are achievable through:
 | Optimization | Expected Impact |
 |--------------|-----------------|
 | Optimized preconditioners | up to 2–3× fewer iterations |
+| Dynamic subspace deflation | Reduced dense matrix ops; faster convergence |
 | Advanced BLAS/LAPACK integration | Faster dense operations; speedup potential 1–3x |
 | **GPU acceleration (CUDA/Metal)** | 10–100× for large grids; linear scaling (!) |
 
