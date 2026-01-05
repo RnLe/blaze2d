@@ -73,7 +73,7 @@ export default function BlazePage() {
           marginBottom: '1rem',
           letterSpacing: '-0.02em',
         }}>
-          Built on the Shoulders of Giants
+          Validated Against MIT Photonic Bands
         </h2>
         <p style={{
           fontSize: '1.1rem',
@@ -83,7 +83,7 @@ export default function BlazePage() {
           marginBottom: '3rem',
           whiteSpace: 'nowrap',
         }}>
-          Validated against MIT Photonic Bands — the gold standard in photonic band structure computation
+          Cross-validated with the gold standard in photonic band structure computation
         </p>
         <BandComparisonPlot />
       </section>
