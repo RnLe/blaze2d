@@ -426,8 +426,19 @@ pub fn enumerate_sectors(
     k_frac: [f64; 2],
     lattice_class: LatticeClass,
     tolerance: f64,
+    simplify: bool,
 ) -> SectorSchedule {
-    let active_mirrors = detect_active_mirrors(k_frac, lattice_class, tolerance);
+    let mut active_mirrors = detect_active_mirrors(k_frac, lattice_class, tolerance);
+
+    // If simplification is requested, limit to just one mirror (max 2 sectors)
+    // This reduces overhead for small N.
+    if simplify && active_mirrors.len() > 1 {
+        debug!(
+            "[symmetry] Simplifying symmetry: truncating {} mirrors to 1",
+            active_mirrors.len()
+        );
+        active_mirrors.truncate(1);
+    }
 
     if active_mirrors.is_empty() {
         // Generic k-point: no symmetry, single full-space sector

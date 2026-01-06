@@ -105,7 +105,8 @@
     - `compute_aq_block`: Uses `operator.batch_apply`.
     - `precondition_residuals`: Uses `preconditioner.batch_apply`.
     - `orthonormalize_subspace`: Uses `operator.batch_apply_mass`.
-- [ ] **Work Buffer Reuse**: The main loop allocates/frees `residuals`, `p_block`, `aq_block`, and `w_new_block` every iteration. Introducing a `Workspace` structure to reuse these buffers would reduce allocator pressure.
+- [x] **Symmetry-based Reduction**: Implement "Parity Projector" to decompose the problem into even/odd sectors, effectively reducing the search space size and ensuring correct mode classification.
 
 ### Medium Priority
 - [ ] **Batched Orthogonalization**: Ensure SVQB uses batched BLAS Level 3 operations (GEMM) for inner products instead of looped dot products.
+

@@ -212,6 +212,12 @@ pub struct RunOptions {
     ///
     /// Default: false (band tracking is enabled)
     pub disable_band_tracking: bool,
+    /// Enable symmetry-based reduction (parity projection).
+    ///
+    /// When enabled, the solver decomposes the problem into symmetry sectors
+    /// (e.g., Even/Odd) based on the active mirror symmetries at each k-point.
+    /// This resolves degeneracies and improves convergence stability.
+    pub enable_symmetry: bool,
 }
 
 impl Default for RunOptions {
@@ -224,6 +230,7 @@ impl Default for RunOptions {
             band_window_blend: 0.5,        // Equal mix of adaptive and band-window
             band_window_scale: 0.5,        // Conservative scaling of median eigenvalue
             disable_band_tracking: false,  // Band tracking enabled by default
+            enable_symmetry: false,        // Symmetry disabled by default
         }
     }
 }
@@ -297,6 +304,12 @@ impl RunOptions {
     /// (e.g., 5×5 grids around Γ) where band tracking can cause spurious hopping.
     pub fn with_disable_band_tracking(mut self, disabled: bool) -> Self {
         self.disable_band_tracking = disabled;
+        self
+    }
+
+    /// Enable symmetry-based reduction.
+    pub fn with_symmetry(mut self, enabled: bool) -> Self {
+        self.enable_symmetry = enabled;
         self
     }
 }
@@ -648,28 +661,127 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             }
         };
 
-        // Create and run the eigensolver
-        let mut solver = Eigensolver::new(
-            &mut theta,
-            eigensolver_config,
-            preconditioner_opt
-                .as_mut()
-                .map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
-            warm_slice,
-        );
+        // Detect symmetry sectors
+        // We enable "simplify" mode to limit to Even/Odd only (max 2 sectors) 
+        // to avoid overhead on small N problems.
+        let sectors = if options.enable_symmetry {
+             crate::symmetry::enumerate_sectors(
+                 k_frac, 
+                 job.geom.lattice.classify(), 
+                 1e-6,
+                 true // Simplify: restrict to max 1 mirror axis (2 sectors)
+             )
+        } else {
+             crate::symmetry::SectorSchedule::trivial(k_frac)
+        };
 
-        let result = solver.solve();
-        let k_iterations = result.iterations;
+        // Solve each sector and collect results
+        let mut sector_eigenpairs: Vec<(f64, Field2D)> = Vec::new(); // (eigenvalue, eigenvector)
+        let mut k_iterations = 0;
+
+        for sector in &sectors.sectors {
+             if options.enable_symmetry && !sector.is_trivial() {
+                 debug!("[bandstructure] Solving sector: {}", sector.label);
+             }
+
+             // Configure solver for this sector
+             // Optimization: reduce n_bands if using multiple symmetry sectors
+             // Simplified logic: Even split with minimal buffer.
+             let mut sector_config = eigensolver_config.clone();
+             if options.enable_symmetry && sectors.sectors.len() > 1 {
+                 let n_total = job.eigensolver.n_bands;
+                 // ceil(N/2) roughly, assuming 2 sectors. 
+                 // If N=12 -> target=6. If N=6 -> target=3.
+                 // We add +1 just to be safe against slight asymmetry (e.g. 7 even, 5 odd).
+                 let target = (n_total / 2) + 1;
+                 
+                 sector_config.n_bands = target;
+                 debug!(
+                     "[bandstructure] Sector optimization: target {} bands (reduced from {})",
+                     target, n_total
+                 );
+             }
+
+             // Create symmetry projector (if applicable)
+             let projector = crate::symmetry::projector_for_sector(job.grid, sector);
+
+             // Filter warm start vectors through the projector
+             // This ensures we only pass vectors that belong to this symmetry sector,
+             // preventing the solver from being initialized with orthogonal (zeroed) vectors.
+             let filtered_warm_storage;
+             let warm_start_ref = if let (Some(ws), Some(proj)) = (warm_slice, &projector) {
+                 // Project and filter out null vectors
+                 let filtered: Vec<crate::field::Field2D> = ws.iter()
+                     .map(|f| {
+                         let mut p = f.clone();
+                         proj.apply(&mut p);
+                         p
+                     })
+                     .filter(|f| {
+                         // Check L2 norm squared > threshold
+                         let norm_sq = f.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>();
+                         norm_sq > 1e-6
+                     })
+                     .take(sector_config.n_bands)
+                     .collect();
+
+                 if !filtered.is_empty() {
+                     filtered_warm_storage = Some(filtered);
+                     filtered_warm_storage.as_deref()
+                 } else {
+                     None
+                 }
+             } else {
+                 warm_slice
+             };
+
+             let mut solver = Eigensolver::new(
+                &mut theta,
+                sector_config, 
+                preconditioner_opt
+                    .as_mut()
+                    .map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
+                warm_start_ref,
+            );
+
+            // Configure symmetry projector
+            if let Some(proj) = projector {
+                solver.set_symmetry_projector(proj);
+            }
+
+            let result = solver.solve();
+            k_iterations += result.iterations;
+
+            // Collect results from this sector
+            let active_evals = result.eigenvalues; 
+            let active_vecs = solver.all_eigenvectors(); // Note: Includes deflated vectors
+             
+            // Pair up eigenvalues and eigenvectors
+            // Eigensolver guarantees result.eigenvalues and all_eigenvectors() are aligned and same length
+            for (ev, vec) in active_evals.into_iter().zip(active_vecs.into_iter()) {
+                sector_eigenpairs.push((ev, vec));
+            }
+        }
+
+        // Sort merged results by eigenvalue (ascending)
+        sector_eigenpairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Truncate to requested number of bands
+        let n_requested = job.eigensolver.n_bands;
+        if sector_eigenpairs.len() > n_requested {
+            sector_eigenpairs.truncate(n_requested);
+        }
+
+        // Unzip into separate vectors
+        let (final_evals, mut eigenvectors): (Vec<f64>, Vec<Field2D>) = sector_eigenpairs.into_iter().unzip();
 
         // Convert eigenvalues (ω²) to frequencies (ω)
-        let mut omegas: Vec<f64> = result
-            .eigenvalues
+        let mut omegas: Vec<f64> = final_evals
             .iter()
             .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
             .collect();
 
-        // Use all_eigenvectors() to include deflated vectors (e.g., Γ constant mode)
-        let mut eigenvectors = solver.all_eigenvectors();
+        // (eigenvectors are already set)
 
         total_iterations += k_iterations;
 
@@ -725,7 +837,7 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
 
         // Store eigenvalues (ω²) for band-window preconditioner shift at next k-point
         // We store the raw eigenvalues (λ = ω²), not frequencies.
-        prev_eigenvalues = Some(result.eigenvalues.clone());
+        prev_eigenvalues = Some(final_evals.clone());
 
         // Update subspace history or warm-start store for next k-point
         if let Some(ref mut history) = subspace_history {

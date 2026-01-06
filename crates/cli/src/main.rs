@@ -75,6 +75,13 @@ struct Cli {
     #[arg(long, value_enum, default_value = "auto")]
     preconditioner: PrecondArg,
 
+    /// Enable symmetry-based reduction (Deep Symmetry).
+    ///
+    /// When enabled, the solver decomposes the problem into symmetry sectors
+    /// to reduce search space and resolve degeneracies.
+    #[arg(long)]
+    symmetry: bool,
+
     /// Write logs to a file instead of stderr
     ///
     /// Creates a timestamped log file with all log output. Useful for debugging
@@ -473,7 +480,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_band_window_shift(cli.band_window_shift)
         .with_band_window_blend(cli.band_window_blend)
         .with_band_window_scale(cli.band_window_scale)
-        .with_disable_band_tracking(cli.no_band_tracking);
+        .with_disable_band_tracking(cli.no_band_tracking)
+        .with_symmetry(cli.symmetry);
 
     if !cli.quiet && use_subspace_pred {
         if use_extrapolation {
