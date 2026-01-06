@@ -1,1 +1,5 @@
 !*.md
+!profiles/Makefile
+profiles/baseline/
+profiles/results/
+profiles/*.txt

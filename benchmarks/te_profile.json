@@ -1,0 +1,107 @@
+{
+  "session_total_ms": 1753.998,
+  "session_std_ms": 29.073,
+  "iterations": 10,
+  "timestamp": "1767708976",
+  "methods": {
+    "svqb::eigendecomp": {
+      "calls": 268,
+      "total_ms": 39.539,
+      "avg_us": 147.534,
+      "min_us": 69.928,
+      "max_us": 5026.325,
+      "std_ms": 0.295,
+      "pct": 2.25
+    },
+    "svqb::gram_matrix": {
+      "calls": 268,
+      "total_ms": 109.121,
+      "avg_us": 407.166,
+      "min_us": 157.356,
+      "max_us": 1228.041,
+      "std_ms": 1.226,
+      "pct": 6.22
+    },
+    "apply_te": {
+      "calls": 6245,
+      "total_ms": 546.374,
+      "avg_us": 87.49,
+      "min_us": 79.772,
+      "max_us": 607.631,
+      "std_ms": 3.888,
+      "pct": 31.15
+    },
+    "svqb::gemm": {
+      "calls": 268,
+      "total_ms": 251.007,
+      "avg_us": 936.595,
+      "min_us": 366.324,
+      "max_us": 3518.717,
+      "std_ms": 8.582,
+      "pct": 14.31
+    },
+    "project_operator": {
+      "calls": 268,
+      "total_ms": 110.139,
+      "avg_us": 410.968,
+      "min_us": 172.238,
+      "max_us": 1596.198,
+      "std_ms": 2.515,
+      "pct": 6.28
+    },
+    "update_ritz_vectors": {
+      "calls": 268,
+      "total_ms": 188.547,
+      "avg_us": 703.532,
+      "min_us": 360.761,
+      "max_us": 2348.012,
+      "std_ms": 6.555,
+      "pct": 10.75
+    },
+    "fft_2d::inverse": {
+      "calls": 25428,
+      "total_ms": 315.961,
+      "avg_us": 12.426,
+      "min_us": 11.348,
+      "max_us": 393.556,
+      "std_ms": 1.716,
+      "pct": 18.01
+    },
+    "compute_aq_block": {
+      "calls": 268,
+      "total_ms": 524.364,
+      "avg_us": 1956.581,
+      "min_us": 1155.12,
+      "max_us": 6455.82,
+      "std_ms": 4.015,
+      "pct": 29.9
+    },
+    "svqb": {
+      "calls": 268,
+      "total_ms": 434.382,
+      "avg_us": 1620.83,
+      "min_us": 658.95,
+      "max_us": 8606.467,
+      "std_ms": 10.389,
+      "pct": 24.77
+    },
+    "orthonormalize_subspace": {
+      "calls": 268,
+      "total_ms": 447.123,
+      "avg_us": 1668.368,
+      "min_us": 688.769,
+      "max_us": 8819.949,
+      "std_ms": 10.802,
+      "pct": 25.49
+    },
+    "fft_2d::forward": {
+      "calls": 25428,
+      "total_ms": 296.742,
+      "avg_us": 11.67,
+      "min_us": 10.624,
+      "max_us": 385.319,
+      "std_ms": 1.584,
+      "pct": 16.92
+    }
+  }
+}

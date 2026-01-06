@@ -23,6 +23,10 @@ wasm-linalg = ["dep:nalgebra"]
 # This feature is automatically enabled by the CUDA backend.
 cuda = []
 
+# Use batched FFT in operator application. Disable to fall back to 
+# sequential per-vector FFTs for A/B performance testing.
+batched-fft = []
+
 # Enable profiling instrumentation. When disabled (default), profiling calls
 # are no-ops with zero runtime overhead.
 profiling = []

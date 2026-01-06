@@ -1,0 +1,32 @@
+# Square lattice profiling benchmark: TE mode
+# eps=13, r=0.3, 64×64 grid, 12 bands
+# Designed for stable profiling with low variance
+
+polarization = "TE"
+
+[geometry]
+eps_bg = 13.0
+
+[geometry.lattice]
+type = "square"
+a = 1.0
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.3
+eps_inside = 1.0
+
+[grid]
+nx = 64
+ny = 64
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "square"
+segments_per_leg = 10
+
+[eigensolver]
+n_bands = 12
+max_iter = 200
+tol = 1e-8
