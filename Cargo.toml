@@ -41,6 +41,7 @@ num_cpus = "1.16"
 # Additional LTO doesn't help and may hurt cache locality
 panic = "abort"       # No unwinding overhead
 strip = true          # Strip symbols for smaller binary
+codegen-units = 1     # Maximize optimization (slower build)
 
 [profile.bench]
 inherits = "release"

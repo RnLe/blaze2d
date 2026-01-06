@@ -225,11 +225,16 @@ eps_bg = {{ min = 12.999, max = 13.001, step = {step:.10f} }}
 def build_bulk_driver():
     """Build blaze2d-bulk-driver in release mode."""
     print("Building blaze2d-bulk-driver (release)...")
+    # Enable native CPU optimizations for maximum performance
+    env = os.environ.copy()
+    env["RUSTFLAGS"] = "-C target-cpu=native"
+    
     result = subprocess.run(
         ["cargo", "build", "--release", "-p", "blaze2d-bulk-driver"],
         cwd=PROJECT_ROOT,
         capture_output=True,
-        text=True
+        text=True,
+        env=env
     )
     if result.returncode != 0:
         print("ERROR: Failed to build blaze2d-bulk-driver")
