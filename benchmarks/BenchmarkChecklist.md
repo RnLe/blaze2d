@@ -97,3 +97,12 @@
 | Speed (multi-core) | - | - | |
 | Scaling | - | - | |
 | Memory | - | - | |
+
+## Optimization Opportunities (Identified via Audit)
+
+### High Priority
+- [ ] **Batched Operator Application**: `Eigensolver::compute_aq_block` calls `apply` sequentially. Refactor `LinearOperator` to support `batch_apply` to utilize optimized backend implementations (e.g., fused gradients, batched FFTs).
+- [ ] **Work Buffer Reuse**: The main loop allocates/frees `residuals`, `p_block`, `aq_block`, and `w_new_block` every iteration. Introducing a `Workspace` structure to reuse these buffers would reduce allocator pressure.
+
+### Medium Priority
+- [ ] **Batched Orthogonalization**: Ensure SVQB uses batched BLAS Level 3 operations (GEMM) for inner products instead of looped dot products.
