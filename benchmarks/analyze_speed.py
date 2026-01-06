@@ -51,15 +51,15 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
     mpb_data = load_results(results_dir, "mpb", core_mode)
     blaze_data = load_results(results_dir, "blaze2d", core_mode)
     
-    if mpb_data is None:
-        print(f"  WARNING: MPB {core_mode}-core results not found")
-        return None
-    if blaze_data is None:
-        print(f"  WARNING: Blaze2D {core_mode}-core results not found")
+    if mpb_data is None and blaze_data is None:
+        print(f"  No results found for {core_mode}-core mode.")
         return None
     
-    print(f"\n  MPB timestamp: {mpb_data['timestamp']}")
-    print(f"  Blaze2D timestamp: {blaze_data['timestamp']}")
+    mpb_ts = mpb_data['timestamp'] if mpb_data else "N/A"
+    blaze_ts = blaze_data['timestamp'] if blaze_data else "N/A"
+    
+    print(f"\n  MPB timestamp: {mpb_ts}")
+    print(f"  Blaze2D timestamp: {blaze_ts}")
     
     # Map configs between MPB and Blaze2D
     # MPB: configs["config_a"]["polarizations"]["tm"]
@@ -79,17 +79,30 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
     
     for mpb_config, pol, blaze_config, desc in config_mappings:
         # Get MPB data
-        mpb_pol_data = mpb_data["configs"][mpb_config]["polarizations"][pol]
-        mpb_mean = mpb_pol_data["mean_ms"]
-        mpb_std = mpb_pol_data["std_ms"]
+        mpb_mean, mpb_std = 0.0, 0.0
+        if mpb_data:
+            try:
+                mpb_pol_data = mpb_data["configs"][mpb_config]["polarizations"][pol]
+                mpb_mean = mpb_pol_data["mean_ms"]
+                mpb_std = mpb_pol_data["std_ms"]
+            except (KeyError, TypeError):
+                pass
         
         # Get Blaze2D data
-        blaze_cfg_data = blaze_data["configs"][blaze_config]
-        blaze_mean = blaze_cfg_data["mean_ms"]
-        blaze_std = blaze_cfg_data["std_ms"]
+        blaze_mean, blaze_std = 0.0, 0.0
+        if blaze_data:
+            try:
+                blaze_cfg_data = blaze_data["configs"][blaze_config]
+                blaze_mean = blaze_cfg_data["mean_ms"]
+                blaze_std = blaze_cfg_data["std_ms"]
+            except (KeyError, TypeError):
+                pass
         
         # Compute speedup
-        speedup, speedup_err = compute_speedup(mpb_mean, mpb_std, blaze_mean, blaze_std)
+        if mpb_mean > 0 and blaze_mean > 0:
+            speedup, speedup_err = compute_speedup(mpb_mean, mpb_std, blaze_mean, blaze_std)
+        else:
+            speedup, speedup_err = 0.0, 0.0
         
         comparisons.append({
             "config": desc,
@@ -102,24 +115,37 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
             "speedup_err": speedup_err,
         })
         
-        print(f"  {desc + ' ' + pol.upper():<22} {mpb_mean:>6.1f} ± {mpb_std:<5.1f} "
-              f"{blaze_mean:>6.1f} ± {blaze_std:<5.1f} "
-              f"{speedup:>5.1f}× ± {speedup_err:.1f}")
+        mpb_str = f"{mpb_mean:>6.1f} ± {mpb_std:<5.1f}" if mpb_mean > 0 else "N/A"
+        blaze_str = f"{blaze_mean:>6.1f} ± {blaze_std:<5.1f}" if blaze_mean > 0 else "N/A"
+        speedup_str = f"{speedup:>5.1f}× ± {speedup_err:.1f}" if speedup > 0 else "N/A"
+        
+        print(f"  {desc + ' ' + pol.upper():<22} {mpb_str:<15} {blaze_str:<15} {speedup_str}")
     
     # Summary stats
-    speedups = [c["speedup"] for c in comparisons]
-    speedup_errs = [c["speedup_err"] for c in comparisons]
+    valid_speedups = [c["speedup"] for c in comparisons if c["speedup"] > 0]
+    valid_errs = [c["speedup_err"] for c in comparisons if c["speedup"] > 0]
+    
+    if valid_speedups:
+        mean_speedup = float(np.mean(valid_speedups))
+        min_speedup = float(np.min(valid_speedups))
+        max_speedup = float(np.max(valid_speedups))
+        combined_err = float(np.sqrt(np.sum(np.array(valid_errs)**2)) / len(valid_errs))
+    else:
+        mean_speedup = 0.0
+        min_speedup = 0.0
+        max_speedup = 0.0
+        combined_err = 0.0
     
     return {
         "core_mode": core_mode,
-        "mpb_timestamp": mpb_data["timestamp"],
-        "blaze_timestamp": blaze_data["timestamp"],
+        "mpb_timestamp": mpb_ts,
+        "blaze_timestamp": blaze_ts,
         "comparisons": comparisons,
         "summary": {
-            "mean_speedup": float(np.mean(speedups)),
-            "min_speedup": float(np.min(speedups)),
-            "max_speedup": float(np.max(speedups)),
-            "combined_error": float(np.sqrt(np.sum(np.array(speedup_errs)**2)) / len(speedup_errs)),
+            "mean_speedup": mean_speedup,
+            "min_speedup": min_speedup,
+            "max_speedup": max_speedup,
+            "combined_error": combined_err,
         }
     }
 

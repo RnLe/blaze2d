@@ -63,11 +63,13 @@ def plot_time_comparison(ax, mode_data: dict, title: str):
     
     # Add value labels
     for bar, val in zip(bars1, mpb_times):
-        ax.annotate(f'{val:.0f}',
+        label = f'{val:.0f}' if val > 0 else "N/A"
+        ax.annotate(label,
                     xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
                     ha='center', va='bottom', fontsize=8)
     for bar, val in zip(bars2, blaze_times):
-        ax.annotate(f'{val:.0f}',
+        label = f'{val:.0f}' if val > 0 else "N/A"
+        ax.annotate(label,
                     xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
                     ha='center', va='bottom', fontsize=8)
 
@@ -99,7 +101,8 @@ def plot_speedup_comparison(ax, results: dict):
         
         # Value labels
         for bar, val in zip(bars, speedups):
-            ax.annotate(f'{val:.1f}×',
+            label = f'{val:.1f}×' if val > 0 else "N/A"
+            ax.annotate(label,
                         xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
                         ha='center', va='bottom', fontsize=8)
     
@@ -145,7 +148,8 @@ def plot_summary_bars(ax, results: dict):
     
     # Value labels
     for bar, val, err in zip(bars, speedups, errors):
-        ax.annotate(f'{val:.1f}× ± {err:.1f}',
+        label = f'{val:.1f}× ± {err:.1f}' if val > 0 else "N/A"
+        ax.annotate(label,
                     xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
                     ha='center', va='bottom', fontsize=10, fontweight='bold')
 
