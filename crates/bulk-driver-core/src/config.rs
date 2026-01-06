@@ -1014,6 +1014,16 @@ pub struct BulkSection {
     /// Default: `false` (band tracking enabled)
     #[serde(default)]
     pub disable_band_tracking: bool,
+
+    /// Enable symmetry-based reduction (parity projection).
+    ///
+    /// When enabled, the solver decomposes the problem into symmetry sectors
+    /// (e.g., Even/Odd) based on the active mirror symmetries at each k-point.
+    /// This resolves degeneracies and improves convergence stability.
+    ///
+    /// Default: `false` (symmetry disabled)
+    #[serde(default)]
+    pub enable_symmetry: bool,
 }
 
 impl Default for BulkSection {
@@ -1024,6 +1034,7 @@ impl Default for BulkSection {
             dry_run: false,
             skip_final_gamma: false,
             disable_band_tracking: false,
+            enable_symmetry: false,
         }
     }
 }
