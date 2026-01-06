@@ -182,6 +182,14 @@ struct Cli {
     /// due to large jumps or direction changes in k-space.
     #[arg(long)]
     no_band_tracking: bool,
+
+    /// Enable profiling and write JSON report to the specified path
+    ///
+    /// Records timing information for key operations (FFTs, eigensolver,
+    /// operator applications) and outputs a JSON report at the end.
+    /// Requires the `profiling` feature to be enabled at compile time.
+    #[arg(long)]
+    profile: Option<PathBuf>,
 }
 
 /// CLI path argument supporting all four lattice types.
@@ -571,6 +579,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             info!("wrote {} rows to stdout", result.k_path.len());
         }
+    }
+
+    // Write profiling report if requested
+    #[cfg(feature = "profiling")]
+    if let Some(ref profile_path) = cli.profile {
+        use blaze2d_core::profiler::get_profile_json;
+        let json = get_profile_json();
+        fs::write(profile_path, &json)?;
+        if !cli.quiet {
+            info!("wrote profiling report to {}", profile_path.display());
+        }
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    if cli.profile.is_some() {
+        warn!("--profile flag requires the `profiling` feature to be enabled");
+        warn!("recompile with: cargo build --release --features profiling");
     }
 
     Ok(())

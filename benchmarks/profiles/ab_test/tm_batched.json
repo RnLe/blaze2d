@@ -1,0 +1,134 @@
+{
+  "session_total_ms": 1329.699,
+  "session_std_ms": 16.16,
+  "iterations": 10,
+  "timestamp": "1767706755",
+  "methods": {
+    "svqb::gram_matrix": {
+      "calls": 152,
+      "total_ms": 126.376,
+      "avg_us": 831.418,
+      "min_us": 204.524,
+      "max_us": 1685.349,
+      "std_ms": 0.879,
+      "pct": 9.5
+    },
+    "update_ritz_vectors": {
+      "calls": 152,
+      "total_ms": 205.365,
+      "avg_us": 1351.083,
+      "min_us": 530.635,
+      "max_us": 4334.797,
+      "std_ms": 3.311,
+      "pct": 15.44
+    },
+    "project_operator": {
+      "calls": 152,
+      "total_ms": 104.941,
+      "avg_us": 690.399,
+      "min_us": 193.658,
+      "max_us": 3946.695,
+      "std_ms": 2.737,
+      "pct": 7.89
+    },
+    "batch_fft_2d::forward": {
+      "calls": 152,
+      "total_ms": 60.503,
+      "avg_us": 398.046,
+      "min_us": 179.217,
+      "max_us": 1209.591,
+      "std_ms": 0.567,
+      "pct": 4.55
+    },
+    "apply_tm": {
+      "calls": 467,
+      "total_ms": 13.367,
+      "avg_us": 28.624,
+      "min_us": 26.03,
+      "max_us": 395.092,
+      "std_ms": 0.27,
+      "pct": 1.01
+    },
+    "batch_apply_tm": {
+      "calls": 152,
+      "total_ms": 142.637,
+      "avg_us": 938.402,
+      "min_us": 419.48,
+      "max_us": 2139.174,
+      "std_ms": 1.761,
+      "pct": 10.73
+    },
+    "svqb::eigendecomp": {
+      "calls": 152,
+      "total_ms": 41.578,
+      "avg_us": 273.542,
+      "min_us": 92.294,
+      "max_us": 4724.62,
+      "std_ms": 0.552,
+      "pct": 3.13
+    },
+    "svqb::gemm": {
+      "calls": 152,
+      "total_ms": 280.866,
+      "avg_us": 1847.805,
+      "min_us": 496.818,
+      "max_us": 5843.887,
+      "std_ms": 5.475,
+      "pct": 21.12
+    },
+    "fft_2d::inverse": {
+      "calls": 2366,
+      "total_ms": 30.198,
+      "avg_us": 12.763,
+      "min_us": 11.369,
+      "max_us": 342.95,
+      "std_ms": 0.354,
+      "pct": 2.27
+    },
+    "batch_fft_2d::inverse": {
+      "calls": 152,
+      "total_ms": 63.892,
+      "avg_us": 420.339,
+      "min_us": 188.929,
+      "max_us": 1195.421,
+      "std_ms": 1.162,
+      "pct": 4.8
+    },
+    "orthonormalize_subspace": {
+      "calls": 152,
+      "total_ms": 495.231,
+      "avg_us": 3258.097,
+      "min_us": 923.403,
+      "max_us": 11158.084,
+      "std_ms": 6.16,
+      "pct": 37.24
+    },
+    "fft_2d::forward": {
+      "calls": 2366,
+      "total_ms": 28.749,
+      "avg_us": 12.151,
+      "min_us": 10.673,
+      "max_us": 428.197,
+      "std_ms": 0.349,
+      "pct": 2.16
+    },
+    "compute_aq_block": {
+      "calls": 152,
+      "total_ms": 154.585,
+      "avg_us": 1017.009,
+      "min_us": 437.676,
+      "max_us": 2273.149,
+      "std_ms": 2.075,
+      "pct": 11.63
+    },
+    "svqb": {
+      "calls": 152,
+      "total_ms": 479.408,
+      "avg_us": 3154.003,
+      "min_us": 865.715,
+      "max_us": 10853.335,
+      "std_ms": 5.754,
+      "pct": 36.05
+    }
+  }
+}

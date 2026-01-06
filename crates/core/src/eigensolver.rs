@@ -992,6 +992,8 @@ where
         bx_precomputed: Vec<B::Buffer>,
         (x_size, p_size, w_size): (usize, usize, usize),
     ) -> (Vec<B::Buffer>, Vec<B::Buffer>, SvqbResult) {
+        crate::profiler::start_timer("orthonormalize_subspace");
+        
         // Build B*q block, reusing precomputed B*X and computing B*P and B*W fresh
         let mut bq_block: Vec<B::Buffer> = Vec::with_capacity(q_block.len());
 
@@ -1008,6 +1010,7 @@ where
         }
 
         // Apply SVQB to B-orthonormalize
+        crate::profiler::start_timer("svqb");
         let config = SvqbConfig::default();
         let mut result = svqb_orthonormalize(
             self.operator.backend(),
@@ -1015,6 +1018,7 @@ where
             &mut bq_block,
             &config,
         );
+        crate::profiler::stop_timer("svqb");
 
         // Compute per-block drop counts from kept_indices
         let block_drops = result.compute_block_drops(x_size, p_size, w_size);
@@ -1024,6 +1028,7 @@ where
         q_block.truncate(result.output_rank);
         bq_block.truncate(result.output_rank);
 
+        crate::profiler::stop_timer("orthonormalize_subspace");
         (q_block, bq_block, result)
     }
 
@@ -1041,6 +1046,8 @@ where
     /// # Returns
     /// A vector of buffers containing A*q_j for each q_j in q_block.
     fn compute_aq_block(&mut self, q_block: &[B::Buffer]) -> Vec<B::Buffer> {
+        crate::profiler::start_timer("compute_aq_block");
+        
         let r = q_block.len();
         let mut aq_block: Vec<B::Buffer> = Vec::with_capacity(r);
         for q in q_block {
@@ -1048,6 +1055,8 @@ where
             self.operator.apply(q, &mut aq);
             aq_block.push(aq);
         }
+        
+        crate::profiler::stop_timer("compute_aq_block");
         aq_block
     }
 
@@ -1072,8 +1081,11 @@ where
         q_block: &[B::Buffer],
         aq_block: &[B::Buffer],
     ) -> Vec<num_complex::Complex64> {
+        crate::profiler::start_timer("project_operator");
+        
         let r = q_block.len();
         if r == 0 {
+            crate::profiler::stop_timer("project_operator");
             return vec![];
         }
 
@@ -1081,7 +1093,7 @@ where
         // The matrix is Hermitian, so A_s[j,i] = conj(A_s[i,j])
 
         #[cfg(feature = "cuda")]
-        {
+        let result = {
             // GPU path: use batched gram_matrix (single ZGEMM call)
             let backend = self.operator.backend();
             let a_projected_row_major = backend.gram_matrix(q_block, aq_block);
@@ -1094,10 +1106,10 @@ where
                 }
             }
             a_projected
-        }
+        };
 
         #[cfg(all(not(feature = "cuda"), feature = "native-linalg"))]
-        {
+        let result = {
             // CPU path with faer: use faer GEMM for matrix multiplication
             // A_s = Q^H * AQ where Q is n×r and AQ is n×r
             // Result is r×r in column-major order
@@ -1127,10 +1139,10 @@ where
                 }
             }
             a_projected
-        }
+        };
 
         #[cfg(all(not(feature = "cuda"), feature = "wasm-linalg"))]
-        {
+        let result = {
             // CPU path with nalgebra: use nalgebra GEMM for matrix multiplication
             // A_s = Q^H * AQ where Q is n×r and AQ is n×r
             // Result is r×r in column-major order
@@ -1160,7 +1172,10 @@ where
                 }
             }
             a_projected
-        }
+        };
+        
+        crate::profiler::stop_timer("project_operator");
+        result
     }
 
     // ========================================================================
@@ -1193,11 +1208,16 @@ where
         aq_block: &[B::Buffer],
         dense_result: &DenseEigenResult,
     ) {
+        #[cfg(feature = "profiling")]
+        crate::profiler::start_timer("update_ritz_vectors");
+
         let n_bands = self.config.n_bands;
         let r = dense_result.dim; // Subspace dimension
         let m = n_bands.min(r); // Number of Ritz pairs to extract
 
         if m == 0 || r == 0 {
+            #[cfg(feature = "profiling")]
+            crate::profiler::stop_timer("update_ritz_vectors");
             return;
         }
 
@@ -1395,6 +1415,9 @@ where
 
         // Replace old X block with new Ritz vectors
         self.x_block = new_x_block;
+
+        #[cfg(feature = "profiling")]
+        crate::profiler::stop_timer("update_ritz_vectors");
     }
 
     /// Compute new history directions W_{k+1} = Q_k * Y_2.

@@ -73,6 +73,11 @@ impl CpuBackend {
     }
 
     fn fft_2d(&self, buffer: &mut Field2D, direction: FftDirection) {
+        blaze2d_core::profiler::start_timer(match direction {
+            FftDirection::Forward => "fft_2d::forward",
+            FftDirection::Inverse => "fft_2d::inverse",
+        });
+        
         let grid = buffer.grid();
         let nx = grid.nx;
         let ny = grid.ny;
@@ -136,6 +141,111 @@ impl CpuBackend {
                 *value *= scale;
             }
         }
+        
+        blaze2d_core::profiler::stop_timer(match direction {
+            FftDirection::Forward => "fft_2d::forward",
+            FftDirection::Inverse => "fft_2d::inverse",
+        });
+    }
+
+    /// Batched 2D FFT: process all rows across all buffers first, then all columns.
+    ///
+    /// This improves cache utilization for FFT plans and reduces mutex contention
+    /// by acquiring the plan once and reusing it across all buffers.
+    fn batch_fft_2d(&self, buffers: &mut [Field2D], direction: FftDirection) {
+        if buffers.is_empty() {
+            return;
+        }
+
+        blaze2d_core::profiler::start_timer(match direction {
+            FftDirection::Forward => "batch_fft_2d::forward",
+            FftDirection::Inverse => "batch_fft_2d::inverse",
+        });
+
+        // All buffers must have the same grid (same nx, ny)
+        let grid = buffers[0].grid();
+        let nx = grid.nx;
+        let ny = grid.ny;
+        assert!(nx > 0 && ny > 0, "grid must be non-zero length");
+
+        #[cfg(debug_assertions)]
+        for buf in buffers.iter() {
+            let g = buf.grid();
+            assert_eq!(g.nx, nx, "all buffers must have same nx");
+            assert_eq!(g.ny, ny, "all buffers must have same ny");
+        }
+
+        // Acquire FFT plans once for the entire batch
+        let (row_fft, col_fft) = {
+            let mut planner = self
+                .plan_cache
+                .lock()
+                .expect("fft plan cache mutex poisoned");
+            let row = match direction {
+                FftDirection::Forward => planner.plan_fft_forward(nx),
+                FftDirection::Inverse => planner.plan_fft_inverse(nx),
+            };
+            let col = match direction {
+                FftDirection::Forward => planner.plan_fft_forward(ny),
+                FftDirection::Inverse => planner.plan_fft_inverse(ny),
+            };
+            (row, col)
+        };
+
+        #[cfg(feature = "parallel")]
+        let use_parallel = self.parallel_fft && (grid.len() * buffers.len()) >= self.parallel_min_points;
+
+        #[cfg(not(feature = "parallel"))]
+        let use_parallel = false;
+
+        if use_parallel {
+            #[cfg(feature = "parallel")]
+            batch_fft_2d_parallel(
+                buffers,
+                nx,
+                ny,
+                row_fft.clone(),
+                col_fft.clone(),
+                self.parallel_pool.as_deref(),
+            );
+        } else {
+            // Process all rows across all buffers first
+            for buffer in buffers.iter_mut() {
+                process_rows_serial(buffer.as_mut_slice(), nx, &row_fft);
+            }
+
+            // Process all columns across all buffers
+            // Reuse a single scratch buffer for all column transforms
+            let mut scratch = vec![Complex64::default(); ny];
+            for buffer in buffers.iter_mut() {
+                process_columns_serial_with_scratch(buffer.as_mut_slice(), nx, ny, &col_fft, &mut scratch);
+            }
+        }
+
+        // Apply inverse normalization if needed
+        if matches!(direction, FftDirection::Inverse) {
+            let scale = 1.0 / (nx * ny) as f64;
+            for buffer in buffers.iter_mut() {
+                let data = buffer.as_mut_slice();
+                #[cfg(feature = "parallel")]
+                if use_parallel {
+                    data.par_iter_mut().for_each(|value| *value *= scale);
+                } else {
+                    for value in data.iter_mut() {
+                        *value *= scale;
+                    }
+                }
+                #[cfg(not(feature = "parallel"))]
+                for value in data.iter_mut() {
+                    *value *= scale;
+                }
+            }
+        }
+
+        blaze2d_core::profiler::stop_timer(match direction {
+            FftDirection::Forward => "batch_fft_2d::forward",
+            FftDirection::Inverse => "batch_fft_2d::inverse",
+        });
     }
 }
 
@@ -164,6 +274,26 @@ fn process_columns_serial(data: &mut [Complex64], nx: usize, ny: usize, fft: &Ar
             scratch[iy] = data[iy * nx + ix];
         }
         fft.process(&mut scratch);
+        for iy in 0..ny {
+            data[iy * nx + ix] = scratch[iy];
+        }
+    }
+}
+
+/// Process columns with an externally provided scratch buffer (for batched operations).
+fn process_columns_serial_with_scratch(
+    data: &mut [Complex64],
+    nx: usize,
+    ny: usize,
+    fft: &Arc<dyn Fft<f64>>,
+    scratch: &mut [Complex64],
+) {
+    debug_assert!(scratch.len() >= ny);
+    for ix in 0..nx {
+        for iy in 0..ny {
+            scratch[iy] = data[iy * nx + ix];
+        }
+        fft.process(&mut scratch[..ny]);
         for iy in 0..ny {
             data[iy * nx + ix] = scratch[iy];
         }
@@ -205,6 +335,62 @@ fn execute_parallel_fft(
     }
 }
 
+/// Batched parallel FFT for multiple buffers.
+///
+/// Processes all rows across all buffers in parallel, then all columns.
+/// Uses transpose-based column processing for better parallelism.
+#[cfg(feature = "parallel")]
+fn batch_fft_2d_parallel(
+    buffers: &mut [Field2D],
+    nx: usize,
+    ny: usize,
+    row_fft: Arc<dyn Fft<f64>>,
+    col_fft: Arc<dyn Fft<f64>>,
+    pool: Option<&ThreadPool>,
+) {
+    let mut job = || {
+        // Phase 1: Process all rows across all buffers in parallel
+        // Collect all row data pointers for parallel iteration
+        let total_rows = buffers.len() * ny;
+        let mut row_slices: Vec<&mut [Complex64]> = Vec::with_capacity(total_rows);
+        
+        for buffer in buffers.iter_mut() {
+            for row in buffer.as_mut_slice().chunks_mut(nx) {
+                // SAFETY: We're collecting mutable references to non-overlapping rows.
+                // This is sound because chunks_mut returns non-overlapping slices.
+                row_slices.push(row);
+            }
+        }
+        
+        let row_fft_clone = row_fft.clone();
+        row_slices.par_iter_mut().for_each(|row| {
+            row_fft_clone.process(*row);
+        });
+        
+        // Phase 2: Process columns using transpose trick for each buffer
+        // This is done per-buffer since we need a transposed buffer for each
+        for buffer in buffers.iter_mut() {
+            let data = buffer.as_mut_slice();
+            let mut transposed = vec![Complex64::default(); data.len()];
+            transpose_into(data, &mut transposed, nx, ny);
+            
+            // Process transposed rows (which are original columns) in parallel
+            transposed.par_chunks_mut(ny).for_each(|row| {
+                col_fft.process(row);
+            });
+            
+            // Transpose back
+            transpose_into(&transposed, data, ny, nx);
+        }
+    };
+    
+    if let Some(pool) = pool {
+        pool.install(&mut job);
+    } else {
+        job();
+    }
+}
+
 impl SpectralBackend for CpuBackend {
     type Buffer = Field2D;
 
@@ -238,6 +424,14 @@ impl SpectralBackend for CpuBackend {
             .zip(y.as_slice())
             .map(|(a, b)| a.conj() * b)
             .sum()
+    }
+
+    fn batch_forward_fft_2d(&self, buffers: &mut [Self::Buffer]) {
+        self.batch_fft_2d(buffers, FftDirection::Forward);
+    }
+
+    fn batch_inverse_fft_2d(&self, buffers: &mut [Self::Buffer]) {
+        self.batch_fft_2d(buffers, FftDirection::Inverse);
     }
 }
 

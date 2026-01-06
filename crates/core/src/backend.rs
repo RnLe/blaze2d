@@ -115,4 +115,33 @@ pub trait SpectralBackend {
 
         outputs
     }
+
+    /// Batched forward FFT on multiple buffers.
+    ///
+    /// This applies forward 2D FFT to all buffers in the slice.
+    /// Backends can override this for better cache locality by processing
+    /// all rows first across all buffers, then all columns.
+    ///
+    /// # Performance
+    /// CPU backends can gain significant speedup by:
+    /// 1. Processing all rows of all buffers together (better cache use of FFT plans)
+    /// 2. Then processing all columns of all buffers together
+    /// 3. Amortizing the plan lookup cost across all buffers
+    fn batch_forward_fft_2d(&self, buffers: &mut [Self::Buffer]) {
+        // Default: process each buffer individually
+        for buffer in buffers.iter_mut() {
+            self.forward_fft_2d(buffer);
+        }
+    }
+
+    /// Batched inverse FFT on multiple buffers.
+    ///
+    /// This applies inverse 2D FFT to all buffers in the slice.
+    /// See `batch_forward_fft_2d` for performance notes.
+    fn batch_inverse_fft_2d(&self, buffers: &mut [Self::Buffer]) {
+        // Default: process each buffer individually
+        for buffer in buffers.iter_mut() {
+            self.inverse_fft_2d(buffer);
+        }
+    }
 }

@@ -77,6 +77,9 @@ pub struct ThetaOperator<B: SpectralBackend> {
     grad_x: B::Buffer,
     grad_y: B::Buffer,
     k_plus_g_was_clamped: Vec<bool>,
+    /// Cached gradient buffers for batch TE operations (avoids allocations in hot path)
+    batch_grad_x: Vec<B::Buffer>,
+    batch_grad_y: Vec<B::Buffer>,
 }
 
 /// Snapshot of operator state for debugging and visualization.
@@ -158,6 +161,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             grad_x,
             grad_y,
             k_plus_g_was_clamped,
+            batch_grad_x: Vec::new(),
+            batch_grad_y: Vec::new(),
         }
     }
 
@@ -599,6 +604,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     }
 
     fn apply_te(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
+        crate::profiler::start_timer("apply_te");
+        
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
 
@@ -634,9 +641,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
         self.backend.inverse_fft_2d(&mut self.scratch);
         copy_buffer(output, &self.scratch);
+        
+        crate::profiler::stop_timer("apply_te");
     }
 
     fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
+        crate::profiler::start_timer("apply_tm");
+        
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
         let data = self.scratch.as_mut_slice();
@@ -659,6 +670,184 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
         self.backend.inverse_fft_2d(&mut self.scratch);
         copy_buffer(output, &self.scratch);
+        
+        crate::profiler::stop_timer("apply_tm");
+    }
+
+    /// Batched TM operator: apply -∇² to multiple vectors with batched FFTs.
+    ///
+    /// TM flow per vector:
+    /// 1. Forward FFT
+    /// 2. Multiply by |k+G|²
+    /// 3. Inverse FFT
+    ///
+    /// Batched: Forward FFT all → k² multiply all → Inverse FFT all
+    fn batch_apply_tm(&mut self, inputs: &[B::Buffer], outputs: &mut [B::Buffer]) {
+        crate::profiler::start_timer("batch_apply_tm");
+        
+        let n = inputs.len();
+        if n == 0 {
+            crate::profiler::stop_timer("batch_apply_tm");
+            return;
+        }
+
+        // Copy inputs to outputs (which serve as working buffers)
+        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+            copy_buffer(output, input);
+        }
+
+        // Forward FFT (batched or sequential based on feature flag)
+        #[cfg(feature = "batched-fft")]
+        self.backend.batch_forward_fft_2d(outputs);
+        #[cfg(not(feature = "batched-fft"))]
+        for output in outputs.iter_mut() {
+            self.backend.forward_fft_2d(output);
+        }
+
+        // Apply |k+G|² in Fourier space for all vectors
+        for output in outputs.iter_mut() {
+            let data = output.as_mut_slice();
+            for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
+                *value *= k_sq;
+            }
+        }
+
+        // Inverse FFT (batched or sequential based on feature flag)
+        #[cfg(feature = "batched-fft")]
+        self.backend.batch_inverse_fft_2d(outputs);
+        #[cfg(not(feature = "batched-fft"))]
+        for output in outputs.iter_mut() {
+            self.backend.inverse_fft_2d(output);
+        }
+        
+        crate::profiler::stop_timer("batch_apply_tm");
+    }
+
+    /// Batched TE operator: apply -∇·(ε⁻¹∇) to multiple vectors with batched FFTs.
+    ///
+    /// TE flow per vector:
+    /// 1. Forward FFT → H̃
+    /// 2. Apply gradient: grad_x = ikx·H̃, grad_y = iky·H̃
+    /// 3. Inverse FFT grad_x, grad_y → spatial gradients
+    /// 4. Multiply by ε⁻¹ in spatial domain
+    /// 5. Forward FFT grad_x, grad_y → Fourier gradients
+    /// 6. Assemble divergence: result = -ikx·grad_x - iky·grad_y
+    /// 7. Inverse FFT → output
+    ///
+    /// Batched phases (when batched-fft feature enabled):
+    /// - Phase 1: Forward FFT all inputs
+    /// - Phase 2: Compute gradients for all vectors
+    /// - Phase 3: Batch inverse FFT all gradients
+    /// - Phase 4: Apply ε⁻¹ to all gradients
+    /// - Phase 5: Batch forward FFT all gradients
+    /// - Phase 6: Assemble divergence for all vectors
+    /// - Phase 7: Batch inverse FFT all outputs
+    fn batch_apply_te(&mut self, inputs: &[B::Buffer], outputs: &mut [B::Buffer]) {
+        crate::profiler::start_timer("batch_apply_te");
+        
+        let n = inputs.len();
+        if n == 0 {
+            crate::profiler::stop_timer("batch_apply_te");
+            return;
+        }
+
+        // Ensure we have enough cached gradient buffers (grow if needed, never shrink)
+        while self.batch_grad_x.len() < n {
+            self.batch_grad_x.push(self.backend.alloc_field(self.grid));
+            self.batch_grad_y.push(self.backend.alloc_field(self.grid));
+        }
+        
+        // Use only the buffers we need
+        let grad_x_all = &mut self.batch_grad_x[..n];
+        let grad_y_all = &mut self.batch_grad_y[..n];
+
+        // Phase 1: Copy inputs to outputs and forward FFT all
+        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+            copy_buffer(output, input);
+        }
+        #[cfg(feature = "batched-fft")]
+        self.backend.batch_forward_fft_2d(outputs);
+        #[cfg(not(feature = "batched-fft"))]
+        for output in outputs.iter_mut() {
+            self.backend.forward_fft_2d(output);
+        }
+
+        // Phase 2: Compute gradients for all vectors (in Fourier space)
+        for i in 0..n {
+            // Copy Fourier-space input to grad buffers
+            copy_buffer(&mut grad_x_all[i], &outputs[i]);
+            copy_buffer(&mut grad_y_all[i], &outputs[i]);
+
+            // Apply gradient factors
+            apply_gradient_factors(
+                grad_x_all[i].as_mut_slice(),
+                grad_y_all[i].as_mut_slice(),
+                &self.k_plus_g_x,
+                &self.k_plus_g_y,
+            );
+        }
+
+        // Phase 3: Batch inverse FFT all gradients
+        #[cfg(feature = "batched-fft")]
+        {
+            self.backend.batch_inverse_fft_2d(grad_x_all);
+            self.backend.batch_inverse_fft_2d(grad_y_all);
+        }
+        #[cfg(not(feature = "batched-fft"))]
+        {
+            for grad_x in grad_x_all.iter_mut() {
+                self.backend.inverse_fft_2d(grad_x);
+            }
+            for grad_y in grad_y_all.iter_mut() {
+                self.backend.inverse_fft_2d(grad_y);
+            }
+        }
+
+        // Phase 4: Apply ε⁻¹ in spatial domain for all gradients
+        for i in 0..n {
+            apply_inv_eps(
+                grad_x_all[i].as_mut_slice(),
+                grad_y_all[i].as_mut_slice(),
+                &self.dielectric,
+            );
+        }
+
+        // Phase 5: Batch forward FFT all gradients
+        #[cfg(feature = "batched-fft")]
+        {
+            self.backend.batch_forward_fft_2d(grad_x_all);
+            self.backend.batch_forward_fft_2d(grad_y_all);
+        }
+        #[cfg(not(feature = "batched-fft"))]
+        {
+            for grad_x in grad_x_all.iter_mut() {
+                self.backend.forward_fft_2d(grad_x);
+            }
+            for grad_y in grad_y_all.iter_mut() {
+                self.backend.forward_fft_2d(grad_y);
+            }
+        }
+
+        // Phase 6: Assemble divergence for all vectors
+        for i in 0..n {
+            assemble_divergence(
+                grad_x_all[i].as_slice(),
+                grad_y_all[i].as_slice(),
+                outputs[i].as_mut_slice(),
+                &self.k_plus_g_x,
+                &self.k_plus_g_y,
+            );
+        }
+
+        // Phase 7: Batch inverse FFT all outputs
+        #[cfg(feature = "batched-fft")]
+        self.backend.batch_inverse_fft_2d(outputs);
+        #[cfg(not(feature = "batched-fft"))]
+        for output in outputs.iter_mut() {
+            self.backend.inverse_fft_2d(output);
+        }
+        
+        crate::profiler::stop_timer("batch_apply_te");
     }
 
     fn capture_te_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
@@ -787,6 +976,18 @@ impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
                 copy_buffer(output, input);
                 apply_scalar_eps(output.as_mut_slice(), self.dielectric.eps());
             }
+        }
+    }
+
+    fn batch_apply(&mut self, inputs: &[B::Buffer], outputs: &mut [B::Buffer]) {
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "batch_apply: inputs and outputs must have same length"
+        );
+        match self.polarization {
+            Polarization::TE => self.batch_apply_te(inputs, outputs),
+            Polarization::TM => self.batch_apply_tm(inputs, outputs),
         }
     }
 
