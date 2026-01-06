@@ -609,10 +609,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
 
-        copy_buffer(&mut self.grad_x, &self.scratch);
-        copy_buffer(&mut self.grad_y, &self.scratch);
-
-        apply_gradient_factors(
+        compute_gradients_from_potential(
+            self.scratch.as_slice(),
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
             &self.k_plus_g_x,
@@ -634,13 +632,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         assemble_divergence(
             self.grad_x.as_slice(),
             self.grad_y.as_slice(),
-            self.scratch.as_mut_slice(),
+            output.as_mut_slice(),
             &self.k_plus_g_x,
             &self.k_plus_g_y,
         );
 
-        self.backend.inverse_fft_2d(&mut self.scratch);
-        copy_buffer(output, &self.scratch);
+        self.backend.inverse_fft_2d(output);
         
         crate::profiler::stop_timer("apply_te");
     }
@@ -648,9 +645,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         crate::profiler::start_timer("apply_tm");
         
-        copy_buffer(&mut self.scratch, input);
-        self.backend.forward_fft_2d(&mut self.scratch);
-        let data = self.scratch.as_mut_slice();
+        // Optimization: Work directly on output buffer to save a copy
+        copy_buffer(output, input);
+        self.backend.forward_fft_2d(output);
+        let data = output.as_mut_slice();
         #[cfg(debug_assertions)]
         {
             static ONCE: std::sync::Once = std::sync::Once::new();
@@ -668,8 +666,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
             *value *= k_sq;
         }
-        self.backend.inverse_fft_2d(&mut self.scratch);
-        copy_buffer(output, &self.scratch);
+        self.backend.inverse_fft_2d(output);
         
         crate::profiler::stop_timer("apply_tm");
     }
@@ -774,12 +771,9 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
         // Phase 2: Compute gradients for all vectors (in Fourier space)
         for i in 0..n {
-            // Copy Fourier-space input to grad buffers
-            copy_buffer(&mut grad_x_all[i], &outputs[i]);
-            copy_buffer(&mut grad_y_all[i], &outputs[i]);
-
-            // Apply gradient factors
-            apply_gradient_factors(
+            // Compute gradients directly from Fourier-space input
+            compute_gradients_from_potential(
+                outputs[i].as_slice(),
                 grad_x_all[i].as_mut_slice(),
                 grad_y_all[i].as_mut_slice(),
                 &self.k_plus_g_x,
@@ -856,9 +850,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         self.backend.forward_fft_2d(&mut self.scratch);
         let field_fourier = self.scratch.as_slice().to_vec();
 
-        copy_buffer(&mut self.grad_x, &self.scratch);
-        copy_buffer(&mut self.grad_y, &self.scratch);
-        apply_gradient_factors(
+        compute_gradients_from_potential(
+            self.scratch.as_slice(),
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
             &self.k_plus_g_x,
@@ -912,9 +905,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         self.backend.forward_fft_2d(&mut self.scratch);
         let field_fourier = self.scratch.as_slice().to_vec();
 
-        copy_buffer(&mut self.grad_x, &self.scratch);
-        copy_buffer(&mut self.grad_y, &self.scratch);
-        apply_gradient_factors(
+        compute_gradients_from_potential(
+            self.scratch.as_slice(),
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
             &self.k_plus_g_x,
@@ -1192,22 +1184,25 @@ fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
     dst.as_mut_slice().copy_from_slice(src.as_slice());
 }
 
-fn apply_gradient_factors(
+
+fn compute_gradients_from_potential(
+    potential: &[Complex64],
     grad_x: &mut [Complex64],
     grad_y: &mut [Complex64],
     k_plus_g_x: &[f64],
     k_plus_g_y: &[f64],
 ) {
-    for (((gx, gy), &kx), &ky) in grad_x
-        .iter_mut()
+    for ((((val, gx), gy), &kx), &ky) in potential
+        .iter()
+        .zip(grad_x.iter_mut())
         .zip(grad_y.iter_mut())
         .zip(k_plus_g_x.iter())
         .zip(k_plus_g_y.iter())
     {
         let factor_x = Complex64::new(0.0, kx);
         let factor_y = Complex64::new(0.0, ky);
-        *gx *= factor_x;
-        *gy *= factor_y;
+        *gx = *val * factor_x;
+        *gy = *val * factor_y;
     }
 }
 

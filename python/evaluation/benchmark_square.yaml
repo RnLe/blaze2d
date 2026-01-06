@@ -407,3 +407,20 @@ runs:
     total_time_s: 0.080
     time_per_iter_ms: 0.600
     description: ""
+
+  - timestamp: "2026-01-06T17:15:18+01:00"
+    polarization: "TE"
+    min_iter: 5
+    max_iter: 18
+    total_iterations: 193
+    total_time_s: 0.140
+    time_per_iter_ms: 0.700
+    description: ""
+  - timestamp: "2026-01-06T17:15:18+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 14
+    total_iterations: 136
+    total_time_s: 0.080
+    time_per_iter_ms: 0.600
+    description: ""
