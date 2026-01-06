@@ -90,7 +90,7 @@ K_POINTS_PER_SEGMENT = 20
 
 # Different run counts for single vs multi-core
 SINGLE_CORE_RUNS = 10    # Jobs per iteration for single-core
-MULTI_CORE_RUNS = 16    # Jobs per iteration for multi-core
+MULTI_CORE_RUNS = 20    # Jobs per iteration for multi-core
 NUM_ITERATIONS = 5
 
 def build_k_path_square(density: int):
@@ -226,13 +226,15 @@ def run_benchmark_config(config_name: str, create_solver_func, polarization: str
 def main():
     parser = argparse.ArgumentParser(description="MPB Speed Benchmark")
     parser.add_argument("--runs", type=int, default=None,
-                        help="Runs per iteration (default: 10 for single-core, 100 for multi)")
+                        help="Runs per iteration (default: 10 for single-core, 20 for multi)")
     parser.add_argument("--iterations", type=int, default=NUM_ITERATIONS,
                         help=f"Number of iterations (default: {NUM_ITERATIONS})")
     parser.add_argument("--output", type=str, default="results",
                         help="Output directory for results")
     parser.add_argument("--cores", type=int, default=None,
                         help="Number of cores (1 for single-core, None for all)")
+    parser.add_argument("--tag", type=str, default=None,
+                        help="Explicit filename tag (overrides 'single'/'multi')")
     parser.add_argument("--quick", action="store_true",
                         help="Quick test mode (5 runs × 2 iterations)")
     args = parser.parse_args()
@@ -247,6 +249,9 @@ def main():
         num_cores = args.cores if args.cores else os.cpu_count()
         cores_desc = f"{num_cores} (multi-core)"
         default_runs = MULTI_CORE_RUNS
+    
+    # Override filename tag if provided
+    file_tag = args.tag if args.tag else core_mode
     
     # Set run count: explicit arg > quick mode > mode-based default
     if args.quick:
@@ -311,7 +316,7 @@ def main():
             print(f"  {pol.upper()}: {pol_data['mean_ms']:.2f} ± {pol_data['std_ms']:.2f} ms/job")
     
     # Save results
-    output_file = os.path.join(args.output, f"mpb_speed_{core_mode}_results.json")
+    output_file = os.path.join(args.output, f"mpb_speed_{file_tag}_results.json")
     
     def convert_for_json(obj):
         if isinstance(obj, dict):
@@ -330,7 +335,7 @@ def main():
     print(f"\nResults saved to: {output_file}")
     
     # CSV summary
-    csv_file = os.path.join(args.output, f"mpb_speed_{core_mode}_summary.csv")
+    csv_file = os.path.join(args.output, f"mpb_speed_{file_tag}_summary.csv")
     with open(csv_file, 'w') as f:
         f.write("config,polarization,mean_ms,std_ms,min_ms,max_ms,total_runs,core_mode\n")
         for config_key, config_data in all_results["configs"].items():

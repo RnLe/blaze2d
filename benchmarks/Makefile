@@ -22,12 +22,12 @@ quick: quick-single quick-multi analyze plot
 single: single-mpb single-blaze
 
 # Multi-core benchmarks only  
-multi: multi-mpb multi-blaze
+multi: mpb-multi-native mpb-multi-process blaze-multi
 
-# Individual solver targets (alternative naming convention)
+# Individual solver targets
 single-mpb: mpb-single
 single-blaze: blaze-single
-multi-mpb: mpb-multi
+multi-mpb: mpb-multi-native mpb-multi-process  # Runs both MPB variants
 multi-blaze: blaze-multi
 
 # ============================================================================
@@ -44,17 +44,24 @@ mpb-single:
 	@echo "========================================"
 	$(SINGLE_CORE_ENV) python bench_mpb_speed.py --cores 1 --output results
 
-mpb-multi:
+mpb-multi-native:
 	@echo "========================================"
-	@echo "MPB Multi-Core Benchmark"
+	@echo "MPB Multi-Core Benchmark (Native Threads)"
 	@echo "========================================"
-	python bench_mpb_speed.py --output results
+	python bench_mpb_speed.py --output results --tag multi-native
+
+mpb-multi-process:
+	@echo "========================================"
+	@echo "MPB Multi-Core Benchmark (Multiprocessing)"
+	@echo "========================================"
+	$(MPB_PYTHON) bench_mpb_multiprocess.py --output results --tag multi-process
 
 mpb-single-quick:
 	$(SINGLE_CORE_ENV) python bench_mpb_speed.py --cores 1 --quick --output results
 
 mpb-multi-quick:
-	python bench_mpb_speed.py --quick --output results
+	python bench_mpb_speed.py --quick --output results --tag multi-native
+	$(MPB_PYTHON) bench_mpb_multiprocess.py --quick --output results --tag multi-process
 
 # ============================================================================
 # Blaze2D Benchmarks (using unified bulk-driver script)

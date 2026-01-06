@@ -23,6 +23,7 @@ pub struct CpuBackend {
     #[cfg(feature = "parallel")]
     parallel_pool: Option<Arc<ThreadPool>>,
     plan_cache: Arc<Mutex<FftPlanner<f64>>>,
+    scratch_cache: Arc<Mutex<Vec<Complex64>>>,
 }
 
 impl CpuBackend {
@@ -35,6 +36,7 @@ impl CpuBackend {
             #[cfg(feature = "parallel")]
             parallel_pool: None,
             plan_cache: Arc::new(Mutex::new(FftPlanner::new())),
+            scratch_cache: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -99,6 +101,21 @@ impl CpuBackend {
             (row, col)
         };
 
+        // Prepare scratch buffer
+        let row_scratch_len = row_fft.get_inplace_scratch_len();
+        let col_scratch_len = col_fft.get_inplace_scratch_len();
+        
+        // For columns: we need 'ny' for transpose buffer. 
+        // We will use standard .process() for FFTs to avoid scratch buffer mismatches,
+        // but we reuse the transpose buffer to save that allocation.
+        let required_len = ny;
+
+        let mut scratch_guard = self.scratch_cache.lock().unwrap();
+        if scratch_guard.len() < required_len {
+            scratch_guard.resize(required_len, Complex64::default());
+        }
+        let scratch = &mut *scratch_guard;
+
         let data = buffer.as_mut_slice();
         
         #[cfg(feature = "parallel")]
@@ -122,8 +139,9 @@ impl CpuBackend {
                 );
             }
         } else {
+            // Serial execution
             process_rows_serial(data, nx, &row_fft);
-            process_columns_serial(data, nx, ny, &col_fft);
+            process_columns_serial_with_scratch_buffer(data, nx, ny, &col_fft, scratch);
         }
 
         if matches!(direction, FftDirection::Inverse) {
@@ -218,7 +236,7 @@ impl CpuBackend {
             // Reuse a single scratch buffer for all column transforms
             let mut scratch = vec![Complex64::default(); ny];
             for buffer in buffers.iter_mut() {
-                process_columns_serial_with_scratch(buffer.as_mut_slice(), nx, ny, &col_fft, &mut scratch);
+                process_columns_serial_with_scratch_buffer(buffer.as_mut_slice(), nx, ny, &col_fft, &mut scratch);
             }
         }
 
@@ -269,19 +287,11 @@ fn process_rows_parallel(data: &mut [Complex64], nx: usize, fft: Arc<dyn Fft<f64
 
 fn process_columns_serial(data: &mut [Complex64], nx: usize, ny: usize, fft: &Arc<dyn Fft<f64>>) {
     let mut scratch = vec![Complex64::default(); ny];
-    for ix in 0..nx {
-        for iy in 0..ny {
-            scratch[iy] = data[iy * nx + ix];
-        }
-        fft.process(&mut scratch);
-        for iy in 0..ny {
-            data[iy * nx + ix] = scratch[iy];
-        }
-    }
+    process_columns_serial_with_scratch_buffer(data, nx, ny, fft, &mut scratch);
 }
 
-/// Process columns with an externally provided scratch buffer (for batched operations).
-fn process_columns_serial_with_scratch(
+/// Process columns with an externally provided scratch buffer (used as transpose buffer).
+fn process_columns_serial_with_scratch_buffer(
     data: &mut [Complex64],
     nx: usize,
     ny: usize,
@@ -289,13 +299,18 @@ fn process_columns_serial_with_scratch(
     scratch: &mut [Complex64],
 ) {
     debug_assert!(scratch.len() >= ny);
+    
+    // We only use the scratch for transposing. 
+    // We let the FFT manage its own internal scratch (allocating if necessary) to avoid panics.
+    let transpose_buf = &mut scratch[..ny];
+    
     for ix in 0..nx {
         for iy in 0..ny {
-            scratch[iy] = data[iy * nx + ix];
+            transpose_buf[iy] = data[iy * nx + ix];
         }
-        fft.process(&mut scratch[..ny]);
+        fft.process(transpose_buf);
         for iy in 0..ny {
-            data[iy * nx + ix] = scratch[iy];
+            data[iy * nx + ix] = transpose_buf[iy];
         }
     }
 }
