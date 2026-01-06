@@ -24,6 +24,11 @@ use blaze2d_backend_cuda::CudaBackend;
 #[cfg(not(feature = "cuda"))]
 use blaze2d_backend_cpu::CpuBackend;
 
+#[cfg(feature = "cuda")]
+type Backend = CudaBackend;
+#[cfg(not(feature = "cuda"))]
+type Backend = CpuBackend;
+
 use crate::adaptive::{AdaptiveConfig, AdaptiveThreadManager, AdjustmentReason};
 use crate::batch::BatchChannel;
 use crate::channel::{
@@ -373,11 +378,17 @@ impl BulkDriver {
         let adaptive_mgr_clone = adaptive_mgr.clone();
         let verbose = self.verbose;
 
+        // Initialize backend (share FFT planner cache across jobs)
+        #[cfg(feature = "cuda")]
+        let backend = CudaBackend::new();
+        #[cfg(not(feature = "cuda"))]
+        let backend = CpuBackend::new();
+
         // Execute jobs in parallel
         pool.install(|| {
             self.jobs.par_iter().for_each(|expanded_job| {
                 let job_start = Instant::now();
-                let result = self.execute_job(expanded_job);
+                let result = self.execute_job(expanded_job, backend.clone());
                 let job_duration = job_start.elapsed();
 
                 // Record timing for adaptive management
@@ -582,9 +593,17 @@ impl BulkDriver {
         // Execute jobs in parallel
         pool.install(|| {
             let channel = &channel_arc;
-            self.jobs.par_iter().for_each(|expanded_job| {
+            self.jobs.par_iter().for_each_init(
+                || {
+                    // Initialize thread-local backend to avoid Mutex contention on FFT planner
+                    #[cfg(feature = "cuda")]
+                    { CudaBackend::new() }
+                    #[cfg(not(feature = "cuda"))]
+                    { CpuBackend::new() }
+                },
+                |backend, expanded_job| {
                 let job_start = Instant::now();
-                let result = self.execute_job(expanded_job);
+                let result = self.execute_job(expanded_job, backend.clone());
                 let job_duration = job_start.elapsed();
 
                 // Record timing for adaptive management
@@ -861,22 +880,16 @@ impl BulkDriver {
     }
 
     /// Execute a single job.
-    fn execute_job(&self, expanded: &ExpandedJob) -> Result<JobResult, JobError> {
+    fn execute_job(&self, expanded: &ExpandedJob, backend: Backend) -> Result<JobResult, JobError> {
         match &expanded.job_type {
-            ExpandedJobType::Maxwell(job) => self.execute_maxwell_job(expanded.index, job),
-            ExpandedJobType::EA(spec) => self.execute_ea_job(expanded.index, spec),
+            ExpandedJobType::Maxwell(job) => self.execute_maxwell_job(expanded.index, job, backend),
+            ExpandedJobType::EA(spec) => self.execute_ea_job(expanded.index, spec, backend),
         }
     }
 
     /// Execute a Maxwell band structure job.
-    fn execute_maxwell_job(&self, index: usize, job: &blaze2d_core::bandstructure::BandStructureJob) -> Result<JobResult, JobError> {
+    fn execute_maxwell_job(&self, index: usize, job: &blaze2d_core::bandstructure::BandStructureJob, backend: Backend) -> Result<JobResult, JobError> {
         let start = Instant::now();
-
-        // Select backend
-        #[cfg(feature = "cuda")]
-        let backend = CudaBackend::new();
-        #[cfg(not(feature = "cuda"))]
-        let backend = CpuBackend::new();
 
         // Build run options from config
         let run_options = RunOptions::default()
@@ -917,17 +930,11 @@ impl BulkDriver {
     }
 
     /// Execute an EA eigenvalue problem.
-    fn execute_ea_job(&self, index: usize, spec: &EAJobSpec) -> Result<JobResult, JobError> {
+    fn execute_ea_job(&self, index: usize, spec: &EAJobSpec, backend: Backend) -> Result<JobResult, JobError> {
         use blaze2d_core::drivers::single_solve;
         use blaze2d_core::operators::EAOperatorBuilder;
 
         let start = Instant::now();
-
-        // Select backend
-        #[cfg(feature = "cuda")]
-        let backend = CudaBackend::new();
-        #[cfg(not(feature = "cuda"))]
-        let backend = CpuBackend::new();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // Read input data files
@@ -1492,10 +1499,18 @@ impl BulkDriver {
 
         // Execute jobs in parallel (no output writing)
         pool.install(|| {
-            self.jobs.par_iter().for_each(|expanded_job| {
+            self.jobs.par_iter().for_each_init(
+                || {
+                    #[cfg(feature = "cuda")]
+                    { CudaBackend::new() }
+                    #[cfg(not(feature = "cuda"))]
+                    { CpuBackend::new() }
+                },
+                |backend, expanded_job| {
                 let job_start = Instant::now();
-                let result = self.execute_job(expanded_job);
+                let result = self.execute_job(expanded_job, backend.clone());
                 let job_duration = job_start.elapsed();
+
 
                 // Record timing for adaptive management
                 if let Some(event) = adaptive_mgr_clone.record_job(job_duration) {

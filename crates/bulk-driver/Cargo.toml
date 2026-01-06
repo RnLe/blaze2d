@@ -40,6 +40,7 @@ crossbeam-channel = "0.5"
 
 # Optional async support for streaming
 tokio = { version = "1", features = ["sync"], optional = true }
+tikv-jemallocator = "0.6.1"
 
 [dev-dependencies]
 tempfile = "3"

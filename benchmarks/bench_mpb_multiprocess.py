@@ -20,6 +20,8 @@ import sys
 import time
 import argparse
 import multiprocessing as mp
+import json
+from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 
@@ -121,6 +123,10 @@ def main():
                         help=f"Number of iterations (default: {NUM_ITERATIONS})")
     parser.add_argument("--quick", action="store_true",
                         help="Quick test (16 jobs, 2 iterations)")
+    parser.add_argument("--output", type=str, default="results",
+                        help="Output directory for results")
+    parser.add_argument("--tag", type=str, default="multi-process",
+                        help="Tag for output files")
     args = parser.parse_args()
     
     num_jobs = args.jobs
@@ -130,6 +136,8 @@ def main():
     if args.quick:
         num_jobs = 16
         num_iterations = 2
+    
+    os.makedirs(args.output, exist_ok=True)
     
     print("=" * 70)
     print("MPB Multiprocessing Benchmark - Config A TM")
@@ -190,6 +198,42 @@ def main():
     print(f"Individual solver time: {mean_job_time:.1f} ± {std_job_time:.1f} ms")
     print(f"Total elapsed: {sum(all_iteration_times):.1f}s")
     
+    # Construct results dictionary matching expected format for analyze_speed.py
+    # Note: Only Config A TM is implemented in this specific script
+    results_data = {
+        "benchmark": "mpb_speed_multi_process",
+        "timestamp": datetime.now().isoformat(),
+        "solver": "MPB",
+        "core_mode": "multi",  # Or 'multi-process'
+        "configs": {
+            "config_a": {
+                "description": "Square lattice, air bg, ε=8.9 rods, r=0.2a",
+                "polarizations": {
+                    "tm": {
+                        "mean_ms": effective_ms_per_job,
+                        "std_ms": effective_ms_std,
+                        "min_ms": min(all_iteration_times) / num_jobs * 1000,
+                        "max_ms": max(all_iteration_times) / num_jobs * 1000,
+                        "total_runs": num_jobs * num_iterations,
+                        "throughput": mean_throughput
+                    }
+                }
+            }
+        }
+    }
+    
+    output_file = os.path.join(args.output, f"mpb_speed_{args.tag}_results.json")
+    
+    def convert_for_json(obj):
+        if isinstance(obj, (np.floating, np.integer)):
+            return float(obj)
+        return obj
+
+    with open(output_file, 'w') as f:
+        json.dump(results_data, f, indent=2, default=convert_for_json)
+        
+    print(f"\nResults saved to: {output_file}")
+
     return {
         "effective_ms_per_job": effective_ms_per_job,
         "effective_ms_std": effective_ms_std,

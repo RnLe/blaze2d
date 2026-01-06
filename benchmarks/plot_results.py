@@ -38,40 +38,55 @@ def load_comparison_results(results_dir: Path) -> dict:
 def plot_time_comparison(ax, mode_data: dict, title: str):
     """Plot time comparison bar chart for a single core mode."""
     comparisons = mode_data["comparisons"]
+    core_mode = mode_data["core_mode"]
     
-    labels = [f"{c['config']}\n{c['polarization']}" for c in comparisons]
+    config_labels = [f"{c['config']}\n{c['polarization']}" for c in comparisons]
     mpb_times = [c["mpb_mean_ms"] for c in comparisons]
     mpb_errs = [c["mpb_std_ms"] for c in comparisons]
+    
+    mpb_proc_times = [c.get("mpb_proc_mean_ms", 0.0) for c in comparisons]
+    mpb_proc_errs = [c.get("mpb_proc_std_ms", 0.0) for c in comparisons]
+    
     blaze_times = [c["blaze_mean_ms"] for c in comparisons]
     blaze_errs = [c["blaze_std_ms"] for c in comparisons]
     
-    x = np.arange(len(labels))
-    width = 0.35
+    x = np.arange(len(config_labels))
     
-    bars1 = ax.bar(x - width/2, mpb_times, width, yerr=mpb_errs,
-                   label='MPB', color=COLORS["mpb"], capsize=3, alpha=0.8)
-    bars2 = ax.bar(x + width/2, blaze_times, width, yerr=blaze_errs,
-                   label='Blaze2D', color=COLORS["blaze2d"], capsize=3, alpha=0.8)
+    if core_mode == "multi":
+        width = 0.25
+        bars1 = ax.bar(x - width, mpb_times, width, yerr=mpb_errs,
+                       label='MPB (Native)', color=COLORS["mpb"], capsize=3, alpha=0.8)
+        bars2 = ax.bar(x, mpb_proc_times, width, yerr=mpb_proc_errs,
+                       label='MPB (Process)', color="#8E44AD", capsize=3, alpha=0.8) # Purple
+        bars3 = ax.bar(x + width, blaze_times, width, yerr=blaze_errs,
+                       label='Blaze2D', color=COLORS["blaze2d"], capsize=3, alpha=0.8)
+    else:
+        width = 0.35
+        bars1 = ax.bar(x - width/2, mpb_times, width, yerr=mpb_errs,
+                       label='MPB', color=COLORS["mpb"], capsize=3, alpha=0.8)
+        bars3 = ax.bar(x + width/2, blaze_times, width, yerr=blaze_errs,
+                       label='Blaze2D', color=COLORS["blaze2d"], capsize=3, alpha=0.8)
     
     ax.set_xlabel('Configuration')
     ax.set_ylabel('Time per job (ms)')
     ax.set_title(title)
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_xticklabels(config_labels, fontsize=9)
     ax.legend()
     ax.grid(axis='y', alpha=0.3)
     
     # Add value labels
-    for bar, val in zip(bars1, mpb_times):
-        label = f'{val:.0f}' if val > 0 else "N/A"
-        ax.annotate(label,
-                    xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
-                    ha='center', va='bottom', fontsize=8)
-    for bar, val in zip(bars2, blaze_times):
-        label = f'{val:.0f}' if val > 0 else "N/A"
-        ax.annotate(label,
-                    xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
-                    ha='center', va='bottom', fontsize=8)
+    def add_labels(bars, values):
+        for bar, val in zip(bars, values):
+            label = f'{val:.0f}' if val > 0 else "N/A"
+            ax.annotate(label,
+                        xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
+                        ha='center', va='bottom', fontsize=8)
+
+    add_labels(bars1, mpb_times)
+    if core_mode == "multi":
+        add_labels(bars2, mpb_proc_times)
+    add_labels(bars3, blaze_times)
 
 def plot_speedup_comparison(ax, results: dict):
     """Plot speedup comparison for both core modes."""
