@@ -8,10 +8,11 @@ authors.workspace = true
 description = "Smart multi-threaded driver for bulk Blaze parameter sweep calculations"
 
 [features]
-default = ["native-linalg"]
+default = ["native-linalg", "mixed-precision"]
 native-linalg = ["blaze2d-core/native-linalg", "blaze2d-bulk-driver-core/native-linalg", "blaze2d-backend-cpu/native-linalg"]
 wasm-linalg = ["blaze2d-core/wasm-linalg", "blaze2d-bulk-driver-core/wasm-linalg", "blaze2d-backend-cpu/wasm-linalg"]
 cuda = ["blaze2d-backend-cpu/cuda", "dep:blaze2d-backend-cuda"]
+mixed-precision = ["blaze2d-core/mixed-precision", "blaze2d-bulk-driver-core/mixed-precision", "blaze2d-backend-cpu/mixed-precision"]
 
 [dependencies]
 # Workspace dependencies

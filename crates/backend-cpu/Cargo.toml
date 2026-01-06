@@ -7,12 +7,15 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = ["native-linalg", "parallel", "batched-fft"]
+default = ["native-linalg", "parallel", "batched-fft", "mixed-precision"]
 native-linalg = ["blaze2d-core/native-linalg"]
 wasm-linalg = ["blaze2d-core/wasm-linalg"]
 cuda = ["blaze2d-backend-cuda/cuda", "dep:blaze2d-backend-cuda"]
 profiling = ["blaze2d-core/profiling"]
 batched-fft = ["blaze2d-core/batched-fft"]
+
+# Mixed precision: store fields in f32 for 2x bandwidth, accumulate in f64.
+mixed-precision = ["blaze2d-core/mixed-precision"]
 
 # Enable parallel FFT with rayon. Disable for WASM builds.
 parallel = ["dep:rayon", "dep:num_cpus"]

@@ -1,14 +1,25 @@
 //! Backend traits for spectral operations.
+//!
+//! # Mixed Precision Strategy
+//!
+//! When the `mixed-precision` feature is enabled:
+//! - **Storage**: Fields use `Complex<f32>` for 2x bandwidth efficiency
+//! - **FFTs**: Performed in f32 (sufficient for iterative refinement)
+//! - **Dot products**: MUST accumulate in f64 to prevent catastrophic cancellation
+//! - **Rayleigh-Ritz**: Dense eigenproblem always in f64
+//!
+//! This follows the standard HPC "f32 storage, f64 accumulation" pattern.
 
 use num_complex::Complex64;
 
-use crate::{field::Field2D, grid::Grid2D};
+use crate::field::{Field2D, FieldScalar};
+use crate::grid::Grid2D;
 
 pub trait SpectralBuffer {
     fn len(&self) -> usize;
     fn grid(&self) -> Grid2D;
-    fn as_slice(&self) -> &[Complex64];
-    fn as_mut_slice(&mut self) -> &mut [Complex64];
+    fn as_slice(&self) -> &[FieldScalar];
+    fn as_mut_slice(&mut self) -> &mut [FieldScalar];
 }
 
 impl SpectralBuffer for Field2D {
@@ -20,11 +31,11 @@ impl SpectralBuffer for Field2D {
         self.grid()
     }
 
-    fn as_slice(&self) -> &[Complex64] {
+    fn as_slice(&self) -> &[FieldScalar] {
         self.as_slice()
     }
 
-    fn as_mut_slice(&mut self) -> &mut [Complex64] {
+    fn as_mut_slice(&mut self) -> &mut [FieldScalar] {
         self.as_mut_slice()
     }
 }
@@ -35,8 +46,31 @@ pub trait SpectralBackend {
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer;
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer);
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer);
+    
+    /// Scale buffer by a complex scalar.
+    /// Note: In mixed-precision mode, alpha is converted to storage precision.
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer);
+    
+    /// Compute y += alpha * x (axpy operation).
+    /// Note: In mixed-precision mode, alpha is converted to storage precision.
     fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer);
+    
+    /// Compute conjugate dot product ⟨x, y⟩ = x^H · y.
+    /// 
+    /// **CRITICAL for mixed precision**: This MUST accumulate in f64 even when
+    /// storage is f32. Accumulating in f32 causes catastrophic cancellation
+    /// during orthogonalization, leading to loss of basis independence.
+    /// 
+    /// Implementation pattern for f32 storage:
+    /// ```ignore
+    /// let dot: f64 = x.iter().zip(y.iter())
+    ///     .map(|(a, b)| {
+    ///         let a64 = Complex64::new(a.re as f64, a.im as f64);
+    ///         let b64 = Complex64::new(b.re as f64, b.im as f64);
+    ///         a64.conj() * b64
+    ///     })
+    ///     .fold(Complex64::new(0.0, 0.0), |acc, x| acc + x);
+    /// ```
     fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64;
 
     /// Compute the Gram matrix G_ij = ⟨x_i, y_j⟩ for batches of vectors.

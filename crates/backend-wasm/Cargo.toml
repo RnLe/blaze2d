@@ -20,10 +20,12 @@ wasm-opt = false
 wasm-opt = false
 
 [features]
-default = ["wasm-linalg"]
+default = ["mixed-precision"]
 wasm-linalg = ["blaze2d-core/wasm-linalg", "blaze2d-bulk-driver-core/wasm-linalg", "blaze2d-backend-cpu/wasm-linalg"]
 bindings = ["dep:wasm-bindgen", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:web-sys", "dep:console_error_panic_hook"]
 streaming = ["bindings"]
+# Mixed-precision mode: f32 storage, f64 accumulation
+mixed-precision = ["blaze2d-core/mixed-precision", "blaze2d-bulk-driver-core/mixed-precision", "blaze2d-backend-cpu/mixed-precision"]
 
 [dependencies]
 blaze2d-core = { path = "../core", default-features = false }

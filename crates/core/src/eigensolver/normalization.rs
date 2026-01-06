@@ -323,15 +323,16 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         let n = vectors[0].as_slice().len();
 
         // Build X matrix (n × p) from vectors
+        // Note: Always upcast to f64 since faer uses f64 internally
         let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
             let c = vectors[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
+            faer::c64::new(c.re as f64, c.im as f64)
         });
 
         // Build BX matrix (n × p) from mass_vectors
         let bx_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
             let c = mass_vectors[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
+            faer::c64::new(c.re as f64, c.im as f64)
         });
 
         // Compute G = X^H * BX using a single GEMM call
@@ -354,16 +355,16 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         // G = X^H * BX where X is n×p and BX is n×p, result is p×p
         let n = vectors[0].as_slice().len();
 
-        // Build X matrix (n × p) from vectors
+        // Build X matrix (n × p) from vectors (upcast to f64)
         let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
             let c = vectors[col].as_slice()[row];
-            NaComplex::new(c.re, c.im)
+            NaComplex::new(c.re as f64, c.im as f64)
         });
 
-        // Build BX matrix (n × p) from mass_vectors
+        // Build BX matrix (n × p) from mass_vectors (upcast to f64)
         let bx_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
             let c = mass_vectors[col].as_slice()[row];
-            NaComplex::new(c.re, c.im)
+            NaComplex::new(c.re as f64, c.im as f64)
         });
 
         // Compute G = X^H * BX using a single GEMM call
@@ -497,35 +498,41 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 faer::c64::new(c.re * scale, c.im * scale)
             });
 
-            // Build X_old matrix (n × p) from vectors
+            // Build X_old matrix (n × p) from vectors (upcast to f64)
             let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
                 let c = vectors[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
-            // Build M_old matrix (n × p) from mass_vectors
+            // Build M_old matrix (n × p) from mass_vectors (upcast to f64)
             let m_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
                 let c = mass_vectors[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
             // Compute X_new = X_old * T and M_new = M_old * T using GEMM
             let x_new = &x_mat * &t_mat; // n × rank
             let m_new = &m_mat * &t_mat; // n × rank
 
-            // Copy results back to vectors
+            // Copy results back to vectors (downcast from f64 to storage precision)
             for col in 0..rank {
                 let dst = vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = x_new.get(row, col);
-                    dst[row] = Complex64::new(c.re, c.im);
+                    #[cfg(not(feature = "mixed-precision"))]
+                    { dst[row] = Complex64::new(c.re, c.im); }
+                    #[cfg(feature = "mixed-precision")]
+                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
                 }
             }
             for col in 0..rank {
                 let dst = mass_vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = m_new.get(row, col);
-                    dst[row] = Complex64::new(c.re, c.im);
+                    #[cfg(not(feature = "mixed-precision"))]
+                    { dst[row] = Complex64::new(c.re, c.im); }
+                    #[cfg(feature = "mixed-precision")]
+                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
                 }
             }
         }
@@ -541,35 +548,41 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 NaComplex::new(c.re * scale, c.im * scale)
             });
 
-            // Build X_old matrix (n × p) from vectors
+            // Build X_old matrix (n × p) from vectors (upcast to f64)
             let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
                 let c = vectors[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Build M_old matrix (n × p) from mass_vectors
             let m_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
                 let c = mass_vectors[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Compute X_new = X_old * T and M_new = M_old * T using GEMM
             let x_new = &x_mat * &t_mat; // n × rank
             let m_new = &m_mat * &t_mat; // n × rank
 
-            // Copy results back to vectors
+            // Copy results back to vectors (downcast from f64 to storage precision)
             for col in 0..rank {
                 let dst = vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = x_new[(row, col)];
-                    dst[row] = Complex64::new(c.re, c.im);
+                    #[cfg(not(feature = "mixed-precision"))]
+                    { dst[row] = Complex64::new(c.re, c.im); }
+                    #[cfg(feature = "mixed-precision")]
+                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
                 }
             }
             for col in 0..rank {
                 let dst = mass_vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = m_new[(row, col)];
-                    dst[row] = Complex64::new(c.re, c.im);
+                    #[cfg(not(feature = "mixed-precision"))]
+                    { dst[row] = Complex64::new(c.re, c.im); }
+                    #[cfg(feature = "mixed-precision")]
+                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
                 }
             }
         }
@@ -665,10 +678,12 @@ pub fn orthonormalize_against_basis<B: SpectralBackend>(
 // Helper Functions
 // ============================================================================
 
+use crate::field::FieldScalar;
+
 /// Fill a buffer with zeros.
 #[inline]
-pub fn zero_buffer(data: &mut [Complex64]) {
-    data.fill(Complex64::ZERO);
+pub fn zero_buffer(data: &mut [FieldScalar]) {
+    data.fill(FieldScalar::default());
 }
 
 /// Compute eigendecomposition of a Hermitian matrix.

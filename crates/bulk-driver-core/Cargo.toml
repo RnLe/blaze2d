@@ -8,9 +8,10 @@ authors.workspace = true
 description = "Platform-agnostic core types and logic for Blaze bulk driver"
 
 [features]
-default = ["native-linalg"]
+default = ["native-linalg", "mixed-precision"]
 native-linalg = ["blaze2d-core/native-linalg"]
 wasm-linalg = ["blaze2d-core/wasm-linalg"]
+mixed-precision = ["blaze2d-core/mixed-precision"]
 
 [dependencies]
 # Workspace dependencies (platform-agnostic only)

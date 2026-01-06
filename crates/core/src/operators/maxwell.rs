@@ -24,14 +24,24 @@
 
 use num_complex::Complex64;
 
+#[cfg(feature = "mixed-precision")]
+use num_complex::Complex32;
+
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::dielectric::Dielectric2D;
+use crate::field::{FieldScalar, FieldReal};
 use crate::grid::Grid2D;
 use crate::operators::{K_PLUS_G_NEAR_ZERO_FLOOR, LinearOperator, TM_PRECONDITIONER_MASS_FRACTION};
 use crate::polarization::Polarization;
 use crate::preconditioners::{
     FourierDiagonalPreconditioner, SpectralStats, TransverseProjectionPreconditioner,
 };
+
+/// Convert FieldScalar slice to Vec<Complex64> for snapshot data (always f64 for precision).
+#[inline]
+fn to_complex64_vec(slice: &[FieldScalar]) -> Vec<Complex64> {
+    slice.iter().map(|c| Complex64::new(c.re as f64, c.im as f64)).collect()
+}
 
 // ============================================================================
 // ThetaOperator - Maxwell Curl-Curl Operator
@@ -366,45 +376,70 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
         // Initialize with pseudo-random vector
         for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
-            *val = Complex64::new(
-                (i as f64 * 0.618033988749895).sin(),
-                (i as f64 * 0.414213562373095).cos(),
-            );
+            let re = (i as f64 * 0.618033988749895).sin();
+            let im = (i as f64 * 0.414213562373095).cos();
+            #[cfg(not(feature = "mixed-precision"))]
+            { *val = Complex64::new(re, im); }
+            #[cfg(feature = "mixed-precision")]
+            { *val = Complex32::new(re as f32, im as f32); }
         }
 
-        // Normalize
+        // Normalize (accumulate in f64)
         let norm: f64 = v
             .as_slice()
             .iter()
-            .map(|c| c.norm_sqr())
+            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
             .sum::<f64>()
             .sqrt();
         if norm > 1e-15 {
+            #[cfg(not(feature = "mixed-precision"))]
             for val in v.as_mut_slice().iter_mut() {
                 *val /= norm;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                let norm_f32 = norm as f32;
+                for val in v.as_mut_slice().iter_mut() {
+                    *val /= norm_f32;
+                }
             }
         }
 
         let mut lambda_max = 0.0;
         for _ in 0..n_iters {
             self.apply(&v, &mut av);
+            // Accumulate Rayleigh quotient in f64
             let numerator: f64 = v
                 .as_slice()
                 .iter()
                 .zip(av.as_slice().iter())
-                .map(|(vi, avi)| (vi.conj() * avi).re)
+                .map(|(vi, avi)| {
+                    let vi_re = vi.re as f64;
+                    let vi_im = vi.im as f64;
+                    let avi_re = avi.re as f64;
+                    let avi_im = avi.im as f64;
+                    vi_re * avi_re + vi_im * avi_im  // Re(conj(vi) * avi)
+                })
                 .sum();
             lambda_max = numerator;
 
             let norm: f64 = av
                 .as_slice()
                 .iter()
-                .map(|c| c.norm_sqr())
+                .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
                 .sum::<f64>()
                 .sqrt();
             if norm > 1e-15 {
+                #[cfg(not(feature = "mixed-precision"))]
                 for val in av.as_mut_slice().iter_mut() {
                     *val /= norm;
+                }
+                #[cfg(feature = "mixed-precision")]
+                {
+                    let norm_f32 = norm as f32;
+                    for val in av.as_mut_slice().iter_mut() {
+                        *val /= norm_f32;
+                    }
                 }
             }
             std::mem::swap(&mut v, &mut av);
@@ -430,21 +465,31 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let mut av = self.alloc_field();
 
         for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
-            *val = Complex64::new(
-                (i as f64 * 0.618033988749895).sin(),
-                (i as f64 * 0.414213562373095).cos(),
-            );
+            let re = (i as f64 * 0.618033988749895).sin();
+            let im = (i as f64 * 0.414213562373095).cos();
+            #[cfg(not(feature = "mixed-precision"))]
+            { *val = Complex64::new(re, im); }
+            #[cfg(feature = "mixed-precision")]
+            { *val = Complex32::new(re as f32, im as f32); }
         }
 
         let norm: f64 = v
             .as_slice()
             .iter()
-            .map(|c| c.norm_sqr())
+            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
             .sum::<f64>()
             .sqrt();
         if norm > 1e-15 {
+            #[cfg(not(feature = "mixed-precision"))]
             for val in v.as_mut_slice().iter_mut() {
                 *val /= norm;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                let norm_f32 = norm as f32;
+                for val in v.as_mut_slice().iter_mut() {
+                    *val /= norm_f32;
+                }
             }
         }
 
@@ -457,19 +502,33 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 .as_slice()
                 .iter()
                 .zip(av.as_slice().iter())
-                .map(|(vi, avi)| (vi.conj() * avi).re)
+                .map(|(vi, avi)| {
+                    let vi_re = vi.re as f64;
+                    let vi_im = vi.im as f64;
+                    let avi_re = avi.re as f64;
+                    let avi_im = avi.im as f64;
+                    vi_re * avi_re + vi_im * avi_im
+                })
                 .sum();
             lambda_max = numerator;
 
             let norm: f64 = av
                 .as_slice()
                 .iter()
-                .map(|c| c.norm_sqr())
+                .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
                 .sum::<f64>()
                 .sqrt();
             if norm > 1e-15 {
+                #[cfg(not(feature = "mixed-precision"))]
                 for val in av.as_mut_slice().iter_mut() {
                     *val /= norm;
+                }
+                #[cfg(feature = "mixed-precision")]
+                {
+                    let norm_f32 = norm as f32;
+                    for val in av.as_mut_slice().iter_mut() {
+                        *val /= norm_f32;
+                    }
                 }
             }
             std::mem::swap(&mut v, &mut av);
@@ -493,44 +552,57 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let mut ay = self.alloc_field();
 
         for (i, val) in x.as_mut_slice().iter_mut().enumerate() {
-            *val = Complex64::new(
-                (i as f64 * 0.618033988749895).sin(),
-                (i as f64 * 0.414213562373095).cos(),
-            );
+            let re = (i as f64 * 0.618033988749895).sin();
+            let im = (i as f64 * 0.414213562373095).cos();
+            #[cfg(not(feature = "mixed-precision"))]
+            { *val = Complex64::new(re, im); }
+            #[cfg(feature = "mixed-precision")]
+            { *val = Complex32::new(re as f32, im as f32); }
         }
         for (i, val) in y.as_mut_slice().iter_mut().enumerate() {
-            *val = Complex64::new(
-                (i as f64 * 1.414213562373095).cos(),
-                (i as f64 * 1.732050807568877).sin(),
-            );
+            let re = (i as f64 * 1.414213562373095).cos();
+            let im = (i as f64 * 1.732050807568877).sin();
+            #[cfg(not(feature = "mixed-precision"))]
+            { *val = Complex64::new(re, im); }
+            #[cfg(feature = "mixed-precision")]
+            { *val = Complex32::new(re as f32, im as f32); }
         }
 
         self.apply(&x, &mut ax);
         self.apply(&y, &mut ay);
 
+        // Compute inner products in f64 for accuracy
         let ax_y: Complex64 = ax
             .as_slice()
             .iter()
             .zip(y.as_slice().iter())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = Complex64::new(a.re as f64, a.im as f64);
+                let b64 = Complex64::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum();
         let x_ay: Complex64 = x
             .as_slice()
             .iter()
             .zip(ay.as_slice().iter())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = Complex64::new(a.re as f64, a.im as f64);
+                let b64 = Complex64::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum();
 
         let norm_ax: f64 = ax
             .as_slice()
             .iter()
-            .map(|c| c.norm_sqr())
+            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
             .sum::<f64>()
             .sqrt();
         let norm_y: f64 = y
             .as_slice()
             .iter()
-            .map(|c| c.norm_sqr())
+            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
             .sum::<f64>()
             .sqrt();
 
@@ -664,7 +736,17 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             });
         }
         for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
-            *value *= k_sq;
+            #[cfg(feature = "mixed-precision")]
+            {
+                // Perform multiplication in f64 to avoid precision loss from k^2 (~10^5) being cast to f32
+                let v = Complex64::new(value.re as f64, value.im as f64);
+                let res = v * k_sq;
+                *value = Complex32::new(res.re as f32, res.im as f32);
+            }
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *value *= k_sq;
+            }
         }
         self.backend.inverse_fft_2d(output);
         
@@ -700,7 +782,16 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             for output in outputs.iter_mut() {
                 let data = output.as_mut_slice();
                 for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
-                    *value *= k_sq;
+                    #[cfg(feature = "mixed-precision")]
+                    {
+                        let v = Complex64::new(value.re as f64, value.im as f64);
+                        let res = v * k_sq;
+                        *value = Complex32::new(res.re as f32, res.im as f32);
+                    }
+                    #[cfg(not(feature = "mixed-precision"))]
+                    {
+                        *value *= k_sq;
+                    }
                 }
             }
             self.backend.batch_inverse_fft_2d(outputs);
@@ -803,10 +894,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     }
 
     fn capture_te_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
-        let field_spatial = input.as_slice().to_vec();
+        let field_spatial = to_complex64_vec(input.as_slice());
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
-        let field_fourier = self.scratch.as_slice().to_vec();
+        let field_fourier = to_complex64_vec(self.scratch.as_slice());
 
         compute_gradients_from_potential(
             self.scratch.as_slice(),
@@ -818,16 +909,16 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
         self.backend.inverse_fft_2d(&mut self.grad_x);
         self.backend.inverse_fft_2d(&mut self.grad_y);
-        let grad_x = self.grad_x.as_slice().to_vec();
-        let grad_y = self.grad_y.as_slice().to_vec();
+        let grad_x = to_complex64_vec(self.grad_x.as_slice());
+        let grad_y = to_complex64_vec(self.grad_y.as_slice());
 
         apply_inv_eps(
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
             &self.dielectric,
         );
-        let eps_grad_x = self.grad_x.as_slice().to_vec();
-        let eps_grad_y = self.grad_y.as_slice().to_vec();
+        let eps_grad_x = to_complex64_vec(self.grad_x.as_slice());
+        let eps_grad_y = to_complex64_vec(self.grad_y.as_slice());
 
         self.backend.forward_fft_2d(&mut self.grad_x);
         self.backend.forward_fft_2d(&mut self.grad_y);
@@ -839,10 +930,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             &self.k_plus_g_x,
             &self.k_plus_g_y,
         );
-        let theta_fourier = self.scratch.as_slice().to_vec();
+        let theta_fourier = to_complex64_vec(self.scratch.as_slice());
 
         self.backend.inverse_fft_2d(&mut self.scratch);
-        let theta_spatial = self.scratch.as_slice().to_vec();
+        let theta_spatial = to_complex64_vec(self.scratch.as_slice());
 
         OperatorSnapshotData {
             grid: self.grid,
@@ -858,10 +949,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     }
 
     fn capture_tm_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
-        let field_spatial = input.as_slice().to_vec();
+        let field_spatial = to_complex64_vec(input.as_slice());
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
-        let field_fourier = self.scratch.as_slice().to_vec();
+        let field_fourier = to_complex64_vec(self.scratch.as_slice());
 
         compute_gradients_from_potential(
             self.scratch.as_slice(),
@@ -873,8 +964,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
         self.backend.inverse_fft_2d(&mut self.grad_x);
         self.backend.inverse_fft_2d(&mut self.grad_y);
-        let grad_x = self.grad_x.as_slice().to_vec();
-        let grad_y = self.grad_y.as_slice().to_vec();
+        let grad_x = to_complex64_vec(self.grad_x.as_slice());
+        let grad_y = to_complex64_vec(self.grad_y.as_slice());
 
         for (value, &k_sq) in self
             .scratch
@@ -882,12 +973,21 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             .iter_mut()
             .zip(self.k_plus_g_sq.iter())
         {
-            *value *= k_sq;
+            #[cfg(feature = "mixed-precision")]
+            {
+                let v = Complex64::new(value.re as f64, value.im as f64);
+                let res = v * k_sq;
+                *value = Complex32::new(res.re as f32, res.im as f32);
+            }
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *value *= k_sq;
+            }
         }
-        let theta_fourier = self.scratch.as_slice().to_vec();
+        let theta_fourier = to_complex64_vec(self.scratch.as_slice());
 
         self.backend.inverse_fft_2d(&mut self.scratch);
-        let theta_spatial = self.scratch.as_slice().to_vec();
+        let theta_spatial = to_complex64_vec(self.scratch.as_slice());
 
         OperatorSnapshotData {
             grid: self.grid,
@@ -1144,9 +1244,9 @@ fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
 
 
 fn compute_gradients_from_potential(
-    potential: &[Complex64],
-    grad_x: &mut [Complex64],
-    grad_y: &mut [Complex64],
+    potential: &[FieldScalar],
+    grad_x: &mut [FieldScalar],
+    grad_y: &mut [FieldScalar],
     k_plus_g_x: &[f64],
     k_plus_g_y: &[f64],
 ) {
@@ -1157,22 +1257,47 @@ fn compute_gradients_from_potential(
         .zip(k_plus_g_x.iter())
         .zip(k_plus_g_y.iter())
     {
-        let factor_x = Complex64::new(0.0, kx);
-        let factor_y = Complex64::new(0.0, ky);
-        *gx = *val * factor_x;
-        *gy = *val * factor_y;
+        #[cfg(not(feature = "mixed-precision"))]
+        {
+            let factor_x = Complex64::new(0.0, kx);
+            let factor_y = Complex64::new(0.0, ky);
+            *gx = *val * factor_x;
+            *gy = *val * factor_y;
+        }
+        #[cfg(feature = "mixed-precision")]
+        {
+            let val_f64 = Complex64::new(val.re as f64, val.im as f64);
+            let factor_x = Complex64::new(0.0, kx);
+            let factor_y = Complex64::new(0.0, ky);
+            let res_x = val_f64 * factor_x;
+            let res_y = val_f64 * factor_y;
+            *gx = Complex32::new(res_x.re as f32, res_x.im as f32);
+            *gy = Complex32::new(res_y.re as f32, res_y.im as f32);
+        }
     }
 }
 
-fn apply_inv_eps(grad_x: &mut [Complex64], grad_y: &mut [Complex64], dielectric: &Dielectric2D) {
+fn apply_inv_eps(grad_x: &mut [FieldScalar], grad_y: &mut [FieldScalar], dielectric: &Dielectric2D) {
     if let Some(tensors) = dielectric.inv_eps_tensors() {
         for ((gx, gy), tensor) in grad_x.iter_mut().zip(grad_y.iter_mut()).zip(tensors.iter()) {
             let orig_x = *gx;
             let orig_y = *gy;
-            let out_x = orig_x * tensor[0] + orig_y * tensor[1];
-            let out_y = orig_x * tensor[2] + orig_y * tensor[3];
-            *gx = out_x;
-            *gy = out_y;
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                let out_x = orig_x * tensor[0] + orig_y * tensor[1];
+                let out_y = orig_x * tensor[2] + orig_y * tensor[3];
+                *gx = out_x;
+                *gy = out_y;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                let ox = Complex64::new(orig_x.re as f64, orig_x.im as f64);
+                let oy = Complex64::new(orig_y.re as f64, orig_y.im as f64);
+                let out_x = ox * tensor[0] + oy * tensor[1];
+                let out_y = ox * tensor[2] + oy * tensor[3];
+                *gx = Complex32::new(out_x.re as f32, out_x.im as f32);
+                *gy = Complex32::new(out_y.re as f32, out_y.im as f32);
+            }
         }
     } else {
         for ((gx, gy), &inv) in grad_x
@@ -1180,22 +1305,41 @@ fn apply_inv_eps(grad_x: &mut [Complex64], grad_y: &mut [Complex64], dielectric:
             .zip(grad_y.iter_mut())
             .zip(dielectric.inv_eps().iter())
         {
-            *gx *= inv;
-            *gy *= inv;
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *gx *= inv;
+                *gy *= inv;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                let gx64 = Complex64::new(gx.re as f64, gx.im as f64);
+                let gy64 = Complex64::new(gy.re as f64, gy.im as f64);
+                let rx = gx64 * inv;
+                let ry = gy64 * inv;
+                *gx = Complex32::new(rx.re as f32, rx.im as f32);
+                *gy = Complex32::new(ry.re as f32, ry.im as f32);
+            }
         }
     }
 }
 
-fn apply_scalar_eps(field: &mut [Complex64], eps: &[f64]) {
+fn apply_scalar_eps(field: &mut [FieldScalar], eps: &[f64]) {
     for (value, &eps_val) in field.iter_mut().zip(eps.iter()) {
-        *value *= eps_val;
+        #[cfg(not(feature = "mixed-precision"))]
+        { *value *= eps_val; }
+        #[cfg(feature = "mixed-precision")]
+        {
+            let v = Complex64::new(value.re as f64, value.im as f64);
+            let res = v * eps_val;
+            *value = Complex32::new(res.re as f32, res.im as f32);
+        }
     }
 }
 
 fn assemble_divergence(
-    grad_x: &[Complex64],
-    grad_y: &[Complex64],
-    output: &mut [Complex64],
+    grad_x: &[FieldScalar],
+    grad_y: &[FieldScalar],
+    output: &mut [FieldScalar],
     k_plus_g_x: &[f64],
     k_plus_g_y: &[f64],
 ) {
@@ -1206,10 +1350,23 @@ fn assemble_divergence(
         .zip(k_plus_g_x.iter())
         .zip(k_plus_g_y.iter())
     {
-        let factor_x = Complex64::new(0.0, kx);
-        let factor_y = Complex64::new(0.0, ky);
-        let div = factor_x * gx + factor_y * gy;
-        *out = -div;
+        #[cfg(not(feature = "mixed-precision"))]
+        {
+            let factor_x = Complex64::new(0.0, kx);
+            let factor_y = Complex64::new(0.0, ky);
+            let div = factor_x * gx + factor_y * gy;
+            *out = -div;
+        }
+        #[cfg(feature = "mixed-precision")]
+        {
+            let gx64 = Complex64::new(gx.re as f64, gx.im as f64);
+            let gy64 = Complex64::new(gy.re as f64, gy.im as f64);
+            let factor_x = Complex64::new(0.0, kx);
+            let factor_y = Complex64::new(0.0, ky);
+            let div = factor_x * gx64 + factor_y * gy64;
+            let res = -div;
+            *out = Complex32::new(res.re as f32, res.im as f32);
+        }
     }
 }
 

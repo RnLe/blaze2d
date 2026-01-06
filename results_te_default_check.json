@@ -1,0 +1,116 @@
+{
+  "session_total_ms": 27596.437,
+  "session_std_ms": 0,
+  "iterations": 1,
+  "timestamp": "1767741646",
+  "methods": {
+    "fft_2d::inverse": {
+      "calls": 517857,
+      "total_ms": 3025.134,
+      "avg_us": 5.842,
+      "min_us": 4.77,
+      "max_us": 1115.753,
+      "std_ms": 0,
+      "pct": 10.96
+    },
+    "update_ritz_vectors": {
+      "calls": 5630,
+      "total_ms": 4583.485,
+      "avg_us": 814.118,
+      "min_us": 444.025,
+      "max_us": 3529.245,
+      "std_ms": 0,
+      "pct": 16.61
+    },
+    "svqb": {
+      "calls": 5630,
+      "total_ms": 9230.422,
+      "avg_us": 1639.507,
+      "min_us": 560.005,
+      "max_us": 8987.601,
+      "std_ms": 0,
+      "pct": 33.45
+    },
+    "svqb::gram_matrix": {
+      "calls": 5630,
+      "total_ms": 2383.787,
+      "avg_us": 423.408,
+      "min_us": 160.634,
+      "max_us": 5612.847,
+      "std_ms": 0,
+      "pct": 8.64
+    },
+    "batch_apply_te": {
+      "calls": 5630,
+      "total_ms": 6039.23,
+      "avg_us": 1072.687,
+      "min_us": 581.99,
+      "max_us": 2729.32,
+      "std_ms": 0,
+      "pct": 21.88
+    },
+    "apply_te": {
+      "calls": 137625,
+      "total_ms": 6049.377,
+      "avg_us": 43.956,
+      "min_us": 40.153,
+      "max_us": 1195.842,
+      "std_ms": 0,
+      "pct": 21.92
+    },
+    "fft_2d::forward": {
+      "calls": 517857,
+      "total_ms": 2925.758,
+      "avg_us": 5.65,
+      "min_us": 4.693,
+      "max_us": 404.85,
+      "std_ms": 0,
+      "pct": 10.6
+    },
+    "project_operator": {
+      "calls": 5630,
+      "total_ms": 2460.31,
+      "avg_us": 437.0,
+      "min_us": 161.425,
+      "max_us": 2537.788,
+      "std_ms": 0,
+      "pct": 8.92
+    },
+    "svqb::eigendecomp": {
+      "calls": 5630,
+      "total_ms": 293.257,
+      "avg_us": 52.088,
+      "min_us": 16.069,
+      "max_us": 413.4,
+      "std_ms": 0,
+      "pct": 1.06
+    },
+    "svqb::gemm": {
+      "calls": 5630,
+      "total_ms": 5914.497,
+      "avg_us": 1050.532,
+      "min_us": 321.745,
+      "max_us": 4445.407,
+      "std_ms": 0,
+      "pct": 21.43
+    },
+    "orthonormalize_subspace": {
+      "calls": 5630,
+      "total_ms": 9330.798,
+      "avg_us": 1657.335,
+      "min_us": 562.683,
+      "max_us": 9104.556,
+      "std_ms": 0,
+      "pct": 33.81
+    },
+    "compute_aq_block": {
+      "calls": 5630,
+      "total_ms": 6174.296,
+      "avg_us": 1096.678,
+      "min_us": 591.226,
+      "max_us": 2771.204,
+      "std_ms": 0,
+      "pct": 22.37
+    }
+  }
+}

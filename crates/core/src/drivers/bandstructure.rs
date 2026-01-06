@@ -718,8 +718,10 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
                          p
                      })
                      .filter(|f| {
-                         // Check L2 norm squared > threshold
-                         let norm_sq = f.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>();
+                         // Check L2 norm squared > threshold (upcast for mixed-precision)
+                         let norm_sq: f64 = f.as_slice().iter()
+                             .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
+                             .sum();
                          norm_sq > 1e-6
                      })
                      .take(sector_config.n_bands)

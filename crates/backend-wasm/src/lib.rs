@@ -71,6 +71,7 @@
 //! ```
 
 use blaze2d_core::backend::{SpectralBackend, SpectralBuffer};
+use blaze2d_core::field::FieldScalar;
 use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 
@@ -92,7 +93,7 @@ pub struct WasmBackend;
 #[derive(Clone)]
 pub struct WasmField {
     grid: Grid2D,
-    data: Vec<Complex64>,
+    data: Vec<FieldScalar>,
 }
 
 impl SpectralBuffer for WasmField {
@@ -104,11 +105,11 @@ impl SpectralBuffer for WasmField {
         self.grid
     }
 
-    fn as_slice(&self) -> &[Complex64] {
+    fn as_slice(&self) -> &[FieldScalar] {
         &self.data
     }
 
-    fn as_mut_slice(&mut self) -> &mut [Complex64] {
+    fn as_mut_slice(&mut self) -> &mut [FieldScalar] {
         &mut self.data
     }
 }
@@ -119,7 +120,7 @@ impl SpectralBackend for WasmBackend {
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {
         WasmField {
             grid,
-            data: vec![Complex64::default(); grid.len()],
+            data: vec![FieldScalar::default(); grid.len()],
         }
     }
 
@@ -129,17 +130,47 @@ impl SpectralBackend for WasmBackend {
 
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
         for value in &mut buffer.data {
-            *value *= alpha;
+            // Compute in f64, store in FieldScalar
+            let v64 = Complex64::new(value.re as f64, value.im as f64);
+            let result = v64 * alpha;
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *value = result;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                *value = FieldScalar::new(result.re as f32, result.im as f32);
+            }
         }
     }
 
     fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
         for (dst, src) in y.data.iter_mut().zip(&x.data) {
-            *dst += alpha * src;
+            // Compute in f64, store in FieldScalar
+            let src64 = Complex64::new(src.re as f64, src.im as f64);
+            let dst64 = Complex64::new(dst.re as f64, dst.im as f64);
+            let result = dst64 + alpha * src64;
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *dst = result;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                *dst = FieldScalar::new(result.re as f32, result.im as f32);
+            }
         }
     }
 
     fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
-        x.data.iter().zip(&y.data).map(|(a, b)| a.conj() * b).sum()
+        // Accumulate in f64 for numerical stability
+        x.data
+            .iter()
+            .zip(&y.data)
+            .map(|(a, b)| {
+                let a64 = Complex64::new(a.re as f64, a.im as f64);
+                let b64 = Complex64::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
+            .sum()
     }
 }

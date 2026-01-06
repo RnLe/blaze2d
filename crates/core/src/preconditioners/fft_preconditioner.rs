@@ -54,6 +54,7 @@
 //! ```
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
+use crate::field::FieldReal;
 use crate::preconditioners::OperatorPreconditioner;
 
 // ============================================================================
@@ -572,7 +573,7 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for FFTPreconditioner<B> {
 
         // 2. Pointwise multiply: x̂ * P̂
         for (xh, &p) in buffer.as_mut_slice().iter_mut().zip(&self.inv_spectrum) {
-            *xh *= p;
+            *xh *= p as FieldReal;
         }
 
         // 3. Inverse FFT: x̂ → y
