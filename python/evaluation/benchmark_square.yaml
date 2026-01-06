@@ -306,19 +306,53 @@ runs:
     time_per_iter_ms: 0.600
     description: "New baseline after several tweaks.. and before the multi-grid preconditioner. Muahaha!"
 
-  - timestamp: "2025-12-04T22:16:28+01:00"
+  - timestamp: "2026-01-06T13:05:16+01:00"
     polarization: "TE"
     min_iter: 5
     max_iter: 21
     total_iterations: 254
-    total_time_s: 0.250
+    total_time_s: 0.240
     time_per_iter_ms: 1.000
     description: ""
-  - timestamp: "2025-12-04T22:16:28+01:00"
+  - timestamp: "2026-01-06T13:05:16+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 149
+    total_time_s: 0.090
+    time_per_iter_ms: 0.600
+    description: ""
+
+  - timestamp: "2026-01-06T13:14:20+01:00"
+    polarization: "TE"
+    min_iter: 5
+    max_iter: 21
+    total_iterations: 254
+    total_time_s: 0.210
+    time_per_iter_ms: 0.800
+    description: ""
+  - timestamp: "2026-01-06T13:14:20+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 149
+    total_time_s: 0.090
+    time_per_iter_ms: 0.600
+    description: ""
+    
+  - timestamp: "2026-01-06T13:22:58+01:00"
+    polarization: "TE"
+    min_iter: 5
+    max_iter: 21
+    total_iterations: 254
+    total_time_s: 0.210
+    time_per_iter_ms: 0.800
+    description: ""
+  - timestamp: "2026-01-06T13:22:59+01:00"
     polarization: "TM"
     min_iter: 4
     max_iter: 15
     total_iterations: 149
     total_time_s: 0.100
-    time_per_iter_ms: 0.700
+    time_per_iter_ms: 0.600
     description: ""
