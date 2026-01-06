@@ -319,6 +319,25 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for FourierDiagonalPreconditi
         }
         backend.inverse_fft_2d(buffer);
     }
+
+    fn batch_apply(&mut self, backend: &B, buffers: &mut [B::Buffer]) {
+        // 1. Batch Forward FFT
+        backend.batch_forward_fft_2d(buffers);
+        
+        // 2. Apply diagonal scaling
+        for buffer in buffers.iter_mut() {
+            for (value, scale) in buffer
+                .as_mut_slice()
+                .iter_mut()
+                .zip(self.inverse_diagonal.iter())
+            {
+                *value *= *scale;
+            }
+        }
+        
+        // 3. Batch Inverse FFT
+        backend.batch_inverse_fft_2d(buffers);
+    }
 }
 
 // ============================================================================

@@ -101,7 +101,10 @@
 ## Optimization Opportunities (Identified via Audit)
 
 ### High Priority
-- [ ] **Batched Operator Application**: `Eigensolver::compute_aq_block` calls `apply` sequentially. Refactor `LinearOperator` to support `batch_apply` to utilize optimized backend implementations (e.g., fused gradients, batched FFTs).
+- [x] **Batched Operator Application**: Fixed in `Eigensolver` methods:
+    - `compute_aq_block`: Uses `operator.batch_apply`.
+    - `precondition_residuals`: Uses `preconditioner.batch_apply`.
+    - `orthonormalize_subspace`: Uses `operator.batch_apply_mass`.
 - [ ] **Work Buffer Reuse**: The main loop allocates/frees `residuals`, `p_block`, `aq_block`, and `w_new_block` every iteration. Introducing a `Workspace` structure to reuse these buffers would reduce allocator pressure.
 
 ### Medium Priority

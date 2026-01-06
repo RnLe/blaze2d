@@ -126,8 +126,29 @@ impl ProgressInfo {
 }
 
 // ============================================================================
-// Configuration
+// Workspace
 // ============================================================================
+
+/// reusable workspace buffers to avoid allocation in the inner loop
+pub struct EigensolverWorkspace<B: SpectralBackend> {
+    pub residuals: Vec<B::Buffer>,
+    pub p_block: Vec<B::Buffer>,
+    pub q_block: Vec<B::Buffer>,
+    pub bq_block: Vec<B::Buffer>,
+    pub aq_block: Vec<B::Buffer>,
+}
+
+impl<B: SpectralBackend> EigensolverWorkspace<B> {
+    pub fn new() -> Self {
+        Self {
+            residuals: Vec::new(),
+            p_block: Vec::new(),
+            q_block: Vec::new(),
+            bq_block: Vec::new(),
+            aq_block: Vec::new(),
+        }
+    }
+}
 
 /// Main configuration for the eigensolver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -833,23 +854,28 @@ where
     fn precondition_residuals(&mut self, residuals: &[B::Buffer]) -> Vec<B::Buffer> {
         let backend = self.operator.backend();
 
-        residuals
+        // 1. Collect active residuals (cloned)
+        let mut p_block: Vec<B::Buffer> = residuals
             .iter()
             .enumerate()
             .filter_map(|(i, r)| {
                 // Skip soft-locked bands entirely (their residuals are zeros anyway)
                 if i < self.soft_locked.len() && self.soft_locked[i] {
-                    return None;
+                    None
+                } else {
+                    Some(r.clone())
                 }
-
-                let mut p = r.clone();
-                if let Some(ref mut precond) = self.preconditioner {
-                    precond.apply(backend, &mut p);
-                }
-                // If no preconditioner, p = r (identity preconditioning)
-                Some(p)
             })
-            .collect()
+            .collect();
+
+        // 2. Apply preconditioner in batch to leverage optimized backends
+        if !p_block.is_empty() {
+            if let Some(ref mut precond) = self.preconditioner {
+                precond.batch_apply(backend, &mut p_block);
+            }
+        }
+
+        p_block
     }
 
     // ========================================================================
@@ -1225,12 +1251,22 @@ where
             bq_block.push(bx);
         }
 
-        // Remaining vectors (P and W): compute B*v fresh
-        // Note: Mass operator is cheap (copy for TE, ε-multiply for TM) - no FFTs involved
-        for q in q_block.iter().skip(x_size) {
-            let mut bq = self.operator.alloc_field();
-            self.operator.apply_mass(q, &mut bq);
-            bq_block.push(bq);
+        // Remaining vectors (P and W): compute B*v fresh using batched apply_mass
+        let p_w_start = x_size;
+        let p_w_count = q_block.len() - x_size;
+        
+        if p_w_count > 0 {
+            // Allocate outputs for P and W mass application
+            let mut b_pw_block = Vec::with_capacity(p_w_count);
+            for _ in 0..p_w_count {
+                b_pw_block.push(self.operator.alloc_field());
+            }
+
+            // Apply mass operator in batch
+            self.operator.batch_apply_mass(&q_block[p_w_start..], &mut b_pw_block);
+            
+            // Append to bq_block
+            bq_block.append(&mut b_pw_block);
         }
 
         // Apply SVQB to B-orthonormalize
@@ -1274,11 +1310,14 @@ where
         
         let r = q_block.len();
         let mut aq_block: Vec<B::Buffer> = Vec::with_capacity(r);
-        for q in q_block {
-            let mut aq = self.operator.alloc_field();
-            self.operator.apply(q, &mut aq);
-            aq_block.push(aq);
+
+        // Pre-allocate output buffers
+        for _ in 0..r {
+            aq_block.push(self.operator.alloc_field());
         }
+
+        // Apply operator in batch to leverage optimized backends (e.g. batched FFTs)
+        self.operator.batch_apply(q_block, &mut aq_block);
         
         crate::profiler::stop_timer("compute_aq_block");
         aq_block
