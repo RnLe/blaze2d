@@ -1,18 +1,42 @@
 //! CPU spectral backend built on rustfft.
+//!
+//! # Mixed Precision Support
+//!
+//! When compiled with `--features mixed-precision`:
+//! - Fields are stored as Complex<f32> for 2x memory bandwidth
+//! - FFTs are performed in f32 (rustfft supports both)
+//! - Dot products accumulate in f64 to prevent catastrophic cancellation
+//! - All eigenvalues and Rayleigh-Ritz operations remain in f64
 
 use std::sync::{Arc, Mutex};
 
 use blaze2d_core::backend::SpectralBackend;
-use blaze2d_core::field::Field2D;
+use blaze2d_core::field::{Field2D, FieldScalar, FieldReal};
 use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
-use rustfft::{Fft, FftPlanner};
+use rustfft::Fft;
+
+#[cfg(not(feature = "mixed-precision"))]
+use rustfft::FftPlanner;
+
+#[cfg(feature = "mixed-precision")]
+use num_complex::Complex32;
+
+#[cfg(feature = "mixed-precision")]
+use rustfft::FftPlanner as FftPlanner32;
 
 #[cfg(feature = "parallel")]
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 
 #[cfg(feature = "parallel")]
 const DEFAULT_PARALLEL_THRESHOLD: usize = 4096;
+
+// Type aliases for FFT precision - must match FieldScalar
+#[cfg(not(feature = "mixed-precision"))]
+type FftPlannerType = FftPlanner<f64>;
+
+#[cfg(feature = "mixed-precision")]
+type FftPlannerType = FftPlanner32<f32>;
 
 #[derive(Clone)]
 pub struct CpuBackend {
@@ -22,8 +46,8 @@ pub struct CpuBackend {
     parallel_min_points: usize,
     #[cfg(feature = "parallel")]
     parallel_pool: Option<Arc<ThreadPool>>,
-    plan_cache: Arc<Mutex<FftPlanner<f64>>>,
-    scratch_cache: Arc<Mutex<Vec<Complex64>>>,
+    plan_cache: Arc<Mutex<FftPlannerType>>,
+    scratch_cache: Arc<Mutex<Vec<FieldScalar>>>,
 }
 
 impl CpuBackend {
@@ -35,7 +59,7 @@ impl CpuBackend {
             parallel_min_points: DEFAULT_PARALLEL_THRESHOLD,
             #[cfg(feature = "parallel")]
             parallel_pool: None,
-            plan_cache: Arc::new(Mutex::new(FftPlanner::new())),
+            plan_cache: Arc::new(Mutex::new(FftPlannerType::new())),
             scratch_cache: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -101,18 +125,12 @@ impl CpuBackend {
             (row, col)
         };
 
-        // Prepare scratch buffer
-        let row_scratch_len = row_fft.get_inplace_scratch_len();
-        let col_scratch_len = col_fft.get_inplace_scratch_len();
-        
-        // For columns: we need 'ny' for transpose buffer. 
-        // We will use standard .process() for FFTs to avoid scratch buffer mismatches,
-        // but we reuse the transpose buffer to save that allocation.
+        // Prepare scratch buffer for column transpose
         let required_len = ny;
 
         let mut scratch_guard = self.scratch_cache.lock().unwrap();
         if scratch_guard.len() < required_len {
-            scratch_guard.resize(required_len, Complex64::default());
+            scratch_guard.resize(required_len, FieldScalar::default());
         }
         let scratch = &mut *scratch_guard;
 
@@ -127,7 +145,7 @@ impl CpuBackend {
         if use_parallel {
             #[cfg(feature = "parallel")]
             {
-                let mut transposed = vec![Complex64::default(); data.len()];
+                let mut transposed = vec![FieldScalar::default(); data.len()];
                 execute_parallel_fft(
                     self.parallel_pool.as_deref(),
                     data,
@@ -145,7 +163,7 @@ impl CpuBackend {
         }
 
         if matches!(direction, FftDirection::Inverse) {
-            let scale = 1.0 / (nx * ny) as f64;
+            let scale = 1.0 / (nx * ny) as FieldReal;
             #[cfg(feature = "parallel")]
             if use_parallel {
                 data.par_iter_mut().for_each(|value| *value *= scale);
@@ -234,7 +252,7 @@ impl CpuBackend {
 
             // Process all columns across all buffers
             // Reuse a single scratch buffer for all column transforms
-            let mut scratch = vec![Complex64::default(); ny];
+            let mut scratch = vec![FieldScalar::default(); ny];
             for buffer in buffers.iter_mut() {
                 process_columns_serial_with_scratch_buffer(buffer.as_mut_slice(), nx, ny, &col_fft, &mut scratch);
             }
@@ -242,7 +260,7 @@ impl CpuBackend {
 
         // Apply inverse normalization if needed
         if matches!(direction, FftDirection::Inverse) {
-            let scale = 1.0 / (nx * ny) as f64;
+            let scale = 1.0 / (nx * ny) as FieldReal;
             for buffer in buffers.iter_mut() {
                 let data = buffer.as_mut_slice();
                 #[cfg(feature = "parallel")]
@@ -272,31 +290,32 @@ enum FftDirection {
     Inverse,
 }
 
-fn process_rows_serial(data: &mut [Complex64], nx: usize, fft: &Arc<dyn Fft<f64>>) {
+fn process_rows_serial(data: &mut [FieldScalar], nx: usize, fft: &Arc<dyn Fft<FieldReal>>) {
     for row in data.chunks_mut(nx) {
         fft.process(row);
     }
 }
 
 #[cfg(feature = "parallel")]
-fn process_rows_parallel(data: &mut [Complex64], nx: usize, fft: Arc<dyn Fft<f64>>) {
+fn process_rows_parallel(data: &mut [FieldScalar], nx: usize, fft: Arc<dyn Fft<FieldReal>>) {
     data.par_chunks_mut(nx).for_each(|row| {
         fft.process(row);
     });
 }
 
-fn process_columns_serial(data: &mut [Complex64], nx: usize, ny: usize, fft: &Arc<dyn Fft<f64>>) {
-    let mut scratch = vec![Complex64::default(); ny];
+#[allow(dead_code)]
+fn process_columns_serial(data: &mut [FieldScalar], nx: usize, ny: usize, fft: &Arc<dyn Fft<FieldReal>>) {
+    let mut scratch = vec![FieldScalar::default(); ny];
     process_columns_serial_with_scratch_buffer(data, nx, ny, fft, &mut scratch);
 }
 
 /// Process columns with an externally provided scratch buffer (used as transpose buffer).
 fn process_columns_serial_with_scratch_buffer(
-    data: &mut [Complex64],
+    data: &mut [FieldScalar],
     nx: usize,
     ny: usize,
-    fft: &Arc<dyn Fft<f64>>,
-    scratch: &mut [Complex64],
+    fft: &Arc<dyn Fft<FieldReal>>,
+    scratch: &mut [FieldScalar],
 ) {
     debug_assert!(scratch.len() >= ny);
     
@@ -316,7 +335,7 @@ fn process_columns_serial_with_scratch_buffer(
 }
 
 #[cfg(feature = "parallel")]
-fn transpose_into(src: &[Complex64], dst: &mut [Complex64], nx: usize, ny: usize) {
+fn transpose_into(src: &[FieldScalar], dst: &mut [FieldScalar], nx: usize, ny: usize) {
     assert_eq!(src.len(), dst.len());
     for iy in 0..ny {
         for ix in 0..nx {
@@ -330,12 +349,12 @@ fn transpose_into(src: &[Complex64], dst: &mut [Complex64], nx: usize, ny: usize
 #[cfg(feature = "parallel")]
 fn execute_parallel_fft(
     pool: Option<&ThreadPool>,
-    data: &mut [Complex64],
-    transposed: &mut [Complex64],
+    data: &mut [FieldScalar],
+    transposed: &mut [FieldScalar],
     nx: usize,
     ny: usize,
-    row_fft: Arc<dyn Fft<f64>>,
-    col_fft: Arc<dyn Fft<f64>>,
+    row_fft: Arc<dyn Fft<FieldReal>>,
+    col_fft: Arc<dyn Fft<FieldReal>>,
 ) {
     let job = || {
         process_rows_parallel(data, nx, row_fft.clone());
@@ -359,15 +378,15 @@ fn batch_fft_2d_parallel(
     buffers: &mut [Field2D],
     nx: usize,
     ny: usize,
-    row_fft: Arc<dyn Fft<f64>>,
-    col_fft: Arc<dyn Fft<f64>>,
+    row_fft: Arc<dyn Fft<FieldReal>>,
+    col_fft: Arc<dyn Fft<FieldReal>>,
     pool: Option<&ThreadPool>,
 ) {
     let mut job = || {
         // Phase 1: Process all rows across all buffers in parallel
         // Collect all row data pointers for parallel iteration
         let total_rows = buffers.len() * ny;
-        let mut row_slices: Vec<&mut [Complex64]> = Vec::with_capacity(total_rows);
+        let mut row_slices: Vec<&mut [FieldScalar]> = Vec::with_capacity(total_rows);
         
         for buffer in buffers.iter_mut() {
             for row in buffer.as_mut_slice().chunks_mut(nx) {
@@ -386,7 +405,7 @@ fn batch_fft_2d_parallel(
         // This is done per-buffer since we need a transposed buffer for each
         for buffer in buffers.iter_mut() {
             let data = buffer.as_mut_slice();
-            let mut transposed = vec![Complex64::default(); data.len()];
+            let mut transposed = vec![FieldScalar::default(); data.len()];
             transpose_into(data, &mut transposed, nx, ny);
             
             // Process transposed rows (which are original columns) in parallel
@@ -422,23 +441,67 @@ impl SpectralBackend for CpuBackend {
     }
 
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
-        for value in buffer.as_mut_slice() {
-            *value *= alpha;
+        // Convert f64 alpha to storage precision
+        #[cfg(not(feature = "mixed-precision"))]
+        {
+            for value in buffer.as_mut_slice() {
+                *value *= alpha;
+            }
+        }
+        #[cfg(feature = "mixed-precision")]
+        {
+            let alpha32 = Complex32::new(alpha.re as f32, alpha.im as f32);
+            for value in buffer.as_mut_slice() {
+                *value *= alpha32;
+            }
         }
     }
 
     fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
-        for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *dst += alpha * src;
+        // Convert f64 alpha to storage precision
+        #[cfg(not(feature = "mixed-precision"))]
+        {
+            for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
+                *dst += alpha * src;
+            }
+        }
+        #[cfg(feature = "mixed-precision")]
+        {
+            let alpha32 = Complex32::new(alpha.re as f32, alpha.im as f32);
+            for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
+                *dst += alpha32 * src;
+            }
         }
     }
 
+    /// Conjugate dot product with f64 accumulation.
+    ///
+    /// **CRITICAL**: Even in mixed-precision mode (f32 storage), we accumulate
+    /// in f64 to prevent catastrophic cancellation during orthogonalization.
+    /// The CPU-to-register conversion cost is negligible compared to the
+    /// numerical stability benefit.
     fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
-        x.as_slice()
-            .iter()
-            .zip(y.as_slice())
-            .map(|(a, b)| a.conj() * b)
-            .sum()
+        #[cfg(not(feature = "mixed-precision"))]
+        {
+            x.as_slice()
+                .iter()
+                .zip(y.as_slice())
+                .map(|(a, b)| a.conj() * b)
+                .sum()
+        }
+        #[cfg(feature = "mixed-precision")]
+        {
+            // Accumulate in f64 even though storage is f32
+            x.as_slice()
+                .iter()
+                .zip(y.as_slice())
+                .map(|(a, b)| {
+                    let a64 = Complex64::new(a.re as f64, a.im as f64);
+                    let b64 = Complex64::new(b.re as f64, b.im as f64);
+                    a64.conj() * b64
+                })
+                .fold(Complex64::new(0.0, 0.0), |acc, x| acc + x)
+        }
     }
 
     fn batch_forward_fft_2d(&self, buffers: &mut [Self::Buffer]) {
@@ -457,7 +520,7 @@ mod _tests_lib;
 fn test_fft_normalization() {
     use crate::CpuBackend;
     use blaze2d_core::backend::SpectralBackend;
-    use blaze2d_core::field::Field2D;
+    use blaze2d_core::field::{Field2D, FieldScalar};
     use blaze2d_core::grid::Grid2D;
     use std::f64::consts::PI;
 
@@ -469,21 +532,23 @@ fn test_fft_normalization() {
         ly: 1.0,
     };
 
-    // Create a plane wave with G = (2π, 0)
-    let mut data = vec![Complex64::default(); 64];
-    for iy in 0..8 {
-        for ix in 0..8 {
+    // Create a plane wave with G = (2π, 0) - using f64 for computation, then convert
+    let data: Vec<FieldScalar> = (0..64)
+        .map(|i| {
+            let ix = i % 8;
             let x = ix as f64 / 8.0;
             let arg = 2.0 * PI * x;
-            data[iy * 8 + ix] = Complex64::new(arg.cos(), arg.sin());
-        }
-    }
+            #[cfg(not(feature = "mixed-precision"))]
+            { Complex64::new(arg.cos(), arg.sin()) }
+            #[cfg(feature = "mixed-precision")]
+            { Complex32::new(arg.cos() as f32, arg.sin() as f32) }
+        })
+        .collect();
     let mut field = Field2D::from_vec(grid, data);
 
     backend.forward_fft_2d(&mut field);
 
     // After FFT, should have a peak at frequency (1, 0)
-    // The value should be N^2 = 64 (for 2D FFT without normalization)
     let peak = field.as_slice()[0 * 8 + 1]; // freq_x=1, freq_y=0
     eprintln!("FFT peak at (1,0): {:?}", peak);
     eprintln!("Peak magnitude: {}", peak.norm());
@@ -498,7 +563,7 @@ fn test_tm_operator_eigenvalue() {
     use crate::CpuBackend;
     use blaze2d_core::backend::SpectralBackend;
     use blaze2d_core::dielectric::{Dielectric2D, DielectricOptions};
-    use blaze2d_core::field::Field2D;
+    use blaze2d_core::field::{Field2D, FieldScalar};
     use blaze2d_core::geometry::Geometry2D;
     use blaze2d_core::grid::Grid2D;
     use blaze2d_core::lattice::Lattice2D;
@@ -528,14 +593,17 @@ fn test_tm_operator_eigenvalue() {
     let mut operator = ThetaOperator::new(backend.clone(), dielectric, Polarization::TM, bloch);
 
     // Create a plane wave with G = (2π, 0)
-    let mut input_data = vec![Complex64::default(); 64];
-    for iy in 0..8 {
-        for ix in 0..8 {
+    let input_data: Vec<FieldScalar> = (0..64)
+        .map(|i| {
+            let ix = i % 8;
             let x = ix as f64 / 8.0;
             let arg = 2.0 * PI * x;
-            input_data[iy * 8 + ix] = Complex64::new(arg.cos(), arg.sin());
-        }
-    }
+            #[cfg(not(feature = "mixed-precision"))]
+            { Complex64::new(arg.cos(), arg.sin()) }
+            #[cfg(feature = "mixed-precision")]
+            { Complex32::new(arg.cos() as f32, arg.sin() as f32) }
+        })
+        .collect();
     let input = Field2D::from_vec(grid, input_data);
 
     // Apply operator
@@ -569,7 +637,7 @@ fn test_te_operator_eigenvalue() {
     use crate::CpuBackend;
     use blaze2d_core::backend::SpectralBackend;
     use blaze2d_core::dielectric::{Dielectric2D, DielectricOptions};
-    use blaze2d_core::field::Field2D;
+    use blaze2d_core::field::{Field2D, FieldScalar};
     use blaze2d_core::geometry::Geometry2D;
     use blaze2d_core::grid::Grid2D;
     use blaze2d_core::lattice::Lattice2D;
@@ -599,14 +667,17 @@ fn test_te_operator_eigenvalue() {
     let mut operator = ThetaOperator::new(backend.clone(), dielectric, Polarization::TE, bloch);
 
     // Create a plane wave with G = (2π, 0)
-    let mut input_data = vec![Complex64::default(); 64];
-    for iy in 0..8 {
-        for ix in 0..8 {
+    let input_data: Vec<FieldScalar> = (0..64)
+        .map(|i| {
+            let ix = i % 8;
             let x = ix as f64 / 8.0;
             let arg = 2.0 * PI * x;
-            input_data[iy * 8 + ix] = Complex64::new(arg.cos(), arg.sin());
-        }
-    }
+            #[cfg(not(feature = "mixed-precision"))]
+            { Complex64::new(arg.cos(), arg.sin()) }
+            #[cfg(feature = "mixed-precision")]
+            { Complex32::new(arg.cos() as f32, arg.sin() as f32) }
+        })
+        .collect();
     let input = Field2D::from_vec(grid, input_data);
 
     // Apply operator

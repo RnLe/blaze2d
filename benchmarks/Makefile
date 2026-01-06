@@ -71,12 +71,14 @@ blaze-single:
 	@echo "========================================"
 	@echo "Blaze2D Single-Core Benchmark (bulk-driver -j 1)"
 	@echo "========================================"
+	cargo build --release -p blaze2d-bulk-driver
 	python bench_blaze2d.py --mode single --output results
 
 blaze-multi:
 	@echo "========================================"
 	@echo "Blaze2D Multi-Core Benchmark (bulk-driver -j 16)"
 	@echo "========================================"
+	cargo build --release -p blaze2d-bulk-driver
 	python bench_blaze2d.py --mode multi --threads 16 --output results
 
 blaze-single-quick:

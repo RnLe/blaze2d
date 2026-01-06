@@ -42,7 +42,7 @@ TE_CONFIG := $(ROOT_DIR)/examples/profile_square_te_res64.toml
 TM_CONFIG := $(ROOT_DIR)/examples/profile_square_tm_res64.toml
 
 # Number of iterations to average (higher = more stable, slower)
-ITERATIONS := 10
+ITERATIONS := 2
 
 # Output files
 BASELINE_TE := $(BASELINE_DIR)/baseline_te.json

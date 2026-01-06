@@ -51,8 +51,11 @@
 //! ```
 
 use num_complex::Complex64;
+#[cfg(feature = "mixed-precision")]
+use num_complex::Complex32;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
+use crate::field::{FieldScalar, FieldReal};
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 
@@ -416,22 +419,37 @@ impl<B: SpectralBackend> EAOperator<B> {
 
         // Initialize with pseudo-random vector
         for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
-            *val = Complex64::new(
-                (i as f64 * 0.618033988749895).sin(),
-                (i as f64 * 0.414213562373095).cos(),
-            );
+            let re = (i as f64 * 0.618033988749895).sin();
+            let im = (i as f64 * 0.414213562373095).cos();
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *val = Complex64::new(re, im);
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                *val = Complex32::new(re as f32, im as f32);
+            }
         }
 
-        // Normalize
+        // Normalize - accumulate in f64 for precision
         let norm: f64 = v
             .as_slice()
             .iter()
-            .map(|c| c.norm_sqr())
+            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
             .sum::<f64>()
             .sqrt();
         if norm > 1e-15 {
             for val in v.as_mut_slice().iter_mut() {
-                *val /= norm;
+                let re = val.re as f64 / norm;
+                let im = val.im as f64 / norm;
+                #[cfg(not(feature = "mixed-precision"))]
+                {
+                    *val = Complex64::new(re, im);
+                }
+                #[cfg(feature = "mixed-precision")]
+                {
+                    *val = Complex32::new(re as f32, im as f32);
+                }
             }
         }
 
@@ -442,23 +460,37 @@ impl<B: SpectralBackend> EAOperator<B> {
                 .as_slice()
                 .iter()
                 .zip(av.as_slice().iter())
-                .map(|(vi, avi)| (vi.conj() * avi).re)
+                .map(|(vi, avi)| {
+                    let vi64 = Complex64::new(vi.re as f64, vi.im as f64);
+                    let avi64 = Complex64::new(avi.re as f64, avi.im as f64);
+                    (vi64.conj() * avi64).re
+                })
                 .sum();
             lambda_max = numerator;
 
             let norm: f64 = av
                 .as_slice()
                 .iter()
-                .map(|c| c.norm_sqr())
+                .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
                 .sum::<f64>()
                 .sqrt();
             if norm > 1e-15 {
                 for val in av.as_mut_slice().iter_mut() {
-                    *val /= norm;
+                    let re = val.re as f64 / norm;
+                    let im = val.im as f64 / norm;
+                    #[cfg(not(feature = "mixed-precision"))]
+                    {
+                        *val = Complex64::new(re, im);
+                    }
+                    #[cfg(feature = "mixed-precision")]
+                    {
+                        *val = Complex32::new(re as f32, im as f32);
+                    }
                 }
             }
             std::mem::swap(&mut v, &mut av);
         }
+
 
         // For EA operators, the diagonal (potential + kinetic diagonal) provides bounds
         // The minimum potential gives a rough lower bound on eigenvalues
@@ -491,22 +523,37 @@ impl<B: SpectralBackend> EAOperator<B> {
 
         // Initialize with pseudo-random vector
         for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
-            *val = Complex64::new(
-                (i as f64 * 0.618033988749895).sin(),
-                (i as f64 * 0.414213562373095).cos(),
-            );
+            let re = (i as f64 * 0.618033988749895).sin();
+            let im = (i as f64 * 0.414213562373095).cos();
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *val = Complex64::new(re, im);
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                *val = Complex32::new(re as f32, im as f32);
+            }
         }
 
-        // Normalize
+        // Normalize - accumulate in f64 for precision
         let norm: f64 = v
             .as_slice()
             .iter()
-            .map(|c| c.norm_sqr())
+            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
             .sum::<f64>()
             .sqrt();
         if norm > 1e-15 {
             for val in v.as_mut_slice().iter_mut() {
-                *val /= norm;
+                let re = val.re as f64 / norm;
+                let im = val.im as f64 / norm;
+                #[cfg(not(feature = "mixed-precision"))]
+                {
+                    *val = Complex64::new(re, im);
+                }
+                #[cfg(feature = "mixed-precision")]
+                {
+                    *val = Complex32::new(re as f32, im as f32);
+                }
             }
         }
 
@@ -519,19 +566,32 @@ impl<B: SpectralBackend> EAOperator<B> {
                 .as_slice()
                 .iter()
                 .zip(av.as_slice().iter())
-                .map(|(vi, avi)| (vi.conj() * avi).re)
+                .map(|(vi, avi)| {
+                    let vi64 = Complex64::new(vi.re as f64, vi.im as f64);
+                    let avi64 = Complex64::new(avi.re as f64, avi.im as f64);
+                    (vi64.conj() * avi64).re
+                })
                 .sum();
             lambda_max = numerator;
 
             let norm: f64 = av
                 .as_slice()
                 .iter()
-                .map(|c| c.norm_sqr())
+                .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
                 .sum::<f64>()
                 .sqrt();
             if norm > 1e-15 {
                 for val in av.as_mut_slice().iter_mut() {
-                    *val /= norm;
+                    let re = val.re as f64 / norm;
+                    let im = val.im as f64 / norm;
+                    #[cfg(not(feature = "mixed-precision"))]
+                    {
+                        *val = Complex64::new(re, im);
+                    }
+                    #[cfg(feature = "mixed-precision")]
+                    {
+                        *val = Complex32::new(re as f32, im as f32);
+                    }
                 }
             }
             std::mem::swap(&mut v, &mut av);
@@ -588,25 +648,25 @@ impl<B: SpectralBackend> EAOperator<B> {
     /// Returns ∂ψ/∂x evaluated at the cell face.
     #[allow(dead_code)]
     #[inline]
-    fn grad_x_at_face(&self, input: &[Complex64], i: usize, j: usize) -> Complex64 {
-        let mut result = Complex64::new(0.0, 0.0);
+    fn grad_x_at_face(&self, input: &[FieldScalar], i: usize, j: usize) -> FieldScalar {
+        let mut result = FieldScalar::new(0.0, 0.0);
         for (w, &off) in GRAD_WEIGHTS.iter().zip(GRAD_OFFSETS.iter()) {
             let ii = self.wrap_x(i as i32 + off);
-            result += *w * input[ii * self.ny + j];
+            result += (*w as FieldReal) * input[ii * self.ny + j];
         }
-        result / self.dx
+        result / (self.dx as FieldReal)
     }
 
     /// Compute the 4th-order gradient in Y at face (i, j+1/2).
     #[allow(dead_code)]
     #[inline]
-    fn grad_y_at_face(&self, input: &[Complex64], i: usize, j: usize) -> Complex64 {
-        let mut result = Complex64::new(0.0, 0.0);
+    fn grad_y_at_face(&self, input: &[FieldScalar], i: usize, j: usize) -> FieldScalar {
+        let mut result = FieldScalar::new(0.0, 0.0);
         for (w, &off) in GRAD_WEIGHTS.iter().zip(GRAD_OFFSETS.iter()) {
             let jj = self.wrap_y(j as i32 + off);
-            result += *w * input[i * self.ny + jj];
+            result += (*w as FieldReal) * input[i * self.ny + jj];
         }
-        result / self.dy
+        result / (self.dy as FieldReal)
     }
 
     /// Compute the face-averaged mass tensor component at x-face (i+1/2, j).
@@ -649,17 +709,17 @@ impl<B: SpectralBackend> EAOperator<B> {
     /// - Off-diagonal terms: ∂_x(m_xy ∂_y ψ) + ∂_y(m_yx ∂_x ψ)
     ///
     /// The off-diagonal terms use symmetric averaging to preserve Hermitian structure.
-    fn apply_kinetic(&self, input: &[Complex64], output: &mut [Complex64]) {
-        let prefactor = -0.5 * self.eta * self.eta;
+    fn apply_kinetic(&self, input: &[FieldScalar], output: &mut [FieldScalar]) {
+        let prefactor = (-0.5 * self.eta * self.eta) as FieldReal;
 
         for i in 0..self.nx {
             for j in 0..self.ny {
                 let p = i * self.ny + j;
                 let m = self.mass_inv_at(i, j);
-                let m_xx = m[0];
-                let m_xy = m[1];
-                let m_yx = m[2];
-                let m_yy = m[3];
+                let m_xx = m[0] as FieldReal;
+                let m_xy = m[1] as FieldReal;
+                let m_yx = m[2] as FieldReal;
+                let m_yy = m[3] as FieldReal;
 
                 // Diagonal terms: use central differences
                 // ∂_x(m_xx ∂_x ψ) ≈ m_xx * ∂²ψ/∂x² (constant m_xx approximation)
@@ -677,8 +737,8 @@ impl<B: SpectralBackend> EAOperator<B> {
 
                 // Gradient of m_xx and m_yy (needed for variable coefficient)
                 // For simplicity, use 2nd-order central differences for the mass gradients
-                let dm_xx_dx = self.grad_m_x(i, j, 0); // d(m_xx)/dx
-                let dm_yy_dy = self.grad_m_y(i, j, 3); // d(m_yy)/dy
+                let dm_xx_dx = self.grad_m_x(i, j, 0) as FieldReal; // d(m_xx)/dx
+                let dm_yy_dy = self.grad_m_y(i, j, 3) as FieldReal; // d(m_yy)/dy
 
                 // Diagonal contribution: ∂_α(m_αα ∂_α ψ) = m_αα ∂²ψ/∂α² + (∂m_αα/∂α)(∂ψ/∂α)
                 let diag_term =
@@ -688,8 +748,8 @@ impl<B: SpectralBackend> EAOperator<B> {
                 // Use symmetric form: m_xy * ∂²ψ/∂x∂y + m_yx * ∂²ψ/∂y∂x + gradient corrections
                 // For symmetric M^{-1} (m_xy = m_yx), these combine nicely
                 let mixed_deriv = self.mixed_derivative(input, i, j);
-                let dm_xy_dx = self.grad_m_x(i, j, 1);
-                let dm_yx_dy = self.grad_m_y(i, j, 2);
+                let dm_xy_dx = self.grad_m_x(i, j, 1) as FieldReal;
+                let dm_yx_dy = self.grad_m_y(i, j, 2) as FieldReal;
 
                 let off_diag_term =
                     (m_xy + m_yx) * mixed_deriv + dm_xy_dx * grad_y + dm_yx_dy * grad_x;
@@ -701,7 +761,7 @@ impl<B: SpectralBackend> EAOperator<B> {
 
     /// 4th-order Laplacian in X: d²ψ/dx²
     #[inline]
-    fn laplacian_x(&self, input: &[Complex64], i: usize, j: usize) -> Complex64 {
+    fn laplacian_x(&self, input: &[FieldScalar], i: usize, j: usize) -> FieldScalar {
         // (-f_{i-2} + 16f_{i-1} - 30f_i + 16f_{i+1} - f_{i+2}) / (12 dx²)
         let im2 = self.wrap_x(i as i32 - 2);
         let im1 = self.wrap_x(i as i32 - 1);
@@ -714,12 +774,13 @@ impl<B: SpectralBackend> EAOperator<B> {
         let f_ip1 = input[ip1 * self.ny + j];
         let f_ip2 = input[ip2 * self.ny + j];
 
-        (-f_im2 + 16.0 * f_im1 - 30.0 * f_i + 16.0 * f_ip1 - f_ip2) / (12.0 * self.dx * self.dx)
+        let denom = (12.0 * self.dx * self.dx) as FieldReal;
+        (-f_im2 + (16.0 as FieldReal) * f_im1 - (30.0 as FieldReal) * f_i + (16.0 as FieldReal) * f_ip1 - f_ip2) / denom
     }
 
     /// 4th-order Laplacian in Y: d²ψ/dy²
     #[inline]
-    fn laplacian_y(&self, input: &[Complex64], i: usize, j: usize) -> Complex64 {
+    fn laplacian_y(&self, input: &[FieldScalar], i: usize, j: usize) -> FieldScalar {
         let jm2 = self.wrap_y(j as i32 - 2);
         let jm1 = self.wrap_y(j as i32 - 1);
         let jp1 = self.wrap_y(j as i32 + 1);
@@ -731,12 +792,13 @@ impl<B: SpectralBackend> EAOperator<B> {
         let f_jp1 = input[i * self.ny + jp1];
         let f_jp2 = input[i * self.ny + jp2];
 
-        (-f_jm2 + 16.0 * f_jm1 - 30.0 * f_j + 16.0 * f_jp1 - f_jp2) / (12.0 * self.dy * self.dy)
+        let denom = (12.0 * self.dy * self.dy) as FieldReal;
+        (-f_jm2 + (16.0 as FieldReal) * f_jm1 - (30.0 as FieldReal) * f_j + (16.0 as FieldReal) * f_jp1 - f_jp2) / denom
     }
 
     /// 4th-order mixed derivative: d²ψ/dxdy
     #[inline]
-    fn mixed_derivative(&self, input: &[Complex64], i: usize, j: usize) -> Complex64 {
+    fn mixed_derivative(&self, input: &[FieldScalar], i: usize, j: usize) -> FieldScalar {
         // Use composition of 4th-order gradients: d/dx(d/dy)
         // First compute d/dy at neighboring x points, then d/dx of that
         // This is expensive but accurate
@@ -753,7 +815,8 @@ impl<B: SpectralBackend> EAOperator<B> {
         let f_mp = input[im1 * self.ny + jp1];
         let f_mm = input[im1 * self.ny + jm1];
 
-        (f_pp - f_pm - f_mp + f_mm) / (4.0 * self.dx * self.dy)
+        let denom = (4.0 * self.dx * self.dy) as FieldReal;
+        (f_pp - f_pm - f_mp + f_mm) / denom
     }
 
     /// Gradient of mass component in X direction (2nd order)
@@ -781,21 +844,21 @@ impl<B: SpectralBackend> EAOperator<B> {
     }
 
     /// Apply the potential term: V(R) ψ(R)
-    fn apply_potential(&self, input: &[Complex64], output: &mut [Complex64]) {
+    fn apply_potential(&self, input: &[FieldScalar], output: &mut [FieldScalar]) {
         for (p, (&v, &x)) in self.potential.iter().zip(input.iter()).enumerate() {
-            output[p] += v * x;
+            output[p] += (v as FieldReal) * x;
         }
     }
 
     /// Apply the drift term: -iη v_g(R)·∇ψ
     ///
     /// Uses 4th-order central differences for the gradient.
-    fn apply_drift(&self, input: &[Complex64], output: &mut [Complex64]) {
+    fn apply_drift(&self, input: &[FieldScalar], output: &mut [FieldScalar]) {
         let Some(ref _vg) = self.vg else {
             return;
         };
 
-        let prefactor = Complex64::new(0.0, -self.eta);
+        let prefactor = FieldScalar::new(0.0, -self.eta as _);
 
         for i in 0..self.nx {
             for j in 0..self.ny {
@@ -806,14 +869,14 @@ impl<B: SpectralBackend> EAOperator<B> {
                 let grad_x = self.grad_x_central(input, i, j);
                 let grad_y = self.grad_y_central(input, i, j);
 
-                output[p] += prefactor * (vg_x * grad_x + vg_y * grad_y);
+                output[p] += prefactor * ((vg_x as FieldReal) * grad_x + (vg_y as FieldReal) * grad_y);
             }
         }
     }
 
     /// 4th-order central difference gradient in X at cell center (i, j).
     #[inline]
-    fn grad_x_central(&self, input: &[Complex64], i: usize, j: usize) -> Complex64 {
+    fn grad_x_central(&self, input: &[FieldScalar], i: usize, j: usize) -> FieldScalar {
         // 4th-order: (1/12)(-f_{i+2} + 8f_{i+1} - 8f_{i-1} + f_{i-2}) / dx
         let im2 = self.wrap_x(i as i32 - 2);
         let im1 = self.wrap_x(i as i32 - 1);
@@ -825,12 +888,13 @@ impl<B: SpectralBackend> EAOperator<B> {
         let f_ip1 = input[ip1 * self.ny + j];
         let f_ip2 = input[ip2 * self.ny + j];
 
-        (f_im2 - 8.0 * f_im1 + 8.0 * f_ip1 - f_ip2) / (12.0 * self.dx)
+        let denom = (12.0 * self.dx) as FieldReal;
+        (f_im2 - (8.0 as FieldReal) * f_im1 + (8.0 as FieldReal) * f_ip1 - f_ip2) / denom
     }
 
     /// 4th-order central difference gradient in Y at cell center (i, j).
     #[inline]
-    fn grad_y_central(&self, input: &[Complex64], i: usize, j: usize) -> Complex64 {
+    fn grad_y_central(&self, input: &[FieldScalar], i: usize, j: usize) -> FieldScalar {
         let jm2 = self.wrap_y(j as i32 - 2);
         let jm1 = self.wrap_y(j as i32 - 1);
         let jp1 = self.wrap_y(j as i32 + 1);
@@ -841,7 +905,8 @@ impl<B: SpectralBackend> EAOperator<B> {
         let f_jp1 = input[i * self.ny + jp1];
         let f_jp2 = input[i * self.ny + jp2];
 
-        (f_jm2 - 8.0 * f_jm1 + 8.0 * f_jp1 - f_jp2) / (12.0 * self.dy)
+        let denom = (12.0 * self.dy) as FieldReal;
+        (f_jm2 - (8.0 as FieldReal) * f_jm1 + (8.0 as FieldReal) * f_jp1 - f_jp2) / denom
     }
 }
 
@@ -852,7 +917,7 @@ impl<B: SpectralBackend> LinearOperator<B> for EAOperator<B> {
 
         // Zero output
         for o in output_slice.iter_mut() {
-            *o = Complex64::new(0.0, 0.0);
+            *o = FieldScalar::new(0.0, 0.0);
         }
 
         // H = V + kinetic + drift (optional)
@@ -977,7 +1042,7 @@ mod tests {
         let grid = Grid2D::new(nx, ny, dx * nx as f64, dy * ny as f64);
         let mut input = Field2D::zeros(grid);
         for v in input.as_mut_slice() {
-            *v = Complex64::new(1.0, 0.0);
+            *v = FieldScalar::new(1.0, 0.0);
         }
 
         let mut output = Field2D::zeros(grid);
@@ -985,8 +1050,8 @@ mod tests {
 
         // All output values should be close to V = 1.0
         for &o in output.as_slice() {
-            assert!((o.re - 1.0).abs() < 1e-10, "Expected ~1.0, got {}", o.re);
-            assert!(o.im.abs() < 1e-10, "Expected real output");
+            assert!((o.re as f64 - 1.0).abs() < 1e-10, "Expected ~1.0, got {}", o.re);
+            assert!((o.im as f64).abs() < 1e-10, "Expected real output");
         }
     }
 
@@ -1032,7 +1097,7 @@ mod tests {
                 let x = i as f64 * dx;
                 let y = j as f64 * dy;
                 let phase = kx * x + ky * y;
-                input.as_mut_slice()[i * ny + j] = Complex64::new(phase.cos(), phase.sin());
+                input.as_mut_slice()[i * ny + j] = FieldScalar::new(phase.cos() as _, phase.sin() as _);
             }
         }
 
@@ -1094,8 +1159,8 @@ mod tests {
         let mut x = Field2D::zeros(grid);
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
-            x.as_mut_slice()[i] = Complex64::new((i as f64 * 0.1).sin(), (i as f64 * 0.2).cos());
-            y.as_mut_slice()[i] = Complex64::new((i as f64 * 0.3).cos(), (i as f64 * 0.15).sin());
+            x.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
+            y.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
         }
 
         let mut hx = Field2D::zeros(grid);
@@ -1160,8 +1225,8 @@ mod tests {
         let mut x = Field2D::zeros(grid);
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
-            x.as_mut_slice()[i] = Complex64::new((i as f64 * 0.1).sin(), (i as f64 * 0.2).cos());
-            y.as_mut_slice()[i] = Complex64::new((i as f64 * 0.3).cos(), (i as f64 * 0.15).sin());
+            x.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
+            y.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
         }
 
         let mut hx = Field2D::zeros(grid);
@@ -1244,7 +1309,7 @@ mod tests {
             for j in 0..ny {
                 let x = i as f64 * dx;
                 let phase = kx * x;
-                input.as_mut_slice()[i * ny + j] = Complex64::new(phase.cos(), phase.sin());
+                input.as_mut_slice()[i * ny + j] = FieldScalar::new(phase.cos() as _, phase.sin() as _);
             }
         }
 
@@ -1326,8 +1391,8 @@ mod tests {
         let mut x = Field2D::zeros(grid);
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
-            x.as_mut_slice()[i] = Complex64::new((i as f64 * 0.1).sin(), (i as f64 * 0.2).cos());
-            y.as_mut_slice()[i] = Complex64::new((i as f64 * 0.3).cos(), (i as f64 * 0.15).sin());
+            x.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
+            y.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
         }
 
         let mut hx = Field2D::zeros(grid);

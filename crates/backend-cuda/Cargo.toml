@@ -7,10 +7,12 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = []
+default = ["mixed-precision"]
 # CUDA backend uses cuBLAS for linear algebra but CPU FFT (rustfft) for transforms.
 # Benchmarks showed cuFFT has too much overhead for typical photonic crystal grid sizes.
 cuda = ["dep:cudarc", "dep:rustfft", "blaze2d-core/cuda"]
+# Mixed-precision mode: f32 storage, f64 accumulation
+mixed-precision = ["blaze2d-core/mixed-precision"]
 
 [dependencies]
 blaze2d-core = { path = "../core" }

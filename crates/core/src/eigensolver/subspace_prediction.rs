@@ -469,13 +469,13 @@ fn compute_overlap_faer(
         let prev_weighted = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = prev[col].as_slice()[row];
             let w = sqrt_eps[row];
-            faer::c64::new(c.re * w, c.im * w)
+            faer::c64::new(c.re as f64 * w, c.im as f64 * w)
         });
 
         let curr_weighted = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = curr[col].as_slice()[row];
             let w = sqrt_eps[row];
-            faer::c64::new(c.re * w, c.im * w)
+            faer::c64::new(c.re as f64 * w, c.im as f64 * w)
         });
 
         prev_weighted.adjoint() * &curr_weighted
@@ -483,12 +483,12 @@ fn compute_overlap_faer(
         // TE mode: identity B
         let prev_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = prev[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
+            faer::c64::new(c.re as f64, c.im as f64)
         });
 
         let curr_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = curr[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
+            faer::c64::new(c.re as f64, c.im as f64)
         });
 
         prev_mat.adjoint() * &curr_mat
@@ -520,13 +520,13 @@ fn compute_overlap_nalgebra(
         let prev_weighted = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
             let c = prev[col].as_slice()[row];
             let w = sqrt_eps[row];
-            NaComplex::new(c.re * w, c.im * w)
+            NaComplex::new(c.re as f64 * w, c.im as f64 * w)
         });
 
         let curr_weighted = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
             let c = curr[col].as_slice()[row];
             let w = sqrt_eps[row];
-            NaComplex::new(c.re * w, c.im * w)
+            NaComplex::new(c.re as f64 * w, c.im as f64 * w)
         });
 
         prev_weighted.adjoint() * &curr_weighted
@@ -534,12 +534,12 @@ fn compute_overlap_nalgebra(
         // TE mode: identity B
         let prev_mat = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
             let c = prev[col].as_slice()[row];
-            NaComplex::new(c.re, c.im)
+            NaComplex::new(c.re as f64, c.im as f64)
         });
 
         let curr_mat = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
             let c = curr[col].as_slice()[row];
-            NaComplex::new(c.re, c.im)
+            NaComplex::new(c.re as f64, c.im as f64)
         });
 
         prev_mat.adjoint() * &curr_mat
@@ -806,10 +806,10 @@ fn apply_rotation_faer(
     m: usize,
     n: usize,
 ) -> Vec<Field2D> {
-    // Build X matrix (n × m) from vectors in faer format
+    // Build X matrix (n × m) from vectors in faer format (upcast to f64)
     let x_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
         let c = vectors[col].as_slice()[row];
-        faer::c64::new(c.re, c.im)
+        faer::c64::new(c.re as f64, c.im as f64)
     });
 
     // Build rotation^† in faer format
@@ -822,7 +822,7 @@ fn apply_rotation_faer(
     // Compute X̃ = X * U^† using faer GEMM
     let x_tilde = &x_mat * &rotation_adj;
 
-    // Convert back to Vec<Field2D>
+    // Convert back to Vec<Field2D> using the from_f64_vec method
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
     for j in 0..m {
         let output_data: Vec<Complex64> = (0..n)
@@ -831,7 +831,7 @@ fn apply_rotation_faer(
                 Complex64::new(c.re, c.im)
             })
             .collect();
-        result.push(Field2D::from_vec(grid, output_data));
+        result.push(Field2D::from_f64_vec(grid, output_data));
     }
 
     result
@@ -845,10 +845,10 @@ fn apply_rotation_nalgebra(
     m: usize,
     n: usize,
 ) -> Vec<Field2D> {
-    // Build X matrix (n × m) from vectors
+    // Build X matrix (n × m) from vectors (upcast to f64)
     let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
         let c = vectors[col].as_slice()[row];
-        NaComplex::new(c.re, c.im)
+        NaComplex::new(c.re as f64, c.im as f64)
     });
 
     // Build rotation^† (adjoint = transpose + conjugate)
@@ -860,7 +860,7 @@ fn apply_rotation_nalgebra(
     // Compute X̃ = X * U^†
     let x_tilde = &x_mat * &rotation_adj;
 
-    // Convert back to Vec<Field2D>
+    // Convert back to Vec<Field2D> using from_f64_vec
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
     for j in 0..m {
         let output_data: Vec<Complex64> = (0..n)
@@ -869,7 +869,7 @@ fn apply_rotation_nalgebra(
                 Complex64::new(c.re, c.im)
             })
             .collect();
-        result.push(Field2D::from_vec(grid, output_data));
+        result.push(Field2D::from_f64_vec(grid, output_data));
     }
 
     result
@@ -935,10 +935,10 @@ fn extrapolate_faer(
     m: usize,
     n: usize,
 ) -> Vec<Field2D> {
-    // Build X_curr matrix (n × m)
+    // Build X_curr matrix (n × m) - upcast to f64
     let x_curr = Mat::<faer::c64>::from_fn(n, m, |row, col| {
         let c = curr[col].as_slice()[row];
-        faer::c64::new(c.re, c.im)
+        faer::c64::new(c.re as f64, c.im as f64)
     });
 
     // Compute scaled transformation: T = (1+α) U^†
@@ -951,6 +951,7 @@ fn extrapolate_faer(
     let x_aligned = &x_curr * &rotation_adj;
 
     // Build result: X_pred = X_aligned + coeff_prev * X_prev
+    // Note: prev_slice elements are FieldScalar, need to upcast to f64
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
     let coeff_p = Complex64::new(coeff_prev, 0.0);
 
@@ -959,10 +960,11 @@ fn extrapolate_faer(
         let output_data: Vec<Complex64> = (0..n)
             .map(|k| {
                 let aligned = x_aligned.get(k, j);
-                Complex64::new(aligned.re, aligned.im) + coeff_p * prev_slice[k]
+                let prev_k = Complex64::new(prev_slice[k].re as f64, prev_slice[k].im as f64);
+                Complex64::new(aligned.re, aligned.im) + coeff_p * prev_k
             })
             .collect();
-        result.push(Field2D::from_vec(grid, output_data));
+        result.push(Field2D::from_f64_vec(grid, output_data));
     }
 
     result
@@ -982,7 +984,7 @@ fn extrapolate_nalgebra(
     // Build X_curr matrix (n × m)
     let x_curr = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
         let c = curr[col].as_slice()[row];
-        NaComplex::new(c.re, c.im)
+        NaComplex::new(c.re as f64, c.im as f64)
     });
 
     // Compute scaled transformation: T = (1+α) U^†
@@ -995,6 +997,7 @@ fn extrapolate_nalgebra(
     let x_aligned = &x_curr * &rotation_adj;
 
     // Build result: X_pred = X_aligned + coeff_prev * X_prev
+    // Note: prev_slice elements are FieldScalar, need to upcast to f64
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
     let coeff_p = Complex64::new(coeff_prev, 0.0);
 
@@ -1003,10 +1006,11 @@ fn extrapolate_nalgebra(
         let output_data: Vec<Complex64> = (0..n)
             .map(|k| {
                 let aligned = x_aligned[(k, j)];
-                Complex64::new(aligned.re, aligned.im) + coeff_p * prev_slice[k]
+                let prev_k = Complex64::new(prev_slice[k].re as f64, prev_slice[k].im as f64);
+                Complex64::new(aligned.re, aligned.im) + coeff_p * prev_k
             })
             .collect();
-        result.push(Field2D::from_vec(grid, output_data));
+        result.push(Field2D::from_f64_vec(grid, output_data));
     }
 
     result
@@ -1036,8 +1040,12 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
     let grid = vectors[0].grid();
     let n = vectors[0].len();
 
-    // Clone input vectors (we'll modify them)
-    let mut result: Vec<Vec<Complex64>> = vectors.iter().map(|v| v.as_slice().to_vec()).collect();
+    // Clone input vectors and upcast to f64 for the orthonormalization computation
+    let mut result: Vec<Vec<Complex64>> = vectors.iter()
+        .map(|v| v.as_slice().iter()
+            .map(|c| Complex64::new(c.re as f64, c.im as f64))
+            .collect())
+        .collect();
 
     // Modified Gram-Schmidt
     for i in 0..m {
@@ -1068,10 +1076,10 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
         }
     }
 
-    // Convert back to Field2D
+    // Convert back to Field2D using from_f64_vec
     result
         .into_iter()
-        .map(|data| Field2D::from_vec(grid, data))
+        .map(|data| Field2D::from_f64_vec(grid, data))
         .collect()
 }
 
