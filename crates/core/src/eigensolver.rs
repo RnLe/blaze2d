@@ -474,6 +474,10 @@ where
     eigenvalues: Vec<f64>,
     /// Previous iteration's eigenvalues (for eigenvalue-based convergence check).
     previous_eigenvalues: Vec<f64>,
+    /// Soft-locked bands: these bands have converged but remain in X block.
+    /// For soft-locked bands, we skip residual/preconditioning and set P=W=0.
+    /// This is numerically more stable than hard locking (deflation).
+    soft_locked: Vec<bool>,
     /// Current iteration count.
     iteration: usize,
     /// Whether the solver has been initialized.
@@ -508,6 +512,7 @@ where
             deflation: DeflationSubspace::new(),
             eigenvalues: Vec::new(),
             previous_eigenvalues: Vec::new(),
+            soft_locked: Vec::new(),
             iteration: 0,
             initialized: false,
         }
@@ -616,6 +621,9 @@ where
         self.x_block = x_block;
         self.initialized = true;
 
+        // Initialize soft_locked to all false (no bands converged yet)
+        self.soft_locked = vec![false; self.x_block.len()];
+
         // Compute initial Rayleigh quotients as eigenvalue estimates
         self.eigenvalues = self
             .x_block
@@ -654,6 +662,16 @@ where
         self.deflation.len()
     }
 
+    /// Get the number of soft-locked bands (converged but still in X block).
+    pub fn soft_locked_count(&self) -> usize {
+        self.soft_locked.iter().filter(|&&b| b).count()
+    }
+
+    /// Get the number of active (non-soft-locked) bands in X block.
+    pub fn active_band_count(&self) -> usize {
+        self.soft_locked.iter().filter(|&&b| !b).count()
+    }
+
     /// Get the total number of bands (locked + active).
     pub fn total_bands(&self) -> usize {
         self.deflation.len() + self.x_block.len()
@@ -690,6 +708,10 @@ where
     ///
     /// where λ_i is the current Rayleigh quotient estimate.
     ///
+    /// **Soft Locking Optimization**: Skips residual computation for soft-locked bands,
+    /// returning a zero vector as a placeholder. These zeros won't be used since
+    /// P[j] will also be skipped for soft-locked bands.
+    ///
     /// Returns only the residual vectors (norms computed separately after deflation).
     fn compute_residuals(&self) -> Vec<B::Buffer> {
         let backend = self.operator.backend();
@@ -698,6 +720,15 @@ where
         let mut residuals: Vec<B::Buffer> = Vec::with_capacity(n);
 
         for (i, entry) in self.x_block.iter().enumerate() {
+            // Skip expensive computation for soft-locked bands
+            if i < self.soft_locked.len() && self.soft_locked[i] {
+                // Return zero residual for soft-locked bands (won't be used)
+                let mut zero = entry.vector.clone();
+                backend.scale(Complex64::ZERO, &mut zero);
+                residuals.push(zero);
+                continue;
+            }
+
             // r_i = A*x_i (start with applied)
             let mut r = entry.applied.clone();
 
@@ -796,18 +827,27 @@ where
     ///
     /// If no preconditioner is available, returns a clone of the residuals
     /// (equivalent to M = I).
+    ///
+    /// **Soft Locking Optimization**: Only processes residuals for active (non-soft-locked)
+    /// bands. Returns a smaller P block containing only active band directions.
     fn precondition_residuals(&mut self, residuals: &[B::Buffer]) -> Vec<B::Buffer> {
         let backend = self.operator.backend();
 
         residuals
             .iter()
-            .map(|r| {
+            .enumerate()
+            .filter_map(|(i, r)| {
+                // Skip soft-locked bands entirely (their residuals are zeros anyway)
+                if i < self.soft_locked.len() && self.soft_locked[i] {
+                    return None;
+                }
+
                 let mut p = r.clone();
                 if let Some(ref mut precond) = self.preconditioner {
                     precond.apply(backend, &mut p);
                 }
                 // If no preconditioner, p = r (identity preconditioning)
-                p
+                Some(p)
             })
             .collect()
     }
@@ -828,13 +868,161 @@ where
             .project_block_no_mass(self.operator.backend(), vectors);
     }
 
-    /// Lock converged bands and move them to the deflation subspace.
+    /// Soft-lock converged bands (Knyazev's recommended approach).
+    ///
+    /// Unlike hard locking (deflation), soft locking keeps converged vectors in X
+    /// but skips expensive computations for them:
+    /// - No residual computation
+    /// - No preconditioning
+    /// - No P or W directions
+    ///
+    /// The converged vectors remain in the Rayleigh-Ritz projection, allowing
+    /// them to self-adjust slightly for numerical stability.
+    ///
+    /// # Degeneracy Handling
+    /// For bands with near-degenerate eigenvalues (within a relative threshold),
+    /// we only soft-lock the entire degenerate cluster at once. This prevents
+    /// numerical issues where one band from a degenerate pair locks while the
+    /// other can't properly orthogonalize without the P/W directions.
+    ///
+    /// # Arguments
+    /// * `bands_to_lock` - Indices of bands to soft-lock (in the current active block)
+    ///
+    /// # Returns
+    /// The number of bands newly soft-locked (not counting already soft-locked).
+    fn soft_lock_bands(&mut self, bands_to_lock: &[usize]) -> usize {
+        if bands_to_lock.is_empty() {
+            return 0;
+        }
+
+        // Relative threshold for detecting degenerate eigenvalues
+        // Two eigenvalues λ1, λ2 are considered degenerate if |λ1 - λ2| / max(|λ1|, |λ2|) < threshold
+        const DEGENERACY_THRESHOLD: f64 = 1e-4;
+
+        // Build the lock set (bands that want to lock)
+        let lock_set: std::collections::HashSet<usize> = bands_to_lock.iter().copied().collect();
+
+        // For each band that wants to lock, check if all near-degenerate partners also want to lock
+        let mut safe_to_lock: Vec<usize> = Vec::new();
+
+        for &band_idx in bands_to_lock {
+            if band_idx >= self.eigenvalues.len() || band_idx >= self.soft_locked.len() {
+                continue;
+            }
+            if self.soft_locked[band_idx] {
+                // Already soft-locked
+                continue;
+            }
+
+            let lambda_i = self.eigenvalues[band_idx];
+
+            // Check all other bands for degeneracy
+            let mut all_degenerate_partners_want_lock = true;
+
+            for (j, &lambda_j) in self.eigenvalues.iter().enumerate() {
+                if j == band_idx || j >= self.soft_locked.len() {
+                    continue;
+                }
+                if self.soft_locked[j] {
+                    // Already locked, not a concern
+                    continue;
+                }
+
+                // Check if eigenvalues are near-degenerate
+                let max_lambda = lambda_i.abs().max(lambda_j.abs()).max(1e-10);
+                let relative_diff = (lambda_i - lambda_j).abs() / max_lambda;
+
+                if relative_diff < DEGENERACY_THRESHOLD {
+                    // Band j is near-degenerate with band_idx
+                    // Check if j also wants to lock
+                    if !lock_set.contains(&j) {
+                        // Found a degenerate partner that doesn't want to lock
+                        all_degenerate_partners_want_lock = false;
+                        break;
+                    }
+                }
+            }
+
+            if all_degenerate_partners_want_lock {
+                safe_to_lock.push(band_idx);
+            }
+        }
+
+        // Now lock only the safe bands
+        let mut newly_locked = 0;
+        for band_idx in safe_to_lock {
+            if !self.soft_locked[band_idx] {
+                self.soft_locked[band_idx] = true;
+                newly_locked += 1;
+
+                let eigenvalue = self.eigenvalues.get(band_idx).copied().unwrap_or(0.0);
+                debug!(
+                    "[soft-lock] Band {} soft-locked (λ={:.6e}, ω={:.6e})",
+                    band_idx + 1,
+                    eigenvalue,
+                    if eigenvalue > 0.0 {
+                        eigenvalue.sqrt()
+                    } else {
+                        0.0
+                    }
+                );
+            }
+        }
+
+        newly_locked
+    }
+
+
+    /// Explicitly B-orthogonalize vectors against soft-locked eigenvectors.
+    ///
+    /// This acts like deflation: R <- R - X_soft * (X_soft^T B R)
+    ///
+    /// For stability in high-condition-number or degenerate problems, active residuals
+    /// must be orthogonal to the already-converged soft-locked vectors. Without this,
+    /// numerical noise can cause the solver to "rediscover" the converged modes.
+    fn apply_soft_deflation(&self, residuals: &mut [B::Buffer]) {
+        if self.soft_locked_count() == 0 {
+            return;
+        }
+
+        let backend = self.operator.backend();
+
+        // For each residual (active band)
+        for (i, r) in residuals.iter_mut().enumerate() {
+            // Skip if this band itself is soft-locked (r should be 0 anyway)
+            if i < self.soft_locked.len() && self.soft_locked[i] {
+                continue;
+            }
+
+            // Project against every soft-locked vector
+            for (j, is_locked) in self.soft_locked.iter().enumerate() {
+                if *is_locked && j < self.x_block.len() {
+                    let locked_entry = &self.x_block[j];
+                    let locked_vec = &locked_entry.vector;
+                    let locked_bx = &locked_entry.mass; // B * x_soft
+
+                    // Calculate overlap: <x_soft, r>_B = x_soft^T B r = (B x_soft)^T r
+                    // dot(a, b) computes a^H b. So we use dot(locked_bx, r).
+                    let overlap = backend.dot(locked_bx, r);
+
+                    // r <- r - overlap * x_soft
+                    backend.axpy(-overlap, locked_vec, r);
+                }
+            }
+        }
+    }
+
+    /// Lock converged bands and move them to the deflation subspace (HARD locking).
+    ///
+    /// NOTE: This is the old hard locking approach. Prefer `soft_lock_bands` for
+    /// better numerical stability.
     ///
     /// # Arguments
     /// * `bands_to_lock` - Indices of bands to lock (in the current active block)
     ///
     /// # Returns
     /// The number of bands successfully locked.
+    #[allow(dead_code)]
     fn lock_converged_bands(&mut self, bands_to_lock: &[usize]) -> usize {
         if bands_to_lock.is_empty() {
             return 0;
@@ -887,6 +1075,10 @@ where
             if band_idx < self.x_block.len() {
                 self.x_block.remove(band_idx);
                 self.eigenvalues.remove(band_idx);
+                // Also remove from soft_locked
+                if band_idx < self.soft_locked.len() {
+                    self.soft_locked.remove(band_idx);
+                }
             }
         }
 
@@ -908,8 +1100,13 @@ where
     /// This clones the vectors to avoid borrow conflicts with subsequent
     /// mutable operations (like orthonormalization).
     ///
+    /// # Soft Locking Optimization
+    /// For soft-locked bands, we include X[j] but skip P[j] and W[j].
+    /// This reduces the subspace dimension while keeping converged vectors
+    /// in the Rayleigh-Ritz projection for numerical stability.
+    ///
     /// # Returns
-    /// - `subspace`: Vectors [X, P, W]
+    /// - `subspace`: Vectors [X, P_active, W_active]
     /// - `bx_precomputed`: Precomputed B*X vectors (we already have these in entry.mass)
     /// - `block_sizes`: (x_size, p_size, w_size) for tracking per-block statistics
     ///
@@ -922,43 +1119,69 @@ where
     ) -> (Vec<B::Buffer>, Vec<B::Buffer>, (usize, usize, usize)) {
         let m = self.x_block.len();
 
-        // W directions are always used when available (LOBPCG default)
-        let has_w = !self.w_block.is_empty();
-        let w_size = if has_w { self.w_block.len() } else { 0 };
+        // Count active (non-soft-locked) bands
+        let n_active = self.soft_locked.iter().take(m).filter(|&&b| !b).count();
 
-        let subspace_dim = m + p_block.len() + w_size;
+        // W directions are used for active bands only
+        let has_w = !self.w_block.is_empty();
+
+        // Calculate actual P and W sizes (only for non-soft-locked bands)
+        // p_block should have the same size as the number of non-soft-locked bands
+        let p_size = p_block.len().min(n_active);
+        let w_size = if has_w {
+            self.w_block.len().min(n_active)
+        } else {
+            0
+        };
+
+        let subspace_dim = m + p_size + w_size;
         let mut subspace: Vec<B::Buffer> = Vec::with_capacity(subspace_dim);
         let mut bx_precomputed: Vec<B::Buffer> = Vec::with_capacity(m);
 
-        // Add X_k vectors (cloned) and their precomputed B*X
+        // Add ALL X_k vectors (cloned) and their precomputed B*X
+        // (including soft-locked bands - they stay in X for Rayleigh-Ritz)
         for entry in &self.x_block {
             subspace.push(entry.vector.clone());
             bx_precomputed.push(entry.mass.clone());
         }
 
-        // Add P_k vectors (cloned) - B*P will be computed in SVQB
-        for p in p_block {
-            subspace.push(p.clone());
+        // Add P_k vectors ONLY for active (non-soft-locked) bands
+        // p_block is indexed by the active band indices
+        let mut p_idx = 0;
+        for (i, &is_locked) in self.soft_locked.iter().take(m).enumerate() {
+            if !is_locked && p_idx < p_block.len() {
+                subspace.push(p_block[p_idx].clone());
+                p_idx += 1;
+            }
+            // Skip P for soft-locked bands (no residual was computed for them)
+            let _ = i; // silence unused variable warning
         }
 
-        // Add W_k vectors (cloned) if available - B*W will be computed in SVQB
+        // Add W_k vectors ONLY for active (non-soft-locked) bands
         if has_w {
-            for w in &self.w_block {
-                subspace.push(w.clone());
+            let mut w_idx = 0;
+            for &is_locked in self.soft_locked.iter().take(m) {
+                if !is_locked && w_idx < self.w_block.len() {
+                    subspace.push(self.w_block[w_idx].clone());
+                    w_idx += 1;
+                }
+                // Skip W for soft-locked bands
             }
         }
 
-        let block_sizes = (m, p_block.len(), w_size);
+        let block_sizes = (m, p_size, w_size);
         (subspace, bx_precomputed, block_sizes)
     }
 
     /// Get the current subspace dimension.
     ///
     /// Returns 2m on first iteration (no W), 3m otherwise.
+    /// With soft locking, returns m + 2*n_active where n_active = m - n_soft_locked.
     pub fn subspace_dimension(&self) -> usize {
         let m = self.x_block.len();
+        let n_active = self.soft_locked.iter().take(m).filter(|&&b| !b).count();
         let has_w = !self.w_block.is_empty();
-        if has_w { 3 * m } else { 2 * m }
+        if has_w { m + 2 * n_active } else { m + n_active }
     }
 
     // ========================================================================
@@ -1003,6 +1226,7 @@ where
         }
 
         // Remaining vectors (P and W): compute B*v fresh
+        // Note: Mass operator is cheap (copy for TE, ε-multiply for TM) - no FFTs involved
         for q in q_block.iter().skip(x_size) {
             let mut bq = self.operator.alloc_field();
             self.operator.apply_mass(q, &mut bq);
@@ -1622,6 +1846,7 @@ where
             // This removes components along locked eigenvectors.
             // ================================================================
             self.apply_deflation(&mut residuals);
+            self.apply_soft_deflation(&mut residuals);
 
             // ================================================================
             // Step 3: Compute B-norms of deflated residuals (LAZY)
@@ -1661,8 +1886,11 @@ where
             }
 
             // Check for overall convergence (all requested bands)
-            let n_locked = self.deflation.len();
-            let total_converged = n_locked + convergence.n_converged;
+            // Count both hard-locked (deflation) and soft-locked bands as converged
+            // Also count bands that converge based on eigenvalue change criterion
+            let n_hard_locked = self.deflation.len();
+            let n_soft_locked = self.soft_locked_count();
+            let total_converged = n_hard_locked + n_soft_locked + convergence.n_converged;
             if total_converged >= n_bands_requested {
                 // All requested bands have converged
                 let elapsed = start_time.elapsed_secs();
@@ -1679,7 +1907,7 @@ where
                 let iters = iter + 1;
                 let time_per_iter = elapsed / iters as f64;
                 info!(
-                    "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, locked={})",
+                    "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, soft_locked={})",
                     k_idx,
                     k_frac[0],
                     k_frac[1],
@@ -1689,7 +1917,7 @@ where
                     freq_max,
                     elapsed,
                     time_per_iter * 1000.0,
-                    n_locked
+                    n_soft_locked
                 );
 
                 return EigensolverResult {
@@ -1708,7 +1936,7 @@ where
             // Only try locking from iteration 2 onward (need eigenvalue history)
             // ================================================================
             if iter >= 2 {
-                // Recompute eigenvalue changes for locking decision
+                // Recompute eigenvalue changes for soft locking decision
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
@@ -1716,28 +1944,47 @@ where
                 );
 
                 if locking_result.has_locks() {
-                    let n_locked_now = self.lock_converged_bands(&locking_result.bands_to_lock);
-                    if n_locked_now > 0 {
+                    // Apply SOFT locking: mark bands as converged but keep them in X
+                    // This is numerically more stable than hard locking (deflation)
+                    let n_newly_locked = self.soft_lock_bands(&locking_result.bands_to_lock);
+                    if n_newly_locked > 0 {
                         debug!(
-                            "[iter {:>4}] Locked {} bands (by Δλ), {} active remaining",
+                            "[iter {:>4}] Soft-locked {} bands (by Δλ), {} active remaining",
                             iter + 1,
-                            n_locked_now,
-                            self.x_block.len()
+                            n_newly_locked,
+                            self.active_band_count()
                         );
 
-                        // If all bands are now locked, we're done
-                        if self.x_block.is_empty() {
-                            break;
+                        // Check if we just reached full convergence
+                        let n_soft_locked_now = self.soft_locked_count();
+                        if n_soft_locked_now >= n_bands_requested {
+                            let elapsed = start_time.elapsed_secs();
+                            let max_ev_change = convergence.max_eigenvalue_change;
+                            let all_eigenvalues = self.collect_all_eigenvalues();
+                            let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
+                            let k_frac = [bloch[0] / (2.0 * PI), bloch[1] / (2.0 * PI)];
+                            let k_idx = self.config.k_index.unwrap_or(0);
+                            let iters = iter + 1;
+                            let time_per_iter = elapsed / iters as f64;
+                            info!(
+                                "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, soft_locked={})",
+                                k_idx, k_frac[0], k_frac[1], iters, max_ev_change, freq_min, freq_max,
+                                elapsed, time_per_iter * 1000.0, n_soft_locked_now
+                            );
+                            return EigensolverResult {
+                                eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
+                                iterations: iter + 1,
+                                convergence,
+                                converged: true,
+                            };
                         }
-
-                        // Eigenvalues may have changed indices, but we'll recompute next iteration
-                        // For now, continue with remaining active bands
                     }
                 }
             }
 
             // ================================================================
             // Step 6: Precondition residuals P_k = M^{-1} R_k
+            // Soft-locked bands are skipped (returns smaller P block)
             // ================================================================
             let mut p_block = self.precondition_residuals(&residuals);
 
@@ -1746,6 +1993,7 @@ where
             // P_k ← P_Y P_k (preconditioner may have reintroduced components along Y)
             // ================================================================
             self.apply_deflation(&mut p_block);
+            self.apply_soft_deflation(&mut p_block);
 
             // ================================================================
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
@@ -1879,7 +2127,7 @@ where
                 let n_converged = convergence.n_converged;
                 let max_res = convergence.max_residual;
                 let max_ev_change = convergence.max_eigenvalue_change;
-                let n_locked = self.deflation.len();
+                let n_soft_locked = self.soft_locked_count();
 
                 // Collect ALL frequencies (locked + active) for complete picture
                 let all_eigenvalues = self.collect_all_eigenvalues();
@@ -1889,12 +2137,12 @@ where
                     .collect();
 
                 debug!(
-                    "[iter {:>4}] elapsed={:.3}s converged={}/{} locked={} max_Δλ={:.2e} max_res={:.2e} subspace_rank={} w_size={}",
+                    "[iter {:>4}] elapsed={:.3}s converged={}/{} soft_locked={} max_Δλ={:.2e} max_res={:.2e} subspace_rank={} w_size={}",
                     iter + 1,
                     iter_elapsed,
                     n_converged,
                     n_active,
-                    n_locked,
+                    n_soft_locked,
                     max_ev_change,
                     max_res,
                     subspace_rank,
@@ -1921,10 +2169,10 @@ where
                     );
                 }
                 debug!(
-                    "[iter {:>4}] frequencies (ω):  {} (first {} locked)",
+                    "[iter {:>4}] frequencies (ω):  {} (first {} soft_locked)",
                     iter + 1,
                     format_values(&all_frequencies, 6),
-                    n_locked
+                    n_soft_locked
                 );
                 debug!(
                     "[iter {:>4}] residual_B_norms: {}",
@@ -1964,7 +2212,8 @@ where
 
                     // Flag if discrepancy is significant (> 1e-6 relative)
                     if rel_diff > 1e-6 {
-                        let global_band = n_locked + j;
+                        // Band index (soft-locked bands are still in x_block)
+                        let global_band = j;
                         rq_discrepancies.push(format!(
                             "b{}:RQ={:.6e},RR={:.6e},Δ={:.2e}",
                             global_band + 1,
@@ -2002,14 +2251,15 @@ where
         // End of loop: either max iterations reached or all bands locked
         let elapsed = start_time.elapsed_secs();
         let max_ev_change = convergence.max_eigenvalue_change;
-        let n_locked = self.deflation.len();
+        let n_hard_locked = self.deflation.len();
+        let n_soft_locked = self.soft_locked_count();
 
         // Combine locked and active eigenvalues
         let all_eigenvalues = self.collect_all_eigenvalues();
         let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
-        // Determine if we actually converged
-        let total_converged = n_locked + convergence.n_converged;
+        // Determine if we actually converged (count both hard and soft locked)
+        let total_converged = n_hard_locked + n_soft_locked;
         let converged = total_converged >= n_bands_requested;
 
         // Convert Bloch wavevector to fractional k-point for logging
@@ -2025,7 +2275,7 @@ where
 
         if converged {
             info!(
-                "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, locked={})",
+                "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, soft_locked={})",
                 k_idx,
                 k_frac[0],
                 k_frac[1],
@@ -2035,11 +2285,11 @@ where
                 freq_max,
                 elapsed,
                 time_per_iter * 1000.0,
-                n_locked
+                n_soft_locked
             );
         } else {
             info!(
-                "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, NOT CONVERGED, locked={})",
+                "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, NOT CONVERGED, soft_locked={})",
                 k_idx,
                 k_frac[0],
                 k_frac[1],
@@ -2049,7 +2299,7 @@ where
                 freq_max,
                 elapsed,
                 time_per_iter * 1000.0,
-                n_locked
+                n_soft_locked
             );
         }
 
@@ -2108,6 +2358,7 @@ where
             // Compute residuals R_k = A*X_k - B*X_k * Λ_k
             let mut residuals = self.compute_residuals();
             self.apply_deflation(&mut residuals);
+            self.apply_soft_deflation(&mut residuals);
 
             // Compute B-norms of deflated residuals
             let residual_b_norms = self.compute_residual_b_norms(&residuals);
@@ -2137,12 +2388,12 @@ where
             });
 
             // Emit progress callback
-            let n_locked = self.deflation.len();
+            let n_soft_locked = self.soft_locked_count();
             let progress = ProgressInfo {
                 iteration: iter,
                 max_iterations: self.config.max_iter,
                 n_bands: n_bands_requested,
-                n_converged: n_locked + convergence.n_converged,
+                n_converged: n_soft_locked,
                 trace: current_trace,
                 prev_trace,
                 trace_rel_change,
@@ -2154,7 +2405,7 @@ where
             prev_trace = Some(current_trace);
 
             // Check for overall convergence (all requested bands)
-            let total_converged = n_locked + convergence.n_converged;
+            let total_converged = n_soft_locked;
             if total_converged >= n_bands_requested {
                 return EigensolverResult {
                     eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
@@ -2165,7 +2416,7 @@ where
                 };
             }
 
-            // Lock converged bands (from iter 2 onward)
+            // Soft-lock converged bands (from iter 2 onward)
             if iter >= 2 {
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
@@ -2174,16 +2425,14 @@ where
                 );
 
                 if locking_result.has_locks() {
-                    let n_locked_now = self.lock_converged_bands(&locking_result.bands_to_lock);
-                    if n_locked_now > 0 && self.x_block.is_empty() {
-                        break;
-                    }
+                    self.soft_lock_bands(&locking_result.bands_to_lock);
                 }
             }
 
-            // Precondition residuals
+            // Precondition residuals (skips soft-locked bands)
             let mut p_block = self.precondition_residuals(&residuals);
             self.apply_deflation(&mut p_block);
+            self.apply_soft_deflation(&mut p_block);
 
             // Build search subspace Z_k = [X_k, P_k, W_k] with precomputed B*X
             let (subspace, bx_precomputed, block_sizes) =
@@ -2217,11 +2466,10 @@ where
             self.update_history_directions(&q_block, &dense_result);
         }
 
-        // End of loop: either max iterations reached or all bands locked
+        // End of loop: either max iterations reached or all bands soft-locked
         let all_eigenvalues = self.collect_all_eigenvalues();
-        let n_locked = self.deflation.len();
-        let total_converged = n_locked + convergence.n_converged;
-        let converged = total_converged >= n_bands_requested;
+        let n_soft_locked = self.soft_locked_count();
+        let converged = n_soft_locked >= n_bands_requested;
 
         EigensolverResult {
             eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
@@ -2458,6 +2706,7 @@ where
             // This removes components along locked eigenvectors.
             // ================================================================
             self.apply_deflation(&mut residuals);
+            self.apply_soft_deflation(&mut residuals);
 
             // ================================================================
             // Step 3: Compute B-norms of deflated residuals
@@ -2488,8 +2737,8 @@ where
             }
 
             // Check for overall convergence
-            let n_locked = self.deflation.len();
-            let total_converged = n_locked + convergence.n_converged;
+            let n_soft_locked = self.soft_locked_count();
+            let total_converged = n_soft_locked;
 
             // Prepare subspace info for recording (will be filled in after SVQB)
             let subspace_dim_input = self.subspace_dimension();
@@ -2501,7 +2750,7 @@ where
                 let snapshot = IterationSnapshot::new(iter)
                     .with_eigenvalues(self.eigenvalues.clone())
                     .with_residuals(residual_b_norms.clone(), relative_residuals.clone())
-                    .with_convergence_counts(convergence.n_converged, n_locked, n_active)
+                    .with_convergence_counts(convergence.n_converged, n_soft_locked, n_active)
                     .with_subspace_info(subspace_dim_input, subspace_dim_input, 0, w_size);
                 recorder.record_iteration(snapshot);
 
@@ -2512,7 +2761,7 @@ where
                 let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
                 info!(
-                    "[solve_diag] k#{:03} k=({:+.3},{:+.3}) iters={:>3} rel={:+10.3e} frequencies=[{:>8.3}..{:>8.3}] elapsed={:.2}s (locked={})",
+                    "[solve_diag] k#{:03} k=({:+.3},{:+.3}) iters={:>3} rel={:+10.3e} frequencies=[{:>8.3}..{:>8.3}] elapsed={:.2}s (soft_locked={})",
                     iter + 1,
                     bloch[0],
                     bloch[1],
@@ -2521,7 +2770,7 @@ where
                     freq_min,
                     freq_max,
                     elapsed,
-                    n_locked
+                    n_soft_locked
                 );
 
                 let result = EigensolverResult {
@@ -2540,12 +2789,12 @@ where
             }
 
             // ================================================================
-            // Step 5: Lock converged bands
+            // Step 5: Soft-lock converged bands
             // Uses eigenvalue-based convergence criterion
             // Only try locking from iteration 2 onward (need eigenvalue history)
             // ================================================================
             if iter >= 2 {
-                // Recompute eigenvalue changes for locking decision
+                // Recompute eigenvalue changes for soft-locking decision
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
@@ -2553,24 +2802,21 @@ where
                 );
 
                 if locking_result.has_locks() {
-                    let n_locked_now = self.lock_converged_bands(&locking_result.bands_to_lock);
-                    if n_locked_now > 0 {
+                    let n_newly_locked = self.soft_lock_bands(&locking_result.bands_to_lock);
+                    if n_newly_locked > 0 {
                         debug!(
-                            "[iter {:>4}] Locked {} bands (by Δλ), {} active remaining",
+                            "[iter {:>4}] Soft-locked {} bands (by Δλ), {} active remaining",
                             iter + 1,
-                            n_locked_now,
-                            self.x_block.len()
+                            n_newly_locked,
+                            self.active_band_count()
                         );
-
-                        if self.x_block.is_empty() {
-                            break;
-                        }
                     }
                 }
             }
 
             // ================================================================
             // Step 6: Precondition residuals P_k = M^{-1} R_k
+            // Soft-locked bands are skipped
             // ================================================================
             let mut p_block = self.precondition_residuals(&residuals);
 
@@ -2579,6 +2825,7 @@ where
             // P_k ← P_Y P_k (preconditioner may have reintroduced components along Y)
             // ================================================================
             self.apply_deflation(&mut p_block);
+            self.apply_soft_deflation(&mut p_block);
 
             // ================================================================
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
@@ -2626,7 +2873,7 @@ where
             let snapshot = IterationSnapshot::new(iter)
                 .with_eigenvalues(self.eigenvalues.clone())
                 .with_residuals(residual_b_norms.clone(), relative_residuals.clone())
-                .with_convergence_counts(convergence.n_converged, n_locked, n_active)
+                .with_convergence_counts(convergence.n_converged, self.soft_locked_count(), n_active)
                 .with_subspace_info(
                     svqb_result.input_count,
                     svqb_result.output_rank,
@@ -2714,7 +2961,7 @@ where
                 let n_converged = convergence.n_converged;
                 let max_res = convergence.max_residual;
                 let max_ev_change = convergence.max_eigenvalue_change;
-                let n_locked = self.deflation.len();
+                let n_soft_locked = self.soft_locked_count();
 
                 // Collect ALL frequencies (locked + active) for complete picture
                 let all_eigenvalues = self.collect_all_eigenvalues();
@@ -2724,22 +2971,22 @@ where
                     .collect();
 
                 debug!(
-                    "[iter {:>4}] elapsed={:.3}s converged={}/{} locked={} max_Δλ={:.2e} max_res={:.2e} subspace_rank={} w_size={}",
+                    "[iter {:>4}] elapsed={:.3}s converged={}/{} soft_locked={} max_Δλ={:.2e} max_res={:.2e} subspace_rank={} w_size={}",
                     iter + 1,
                     iter_elapsed,
                     n_converged,
                     n_active,
-                    n_locked,
+                    n_soft_locked,
                     max_ev_change,
                     max_res,
                     subspace_rank,
                     self.w_block.len()
                 );
                 debug!(
-                    "[iter {:>4}] frequencies (ω):  {} (first {} locked)",
+                    "[iter {:>4}] frequencies (ω):  {} (first {} soft_locked)",
                     iter + 1,
                     format_values(&all_frequencies, 6),
-                    n_locked
+                    n_soft_locked
                 );
                 // Log condition number with per-block drop info
                 if let Some((x_drop, p_drop, w_drop)) = svqb_result.block_drops {
