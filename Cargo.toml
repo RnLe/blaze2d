@@ -38,10 +38,11 @@ num_cpus = "1.16"
 
 [profile.release]
 # faer and rustfft are already heavily optimized with SIMD
-# Additional LTO doesn't help and may hurt cache locality
 panic = "abort"       # No unwinding overhead
-strip = true          # Strip symbols for smaller binary
+debug = true          # Keep debug symbols for profiling
 codegen-units = 1     # Maximize optimization (slower build)
+lto = "fat"           # Enable Link Time Optimization to remove cross-crate overhead (like faer::noalias_annotate)
+opt-level = 3         # Ensure maximum optimization
 
 [profile.bench]
 inherits = "release"

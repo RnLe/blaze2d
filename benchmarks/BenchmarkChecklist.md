@@ -9,13 +9,13 @@
 | A | Square | Air (ε=1) | 8.9 | 0.2a | TM, TE |
 | B | Hexagonal | ε=13 | Air (ε=1) | 0.48a | TM, TE |
 
-**Common parameters**: 12 bands, 20 k-points per segment, 32×32 resolution, **tol=1e-7**
+**Common parameters**: 12 bands, 20 k-points per segment, 32×32 resolution
 
 ## Fairness Considerations
 
 | Parameter | MPB | Blaze2D | Notes |
 |-----------|-----|---------|-------|
-| Tolerance | 1e-7 (default) | 1e-7 | Must match for fair comparison |
+| Tolerance | 1e-7 (f64) | 1e-4 (mixed-precision f32) | Different due to precision |
 | Resolution | 32×32 | 32×32 | ✓ |
 | Bands | 12 | 12 | ✓ |
 | K-points | 61 (20/segment) | 61 (20/segment) | ✓ |

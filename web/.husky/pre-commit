@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# Pre-commit hook: Hoist benchmark data to public/data/
+# This ensures deployed builds have the latest benchmark data
+
+cd web
+
+# Run the hoist script
+echo "📊 Hoisting benchmark data..."
+node scripts/hoist-benchmark-data.js
+
+# Stage the hoisted files if they changed
+git add public/data/benchmarks/ 2>/dev/null || true
+
+echo "✅ Pre-commit hook completed"

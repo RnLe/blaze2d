@@ -304,4 +304,4 @@ n_bands = 8
 # Maximum LOBPCG iterations
 max_iter = 200
 # Convergence tolerance (relative eigenvalue change)
-tol = 1e-6
+tol = 1e-4

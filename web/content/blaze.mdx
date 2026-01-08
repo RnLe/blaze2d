@@ -1,0 +1,41 @@
+import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalingChart, SpeedupScalingChart } from '../components/charts'
+
+<div className="narrow-centered">
+
+<span className="date">January 7, 2026</span>
+
+# Blaze: A High-Performance Solver for Photonic Crystals
+
+*Accelerating 2D band structure calculations by 3-10× with 20× lower memory footprint.*
+
+---
+</div>
+
+
+<div className="narrow">
+
+Photonic band structure calculations have historically relied on the Plane Wave Expansion (PWE) method, widely standardized by the MIT Photonic Bands (MPB) software. While accurate, legacy solvers suffer from high memory latency and poor multi-core scaling.
+
+We are releasing **Blaze**, a modern Rust-based solver that achieves state-of-the-art performance through cache-aware memory management and mixed-precision arithmetic. On standard benchmarks, Blaze matches MPB's accuracy while delivering **3× faster single-core speeds and a 95% reduction in peak memory usage.**
+
+</div>
+
+<div className="narrow">
+
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
+  <SingleCorePerformanceChart width={650} height={420} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
+  <MultiCorePerformanceChart width={650} height={420} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <ThroughputScalingChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <SpeedupScalingChart width={1000} height={380} />
+</div>

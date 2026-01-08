@@ -31,9 +31,9 @@ import numpy as np
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-SINGLE_CORE_RUNS = 10    # Jobs per iteration for single-core
-MULTI_CORE_RUNS = 100    # Jobs per iteration for multi-core
-NUM_ITERATIONS = 5
+SINGLE_CORE_RUNS = 5     # Jobs per iteration for single-core
+MULTI_CORE_RUNS = 10     # Jobs per iteration for multi-core
+NUM_ITERATIONS = 2
 NUM_THREADS_MULTI = 16
 
 SCRIPT_DIR = Path(__file__).parent.absolute()

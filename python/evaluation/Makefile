@@ -127,7 +127,8 @@ blaze-cuda:
 	$(BLAZE_CUDA_COMMAND)
 
 # blaze with benchmark logging (for compare_square_lowres)
-# Uses script -q to preserve TTY for colored output while logging
+# Uses script to capture output while preserving TTY for colored output
+# Linux script syntax: script -q outputfile -c "command"
 blaze-benchmark:
 	@if [ -z "$(strip $(BLAZE_TE_CMD))" ] || [ -z "$(strip $(BENCHMARK_YAML))" ]; then \
 		echo "Error: This config does not support benchmarking."; \
@@ -135,10 +136,10 @@ blaze-benchmark:
 	fi
 	@echo "[evaluation] running blaze for $(EVAL_NAME) with benchmark tracking"
 	@echo "[benchmark] running TE..."
-	@script -q -c "$(BLAZE_TE_CMD)" $(BENCHMARK_LOG_TE)
+	@script -q $(BENCHMARK_LOG_TE) -c "$(BLAZE_TE_CMD)"
 	@$(EVAL_ROOT)/append_benchmark.sh $(BENCHMARK_YAML) TE $(BENCHMARK_LOG_TE)
 	@echo "[benchmark] running TM..."
-	@script -q -c "$(BLAZE_TM_CMD)" $(BENCHMARK_LOG_TM)
+	@script -q $(BENCHMARK_LOG_TM) -c "$(BLAZE_TM_CMD)"
 	@$(EVAL_ROOT)/append_benchmark.sh $(BENCHMARK_YAML) TM $(BENCHMARK_LOG_TM)
 	@echo "[benchmark] results appended to $(BENCHMARK_YAML)"
 

@@ -29,7 +29,7 @@ preset = "square"    # k-path preset
 
 [eigensolver]
 n_bands = 8          # Number of bands
-tol = 1e-6           # Convergence tolerance
+tol = 1e-4           # Convergence tolerance
 ```
 
 ## Complete Reference

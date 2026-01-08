@@ -37,6 +37,7 @@ use nalgebra::{DMatrix, Complex as NaComplex};
 use num_complex::Complex64;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
+use crate::field::FieldScalar;
 
 // ============================================================================
 // Single-Vector Normalization
@@ -438,6 +439,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     #[cfg(feature = "cuda")]
     {
         // GPU path: use existing manual implementation
+        // Accumulate in f64 for numerical stability, then convert back to storage precision
         let mut transform = vec![Complex64::ZERO; p * rank];
         for (out_col, &in_col) in kept_indices.iter().enumerate() {
             let scale = 1.0 / eigenvalues[in_col].max(1e-30).sqrt();
@@ -464,16 +466,24 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 let dst_mass = &mut new_mass[out_idx];
 
                 for k in 0..n {
-                    dst_vec[k] += coeff * src_vec[k];
-                    dst_mass[k] += coeff * src_mass[k];
+                    // Convert to f64 for accumulation (handles mixed-precision)
+                    let sv = Complex64::new(src_vec[k].re as f64, src_vec[k].im as f64);
+                    let sm = Complex64::new(src_mass[k].re as f64, src_mass[k].im as f64);
+                    dst_vec[k] += coeff * sv;
+                    dst_mass[k] += coeff * sm;
                 }
             }
         }
 
         for i in 0..p {
             if i < rank {
-                vectors[i].as_mut_slice().copy_from_slice(&new_vectors[i]);
-                mass_vectors[i].as_mut_slice().copy_from_slice(&new_mass[i]);
+                // Convert back from f64 accumulation to storage precision
+                let dst_vec = vectors[i].as_mut_slice();
+                let dst_mass = mass_vectors[i].as_mut_slice();
+                for k in 0..n {
+                    dst_vec[k] = FieldScalar::new(new_vectors[i][k].re as _, new_vectors[i][k].im as _);
+                    dst_mass[k] = FieldScalar::new(new_mass[i][k].re as _, new_mass[i][k].im as _);
+                }
             } else {
                 zero_buffer(vectors[i].as_mut_slice());
                 zero_buffer(mass_vectors[i].as_mut_slice());
@@ -677,8 +687,6 @@ pub fn orthonormalize_against_basis<B: SpectralBackend>(
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-use crate::field::FieldScalar;
 
 /// Fill a buffer with zeros.
 #[inline]

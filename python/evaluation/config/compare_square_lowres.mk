@@ -49,6 +49,10 @@ MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py 
         --polarization tm \
         --lattice square
 
+# Optimized compiler flags for native CPU
+# Use export in shell commands instead of inline to avoid quoting issues
+export RUSTFLAGS := -C target-cpu=native
+
 # Split commands for benchmark logging
 BLAZE_TE_CMD := cargo run --release -p blaze2d-cli -- \
 	--config ../../examples/square_eps13_r0p3_te_res24.toml \

@@ -120,7 +120,7 @@ segments_per_leg = 12          # Points per high-symmetry segment (default: 8)
 [eigensolver]
 n_bands = 10                   # Number of bands to compute
 max_iter = 200                 # Maximum LOBPCG iterations
-tol = 1e-6                     # Convergence tolerance
+tol = 1e-4                     # Convergence tolerance
 # block_size = 0               # LOBPCG block size (0 = auto = n_bands)
 # record_diagnostics = false   # Record per-iteration diagnostics
 

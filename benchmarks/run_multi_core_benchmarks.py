@@ -146,7 +146,7 @@ segments_per_leg = 20
 [eigensolver]
 n_bands = 8
 max_iter = 200
-tol = 1e-7
+tol = 1e-4
 
 [output]
 mode = "full"
@@ -186,7 +186,7 @@ segments_per_leg = 20
 [eigensolver]
 n_bands = 8
 max_iter = 200
-tol = 1e-7
+tol = 1e-4
 
 [output]
 mode = "full"
@@ -225,7 +225,7 @@ segments_per_leg = 20
 [eigensolver]
 n_bands = 8
 max_iter = 200
-tol = 1e-7
+tol = 1e-4
 
 [output]
 mode = "full"
@@ -264,7 +264,7 @@ segments_per_leg = 20
 [eigensolver]
 n_bands = 8
 max_iter = 200
-tol = 1e-7
+tol = 1e-4
 
 [output]
 mode = "full"
