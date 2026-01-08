@@ -753,3 +753,10 @@ body:not(:has(.blaze-layout)) .prose code::after {
 .reference-text a:hover {
   color: #a3befa !important;
 }
+
+/* ============================================
+   KATEX MATH OVERRIDES
+   ============================================ */
+.katex {
+  font-size: 1.05em !important;
+}

@@ -181,7 +181,6 @@ export default function MemoryRatioChart({
         fontStyle: 'italic',
         textAlign: 'left',
       }}>
-        Memory efficiency ratio (MPB / Blaze) across resolution and band count. Higher values indicate greater Blaze efficiency. The ratio peaks at low resolutions (~28×) and decreases as problem size grows.
       </p>
     </div>
   );

@@ -418,7 +418,6 @@ export default function BandComparisonChart({
         fontStyle: 'italic',
         textAlign: 'left',
       }}>
-        {`${polarization} band structure along high-symmetry path Γ→X→M→Γ. MPB reference (gray lines) overlaid with Blaze full precision f64 (green circles) and mixed precision f32 (orange triangles).`}
       </p>
     </div>
   );
