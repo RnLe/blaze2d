@@ -8,6 +8,12 @@ export default {
   },
   demo: {
     title: 'Demo',
-    href: '/demo/',
+  },
+  potential: {
+    title: 'Potential',
+  },
+  pitch: {
+    title: 'Pitch',
+    href: '/pitch/',
   },
 }

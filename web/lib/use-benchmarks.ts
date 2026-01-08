@@ -26,7 +26,8 @@ export function useSingleCoreBenchmarks() {
 
       // Try static data from public/data/ (hoisted by pre-commit hook)
       try {
-        const response = await fetch('/data/benchmarks/single-core.json');
+        const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+        const response = await fetch(`${basePath}/data/benchmarks/single-core.json`);
         if (response.ok) {
           const staticData = await response.json();
           setData(staticData);
@@ -71,7 +72,8 @@ export function useMultiCoreBenchmarks() {
 
       // Try static data from public/data/ (hoisted by pre-commit hook)
       try {
-        const response = await fetch('/data/benchmarks/multi-core.json');
+        const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+        const response = await fetch(`${basePath}/data/benchmarks/multi-core.json`);
         if (response.ok) {
           const staticData = await response.json();
           setData(staticData);
@@ -112,7 +114,8 @@ export function useSeries7Benchmarks() {
 
       // Try static data from public/data/ (hoisted by pre-commit hook)
       try {
-        const response = await fetch('/data/benchmarks/series7-scaling.json');
+        const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+        const response = await fetch(`${basePath}/data/benchmarks/series7-scaling.json`);
         if (response.ok) {
           const staticData = await response.json();
           setData(staticData);

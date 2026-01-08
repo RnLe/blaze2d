@@ -1,41 +1,7 @@
 /* Import Tailwind CSS v4 */
 @import "tailwindcss";
 
-/* ============================================
-   OPENAI SANS FONT
-   ============================================ */
-
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('https://cdn.openai.com/common/fonts/openai-sans/OpenAISans-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('https://cdn.openai.com/common/fonts/openai-sans/OpenAISans-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('https://cdn.openai.com/common/fonts/openai-sans/OpenAISans-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('https://cdn.openai.com/common/fonts/openai-sans/OpenAISans-Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
+/* Fonts are now loaded in layout.tsx to support basePath */
 
 /* ============================================
    OPENAI-STYLE DARK THEME
