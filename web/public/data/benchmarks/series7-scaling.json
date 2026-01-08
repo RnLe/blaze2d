@@ -1,0 +1,206 @@
+{
+  "low": {
+    "resolution": 16,
+    "blaze": [
+      {
+        "threads": 1,
+        "mean_throughput": 28.249722191251394,
+        "std_throughput": 1.7655971779031248
+      },
+      {
+        "threads": 2,
+        "mean_throughput": 58.73823545092494,
+        "std_throughput": 1.67331187092109
+      },
+      {
+        "threads": 4,
+        "mean_throughput": 111.61541056841045,
+        "std_throughput": 0.14080709935465308
+      },
+      {
+        "threads": 8,
+        "mean_throughput": 172.9500176140429,
+        "std_throughput": 7.245761271710492
+      },
+      {
+        "threads": 12,
+        "mean_throughput": 201.80502364336738,
+        "std_throughput": 9.094756806701241
+      },
+      {
+        "threads": 16,
+        "mean_throughput": 220.40458566467083,
+        "std_throughput": 14.944968907476621
+      }
+    ],
+    "mpb_omp": [
+      {
+        "threads": 1,
+        "mean_throughput": 14.374195472293973,
+        "std_throughput": 0.5140750918733241
+      },
+      {
+        "threads": 2,
+        "mean_throughput": 14.435709768718663,
+        "std_throughput": 0.182205196202319
+      },
+      {
+        "threads": 4,
+        "mean_throughput": 14.173969427091013,
+        "std_throughput": 0.11517147112608495
+      },
+      {
+        "threads": 8,
+        "mean_throughput": 14.328336712807815,
+        "std_throughput": 0.3064149630122577
+      },
+      {
+        "threads": 12,
+        "mean_throughput": 13.242261666832857,
+        "std_throughput": 0.2770106151688614
+      },
+      {
+        "threads": 16,
+        "mean_throughput": 14.059375292596613,
+        "std_throughput": 0.06448481487432112
+      }
+    ],
+    "mpb_multiproc": [
+      {
+        "threads": 1,
+        "mean_throughput": 13.939366191680158,
+        "std_throughput": 0.346963936904765
+      },
+      {
+        "threads": 2,
+        "mean_throughput": 27.09164345609182,
+        "std_throughput": 0.0423102323597675
+      },
+      {
+        "threads": 4,
+        "mean_throughput": 49.88620209937987,
+        "std_throughput": 1.1565975113942386
+      },
+      {
+        "threads": 8,
+        "mean_throughput": 76.09266867734763,
+        "std_throughput": 4.212925429072612
+      },
+      {
+        "threads": 12,
+        "mean_throughput": 96.13954605995835,
+        "std_throughput": 1.671779227324457
+      },
+      {
+        "threads": 16,
+        "mean_throughput": 106.63602926561302,
+        "std_throughput": 5.307924648759304
+      }
+    ]
+  },
+  "high": {
+    "resolution": 128,
+    "blaze": [
+      {
+        "threads": 1,
+        "mean_throughput": 0.44765609555984553,
+        "std_throughput": 0.0004033753378192839
+      },
+      {
+        "threads": 2,
+        "mean_throughput": 0.9543454911060243,
+        "std_throughput": 0.005688131345814085
+      },
+      {
+        "threads": 4,
+        "mean_throughput": 1.423246058889915,
+        "std_throughput": 0.008817441696774786
+      },
+      {
+        "threads": 8,
+        "mean_throughput": 1.5128594229771486,
+        "std_throughput": 0.018800562090436013
+      },
+      {
+        "threads": 12,
+        "mean_throughput": 1.468468615715831,
+        "std_throughput": 0.006480460795900811
+      },
+      {
+        "threads": 16,
+        "mean_throughput": 1.4468523422309483,
+        "std_throughput": 0.005543088974129695
+      }
+    ],
+    "mpb_omp": [
+      {
+        "threads": 1,
+        "mean_throughput": 0.19247893414341266,
+        "std_throughput": 0.0010419821723235134
+      },
+      {
+        "threads": 2,
+        "mean_throughput": 0.20447857086442878,
+        "std_throughput": 0.00003471025350783308
+      },
+      {
+        "threads": 4,
+        "mean_throughput": 0.19346943849744122,
+        "std_throughput": 0.002164147241018044
+      },
+      {
+        "threads": 8,
+        "mean_throughput": 0.17418218804841484,
+        "std_throughput": 0.0012675193014783925
+      },
+      {
+        "threads": 12,
+        "mean_throughput": 0.16762213779184504,
+        "std_throughput": 0.004230428328363206
+      },
+      {
+        "threads": 16,
+        "mean_throughput": 0.16841114856839368,
+        "std_throughput": 0.0009956738523855951
+      }
+    ],
+    "mpb_multiproc": [
+      {
+        "threads": 1,
+        "mean_throughput": 0.19478102163146624,
+        "std_throughput": 0.0005439451942949869
+      },
+      {
+        "threads": 2,
+        "mean_throughput": 0.3369852887092277,
+        "std_throughput": 0.0008674022912858459
+      },
+      {
+        "threads": 4,
+        "mean_throughput": 0.4892815417307971,
+        "std_throughput": 0.003752671563886728
+      },
+      {
+        "threads": 8,
+        "mean_throughput": 0.4422264108915104,
+        "std_throughput": 0.009098191477691087
+      },
+      {
+        "threads": 12,
+        "mean_throughput": 0.38117803329991795,
+        "std_throughput": 0.0023509857684052837
+      },
+      {
+        "threads": 16,
+        "mean_throughput": 0.34004148062238776,
+        "std_throughput": 0.000568875867718921
+      }
+    ]
+  },
+  "metadata": {
+    "timestamp": "2026-01-07T21:16:46.134409",
+    "source": "static",
+    "hoistedAt": "2026-01-08T01:48:53.292Z",
+    "sourceFile": "series7_scaling/series7_scaling_results.json"
+  }
+}

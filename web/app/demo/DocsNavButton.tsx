@@ -5,7 +5,7 @@ import Link from 'next/link';
 export default function DocsNavButton() {
   return (
     <Link 
-      href="/"
+      href="/blaze/"
       style={{
         position: 'fixed',
         right: '2rem',
@@ -39,7 +39,7 @@ export default function DocsNavButton() {
         e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
       }}
     >
-      <span>Home</span>
+      <span>Introduction</span>
       <svg 
         width="16" 
         height="16" 

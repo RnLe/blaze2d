@@ -24,6 +24,7 @@ def load_results(results_dir: Path, solver: str, core_mode: str) -> dict:
     with open(results_file) as f:
         return json.load(f)
 
+
 def compute_speedup(time1_mean: float, time1_std: float,
                     time2_mean: float, time2_std: float) -> tuple:
     """
@@ -59,8 +60,6 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
         mpb_data = load_results(results_dir, "mpb", "single")
     elif core_mode == "multi":
         # Load both native and process if available
-        # Note: bench_mpb_speed.py writes with tag if provided.
-        # Check standard names first
         mpb_data = load_results(results_dir, "mpb", "multi-native")
         if not mpb_data:
              mpb_data = load_results(results_dir, "mpb", "multi") # Fallback
@@ -96,9 +95,9 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
     if core_mode == "single":
          print(f"\n  {'Config':<22} {'MPB (ms)':<15} {'Blaze2D (ms)':<15} {'Speedup':<12}")
     else:
-         print(f"\n  {'Config':<22} {'MPB Nat(ms)':<15} {'MPB Proc(ms)':<15} {'Blaze2D(ms)':<15} {'Speedup(Proc)':<15}")
+         print(f"\n  {'Config':<22} {'MPB Nat(ms)':<15} {'MPB Proc(ms)':<15} {'Blaze2D(ms)':<15} {'Speedup':<12}")
 
-    print("  " + "-" * 85)
+    print("  " + "-" * 80)
     
     for mpb_config, pol, blaze_config, desc in config_mappings:
         # Get MPB Native data
@@ -131,10 +130,7 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
             except (KeyError, TypeError):
                 pass
         
-        # Compute speedups
-        # Single core: Blaze vs MPB (Native/Single)
-        # Multi core: Blaze vs MPB Process (Fair) AND Blaze vs MPB Native
-        
+        # Compute speedups (Blaze2D vs MPB)
         speedup_native, speedup_native_err = 0.0, 0.0
         if mpb_mean > 0 and blaze_mean > 0:
             speedup_native, speedup_native_err = compute_speedup(mpb_mean, mpb_std, blaze_mean, blaze_std)
@@ -162,7 +158,7 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
             "blaze_std_ms": blaze_std,
             "speedup": primary_speedup,
             "speedup_err": primary_err,
-            "speedup_native": speedup_native, # Extra info
+            "speedup_native": speedup_native,
             "speedup_native_err": speedup_native_err
         })
         
@@ -174,7 +170,6 @@ def analyze_core_mode(results_dir: Path, core_mode: str) -> dict:
              speedup_str = f"{primary_speedup:>5.1f}× ± {primary_err:.1f}" if primary_speedup > 0 else "N/A"
              print(f"  {desc + ' ' + pol.upper():<22} {mpb_str:<15} {blaze_str:<15} {speedup_str}")
         else:
-             # For multi, show speedup vs Process
              speedup_str = f"{primary_speedup:>5.1f}× ± {primary_err:.1f}" if primary_speedup > 0 else "N/A"
              print(f"  {desc + ' ' + pol.upper():<22} {mpb_str:<15} {mpb_proc_str:<15} {blaze_str:<15} {speedup_str}")
 
@@ -218,71 +213,41 @@ def main():
     print("Speed Benchmark Analysis: MPB vs Blaze2D")
     print("=" * 70)
     
-    all_results = {
-        "benchmark": "speed_comparison",
-        "timestamp": datetime.now().isoformat(),
-        "modes": {}
-    }
+    all_results = {"modes": {}}
     
-    # Analyze both core modes
-    for core_mode in ["single", "multi"]:
-        print(f"\n{'='*70}")
-        print(f"{core_mode.upper()}-CORE MODE")
-        print("=" * 70)
-        
-        mode_results = analyze_core_mode(results_dir, core_mode)
-        if mode_results:
-            all_results["modes"][core_mode] = mode_results
-            
-            summary = mode_results["summary"]
-            print(f"\n  SUMMARY:")
-            print(f"    Average Speedup: {summary['mean_speedup']:.1f}× ± {summary['combined_error']:.1f}")
-            print(f"    Speedup Range:   {summary['min_speedup']:.1f}× - {summary['max_speedup']:.1f}×")
+    # Analyze single-core
+    print("\n[Single-Core Mode]")
+    single_results = analyze_core_mode(results_dir, "single")
+    if single_results:
+        all_results["modes"]["single"] = single_results
+        print(f"\n  Summary: {single_results['summary']['mean_speedup']:.1f}× average speedup "
+              f"(range: {single_results['summary']['min_speedup']:.1f}× - {single_results['summary']['max_speedup']:.1f}×)")
+    
+    # Analyze multi-core
+    print("\n[Multi-Core Mode]")
+    multi_results = analyze_core_mode(results_dir, "multi")
+    if multi_results:
+        all_results["modes"]["multi"] = multi_results
+        print(f"\n  Summary: {multi_results['summary']['mean_speedup']:.1f}× average speedup "
+              f"(range: {multi_results['summary']['min_speedup']:.1f}× - {multi_results['summary']['max_speedup']:.1f}×)")
     
     # Save combined results
-    if all_results["modes"]:
-        output_file = results_dir / "speed_comparison.json"
-        with open(output_file, 'w') as f:
-            json.dump(all_results, f, indent=2)
-        print(f"\n\nComparison saved to: {output_file}")
-        
-        # CSV summary
-        csv_file = results_dir / "speed_comparison.csv"
-        with open(csv_file, 'w') as f:
-            f.write("core_mode,config,polarization,mpb_mean_ms,mpb_std_ms,blaze_mean_ms,blaze_std_ms,speedup,speedup_err\n")
-            for mode, mode_data in all_results["modes"].items():
-                for c in mode_data["comparisons"]:
-                    f.write(f"{mode},{c['config']},{c['polarization']},"
-                            f"{c['mpb_mean_ms']:.4f},{c['mpb_std_ms']:.4f},"
-                            f"{c['blaze_mean_ms']:.4f},{c['blaze_std_ms']:.4f},"
-                            f"{c['speedup']:.2f},{c['speedup_err']:.2f}\n")
-        print(f"CSV saved to: {csv_file}")
+    all_results["timestamp"] = datetime.now().isoformat()
     
-    # Print markdown table
-    print("\n" + "=" * 70)
-    print("MARKDOWN TABLES")
-    print("=" * 70)
+    output_file = results_dir / "speed_comparison.json"
+    with open(output_file, 'w') as f:
+        json.dump(all_results, f, indent=2)
+    print(f"\nResults saved to: {output_file}")
     
-    for mode, mode_data in all_results["modes"].items():
-        print(f"\n### {mode.capitalize()}-Core Comparison\n")
-        if mode == "single":
-            print("| Configuration | MPB (ms) | Blaze2D (ms) | Speedup |")
-            print("|---------------|----------|--------------|---------|")
+    # Also create CSV summary
+    csv_file = results_dir / "speed_comparison.csv"
+    with open(csv_file, 'w') as f:
+        f.write("mode,config,polarization,mpb_ms,blaze_ms,speedup\n")
+        for mode, mode_data in all_results["modes"].items():
             for c in mode_data["comparisons"]:
-                print(f"| {c['config']} {c['polarization']} | {c['mpb_mean_ms']:.1f} ± {c['mpb_std_ms']:.1f} | "
-                      f"{c['blaze_mean_ms']:.1f} ± {c['blaze_std_ms']:.1f} | "
-                      f"**{c['speedup']:.1f}×** |")
-        else:
-            print("| Configuration | MPB Nat (ms) | MPB Proc (ms) | Blaze2D (ms) | Speedup (vs Proc) |")
-            print("|---------------|--------------|---------------|--------------|-------------------|")
-            for c in mode_data["comparisons"]:
-                print(f"| {c['config']} {c['polarization']} | {c['mpb_mean_ms']:.1f} ± {c['mpb_std_ms']:.1f} | "
-                      f"{c['mpb_proc_mean_ms']:.1f} ± {c['mpb_proc_std_ms']:.1f} | "
-                      f"{c['blaze_mean_ms']:.1f} ± {c['blaze_std_ms']:.1f} | "
-                      f"**{c['speedup']:.1f}×** |")
-
-        s = mode_data["summary"]
-        print(f"| **Average** | - | - | - | **{s['mean_speedup']:.1f}×** ± {s['combined_error']:.1f} |")
+                f.write(f"{mode},{c['config']},{c['polarization']},"
+                       f"{c['mpb_mean_ms']:.1f},{c['blaze_mean_ms']:.1f},{c['speedup']:.2f}\n")
+    print(f"CSV saved to: {csv_file}")
 
 if __name__ == "__main__":
     main()

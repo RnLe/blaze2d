@@ -59,7 +59,7 @@ ly = 10.0                      # Domain size y (should match ea.domain_size[1])
 [eigensolver]
 n_bands = 12                   # Number of eigenvalues to compute
 max_iter = 500                 # Maximum LOBPCG iterations (EA may need more than Maxwell)
-tol = 1e-6                     # Convergence tolerance
+tol = 1e-4                     # Convergence tolerance
 # block_size = 0               # LOBPCG block size (0 = auto = n_bands + 2)
 # record_diagnostics = false   # Record per-iteration diagnostics
 
