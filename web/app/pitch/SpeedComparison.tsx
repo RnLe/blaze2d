@@ -35,10 +35,10 @@ export default function SpeedComparison() {
       setMpbCount(prev => prev + 1);
     }, 2000);
 
-    // Fast counter: increments 5x faster (once every 400ms)
+    // Fast counter: increments 14.8x faster (once every ~135ms)
     const fastInterval = setInterval(() => {
       setFastCount(prev => prev + 1);
-    }, 2000 / 5);
+    }, 2000 / 14.8);
 
     return () => {
       clearInterval(mpbInterval);
@@ -92,14 +92,14 @@ export default function SpeedComparison() {
           color: 'white',
           marginBottom: '0.5rem',
         }}>
-          Up to 5× faster than MPB*
+          Up to 14.8× faster than MPB
         </h2>
         <p style={{
           fontSize: '0.75rem',
           color: 'rgba(255, 255, 255, 0.4)',
           marginTop: '0.5rem',
         }}>
-          *for selected polarizations and high-throughput workloads
+          *for multi-threaded parameter sweeps
         </p>
       </div>
 
@@ -127,7 +127,7 @@ export default function SpeedComparison() {
         </div>
 
         <div style={cardStyle}>
-          <div style={valueStyle}>12 min</div>
+          <div style={valueStyle}>4 min</div>
           <div style={labelStyle}>BLAZE 2D</div>
         </div>
 

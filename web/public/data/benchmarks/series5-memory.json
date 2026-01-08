@@ -1,0 +1,387 @@
+{
+  "config": {
+    "epsilon": 8.9,
+    "radius": 0.2,
+    "eps_bg": 1,
+    "mpb_tolerance": 1e-7,
+    "blaze_tolerance": 0.0001,
+    "num_runs": 3,
+    "single_core": true
+  },
+  "resolution": {
+    "values": [
+      16,
+      32,
+      48,
+      64,
+      128
+    ],
+    "fixed": {
+      "num_bands": 8,
+      "k_points_per_segment": 10
+    },
+    "mpb": {
+      "TM": [
+        {
+          "value": 16,
+          "memory_mb": 181.51171875,
+          "memory_mb_std": 0.00390625,
+          "elapsed": 0.85,
+          "elapsed_std": 0.25999999999999995,
+          "num_runs": 3
+        },
+        {
+          "value": 32,
+          "memory_mb": 183.08333333333334,
+          "memory_mb_std": 0.28870156238301836,
+          "elapsed": 0.81,
+          "elapsed_std": 0.017320508075688724,
+          "num_runs": 3
+        },
+        {
+          "value": 48,
+          "memory_mb": 184.72005208333334,
+          "memory_mb_std": 0.4087650015563904,
+          "elapsed": 1.1666666666666665,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 64,
+          "memory_mb": 187.35677083333334,
+          "memory_mb_std": 0.36794165682281865,
+          "elapsed": 1.3866666666666665,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 128,
+          "memory_mb": 205.18880208333334,
+          "memory_mb_std": 0.29969704483844317,
+          "elapsed": 4.593333333333334,
+          "elapsed_std": 0.1501110699893026,
+          "num_runs": 3
+        }
+      ],
+      "TE": [
+        {
+          "value": 16,
+          "memory_mb": 181.54557291666666,
+          "memory_mb_std": 0.23998282477064026,
+          "elapsed": 0.72,
+          "elapsed_std": 0.010000000000000009,
+          "num_runs": 3
+        },
+        {
+          "value": 32,
+          "memory_mb": 182.79296875,
+          "memory_mb_std": 0.19574171588074296,
+          "elapsed": 0.96,
+          "elapsed_std": 0.010000000000000009,
+          "num_runs": 3
+        },
+        {
+          "value": 48,
+          "memory_mb": 184.87890625,
+          "memory_mb_std": 0.37506103019000453,
+          "elapsed": 1.6333333333333333,
+          "elapsed_std": 0.011547005383792398,
+          "num_runs": 3
+        },
+        {
+          "value": 64,
+          "memory_mb": 187.23046875,
+          "memory_mb_std": 0.711677585253015,
+          "elapsed": 2.0666666666666664,
+          "elapsed_std": 0.05507570547286102,
+          "num_runs": 3
+        },
+        {
+          "value": 128,
+          "memory_mb": 205.40234375,
+          "memory_mb_std": 0.18948332555679537,
+          "elapsed": 8.236666666666666,
+          "elapsed_std": 0.8974593769822306,
+          "num_runs": 3
+        }
+      ]
+    },
+    "blaze": {
+      "TM": [
+        {
+          "value": 16,
+          "memory_mb": 6.333333333333333,
+          "memory_mb_std": 0.14433756729740643,
+          "elapsed": 0.023333333333333334,
+          "elapsed_std": 0.005773502691896257,
+          "num_runs": 3
+        },
+        {
+          "value": 32,
+          "memory_mb": 9.311197916666666,
+          "memory_mb_std": 0.0022552744890219755,
+          "elapsed": 0.06666666666666667,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 48,
+          "memory_mb": 13.557291666666666,
+          "memory_mb_std": 0.19750076229415126,
+          "elapsed": 0.18,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 64,
+          "memory_mb": 19.483072916666668,
+          "memory_mb_std": 0.16482029848981233,
+          "elapsed": 0.35666666666666663,
+          "elapsed_std": 0.011547005383792526,
+          "num_runs": 3
+        },
+        {
+          "value": 128,
+          "memory_mb": 61.541666666666664,
+          "memory_mb_std": 0.21051510563501336,
+          "elapsed": 1.94,
+          "elapsed_std": 0.010000000000000009,
+          "num_runs": 3
+        }
+      ],
+      "TE": [
+        {
+          "value": 16,
+          "memory_mb": 6.416666666666667,
+          "memory_mb_std": 0.14433756729740643,
+          "elapsed": 0.03,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 32,
+          "memory_mb": 9.365885416666666,
+          "memory_mb_std": 0.0022552744890219755,
+          "elapsed": 0.1,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 48,
+          "memory_mb": 13.966145833333334,
+          "memory_mb_std": 0.11160760788593595,
+          "elapsed": 0.26,
+          "elapsed_std": 0.010000000000000009,
+          "num_runs": 3
+        },
+        {
+          "value": 64,
+          "memory_mb": 19.96484375,
+          "memory_mb_std": 0,
+          "elapsed": 0.38,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 128,
+          "memory_mb": 62.096354166666664,
+          "memory_mb_std": 0.15029336005133703,
+          "elapsed": 2.9233333333333333,
+          "elapsed_std": 0.05773502691896263,
+          "num_runs": 3
+        }
+      ]
+    }
+  },
+  "num_bands": {
+    "values": [
+      4,
+      8,
+      12,
+      16,
+      20
+    ],
+    "fixed": {
+      "resolution": 32,
+      "k_points_per_segment": 10
+    },
+    "mpb": {
+      "TM": [
+        {
+          "value": 4,
+          "memory_mb": 182.17317708333334,
+          "memory_mb_std": 0.28644649596754246,
+          "elapsed": 0.7466666666666667,
+          "elapsed_std": 0.028867513459481315,
+          "num_runs": 3
+        },
+        {
+          "value": 8,
+          "memory_mb": 183.19661458333334,
+          "memory_mb_std": 0.09930893211285596,
+          "elapsed": 0.8333333333333333,
+          "elapsed_std": 0.011547005383792526,
+          "num_runs": 3
+        },
+        {
+          "value": 12,
+          "memory_mb": 182.9296875,
+          "memory_mb_std": 0.38231392915990847,
+          "elapsed": 0.97,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 16,
+          "memory_mb": 183.34375,
+          "memory_mb_std": 0.14547831601200056,
+          "elapsed": 1.0333333333333334,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 20,
+          "memory_mb": 183.71614583333334,
+          "memory_mb_std": 0.40191370625875134,
+          "elapsed": 1.17,
+          "elapsed_std": 0.010000000000000009,
+          "num_runs": 3
+        }
+      ],
+      "TE": [
+        {
+          "value": 4,
+          "memory_mb": 182.09244791666666,
+          "memory_mb_std": 0.18755424562532125,
+          "elapsed": 0.7733333333333333,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 8,
+          "memory_mb": 183.1796875,
+          "memory_mb_std": 0.1488481162754504,
+          "elapsed": 0.9766666666666667,
+          "elapsed_std": 0.011547005383792526,
+          "num_runs": 3
+        },
+        {
+          "value": 12,
+          "memory_mb": 182.76953125,
+          "memory_mb_std": 0.33000299625770446,
+          "elapsed": 1.04,
+          "elapsed_std": 0.010000000000000009,
+          "num_runs": 3
+        },
+        {
+          "value": 16,
+          "memory_mb": 183.4765625,
+          "memory_mb_std": 0.20977689972027425,
+          "elapsed": 1.36,
+          "elapsed_std": 0.010000000000000009,
+          "num_runs": 3
+        },
+        {
+          "value": 20,
+          "memory_mb": 184.18098958333334,
+          "memory_mb_std": 0.3827593500518091,
+          "elapsed": 1.39,
+          "elapsed_std": 0,
+          "num_runs": 3
+        }
+      ]
+    },
+    "blaze": {
+      "TM": [
+        {
+          "value": 4,
+          "memory_mb": 9.229166666666666,
+          "memory_mb_std": 0.14433756729740643,
+          "elapsed": 0.06666666666666667,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 8,
+          "memory_mb": 9.30859375,
+          "memory_mb_std": 0,
+          "elapsed": 0.07,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 12,
+          "memory_mb": 9.311197916666666,
+          "memory_mb_std": 0.0022552744890219755,
+          "elapsed": 0.07,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 16,
+          "memory_mb": 9.311197916666666,
+          "memory_mb_std": 0.0022552744890219755,
+          "elapsed": 0.07,
+          "elapsed_std": 0,
+          "num_runs": 3
+        },
+        {
+          "value": 20,
+          "memory_mb": 9.39453125,
+          "memory_mb_std": 0.14208229280838447,
+          "elapsed": 0.07,
+          "elapsed_std": 0,
+          "num_runs": 3
+        }
+      ],
+      "TE": [
+        {
+          "value": 4,
+          "memory_mb": 9.196614583333334,
+          "memory_mb_std": 0.14433756729740643,
+          "elapsed": 0.09666666666666666,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 8,
+          "memory_mb": 9.279947916666666,
+          "memory_mb_std": 0.14433756729740643,
+          "elapsed": 0.09666666666666666,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 12,
+          "memory_mb": 9.365885416666666,
+          "memory_mb_std": 0.0022552744890219755,
+          "elapsed": 0.09333333333333334,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 16,
+          "memory_mb": 9.27734375,
+          "memory_mb_std": 0.13882309096810047,
+          "elapsed": 0.09333333333333334,
+          "elapsed_std": 0.005773502691896263,
+          "num_runs": 3
+        },
+        {
+          "value": 20,
+          "memory_mb": 9.358072916666666,
+          "memory_mb_std": 0.012556836928376244,
+          "elapsed": 0.09,
+          "elapsed_std": 0,
+          "num_runs": 3
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "timestamp": "2026-01-08T12:40:21.239159",
+    "source": "static",
+    "hoistedAt": "2026-01-08T16:25:31.851Z",
+    "sourceFile": "series5_memory/series5_memory_results.json"
+  }
+}

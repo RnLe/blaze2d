@@ -7,13 +7,13 @@ import JobDriverAnimation from './JobDriverAnimation';
 import JobDriverStream from './JobDriverStream';
 import PyPICard from './PyPICard';
 import InteractiveBandDiagram from './InteractiveBandDiagram';
-import DocsNavButton from './DocsNavButton';
+import PitchHeader from './PitchHeader';
 
 export default function BlazePage() {
   return (
     <>
       <BandBackground />
-      <DocsNavButton />
+      <PitchHeader />
       <div style={{ minHeight: '100vh', position: 'relative', zIndex: 1 }}>
       
       {/* Hero Section */}

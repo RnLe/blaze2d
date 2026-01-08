@@ -1,15 +1,12 @@
-# Blaze 2D
+import BlogCard, { BlogCardGrid } from '../components/BlogCard'
 
-export function Redirect() {
-  if (typeof window !== 'undefined') {
-    window.location.href = '/blaze';
-  }
-  return null;
-}
-
-<Redirect />
-
-<div style={{textAlign: 'center', padding: '4rem'}}>
-  <p>Redirecting to Introduction...</p>
-  <a href="/blaze">Click here if not redirected</a>
-</div>
+<BlogCardGrid>
+  <BlogCard
+    href="/blaze"
+    title="Blaze: A High-Performance Solver for Photonic Crystals"
+    description="Accelerating 2D band structure calculations by 3-10× with 20× lower memory footprint."
+    image="/banners/blaze_intro.webp"
+    date="January 7, 2026"
+    tags={["Release"]}
+  />
+</BlogCardGrid>
