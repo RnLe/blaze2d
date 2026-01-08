@@ -11,14 +11,57 @@ export const metadata = {
   description: 'A lightweight 2D Maxwell solver for photonic band structures',
 }
  
-const navbar = (
-  <Navbar
-    logo={<span style={{ color: '#ffffff', fontWeight: 600, fontSize: '1.5rem', letterSpacing: '-0.02em' }}>Blaze 2D</span>}
-  />
-)
 const footer = <Footer><FooterIcons /></Footer>
  
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const base = process.env.NEXT_PUBLIC_BASE_PATH || '';
+  
+  const navbar = (
+    <Navbar
+      logo={
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <img 
+            src={`${base}/icons/blaze_bw.svg`} 
+            alt="Blaze 2D Logo" 
+            style={{ width: '32px', height: '32px' }} 
+          />
+          <span style={{ color: '#ffffff', fontWeight: 600, fontSize: '1.5rem', letterSpacing: '-0.02em' }}>Blaze 2D</span>
+        </div>
+      }
+    />
+  )
+
+  const fontCss = `
+@font-face {
+  font-family: 'OpenAI Sans';
+  src: url('${base}/fonts/OpenAISans-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'OpenAI Sans';
+  src: url('${base}/fonts/OpenAISans-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'OpenAI Sans';
+  src: url('${base}/fonts/OpenAISans-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'OpenAI Sans';
+  src: url('${base}/fonts/OpenAISans-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+`;
+
   return (
     <html
       lang="en"
@@ -29,6 +72,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     >
       <Head>
         <meta name="theme-color" content="#000000" />
+        <link rel="icon" href={`${base}/favicon.ico`} sizes="any" />
+        <style dangerouslySetInnerHTML={{ __html: fontCss }} />
       </Head>
       <body style={{ backgroundColor: '#000000', color: '#ffffff' }}>
         <Layout

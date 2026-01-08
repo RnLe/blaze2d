@@ -177,15 +177,15 @@ function CompactCrystalBuilder({
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      {/* Preview - 50% smaller */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      {/* Preview - Compact */}
       <div style={{
         background: bgColor,
         borderRadius: '4px',
         overflow: 'hidden',
         aspectRatio: '1',
         width: '100%',
-        maxWidth: '200px',
+        maxWidth: '130px',
         margin: '0 auto',
         position: 'relative',
       }}>
@@ -281,24 +281,25 @@ function CompactCrystalBuilder({
         </div>
       </div>
 
-      {/* Rectangular parameter */}
-      {latticeType === 'rectangular' && (
-        <div style={{ opacity: isComputing ? 0.5 : 1 }}>
-          <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.75rem' }}>
-            b: {rectangularB.toFixed(2)}
-          </label>
-          <input
-            type="range"
-            min="0.5"
-            max="2"
-            step="0.01"
-            value={rectangularB}
-            onChange={(e) => setRectangularB(parseFloat(e.target.value))}
-            disabled={isComputing}
-            style={{ width: '100%', accentColor: 'rgba(100, 200, 255, 0.8)' }}
-          />
-        </div>
-      )}
+      {/* Rectangular parameter (Reserved space) */}
+      <div style={{ 
+        opacity: isComputing ? 0.5 : 1,
+        visibility: latticeType === 'rectangular' ? 'visible' : 'hidden'
+      }}>
+        <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.75rem' }}>
+          b: {rectangularB.toFixed(2)}
+        </label>
+        <input
+          type="range"
+          min="0.5"
+          max="2"
+          step="0.01"
+          value={rectangularB}
+          onChange={(e) => setRectangularB(parseFloat(e.target.value))}
+          disabled={isComputing}
+          style={{ width: '100%', accentColor: 'rgba(100, 200, 255, 0.8)' }}
+        />
+      </div>
 
       {/* Sliders */}
       <div style={{ opacity: isComputing ? 0.5 : 1 }}>
@@ -385,6 +386,28 @@ function LiveBandPlot({ tmData, teData, phase, pathLabels, totalKPoints, pathTot
     const teKCount = teData?.numKPoints ?? 0;
     lastKCountRef.current = { tm: tmKCount, te: teKCount };
   }, [tmData, teData]);
+
+  // Handle resizing
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    
+    const resizeObserver = new ResizeObserver(() => {
+        // Force a re-render/redraw by toggling a dummy state or just calling draw
+        // Since draw is inside useEffect dependent on props, we can extract draw logic
+        // But simpler: just update canvas size and call the draw function if we could.
+        // Actually, we can just trigger a re-render.
+        // Or, better: Move the draw logic into a useCallback and call it from here.
+        setResizeTrigger(prev => prev + 1);
+    });
+    
+    resizeObserver.observe(canvas);
+    
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  const [resizeTrigger, setResizeTrigger] = useState(0);
   
   // Reset locked yMax when data is cleared (both null means fresh start)
   useEffect(() => {
@@ -595,7 +618,7 @@ function LiveBandPlot({ tmData, teData, phase, pathLabels, totalKPoints, pathTot
       ctx.fillText('Click "Compute Band Diagram" to start', width / 2, height / 2);
     }
 
-  }, [tmData, teData, phase, pathLabels, pathTotalDistance, showDots]);
+  }, [tmData, teData, phase, pathLabels, pathTotalDistance, showDots, resizeTrigger]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: '200px' }}>
@@ -704,7 +727,7 @@ function LiveBandPlot({ tmData, teData, phase, pathLabels, totalKPoints, pathTot
 // Main Interactive Component
 // =============================================================================
 
-export default function InteractiveBandDiagram() {
+export default function InteractiveBandDiagram({ maxWidth = '1100px' }: { maxWidth?: string }) {
   // Crystal builder state
   const [latticeType, setLatticeType] = useState<LatticeType>('square');
   const [radius, setRadius] = useState(0.25);
@@ -846,7 +869,7 @@ tol = 1e-6
       borderRadius: '24px',
       padding: '1.5rem',
       border: '1px solid rgba(255, 255, 255, 0.1)',
-      maxWidth: '1100px',
+      maxWidth: maxWidth,
       width: '100%',
     }}>
 
