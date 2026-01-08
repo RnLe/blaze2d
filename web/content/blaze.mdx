@@ -1,6 +1,7 @@
 import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalingChart, SpeedupScalingChart, MemoryUsageChart, MemoryRatioChart, MemoryScalingChart, ResolutionBarChart, ResolutionSpeedupChart, ResolutionScalingChart, IterationBarChart, IterationTimeChart, IterationDistributionChart, EpsilonBarChart, BandsBarChart, BandComparisonChart, DeviationBoxPlotChart } from '../components/charts'
 import { EpsilonGridViewer } from '../components/charts'
 import HeroImage from '../components/HeroImage'
+import { Citation, Reference, References } from '../components/Citation'
 
 
 <div style={{
@@ -47,21 +48,51 @@ We introduce **Blaze**, a Rust-based solver that modernizes the PWE approach usi
   fontSize: '0.9rem',
   lineHeight: 1.6,
 }}>
-Performance benchmarks utilize the canonical square and hexagonal lattice configurations from [Joannopoulos' seminal 1997 Nature paper](https://www.nature.com/articles/386143a0). Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, calculating 8 bands with 20 k-points per segment.
+Performance benchmarks utilize the canonical square and hexagonal lattice configurations from [Joannopoulos' seminal 1997 Nature paper](https://www.nature.com/articles/386143a0).<Citation id={1} /> Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, calculating 8 bands with 20 k-points per segment.
 </div>
 
 </div>
 
 <div className="narrow">
+## Single-Core Performance
 
+The computational cost of PWE solvers is dominated by Fast Fourier Transforms (FFTs). Transverse Electric (TE) modes are historically more expensive to solve than Transverse Magnetic (TM) modes, as they require six FFT operations per iteration compared to just two for TM.
+
+This complexity penalty is clearly visible in the legacy solver. Blaze, however, mitigates this through algorithmic optimizations. Even in Full Precision (``f64``), Blaze outperforms MPB. The decisive leap comes from the Mixed Precision (``f32/f64``) approach, which reduces memory traffic enough to effectively double the throughput, resulting in a total speedup of approximately ``3×``.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
   <SingleCorePerformanceChart width={650} height={420} />
 </div>
 
+<div className="narrow">
+## Multi-Core Performance
+
+The architectural age of legacy solvers is most evident in parallel execution.<Citation id={2} /> MPB attempts to parallelize individual operations ***within*** an iteration. On modern hardware, where small-to-medium lattice problems fit entirely within the CPU cache, this fine-grained threading introduces synchronization overhead that outweighs the computational gains, causing performance to regress as threads are added.
+
+Blaze avoids this contention by parallelizing entire jobs rather than individual operations, a strategy optimized for large-scale parameter sweeps.
+
+The chart below reveals a clear three-tier performance hierarchy. The legacy solver struggles with thread overhead. Blaze in Full Precision scales efficiently but remains sensitive to the higher algebraic load of TE modes (approx. ``240–350 ms``). In contrast, the Mixed Precision mode hits a "hard floor" at roughly ``170 ms``. By halving the memory requirement for state vectors, Blaze masks the computational complexity of the TE mode, proving that the solver has hit the physical memory bandwidth limit of the machine.
+</div>
+
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
   <MultiCorePerformanceChart width={650} height={420} />
+</div>
+
+<div className="narrow">
+
+<div style={{
+  background: 'rgba(100, 150, 200, 0.08)',
+  border: '1px solid rgba(100, 150, 200, 0.25)',
+  borderRadius: '6px',
+  padding: '0.85rem 1.1rem',
+  margin: '1.25rem 0',
+  fontSize: '0.9rem',
+  lineHeight: 1.6,
+}}>
+  All subsequent benchmarks for Blaze are performed in Mixed Precision mode, unless otherwise specified.
+</div>
+
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -131,3 +162,16 @@ Performance benchmarks utilize the canonical square and hexagonal lattice config
 </div>
 
 <EpsilonGridViewer initialResolution={64} size={400} />
+
+<References>
+  <Reference id={1}>
+    Joannopoulos, J., Villeneuve, P. & Fan, S. Photonic crystals: putting a new twist on light. <em>Nature</em> 386, 143–149 (1997). [<a href="https://doi.org/10.1038/386143a0" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={2}>
+    J. L. Hennessy and D. A. Patterson, <em>Computer Architecture: A Quantitative Approach</em>, 5th ed. Morgan Kaufmann, 2011, Fig. 2.2. [<a href="https://acs.pub.ro/~cpop/SMPA/Computer%20Architecture%20A%20Quantitative%20Approach%20(5th%20edition).pdf" target="_blank" rel="noopener noreferrer">PDF</a>]
+    <br />
+    <span style={{ fontSize: '0.9em', color: 'rgba(160, 160, 160, 0.85)', fontStyle: 'italic', display: 'block', backgroundColor: 'rgba(10, 10, 10, 1)', marginTop: '-1rem', paddingLeft: '0.5rem' }}>
+      Figure 2.2 illustrates the dramatic divergence in performance trends between processor speed and memory bandwidth, showing how memory access has become the dominant bottleneck in modern computing systems.
+    </span>
+  </Reference>
+</References>

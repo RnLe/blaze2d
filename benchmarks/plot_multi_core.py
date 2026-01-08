@@ -28,13 +28,15 @@ import matplotlib.patches as mpatches
 plt.style.use('seaborn-v0_8-whitegrid')
 COLORS = {
     'blaze2d': '#3498DB',           # Blue
+    'blaze2d_full': '#1A5276',       # Dark blue (full precision)
     'mpb_multiprocess': '#E74C3C',  # Red
     'mpb_openblas': '#F39C12',      # Orange
     'speedup': '#2ECC71',           # Green
 }
 
 SOLVER_LABELS = {
-    'blaze2d': 'Blaze2D (Rayon)',
+    'blaze2d': 'Blaze2D (Mixed f32/f64)',
+    'blaze2d_full': 'Blaze2D (Full f64)',
     'mpb_multiprocess': 'MPB (Multiprocess)',
     'mpb_openblas': 'MPB (OpenBLAS)',
 }
@@ -57,16 +59,23 @@ def load_results(results_dir: Path) -> dict:
     """Load all multi-core benchmark results."""
     results = {
         'blaze2d': {},
+        'blaze2d_full': {},
         'mpb_multiprocess': {},
         'mpb_openblas': {},
     }
     
     for config in CONFIG_ORDER:
-        # Load Blaze2D results
+        # Load Blaze2D results (mixed precision)
         blaze_file = results_dir / f"blaze2d_{config}.json"
         if blaze_file.exists():
             with open(blaze_file) as f:
                 results['blaze2d'][config] = json.load(f)
+        
+        # Load Blaze2D full precision results
+        blaze_full_file = results_dir / f"blaze2d_full_{config}.json"
+        if blaze_full_file.exists():
+            with open(blaze_full_file) as f:
+                results['blaze2d_full'][config] = json.load(f)
         
         # Load MPB Multiprocess results
         mp_file = results_dir / f"mpb_multiprocess_{config}.json"

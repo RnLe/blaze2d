@@ -5,7 +5,7 @@
 # - Multi-core: 16 threads parallel comparison
 
 .PHONY: all quick single multi analyze plot clean help
-.PHONY: mpb-single mpb-multi blaze-single blaze-multi
+.PHONY: mpb-single mpb-multi blaze-single blaze-single-full blaze-multi blaze-multi-full
 .PHONY: single-mpb single-blaze multi-mpb multi-blaze
 .PHONY: series1 series1-quick plot-series1
 .PHONY: series2 series2-quick plot-series2
@@ -81,12 +81,26 @@ blaze-single:
 	RUSTFLAGS="-C target-cpu=native" cargo build --release -p blaze2d-bulk-driver
 	python bench_blaze2d.py --mode single --output results
 
+blaze-single-full:
+	@echo "========================================"
+	@echo "Blaze2D Single-Core Benchmark (Full Precision f64)"
+	@echo "========================================"
+	@echo "Building with --no-default-features --features native-linalg"
+	python bench_blaze2d.py --mode single --output results --full-precision
+
 blaze-multi:
 	@echo "========================================"
 	@echo "Blaze2D Multi-Core Benchmark (bulk-driver -j 16)"
 	@echo "========================================"
 	RUSTFLAGS="-C target-cpu=native" cargo build --release -p blaze2d-bulk-driver
 	python bench_blaze2d.py --mode multi --threads 16 --jobs 32 --iterations 2 --output results
+
+blaze-multi-full:
+	@echo "========================================"
+	@echo "Blaze2D Multi-Core Benchmark (Full Precision f64)"
+	@echo "========================================"
+	@echo "Building with --no-default-features --features native-linalg"
+	python bench_blaze2d.py --mode multi --threads 16 --jobs 32 --iterations 2 --output results --full-precision
 
 blaze-single-quick:
 	python bench_blaze2d.py --mode single --quick --output results

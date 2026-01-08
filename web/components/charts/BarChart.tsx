@@ -453,25 +453,41 @@ export default function BarChart({
         {/* Legend for grouped bars - aligned to y-axis, above plot area */}
         {hasGroups && groups.length > 0 && (
           <Group top={margin.top - 22} left={margin.left}>
-            {groups.map((group, i) => (
-              <Group key={group} left={i * 80}>
-                <rect
-                  width={12}
-                  height={12}
-                  fill={colorScale(group)}
-                  rx={2}
-                />
-                <Text
-                  x={18}
-                  y={10}
-                  fontSize={11}
-                  fontFamily={CHART_STYLES.fontFamily}
-                  fill={CHART_STYLES.labelColor}
-                >
-                  {group}
-                </Text>
-              </Group>
-            ))}
+            {groups.map((group, i) => {
+              // Calculate dynamic x position based on previous labels' widths
+              // Adjusted to match original ~80px spacing for short labels while accommodating long ones
+              const CHAR_WIDTH = 6;     // Improved estimate for font-size 11
+              const RECT_WIDTH = 12;
+              const TEXT_PADDING = 6;   // Space between rect and text
+              const ITEM_GAP = 50;      // Large gap to maintain uniform spacing similar to original 80px grid
+              
+              let xOffset = 0;
+              for (let j = 0; j < i; j++) {
+                const prevLabelLen = groups[j].length;
+                const prevItemWidth = RECT_WIDTH + TEXT_PADDING + (prevLabelLen * CHAR_WIDTH);
+                xOffset += prevItemWidth + ITEM_GAP;
+              }
+              
+              return (
+                <Group key={group} left={xOffset}>
+                  <rect
+                    width={RECT_WIDTH}
+                    height={12}
+                    fill={colorScale(group)}
+                    rx={2}
+                  />
+                  <Text
+                    x={RECT_WIDTH + TEXT_PADDING}
+                    y={10}
+                    fontSize={11}
+                    fontFamily={CHART_STYLES.fontFamily}
+                    fill={CHART_STYLES.labelColor}
+                  >
+                    {group}
+                  </Text>
+                </Group>
+              );
+            })}
           </Group>
         )}
       </svg>

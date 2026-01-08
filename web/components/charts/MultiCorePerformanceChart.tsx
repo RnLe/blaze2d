@@ -20,8 +20,9 @@ const CONFIG_FULL_LABELS: Record<string, string> = {
 };
 
 const COLORS = {
-  MPB: '#5477c4',     // Blue-gray
-  Blaze: '#eaf1fe',   // Light blue-white
+  MPB: '#5477c4',                       // Blue-gray
+  'Blaze (Full Precision)': '#a3befa',  // Slightly darker blue (full precision)
+  'Blaze (Mixed Precision)': '#eaf1fe', // Light blue-white (mixed precision)
 };
 
 interface MultiCoreChartProps {
@@ -38,25 +39,45 @@ export default function MultiCorePerformanceChart({
   const configs = ['config_a_tm', 'config_a_te', 'config_b_tm', 'config_b_te'];
 
   // Transform data for grouped bar chart
-  // Each config is a position on the x-axis, with MPB and Blaze as grouped bars at each position
+  // Each config is a position on the x-axis, with MPB, Blaze, and Blaze f64 as grouped bars
   // The 'id' field identifies the x-position, 'label' is what's displayed
   const data: BarDataPoint[] = useMemo(() => {
-    return configs.flatMap(config => [
-      {
-        id: config,  // Position identifier (same for both MPB and Blaze at this position)
-        label: CONFIG_LABELS[config],  // Display label (TM or TE)
-        value: benchmarkData.mpb[config]?.mean_ms || 0,
-        std: benchmarkData.mpb[config]?.std_ms || 0,
-        group: 'MPB',
-      },
-      {
-        id: config,  // Same position identifier
-        label: CONFIG_LABELS[config],  // Display label (TM or TE)
+    const hasFullPrecision = benchmarkData.metadata?.hasFullPrecision && 
+      Object.keys(benchmarkData.blazeFull || {}).length > 0;
+    
+    return configs.flatMap(config => {
+      const bars: BarDataPoint[] = [
+        {
+          id: config,
+          label: CONFIG_LABELS[config],
+          value: benchmarkData.mpb[config]?.mean_ms || 0,
+          std: benchmarkData.mpb[config]?.std_ms || 0,
+          group: 'MPB',
+        },
+      ];
+      
+      // Add full precision bar first if data is available
+      if (hasFullPrecision && benchmarkData.blazeFull?.[config]) {
+        bars.push({
+          id: config,
+          label: CONFIG_LABELS[config],
+          value: benchmarkData.blazeFull[config]?.mean_ms || 0,
+          std: benchmarkData.blazeFull[config]?.std_ms || 0,
+          group: 'Blaze (Full Precision)',
+        });
+      }
+      
+      // Then add mixed precision
+      bars.push({
+        id: config,
+        label: CONFIG_LABELS[config],
         value: benchmarkData.blaze[config]?.mean_ms || 0,
         std: benchmarkData.blaze[config]?.std_ms || 0,
-        group: 'Blaze',
-      },
-    ]);
+        group: 'Blaze (Mixed Precision)',
+      });
+      
+      return bars;
+    });
   }, [benchmarkData]);
 
   // Calculate speedups for caption
@@ -100,6 +121,12 @@ export default function MultiCorePerformanceChart({
     : ' (fallback data)';
 
   const numThreads = benchmarkData.metadata?.num_threads || 16;
+  const hasFullPrecision = benchmarkData.metadata?.hasFullPrecision && 
+    Object.keys(benchmarkData.blazeFull || {}).length > 0;
+  
+  const captionText = hasFullPrecision
+    ? `Blaze achieves ${avgSpeedup}× average speedup over MPB on ${numThreads}-thread workloads. Mixed precision (f32/f64) shown alongside full precision (f64).`
+    : `Blaze achieves ${avgSpeedup}× average speedup over MPB on ${numThreads}-thread workloads.`;
 
   return (
     <BarChart
@@ -117,7 +144,7 @@ export default function MultiCorePerformanceChart({
       categoryBrackets={categoryBrackets}
       showCategoryBrackets={true}
       bracketOffset={28}
-      caption={`Blaze achieves ${avgSpeedup}× average speedup over MPB on ${numThreads}-thread workloads.`}
+      caption={captionText}
       margin={{ top: 60, right: 30, bottom: 70, left: 75 }}
     />
   );
