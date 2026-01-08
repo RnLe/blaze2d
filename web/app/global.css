@@ -446,17 +446,45 @@ body:not(:has(.blaze-layout)) .prose {
 }
 
 /* Links - white, no underline */
-body:not(:has(.blaze-layout)) a,
-body:not(:has(.blaze-layout)) .prose a {
+body:not(:has(.blaze-layout)) a:not(.blog-card-link),
+body:not(:has(.blaze-layout)) .prose a:not(.blog-card-link) {
   color: #ffffff !important;
   text-decoration: none !important;
   transition: opacity 0.15s ease !important;
 }
 
-body:not(:has(.blaze-layout)) a:hover,
-body:not(:has(.blaze-layout)) .prose a:hover {
+body:not(:has(.blaze-layout)) a:not(.blog-card-link):hover,
+body:not(:has(.blaze-layout)) .prose a:not(.blog-card-link):hover {
   opacity: 0.7 !important;
   text-decoration: none !important;
+}
+
+/* Blog card - NO opacity transitions, clean styling */
+.blog-card-link,
+.blog-card-link:hover,
+.blog-card-link:focus,
+.blog-card-link:active {
+  opacity: 1 !important;
+  text-decoration: none !important;
+}
+
+.blog-card-link article {
+  opacity: 1 !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* Blog card children - no opacity change, but preserve image transition */
+.blog-card-link *:not(img),
+.blog-card-link:hover *:not(img) {
+  opacity: 1 !important;
+  text-decoration: none !important;
+}
+
+/* Blog card image zoom transition */
+.blog-card-link img {
+  transition: transform 0.3s ease !important;
+  opacity: 1 !important;
 }
 
 /* Code blocks - preserve syntax highlighting */
@@ -534,16 +562,16 @@ body:not(:has(.blaze-layout)) [class*="callout"] {
   border: none !important;
 }
 
-/* Cards */
+/* Cards - exclude blog-card-link */
 body:not(:has(.blaze-layout)) .nextra-card,
-body:not(:has(.blaze-layout)) [class*="card"] {
+body:not(:has(.blaze-layout)) [class*="card"]:not(.blog-card-link) {
   background-color: #0a0a0a !important;
   border: 1px solid #1a1a1a !important;
   transition: border-color 0.15s ease !important;
 }
 
 body:not(:has(.blaze-layout)) .nextra-card:hover,
-body:not(:has(.blaze-layout)) [class*="card"]:hover {
+body:not(:has(.blaze-layout)) [class*="card"]:not(.blog-card-link):hover {
   border-color: rgba(255, 255, 255, 0.3) !important;
 }
 

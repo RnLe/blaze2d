@@ -5,6 +5,7 @@ import 'nextra-theme-docs/style.css'
 import 'katex/dist/katex.min.css'
 import './global.css'
 import FooterIcons from '../components/FooterIcons'
+import { getAssetPath } from '../lib/paths'
 
 export const metadata = {
   title: 'Blaze 2D',
@@ -21,7 +22,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       logo={
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <img 
-            src={`${base}/icons/blaze_bw.svg`} 
+            src={getAssetPath('/icons/blaze_bw.svg')} 
             alt="Blaze 2D Logo" 
             style={{ width: '32px', height: '32px' }} 
           />

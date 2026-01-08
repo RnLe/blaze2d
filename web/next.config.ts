@@ -4,14 +4,14 @@ import type { NextConfig } from 'next';
 import nextra from 'nextra'
 import { existsSync } from 'node:fs'
 
-const base = process.env.NEXT_BASE_PATH ?? ''
+const base = process.env.NEXT_BASE_PATH ?? '/blaze2d';
 
 /** @type {import('next').NextConfig} */
 const nextConfig: NextConfig = {
 
     // EXPORT RELATED CONFIG
     output: 'export',
-    // when exporting to gh pages, prefix all routes/assets with /msl
+    // when exporting to gh pages, prefix all routes/assets with /blaze2d
     basePath: base,
     assetPrefix: base ? `${base}/` : '',
     trailingSlash: true,         // output /about/index.html instead of about.html

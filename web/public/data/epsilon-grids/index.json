@@ -1,0 +1,72 @@
+{
+  "generated": "2026-01-08T14:15:25.590Z",
+  "epsilon_background": 13,
+  "epsilon_hole": 1,
+  "radius": 0.3,
+  "resolutions": [
+    {
+      "resolution": 16,
+      "file": "epsilon-res16.json"
+    },
+    {
+      "resolution": 32,
+      "file": "epsilon-res32.json"
+    },
+    {
+      "resolution": 48,
+      "file": "epsilon-res48.json"
+    },
+    {
+      "resolution": 64,
+      "file": "epsilon-res64.json"
+    },
+    {
+      "resolution": 80,
+      "file": "epsilon-res80.json"
+    },
+    {
+      "resolution": 96,
+      "file": "epsilon-res96.json"
+    },
+    {
+      "resolution": 112,
+      "file": "epsilon-res112.json"
+    },
+    {
+      "resolution": 128,
+      "file": "epsilon-res128.json"
+    },
+    {
+      "resolution": 144,
+      "file": "epsilon-res144.json"
+    },
+    {
+      "resolution": 160,
+      "file": "epsilon-res160.json"
+    },
+    {
+      "resolution": 176,
+      "file": "epsilon-res176.json"
+    },
+    {
+      "resolution": 192,
+      "file": "epsilon-res192.json"
+    },
+    {
+      "resolution": 208,
+      "file": "epsilon-res208.json"
+    },
+    {
+      "resolution": 224,
+      "file": "epsilon-res224.json"
+    },
+    {
+      "resolution": 240,
+      "file": "epsilon-res240.json"
+    },
+    {
+      "resolution": 256,
+      "file": "epsilon-res256.json"
+    }
+  ]
+}

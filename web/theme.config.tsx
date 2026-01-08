@@ -1,10 +1,11 @@
 // theme.config.tsx
 import FooterIcons from './components/FooterIcons'
+import { getAssetPath } from './lib/paths'
 
 export default {
   logo: (
     <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-      <img src="/icons/blaze_bw.svg" alt="Blaze" style={{ height: '1.5rem', width: 'auto' }} />
+      <img src={getAssetPath('/icons/blaze_bw.svg')} alt="Blaze" style={{ height: '1.5rem', width: 'auto' }} />
       <span style={{ color: '#ffffff', fontWeight: 600, fontSize: '1.5rem', letterSpacing: '-0.02em' }}>Blaze 2D</span>
     </span>
   ),

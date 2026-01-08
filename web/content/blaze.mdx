@@ -1,4 +1,8 @@
-import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalingChart, SpeedupScalingChart } from '../components/charts'
+import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalingChart, SpeedupScalingChart, MemoryUsageChart, MemoryRatioChart, MemoryScalingChart, ResolutionBarChart, ResolutionSpeedupChart, ResolutionScalingChart, IterationBarChart, IterationTimeChart, IterationDistributionChart, EpsilonBarChart, BandsBarChart, BandComparisonChart, DeviationBoxPlotChart } from '../components/charts'
+import { EpsilonGridViewer } from '../components/charts'
+import HeroImage from '../components/HeroImage'
+
+{/* <HeroImage src="/banners/blaze_intro.webp" alt="Blaze: High-Performance Photonic Crystal Solver" /> */}
 
 <div className="narrow-centered">
 
@@ -39,3 +43,63 @@ We are releasing **Blaze**, a modern Rust-based solver that achieves state-of-th
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
   <SpeedupScalingChart width={1000} height={380} />
 </div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryUsageChart width={1000} height={380} sweep="resolution" />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryUsageChart width={1000} height={380} sweep="num_bands" />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryRatioChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryScalingChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <ResolutionBarChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <ResolutionSpeedupChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <ResolutionScalingChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <IterationBarChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <IterationTimeChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1100px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <IterationDistributionChart width={1040} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <EpsilonBarChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <BandsBarChart width={1000} height={380} />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '2rem 0', width: '100%', maxWidth: '1200px', marginLeft: 'auto', marginRight: 'auto', flexWrap: 'wrap' }}>
+  <BandComparisonChart width={550} height={420} polarization="TM" />
+  <BandComparisonChart width={550} height={420} polarization="TE" />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '2rem 0', width: '100%', maxWidth: '900px', marginLeft: 'auto', marginRight: 'auto', flexWrap: 'wrap' }}>
+  <DeviationBoxPlotChart width={400} height={400} polarization="TM" />
+  <DeviationBoxPlotChart width={400} height={400} polarization="TE" />
+</div>
+
+<EpsilonGridViewer initialResolution={64} size={400} />

@@ -34,11 +34,11 @@ BAND_VALUES = list(range(4, 21))  # 4, 5, 6, ..., 20
 # Fixed parameters (Config A: Square lattice with ε=8.9 rods)
 EPSILON = 8.9
 RADIUS = 0.2
-RESOLUTION = 32
+RESOLUTION = 64
 K_POINTS_PER_SEGMENT = 20
 
 # Benchmark parameters
-NUM_ITERATIONS = 2  # Iterations per band value
+NUM_ITERATIONS = 3  # Iterations per band value
 
 # Single-core environment
 SINGLE_CORE_ENV = {
