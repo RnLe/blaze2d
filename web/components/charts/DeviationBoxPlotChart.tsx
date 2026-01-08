@@ -419,7 +419,6 @@ export default function DeviationBoxPlotChart({
         maxWidth: width,
         fontStyle: 'italic',
       }}>
-        {`${polarization} relative deviation distribution (log scale). Dashed line indicates minimum = 0 (perfect match).`}
       </p>
     </div>
   );
