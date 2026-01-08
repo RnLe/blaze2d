@@ -1,10 +1,23 @@
 import BlogCard, { BlogCardGrid } from '../components/BlogCard'
 
+<div style={{
+  background: 'rgba(255, 152, 0, 0.15)',
+  border: '1px solid rgba(255, 152, 0, 0.6)',
+  borderRadius: '8px',
+  padding: '1rem 1.25rem',
+  marginBottom: '1.5rem',
+  color: 'rgba(255, 200, 120, 0.9)',
+  fontSize: '0.9rem',
+  lineHeight: 1.5,
+}}>
+  <strong>Reader's Note:</strong> This website is under active construction, with updates occurring within ***hours or minutes***. I am currently prioritizing the benchmark section. A detailed post covering Blaze's architecture and optimizations will follow shortly. In the meantime, please feel free to explore the benchmark results below.
+</div>
+
 <BlogCardGrid>
   <BlogCard
     href="/blaze"
     title="Blaze: A High-Performance Solver for Photonic Crystals"
-    description="Accelerating 2D band structure calculations by 3-10× with 20× lower memory footprint."
+    description="Achieving order-of-magnitude speedups through mixed-precision arithmetic and cache-aware architecture."
     image="/banners/blaze_intro.webp"
     date="January 7, 2026"
     tags={["Release"]}

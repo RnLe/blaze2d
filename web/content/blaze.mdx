@@ -2,15 +2,31 @@ import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalin
 import { EpsilonGridViewer } from '../components/charts'
 import HeroImage from '../components/HeroImage'
 
-{/* <HeroImage src="/banners/blaze_intro.webp" alt="Blaze: High-Performance Photonic Crystal Solver" /> */}
 
+<div style={{
+  background: 'rgba(255, 152, 0, 0.15)',
+  border: '1px solid rgba(255, 152, 0, 0.6)',
+  borderRadius: '8px',
+  padding: '1rem 1.25rem',
+  marginBottom: '1.5rem',
+  color: 'rgba(255, 200, 120, 0.9)',
+  fontSize: '0.9rem',
+  lineHeight: 1.5,
+  maxWidth: '650px',
+  marginLeft: 'auto',
+  marginRight: 'auto',
+}}>
+  <strong>Reader's Note:</strong> This article is under active development and is being updated ***live***. The benchmark plots below are complete and accurate; I am currently finalizing the text that explains the technical reasons behind Blaze’s efficiency. Please check back soon for the full analysis.
+</div>
+
+<HeroImage src="/banners/blaze_intro.webp" alt="Blaze: High-Performance Photonic Crystal Solver" />
 <div className="narrow-centered">
 
 <span className="date">January 7, 2026</span>
 
 # Blaze: A High-Performance Solver for Photonic Crystals
 
-*Accelerating 2D band structure calculations by 3-10× with 20× lower memory footprint.*
+*Achieving order-of-magnitude speedups through a mixed-precision LOBPCG algorithm and cache-aware architecture.*
 
 ---
 </div>
@@ -18,9 +34,21 @@ import HeroImage from '../components/HeroImage'
 
 <div className="narrow">
 
-Photonic band structure calculations have historically relied on the Plane Wave Expansion (PWE) method, widely standardized by the MIT Photonic Bands (MPB) software. While accurate, legacy solvers suffer from high memory latency and poor multi-core scaling.
+Photonic band structure calculations rely on the Plane Wave Expansion (PWE) method, widely standardized by the [MIT Photonic Bands (MPB)](https://mpb.readthedocs.io/en/latest/) software. Established as the field's gold standard, MPB is trusted for its accuracy and has long been assumed to represent the ceiling of computational efficiency for these problems.
 
-We are releasing **Blaze**, a modern Rust-based solver that achieves state-of-the-art performance through cache-aware memory management and mixed-precision arithmetic. On standard benchmarks, Blaze matches MPB's accuracy while delivering **3× faster single-core speeds and a 95% reduction in peak memory usage.**
+We introduce **Blaze**, a Rust-based solver that modernizes the PWE approach using mixed-precision arithmetic and an improved LOBPCG algorithm. By explicitly targeting memory bandwidth bottlenecks and leveraging batched Level 3 BLAS operations, Blaze offers superior single- and multi-core scaling, and achieves a 95% reduction in memory footprint while maintaining reference accuracy.
+
+<div style={{
+  background: 'rgba(100, 150, 200, 0.08)',
+  border: '1px solid rgba(100, 150, 200, 0.25)',
+  borderRadius: '6px',
+  padding: '0.85rem 1.1rem',
+  margin: '1.25rem 0',
+  fontSize: '0.9rem',
+  lineHeight: 1.6,
+}}>
+Performance benchmarks utilize the canonical square and hexagonal lattice configurations from [Joannopoulos' seminal 1997 Nature paper](https://www.nature.com/articles/386143a0). Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, calculating 8 bands with 20 k-points per segment.
+</div>
 
 </div>
 
