@@ -214,15 +214,25 @@ eps_bg = {{ min = 12.999, max = 13.001, step = {step:.10f} }}
 }
 
 
-def build_bulk_driver():
-    """Build blaze2d-bulk-driver in release mode."""
-    print("Building blaze2d-bulk-driver (release)...")
+def build_bulk_driver(full_precision: bool = False):
+    """Build blaze2d-bulk-driver in release mode.
+    
+    Args:
+        full_precision: If True, build with f64 precision throughout (no mixed-precision).
+    """
+    mode_str = "full-precision f64" if full_precision else "mixed-precision f32/f64"
+    print(f"Building blaze2d-bulk-driver (release, {mode_str})...")
     # Enable native CPU optimizations for maximum performance
     env = os.environ.copy()
     env["RUSTFLAGS"] = "-C target-cpu=native"
     
+    cmd = ["cargo", "build", "--release", "-p", "blaze2d-bulk-driver"]
+    if full_precision:
+        # Disable default features (which includes mixed-precision) and only enable native-linalg
+        cmd.extend(["--no-default-features", "--features", "native-linalg"])
+    
     result = subprocess.run(
-        ["cargo", "build", "--release", "-p", "blaze2d-bulk-driver"],
+        cmd,
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
@@ -384,6 +394,10 @@ Examples:
                         help="Skip building (use existing binary)")
     parser.add_argument("--config", type=str, default=None,
                         help="Run only specific config (e.g., 'config_a_tm')")
+    parser.add_argument("--full-precision", action="store_true",
+                        help="Use full f64 precision instead of mixed f32/f64")
+    parser.add_argument("--tag", type=str, default=None,
+                        help="Tag to append to output filename (e.g., 'full')")
     args = parser.parse_args()
     
     # Set defaults based on mode
@@ -419,10 +433,15 @@ Examples:
     print("=" * 70)
     
     if not args.no_build:
-        build_bulk_driver()
+        build_bulk_driver(full_precision=args.full_precision)
     
     binary = get_bulk_driver_binary()
+    precision_str = "full-precision (f64)" if args.full_precision else "mixed-precision (f32/f64)"
     print(f"Using binary: {binary}")
+    print(f"Precision: {precision_str}")
+    
+    # Determine output tag for filename
+    output_tag = args.tag if args.tag else ("full" if args.full_precision else None)
     
     all_results = {
         "benchmark": f"blaze2d_speed_{core_mode}",
@@ -430,6 +449,7 @@ Examples:
         "solver": "Blaze2D",
         "core_mode": core_mode,
         "num_threads": num_threads,
+        "precision": "f64" if args.full_precision else "mixed",
         "resolution": 32,
         "num_bands": 12,
         "k_points_per_segment": 20,
@@ -458,7 +478,8 @@ Examples:
               f"({config_data['mean_throughput']:.1f} jobs/s)")
     
     # Save results
-    output_file = output_dir / f"blaze2d_speed_{core_mode}_results.json"
+    tag_suffix = f"_{output_tag}" if output_tag else ""
+    output_file = output_dir / f"blaze2d_speed_{core_mode}{tag_suffix}_results.json"
     
     with open(output_file, 'w') as f:
         json.dump(convert_for_json(all_results), f, indent=2)
@@ -466,7 +487,7 @@ Examples:
     print(f"\nResults saved to: {output_file}")
     
     # CSV summary
-    csv_file = output_dir / f"blaze2d_speed_{core_mode}_summary.csv"
+    csv_file = output_dir / f"blaze2d_speed_{core_mode}{tag_suffix}_summary.csv"
     with open(csv_file, 'w') as f:
         f.write("config,polarization,mean_ms,std_ms,min_ms,max_ms,throughput_jobs_s,total_jobs,core_mode,num_threads\n")
         for config_name, config_data in all_results["configs"].items():

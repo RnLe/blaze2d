@@ -669,3 +669,87 @@ body:not(:has(.blaze-layout)) .prose code::before,
 body:not(:has(.blaze-layout)) .prose code::after {
   content: none !important;
 }
+
+/* ============================================
+   CITATION STYLES
+   Reusable across all MDX files
+   ============================================ */
+
+/* Inline citation marker */
+.citation {
+  font-size: 0.7em;
+  line-height: 1;
+  vertical-align: baseline;
+  position: relative;
+  top: -0.6em;
+  margin-left: 1px;
+}
+
+.citation a {
+  color: #6b8cce !important;
+  text-decoration: none !important;
+  transition: color 0.15s ease;
+}
+
+.citation a:hover {
+  color: #a3befa !important;
+  text-decoration: underline !important;
+}
+
+/* References section */
+.references-section {
+  margin-top: 4rem;
+  padding-top: 2rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  max-width: 650px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.references-section h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #e0e0e0;
+}
+
+.references-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: #a0a0a0;
+}
+
+.reference-item {
+  margin-bottom: 0.75rem;
+  padding-left: 0;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.reference-backlink {
+  color: #6b8cce !important;
+  text-decoration: none !important;
+  flex-shrink: 0;
+  font-size: 0.85em;
+}
+
+.reference-backlink:hover {
+  color: #a3befa !important;
+}
+
+.reference-text {
+  flex: 1;
+}
+
+.reference-text a {
+  color: #6b8cce !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+}
+
+.reference-text a:hover {
+  color: #a3befa !important;
+}

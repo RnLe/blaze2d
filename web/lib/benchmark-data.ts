@@ -25,9 +25,17 @@ export interface SingleCoreBenchmarkData {
       description: string;
     };
   };
+  blazeFull?: {
+    [config: string]: {
+      mean_ms: number;
+      std_ms: number;
+      description: string;
+    };
+  };
   metadata?: {
     timestamp: string;
     source: 'live' | 'static';
+    hasFullPrecision?: boolean;
   };
 }
 
@@ -146,10 +154,18 @@ export interface MultiCoreBenchmarkData {
       description: string;
     };
   };
+  blazeFull?: {
+    [config: string]: {
+      mean_ms: number;
+      std_ms: number;
+      description: string;
+    };
+  };
   metadata?: {
     timestamp: string;
     source: 'live' | 'static';
     num_threads?: number;
+    hasFullPrecision?: boolean;
   };
 }
 
