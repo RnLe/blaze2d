@@ -82,7 +82,7 @@ export default function MultiCorePerformanceChart({
   // Labels are: TM(0), TE(1), TM(2), TE(3) -> Square covers 0-1, Hex covers 2-3
   const categoryBrackets = [
     { labelIndices: [0, 1] as [number, number], category: 'Square' },
-    { labelIndices: [2, 3] as [number, number], category: 'Hex' },
+    { labelIndices: [2, 3] as [number, number], category: 'Hexagonal' },
   ];
 
   // Show loading state
