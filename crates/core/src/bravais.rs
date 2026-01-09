@@ -352,7 +352,7 @@ impl BravaisLattice {
         let height = (3.0_f64).sqrt() * 0.5 * a;
         Self {
             a1: [a, 0.0],
-            a2: [half, height],  // 60° convention: a₂ = [a/2, a√3/2]
+            a2: [half, height], // 60° convention: a₂ = [a/2, a√3/2]
             lattice_type: Some(LatticeType::Triangular),
         }
     }

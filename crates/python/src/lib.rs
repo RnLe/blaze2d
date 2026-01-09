@@ -42,7 +42,10 @@ mod py {
     #[pymodule]
     fn blaze(m: &Bound<'_, PyModule>) -> PyResult<()> {
         // Module documentation
-        m.add("__doc__", "BLAZE: Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals")?;
+        m.add(
+            "__doc__",
+            "BLAZE: Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals",
+        )?;
         m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
         // Register streaming classes

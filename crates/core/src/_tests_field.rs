@@ -1,8 +1,7 @@
 #![cfg(test)]
 
-use super::field::Field2D;
+use super::field::{Field2D, FieldReal, FieldScalar};
 use super::grid::Grid2D;
-use num_complex::Complex64;
 
 #[test]
 fn zeros_initializes_all_entries_to_zero() {
@@ -13,7 +12,7 @@ fn zeros_initializes_all_entries_to_zero() {
         field
             .as_slice()
             .iter()
-            .all(|value| *value == Complex64::new(0.0, 0.0))
+            .all(|value| *value == FieldScalar::new(0.0, 0.0))
     );
 }
 
@@ -21,14 +20,14 @@ fn zeros_initializes_all_entries_to_zero() {
 #[should_panic(expected = "data length must match grid size")]
 fn from_vec_rejects_mismatched_lengths() {
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
-    let data = vec![Complex64::default(); grid.len() - 1];
+    let data = vec![FieldScalar::default(); grid.len() - 1];
     let _ = Field2D::from_vec(grid, data);
 }
 
 #[test]
 fn field_from_vec_preserves_values() {
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
-    let data = vec![Complex64::new(1.0, -1.0); grid.len()];
+    let data = vec![FieldScalar::new(1.0, -1.0); grid.len()];
     let field = Field2D::from_vec(grid, data.clone());
     assert_eq!(field.len(), data.len());
     assert_eq!(field.as_slice(), data.as_slice());
@@ -53,24 +52,24 @@ fn get_and_get_mut_operate_on_correct_cell() {
     let grid = field.grid();
     for iy in 0..grid.ny {
         for ix in 0..grid.nx {
-            *field.get_mut(ix, iy) = Complex64::new(ix as f64, iy as f64);
+            *field.get_mut(ix, iy) = FieldScalar::new(ix as FieldReal, iy as FieldReal);
         }
     }
 
-    assert_eq!(*field.get(0, 0), Complex64::new(0.0, 0.0));
-    assert_eq!(*field.get(2, 1), Complex64::new(2.0, 1.0));
+    assert_eq!(*field.get(0, 0), FieldScalar::new(0.0, 0.0));
+    assert_eq!(*field.get(2, 1), FieldScalar::new(2.0, 1.0));
 }
 
 #[test]
 fn field_fill_updates_all_entries() {
     let grid = Grid2D::new(3, 1, 1.0, 1.0);
     let mut field = Field2D::zeros(grid);
-    field.fill(Complex64::new(0.0, 2.0));
+    field.fill(FieldScalar::new(0.0, 2.0));
     assert!(
         field
             .as_slice()
             .iter()
-            .all(|value| *value == Complex64::new(0.0, 2.0))
+            .all(|value| *value == FieldScalar::new(0.0, 2.0))
     );
 }
 
@@ -78,9 +77,9 @@ fn field_fill_updates_all_entries() {
 fn field_into_vec_returns_original_storage() {
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
     let data: Vec<_> = (0..grid.len())
-        .map(|idx| Complex64::new(idx as f64, -(idx as f64)))
+        .map(|idx| FieldScalar::new(idx as FieldReal, -(idx as FieldReal)))
         .collect();
     let field = Field2D::from_vec(grid, data.clone());
-    let recovered: Vec<Complex64> = field.into();
+    let recovered: Vec<FieldScalar> = field.into();
     assert_eq!(recovered, data);
 }

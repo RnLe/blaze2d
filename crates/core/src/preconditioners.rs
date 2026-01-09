@@ -62,10 +62,7 @@ pub mod transverse_projection;
 
 // Re-export commonly used types
 pub use fft_preconditioner::{
-    EAPreconditionerConfig,
-    FFTPreconditioner,
-    ShiftDiagnostics,
-    ShiftStrategy,
+    EAPreconditionerConfig, FFTPreconditioner, ShiftDiagnostics, ShiftStrategy,
 };
 pub use fourier_diagonal::{
     BandWindow,

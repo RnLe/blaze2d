@@ -138,14 +138,14 @@ impl OutputWriter {
     }
 
     /// Write full mode output for Maxwell (one file per job).
-    fn write_full_maxwell(&mut self, job: &ExpandedJob, result: &JobResult) -> Result<(), OutputError> {
+    fn write_full_maxwell(
+        &mut self,
+        job: &ExpandedJob,
+        result: &JobResult,
+    ) -> Result<(), OutputError> {
         let band_result = result.maxwell().expect("expected Maxwell result");
 
-        let filename = format!(
-            "{}_{:06}.csv",
-            self.config.prefix,
-            job.index
-        );
+        let filename = format!("{}_{:06}.csv", self.config.prefix, job.index);
         let path = self.output_dir.join(filename);
 
         let file = File::create(&path)?;
@@ -204,11 +204,7 @@ impl OutputWriter {
         let ea_result = result.ea().expect("expected EA result");
 
         // Write eigenvalues CSV
-        let csv_filename = format!(
-            "{}_{:06}_ea.csv",
-            self.config.prefix,
-            job.index
-        );
+        let csv_filename = format!("{}_{:06}_ea.csv", self.config.prefix, job.index);
         let csv_path = self.output_dir.join(csv_filename);
 
         let file = File::create(&csv_path)?;
@@ -234,7 +230,7 @@ impl OutputWriter {
                 ",{},{},{},{}",
                 ea_result.n_iterations,
                 ea_result.converged,
-                band_idx + 1,  // 1-based band index
+                band_idx + 1, // 1-based band index
                 eigenvalue
             )?;
             writeln!(writer)?;
@@ -244,20 +240,18 @@ impl OutputWriter {
         debug!("wrote {}", csv_path.display());
 
         // Write eigenvectors to binary file
-        // Format: [n_bands: u64][nx: u64][ny: u64] followed by 
+        // Format: [n_bands: u64][nx: u64][ny: u64] followed by
         // n_bands × (nx × ny × 2) f64 values (interleaved real/imag)
-        let eigvec_filename = format!(
-            "{}_{:06}_eigenvectors.bin",
-            self.config.prefix,
-            job.index
-        );
+        let eigvec_filename = format!("{}_{:06}_eigenvectors.bin", self.config.prefix, job.index);
         let eigvec_path = self.output_dir.join(eigvec_filename);
 
         let eigvec_file = File::create(&eigvec_path)?;
         let mut eigvec_writer = BufWriter::new(eigvec_file);
 
         let n_bands = ea_result.eigenvectors.len() as u64;
-        let grid = ea_result.eigenvectors.first()
+        let grid = ea_result
+            .eigenvectors
+            .first()
             .map(|f| f.grid())
             .unwrap_or_else(|| blaze2d_core::grid::Grid2D::new(1, 1, 1.0, 1.0));
         let nx = grid.nx as u64;
@@ -288,7 +282,9 @@ impl OutputWriter {
         job: &ExpandedJob,
         result: &JobResult,
     ) -> Result<(), OutputError> {
-        let band_result = result.maxwell().expect("selective mode requires Maxwell result");
+        let band_result = result
+            .maxwell()
+            .expect("selective mode requires Maxwell result");
 
         let param_cols = job.params.to_columns();
         let param_values: Vec<String> = param_cols.iter().map(|(_, v)| v.clone()).collect();

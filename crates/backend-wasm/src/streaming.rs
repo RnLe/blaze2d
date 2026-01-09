@@ -55,7 +55,7 @@ use wasm_bindgen::prelude::*;
 
 use blaze2d_bulk_driver_core::{
     config::{BulkConfig, SolverType},
-    expansion::{expand_jobs, ExpandedJob, ExpandedJobType},
+    expansion::{ExpandedJob, ExpandedJobType, expand_jobs},
     filter::SelectiveFilter,
     result::{CompactBandResult, CompactResultType, EAResult, MaxwellResult},
 };
@@ -90,7 +90,11 @@ fn result_to_js(result: &CompactBandResult) -> Result<JsValue, JsValue> {
 
     // Parameters as nested object
     let params = Object::new();
-    Reflect::set(&params, &"eps_bg".into(), &JsValue::from(result.params.eps_bg))?;
+    Reflect::set(
+        &params,
+        &"eps_bg".into(),
+        &JsValue::from(result.params.eps_bg),
+    )?;
     Reflect::set(
         &params,
         &"resolution".into(),
@@ -291,9 +295,9 @@ fn run_maxwell_job(
     job_index: usize,
 ) -> Result<CompactBandResult, String> {
     let backend = CpuBackend::new();
-    
+
     let band_result = bandstructure::run(backend, job, Verbosity::Quiet);
-    
+
     // Normalize frequencies (divide by 2π)
     let bands: Vec<Vec<f64>> = band_result
         .bands
@@ -305,7 +309,7 @@ fn run_maxwell_job(
                 .collect()
         })
         .collect();
-    
+
     Ok(CompactBandResult {
         job_index,
         params: params.clone(),
@@ -324,16 +328,16 @@ fn run_maxwell_job_with_k_streaming(
     job_index: usize,
     callback: &Function,
 ) -> Result<CompactBandResult, String> {
-    use blaze2d_core::drivers::bandstructure::{run_with_k_streaming, RunOptions, KPointResult};
-    
+    use blaze2d_core::drivers::bandstructure::{KPointResult, RunOptions, run_with_k_streaming};
+
     let backend = CpuBackend::new();
-    
+
     // Clone params for use in closure
     let params_clone = params.clone();
-    
+
     // Accumulate all k-point results for the final CompactBandResult
     let accumulated_bands: std::cell::RefCell<Vec<Vec<f64>>> = std::cell::RefCell::new(Vec::new());
-    
+
     let band_result = run_with_k_streaming(
         backend,
         job,
@@ -344,16 +348,18 @@ fn run_maxwell_job_with_k_streaming(
             if let Ok(js_obj) = k_result_to_js(&k_result, job_index, &params_clone) {
                 let _ = callback.call1(&JsValue::NULL, &js_obj);
             }
-            
+
             // Accumulate bands for final result
             // Normalize frequencies (divide by 2π)
-            let normalized: Vec<f64> = k_result.omegas.iter()
+            let normalized: Vec<f64> = k_result
+                .omegas
+                .iter()
                 .map(|omega| omega / (2.0 * std::f64::consts::PI))
                 .collect();
             accumulated_bands.borrow_mut().push(normalized);
         },
     );
-    
+
     // Build final CompactBandResult
     let bands: Vec<Vec<f64>> = band_result
         .bands
@@ -365,7 +371,7 @@ fn run_maxwell_job_with_k_streaming(
                 .collect()
         })
         .collect();
-    
+
     Ok(CompactBandResult {
         job_index,
         params: params.clone(),
@@ -384,55 +390,79 @@ fn k_result_to_js(
     params: &blaze2d_bulk_driver_core::expansion::JobParams,
 ) -> Result<JsValue, JsValue> {
     let obj = Object::new();
-    
+
     // Streaming type identifier
     Reflect::set(&obj, &"stream_type".into(), &JsValue::from_str("k_point"))?;
-    
+
     // Job context
     Reflect::set(&obj, &"job_index".into(), &JsValue::from(job_index as u32))?;
-    
+
     // K-point info
-    Reflect::set(&obj, &"k_index".into(), &JsValue::from(result.k_index as u32))?;
-    Reflect::set(&obj, &"total_k_points".into(), &JsValue::from(result.total_k_points as u32))?;
-    
+    Reflect::set(
+        &obj,
+        &"k_index".into(),
+        &JsValue::from(result.k_index as u32),
+    )?;
+    Reflect::set(
+        &obj,
+        &"total_k_points".into(),
+        &JsValue::from(result.total_k_points as u32),
+    )?;
+
     // K-point coordinates
     let k_point = Array::new();
     k_point.push(&JsValue::from(result.k_point[0]));
     k_point.push(&JsValue::from(result.k_point[1]));
     Reflect::set(&obj, &"k_point".into(), &k_point)?;
-    
+
     // Distance along path
     Reflect::set(&obj, &"distance".into(), &JsValue::from(result.distance))?;
-    
+
     // Frequencies (normalized by 2π)
     let omegas = Array::new();
     for omega in &result.omegas {
         omegas.push(&JsValue::from(omega / (2.0 * std::f64::consts::PI)));
     }
     Reflect::set(&obj, &"omegas".into(), &omegas)?;
-    
+
     // Convenience: also provide as "bands" for consistency
     Reflect::set(&obj, &"bands".into(), &omegas)?;
-    
+
     // Metadata
-    Reflect::set(&obj, &"iterations".into(), &JsValue::from(result.iterations as u32))?;
+    Reflect::set(
+        &obj,
+        &"iterations".into(),
+        &JsValue::from(result.iterations as u32),
+    )?;
     Reflect::set(&obj, &"is_gamma".into(), &JsValue::from(result.is_gamma))?;
-    Reflect::set(&obj, &"num_bands".into(), &JsValue::from(result.omegas.len() as u32))?;
-    
+    Reflect::set(
+        &obj,
+        &"num_bands".into(),
+        &JsValue::from(result.omegas.len() as u32),
+    )?;
+
     // Progress (0.0 to 1.0)
     let progress = (result.k_index + 1) as f64 / result.total_k_points as f64;
     Reflect::set(&obj, &"progress".into(), &JsValue::from(progress))?;
-    
+
     // Parameters for context
     let params_obj = Object::new();
     Reflect::set(&params_obj, &"eps_bg".into(), &JsValue::from(params.eps_bg))?;
-    Reflect::set(&params_obj, &"resolution".into(), &JsValue::from(params.resolution as u32))?;
-    Reflect::set(&params_obj, &"polarization".into(), &JsValue::from_str(&format!("{:?}", params.polarization)))?;
+    Reflect::set(
+        &params_obj,
+        &"resolution".into(),
+        &JsValue::from(params.resolution as u32),
+    )?;
+    Reflect::set(
+        &params_obj,
+        &"polarization".into(),
+        &JsValue::from_str(&format!("{:?}", params.polarization)),
+    )?;
     if let Some(ref lt) = params.lattice_type {
         Reflect::set(&params_obj, &"lattice_type".into(), &JsValue::from_str(lt))?;
     }
     Reflect::set(&obj, &"params".into(), &params_obj)?;
-    
+
     Ok(obj.into())
 }
 
@@ -470,9 +500,9 @@ impl WasmBulkDriver {
     pub fn new(config_str: &str) -> Result<WasmBulkDriver, JsValue> {
         let config = BulkConfig::from_str(config_str)
             .map_err(|e| JsValue::from_str(&format!("Invalid config: {}", e)))?;
-        
+
         let jobs = expand_jobs(&config);
-        
+
         Ok(Self { config, jobs })
     }
 
@@ -583,7 +613,7 @@ impl WasmBulkDriver {
             total_jobs: self.jobs.len(),
             ..Default::default()
         };
-        
+
         for job in &self.jobs {
             match self.execute_job_with_k_streaming(job, &callback) {
                 Ok(_result) => {
@@ -594,7 +624,7 @@ impl WasmBulkDriver {
                 }
             }
         }
-        
+
         stats.total_time_ms = (Date::now() - start) as u128;
         stats_to_js(&stats)
     }
@@ -610,7 +640,7 @@ impl WasmBulkDriver {
             total_jobs: self.jobs.len(),
             ..Default::default()
         };
-        
+
         for job in &self.jobs {
             match self.execute_job(job) {
                 Ok(result) => {
@@ -622,9 +652,9 @@ impl WasmBulkDriver {
                 }
             }
         }
-        
+
         stats.total_time_ms = (Date::now() - start) as u128;
-        
+
         // Convert results to JS array
         let js_results = Array::new();
         for result in &results {
@@ -632,12 +662,12 @@ impl WasmBulkDriver {
                 js_results.push(&js_obj);
             }
         }
-        
+
         // Build return object
         let output = Object::new();
         Reflect::set(&output, &"results".into(), &js_results)?;
         Reflect::set(&output, &"stats".into(), &stats_to_js(&stats)?)?;
-        
+
         Ok(output.into())
     }
 
@@ -652,14 +682,14 @@ impl WasmBulkDriver {
             k_indices.unwrap_or_default(),
             band_indices.unwrap_or_default(),
         );
-        
+
         let start = Date::now();
         let mut results = Vec::new();
         let mut stats = WasmDriverStats {
             total_jobs: self.jobs.len(),
             ..Default::default()
         };
-        
+
         for job in &self.jobs {
             match self.execute_job(job) {
                 Ok(result) => {
@@ -672,9 +702,9 @@ impl WasmBulkDriver {
                 }
             }
         }
-        
+
         stats.total_time_ms = (Date::now() - start) as u128;
-        
+
         // Convert results to JS array
         let js_results = Array::new();
         for result in &results {
@@ -682,11 +712,11 @@ impl WasmBulkDriver {
                 js_results.push(&js_obj);
             }
         }
-        
+
         let output = Object::new();
         Reflect::set(&output, &"results".into(), &js_results)?;
         Reflect::set(&output, &"stats".into(), &stats_to_js(&stats)?)?;
-        
+
         Ok(output.into())
     }
 
@@ -721,7 +751,7 @@ impl WasmBulkDriver {
     #[wasm_bindgen(js_name = "getJobConfigs")]
     pub fn get_job_configs(&self, n: usize) -> Result<Array, JsValue> {
         let result = Array::new();
-        
+
         for job in self.jobs.iter().take(n) {
             let obj = Object::new();
             Reflect::set(&obj, &"index".into(), &JsValue::from(job.index as u32))?;
@@ -745,7 +775,11 @@ impl WasmBulkDriver {
             let atoms = Array::new();
             for atom in &job.params.atoms {
                 let atom_obj = Object::new();
-                Reflect::set(&atom_obj, &"index".into(), &JsValue::from(atom.index as u32))?;
+                Reflect::set(
+                    &atom_obj,
+                    &"index".into(),
+                    &JsValue::from(atom.index as u32),
+                )?;
                 let pos = Array::new();
                 pos.push(&JsValue::from(atom.pos[0]));
                 pos.push(&JsValue::from(atom.pos[1]));
@@ -781,7 +815,7 @@ impl WasmBulkDriver {
             total_jobs: self.jobs.len(),
             ..Default::default()
         };
-        
+
         for job in &self.jobs {
             match self.execute_job(job) {
                 Ok(result) => {
@@ -790,7 +824,7 @@ impl WasmBulkDriver {
                     } else {
                         result
                     };
-                    
+
                     if let Ok(js_obj) = result_to_js(&final_result) {
                         let _ = callback.call1(&JsValue::NULL, &js_obj);
                     }
@@ -801,7 +835,7 @@ impl WasmBulkDriver {
                 }
             }
         }
-        
+
         stats.total_time_ms = (Date::now() - start) as u128;
         stats_to_js(&stats)
     }
@@ -812,9 +846,7 @@ impl WasmBulkDriver {
             ExpandedJobType::Maxwell(maxwell_job) => {
                 run_maxwell_job(maxwell_job, &job.params, job.index)
             }
-            ExpandedJobType::EA(ea_job) => {
-                run_ea_job(ea_job, &job.params, job.index)
-            }
+            ExpandedJobType::EA(ea_job) => run_ea_job(ea_job, &job.params, job.index),
         }
     }
 
@@ -927,7 +959,7 @@ impl Default for WasmSelectiveFilter {
 
 /// Initialize the WASM module with proper panic handling.
 /// Call this once at the start of your application.
-/// 
+///
 /// This sets up the panic hook so that Rust panics are printed
 /// to the browser console with full stack traces instead of
 /// just showing "RuntimeError: unreachable".

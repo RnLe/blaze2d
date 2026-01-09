@@ -90,7 +90,7 @@ pub use driver::{
 };
 
 // Re-export job expansion
-pub use expansion::{expand_jobs, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams};
+pub use expansion::{EAJobSpec, ExpandedJob, ExpandedJobType, JobParams, expand_jobs};
 
 // Re-export legacy output writer
 pub use output::OutputWriter;

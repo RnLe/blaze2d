@@ -190,7 +190,10 @@ impl AdaptiveThreadManager {
 
     /// Get initial thread count for display.
     pub fn initial_threads(&self) -> usize {
-        self.state.lock().adjustment_log.first()
+        self.state
+            .lock()
+            .adjustment_log
+            .first()
             .map(|e| e.to_threads)
             .unwrap_or_else(|| self.current_threads())
     }
@@ -366,7 +369,9 @@ impl AdaptiveThreadManager {
         let state = self.state.lock();
         AdaptiveSummary {
             final_threads: state.current_threads,
-            initial_threads: state.adjustment_log.first()
+            initial_threads: state
+                .adjustment_log
+                .first()
                 .map(|e| e.to_threads)
                 .unwrap_or(state.current_threads),
             total_adjustments: state.adjustment_log.len().saturating_sub(1),
@@ -400,7 +405,8 @@ impl AdaptiveSummary {
 
         for event in self.adjustment_log.iter().skip(1) {
             let elapsed = event.timestamp.duration_since(start);
-            let tp_str = event.throughput_before
+            let tp_str = event
+                .throughput_before
                 .map(|tp| format!("{:.1} jobs/s", tp))
                 .unwrap_or_else(|| String::from("?"));
             lines.push(format!(

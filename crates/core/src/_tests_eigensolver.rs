@@ -4,10 +4,9 @@
 
 use super::backend::SpectralBackend;
 use super::eigensolver::{BandState, ConvergenceInfo, Eigensolver, EigensolverConfig};
-use super::field::Field2D;
+use super::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
 use super::grid::Grid2D;
 use super::operators::LinearOperator;
-use num_complex::Complex64;
 
 // ============================================================================
 // Test Backend (Identity operator)
@@ -28,23 +27,28 @@ impl SpectralBackend for TestBackend {
 
     fn inverse_fft_2d(&self, _buffer: &mut Self::Buffer) {}
 
-    fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
+    fn scale(&self, alpha: AccumScalar, buffer: &mut Self::Buffer) {
         for value in buffer.as_mut_slice() {
-            *value *= alpha;
+            *value *= FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         }
     }
 
-    fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+    fn axpy(&self, alpha: AccumScalar, x: &Self::Buffer, y: &mut Self::Buffer) {
+        let alpha_f = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *dst += alpha * src;
+            *dst += alpha_f * src;
         }
     }
 
-    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> AccumScalar {
         x.as_slice()
             .iter()
             .zip(y.as_slice())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = AccumScalar::new(a.re as f64, a.im as f64);
+                let b64 = AccumScalar::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum()
     }
 }
@@ -80,7 +84,8 @@ impl LinearOperator<TestBackend> for DiagonalOperator {
             .zip(input.as_slice())
             .enumerate()
         {
-            *out = inp * self.diagonal[i];
+            let diag = self.diagonal[i] as FieldReal;
+            *out = *inp * diag;
         }
     }
 
@@ -121,6 +126,10 @@ fn test_config_default() {
     let config = EigensolverConfig::default();
     assert_eq!(config.n_bands, 8);
     assert_eq!(config.max_iter, 200);
+    // Mixed-precision uses 1e-4 tolerance, full precision uses 1e-6
+    #[cfg(feature = "mixed-precision")]
+    assert!((config.tol - 1e-4).abs() < 1e-6);
+    #[cfg(not(feature = "mixed-precision"))]
     assert!((config.tol - 1e-6).abs() < 1e-10);
     assert_eq!(config.effective_block_size(), 10); // 8 + 2 slack
 }
@@ -247,7 +256,7 @@ fn test_convergence_info_update_none_converged() {
         info.band_states,
         vec![BandState::Active, BandState::Active, BandState::Active]
     );
-    assert!((info.max_residual - 1e-3).abs() < 1e-10);
+    assert!((info.max_residual - 1e-3).abs() < 1e-6);
 }
 
 #[test]
@@ -264,7 +273,7 @@ fn test_convergence_info_update_some_converged() {
     assert_eq!(info.band_states[1], BandState::Active);
     assert_eq!(info.band_states[2], BandState::Converged);
     assert_eq!(info.band_states[3], BandState::Active);
-    assert!((info.max_residual - 1e-3).abs() < 1e-10);
+    assert!((info.max_residual - 1e-3).abs() < 1e-6);
 }
 
 #[test]
@@ -359,8 +368,8 @@ fn test_solve_with_exact_eigenvector() {
     let grid = Grid2D::new(4, 1, 1.0, 1.0);
     let mut e0 = Field2D::zeros(grid);
     let mut e1 = Field2D::zeros(grid);
-    e0.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
-    e1.as_mut_slice()[1] = Complex64::new(1.0, 0.0);
+    e0.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
+    e1.as_mut_slice()[1] = FieldScalar::new(1.0, 0.0);
     let warm_start = vec![e0, e1];
 
     let mut solver = Eigensolver::new(&mut operator, config, None, Some(&warm_start));
@@ -377,12 +386,12 @@ fn test_solve_with_exact_eigenvector() {
 
     // Eigenvalues should be exact
     assert!(
-        (result.eigenvalues[0] - 1.0).abs() < 1e-10,
+        (result.eigenvalues[0] - 1.0).abs() < 1e-6,
         "λ_0 should be 1.0, got {}",
         result.eigenvalues[0]
     );
     assert!(
-        (result.eigenvalues[1] - 4.0).abs() < 1e-10,
+        (result.eigenvalues[1] - 4.0).abs() < 1e-6,
         "λ_1 should be 4.0, got {}",
         result.eigenvalues[1]
     );
@@ -445,7 +454,7 @@ struct ScalingPreconditioner {
 impl crate::preconditioners::OperatorPreconditioner<TestBackend> for ScalingPreconditioner {
     fn apply(&mut self, _backend: &TestBackend, buffer: &mut Field2D) {
         for value in buffer.as_mut_slice() {
-            *value *= self.scale;
+            *value *= self.scale as FieldReal;
         }
     }
 }
@@ -554,11 +563,11 @@ fn test_eigensolver_spd_diagonal_convergence() {
     let n_bands = 8;
     let exact: Vec<f64> = eigenvalues[..n_bands].to_vec();
 
-    // Configure eigensolver with tight tolerance
+    // Configure eigensolver with tolerance appropriate for mixed-precision
     let config = EigensolverConfig {
         n_bands,
         max_iter: 200,
-        tol: 1e-10,
+        tol: 1e-6,     // Relaxed for f32 storage
         block_size: 0, // Auto
         record_diagnostics: false,
         k_index: None,
@@ -610,7 +619,7 @@ fn test_eigensolver_spd_diagonal_convergence_with_diagnostics() {
     let config = EigensolverConfig {
         n_bands,
         max_iter: 100,
-        tol: 1e-12, // Very tight
+        tol: 1e-6, // Relaxed for f32 storage
         block_size: 0,
         record_diagnostics: true,
         k_index: None,

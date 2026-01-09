@@ -71,7 +71,10 @@ impl Field2D {
             .into_iter()
             .map(|c| FieldScalar::new(c.re as f32, c.im as f32))
             .collect();
-        Self { grid, data: converted }
+        Self {
+            grid,
+            data: converted,
+        }
     }
 
     #[cfg(not(feature = "mixed-precision"))]

@@ -124,9 +124,13 @@ pub fn seed_random_vector(data: &mut [FieldScalar], phase: f64) {
         state ^= state << 17;
         let real = ((state >> 12) as f64) / ((1u64 << 52) as f64) * 2.0 - 1.0;
         #[cfg(not(feature = "mixed-precision"))]
-        { *value = Complex64::new(real, 0.0); }
+        {
+            *value = Complex64::new(real, 0.0);
+        }
         #[cfg(feature = "mixed-precision")]
-        { *value = Complex32::new(real as f32, 0.0); }
+        {
+            *value = Complex32::new(real as f32, 0.0);
+        }
     }
 }
 
@@ -189,9 +193,13 @@ where
         );
         for (value, &factor) in u0.as_mut_slice().iter_mut().zip(transform.iter()) {
             #[cfg(not(feature = "mixed-precision"))]
-            { *value *= factor; }
+            {
+                *value *= factor;
+            }
             #[cfg(feature = "mixed-precision")]
-            { *value *= factor as f32; }
+            {
+                *value *= factor as f32;
+            }
         }
     }
 

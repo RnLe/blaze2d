@@ -103,9 +103,6 @@
 //! Only the k-path generation utilities below are actively used.
 
 use log::debug;
-use num_complex::Complex64;
-#[cfg(feature = "mixed-precision")]
-use num_complex::Complex32;
 use serde::{Deserialize, Serialize};
 
 use crate::{

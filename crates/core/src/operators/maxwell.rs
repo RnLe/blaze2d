@@ -29,7 +29,7 @@ use num_complex::Complex32;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::dielectric::Dielectric2D;
-use crate::field::{FieldScalar, FieldReal};
+use crate::field::FieldScalar;
 use crate::grid::Grid2D;
 use crate::operators::{K_PLUS_G_NEAR_ZERO_FLOOR, LinearOperator, TM_PRECONDITIONER_MASS_FRACTION};
 use crate::polarization::Polarization;
@@ -40,7 +40,10 @@ use crate::preconditioners::{
 /// Convert FieldScalar slice to Vec<Complex64> for snapshot data (always f64 for precision).
 #[inline]
 fn to_complex64_vec(slice: &[FieldScalar]) -> Vec<Complex64> {
-    slice.iter().map(|c| Complex64::new(c.re as f64, c.im as f64)).collect()
+    slice
+        .iter()
+        .map(|c| Complex64::new(c.re as f64, c.im as f64))
+        .collect()
 }
 
 // ============================================================================
@@ -88,7 +91,9 @@ pub struct ThetaOperator<B: SpectralBackend> {
     grad_y: B::Buffer,
     k_plus_g_was_clamped: Vec<bool>,
     /// Cached gradient buffers for batch TE operations (avoids allocations in hot path)
+    #[allow(dead_code)]
     batch_grad_x: Vec<B::Buffer>,
+    #[allow(dead_code)]
     batch_grad_y: Vec<B::Buffer>,
 }
 
@@ -379,9 +384,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             let re = (i as f64 * 0.618033988749895).sin();
             let im = (i as f64 * 0.414213562373095).cos();
             #[cfg(not(feature = "mixed-precision"))]
-            { *val = Complex64::new(re, im); }
+            {
+                *val = Complex64::new(re, im);
+            }
             #[cfg(feature = "mixed-precision")]
-            { *val = Complex32::new(re as f32, im as f32); }
+            {
+                *val = Complex32::new(re as f32, im as f32);
+            }
         }
 
         // Normalize (accumulate in f64)
@@ -418,7 +427,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                     let vi_im = vi.im as f64;
                     let avi_re = avi.re as f64;
                     let avi_im = avi.im as f64;
-                    vi_re * avi_re + vi_im * avi_im  // Re(conj(vi) * avi)
+                    vi_re * avi_re + vi_im * avi_im // Re(conj(vi) * avi)
                 })
                 .sum();
             lambda_max = numerator;
@@ -468,9 +477,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             let re = (i as f64 * 0.618033988749895).sin();
             let im = (i as f64 * 0.414213562373095).cos();
             #[cfg(not(feature = "mixed-precision"))]
-            { *val = Complex64::new(re, im); }
+            {
+                *val = Complex64::new(re, im);
+            }
             #[cfg(feature = "mixed-precision")]
-            { *val = Complex32::new(re as f32, im as f32); }
+            {
+                *val = Complex32::new(re as f32, im as f32);
+            }
         }
 
         let norm: f64 = v
@@ -555,17 +568,25 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             let re = (i as f64 * 0.618033988749895).sin();
             let im = (i as f64 * 0.414213562373095).cos();
             #[cfg(not(feature = "mixed-precision"))]
-            { *val = Complex64::new(re, im); }
+            {
+                *val = Complex64::new(re, im);
+            }
             #[cfg(feature = "mixed-precision")]
-            { *val = Complex32::new(re as f32, im as f32); }
+            {
+                *val = Complex32::new(re as f32, im as f32);
+            }
         }
         for (i, val) in y.as_mut_slice().iter_mut().enumerate() {
             let re = (i as f64 * 1.414213562373095).cos();
             let im = (i as f64 * 1.732050807568877).sin();
             #[cfg(not(feature = "mixed-precision"))]
-            { *val = Complex64::new(re, im); }
+            {
+                *val = Complex64::new(re, im);
+            }
             #[cfg(feature = "mixed-precision")]
-            { *val = Complex32::new(re as f32, im as f32); }
+            {
+                *val = Complex32::new(re as f32, im as f32);
+            }
         }
 
         self.apply(&x, &mut ax);
@@ -677,7 +698,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
     fn apply_te(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         crate::profiler::start_timer("apply_te");
-        
+
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
 
@@ -710,13 +731,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         );
 
         self.backend.inverse_fft_2d(output);
-        
+
         crate::profiler::stop_timer("apply_te");
     }
 
     fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         crate::profiler::start_timer("apply_tm");
-        
+
         // Optimization: Work directly on output buffer to save a copy
         copy_buffer(output, input);
         self.backend.forward_fft_2d(output);
@@ -749,7 +770,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             }
         }
         self.backend.inverse_fft_2d(output);
-        
+
         crate::profiler::stop_timer("apply_tm");
     }
 
@@ -763,7 +784,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     /// Batched: Forward FFT all → k² multiply all → Inverse FFT all
     fn batch_apply_tm(&mut self, inputs: &[B::Buffer], outputs: &mut [B::Buffer]) {
         crate::profiler::start_timer("batch_apply_tm");
-        
+
         // For GPU, use batched implementation
         #[cfg(feature = "cuda")]
         {
@@ -804,14 +825,14 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 self.apply_tm(input, output);
             }
         }
-        
+
         crate::profiler::stop_timer("batch_apply_tm");
     }
 
     /// Batched TE operator: apply -∇·(ε⁻¹∇) to multiple vectors
     fn batch_apply_te(&mut self, inputs: &[B::Buffer], outputs: &mut [B::Buffer]) {
         crate::profiler::start_timer("batch_apply_te");
-        
+
         let n = inputs.len();
         if n == 0 {
             crate::profiler::stop_timer("batch_apply_te");
@@ -821,12 +842,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         // For GPU, use batched implementation (phased approach)
         #[cfg(feature = "cuda")]
         {
-             // Ensure we have enough cached gradient buffers (grow if needed, never shrink)
+            // Ensure we have enough cached gradient buffers (grow if needed, never shrink)
             while self.batch_grad_x.len() < n {
                 self.batch_grad_x.push(self.backend.alloc_field(self.grid));
                 self.batch_grad_y.push(self.backend.alloc_field(self.grid));
             }
-            
+
             // Use only the buffers we need
             let grad_x_all = &mut self.batch_grad_x[..n];
             let grad_y_all = &mut self.batch_grad_y[..n];
@@ -881,7 +902,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
 
         // For CPU, sequential processing is significantly faster due to cache locality.
-        // Reusing self.grad_x/y (shared scratch) avoids thrashing L2 cache with 
+        // Reusing self.grad_x/y (shared scratch) avoids thrashing L2 cache with
         // n distinct gradient buffers.
         #[cfg(not(feature = "cuda"))]
         {
@@ -889,7 +910,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 self.apply_te(input, output);
             }
         }
-        
+
         crate::profiler::stop_timer("batch_apply_te");
     }
 
@@ -1242,7 +1263,6 @@ fn copy_buffer<T: SpectralBuffer>(dst: &mut T, src: &T) {
     dst.as_mut_slice().copy_from_slice(src.as_slice());
 }
 
-
 fn compute_gradients_from_potential(
     potential: &[FieldScalar],
     grad_x: &mut [FieldScalar],
@@ -1277,7 +1297,11 @@ fn compute_gradients_from_potential(
     }
 }
 
-fn apply_inv_eps(grad_x: &mut [FieldScalar], grad_y: &mut [FieldScalar], dielectric: &Dielectric2D) {
+fn apply_inv_eps(
+    grad_x: &mut [FieldScalar],
+    grad_y: &mut [FieldScalar],
+    dielectric: &Dielectric2D,
+) {
     if let Some(tensors) = dielectric.inv_eps_tensors() {
         for ((gx, gy), tensor) in grad_x.iter_mut().zip(grad_y.iter_mut()).zip(tensors.iter()) {
             let orig_x = *gx;
@@ -1326,7 +1350,9 @@ fn apply_inv_eps(grad_x: &mut [FieldScalar], grad_y: &mut [FieldScalar], dielect
 fn apply_scalar_eps(field: &mut [FieldScalar], eps: &[f64]) {
     for (value, &eps_val) in field.iter_mut().zip(eps.iter()) {
         #[cfg(not(feature = "mixed-precision"))]
-        { *value *= eps_val; }
+        {
+            *value *= eps_val;
+        }
         #[cfg(feature = "mixed-precision")]
         {
             let v = Complex64::new(value.re as f64, value.im as f64);

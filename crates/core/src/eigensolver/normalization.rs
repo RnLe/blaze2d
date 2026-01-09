@@ -32,7 +32,7 @@
 use faer::{Mat, Side};
 
 #[cfg(feature = "wasm-linalg")]
-use nalgebra::{DMatrix, Complex as NaComplex};
+use nalgebra::{Complex as NaComplex, DMatrix};
 
 use num_complex::Complex64;
 
@@ -481,7 +481,8 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 let dst_vec = vectors[i].as_mut_slice();
                 let dst_mass = mass_vectors[i].as_mut_slice();
                 for k in 0..n {
-                    dst_vec[k] = FieldScalar::new(new_vectors[i][k].re as _, new_vectors[i][k].im as _);
+                    dst_vec[k] =
+                        FieldScalar::new(new_vectors[i][k].re as _, new_vectors[i][k].im as _);
                     dst_mass[k] = FieldScalar::new(new_mass[i][k].re as _, new_mass[i][k].im as _);
                 }
             } else {
@@ -530,9 +531,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 for row in 0..n {
                     let c = x_new.get(row, col);
                     #[cfg(not(feature = "mixed-precision"))]
-                    { dst[row] = Complex64::new(c.re, c.im); }
+                    {
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                     #[cfg(feature = "mixed-precision")]
-                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
+                    {
+                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
+                    }
                 }
             }
             for col in 0..rank {
@@ -540,9 +545,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 for row in 0..n {
                     let c = m_new.get(row, col);
                     #[cfg(not(feature = "mixed-precision"))]
-                    { dst[row] = Complex64::new(c.re, c.im); }
+                    {
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                     #[cfg(feature = "mixed-precision")]
-                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
+                    {
+                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
+                    }
                 }
             }
         }
@@ -580,9 +589,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 for row in 0..n {
                     let c = x_new[(row, col)];
                     #[cfg(not(feature = "mixed-precision"))]
-                    { dst[row] = Complex64::new(c.re, c.im); }
+                    {
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                     #[cfg(feature = "mixed-precision")]
-                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
+                    {
+                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
+                    }
                 }
             }
             for col in 0..rank {
@@ -590,9 +603,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 for row in 0..n {
                     let c = m_new[(row, col)];
                     #[cfg(not(feature = "mixed-precision"))]
-                    { dst[row] = Complex64::new(c.re, c.im); }
+                    {
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                     #[cfg(feature = "mixed-precision")]
-                    { dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32); }
+                    {
+                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
+                    }
                 }
             }
         }
@@ -768,7 +785,10 @@ fn hermitian_eigendecomposition_faer(matrix: &[Complex64], n: usize) -> (Vec<f64
 // ============================================================================
 
 #[cfg(feature = "wasm-linalg")]
-fn hermitian_eigendecomposition_nalgebra(matrix: &[Complex64], n: usize) -> (Vec<f64>, Vec<Complex64>) {
+fn hermitian_eigendecomposition_nalgebra(
+    matrix: &[Complex64],
+    n: usize,
+) -> (Vec<f64>, Vec<Complex64>) {
     // Convert to nalgebra DMatrix<Complex<f64>>
     // Input matrix[i*n + j] is element (i, j) in row-major
     let a_na = DMatrix::<NaComplex<f64>>::from_fn(n, n, |i, j| {
@@ -778,19 +798,21 @@ fn hermitian_eigendecomposition_nalgebra(matrix: &[Complex64], n: usize) -> (Vec
 
     // Compute eigendecomposition
     let eigen = a_na.symmetric_eigen();
-    
+
     // Extract eigenvalues (already real for Hermitian matrices)
     let eigenvalues: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
-    
+
     // Sort indices by eigenvalue in descending order
     let mut indices: Vec<usize> = (0..n).collect();
     indices.sort_by(|&i, &j| {
-        eigenvalues[j].partial_cmp(&eigenvalues[i]).unwrap_or(std::cmp::Ordering::Equal)
+        eigenvalues[j]
+            .partial_cmp(&eigenvalues[i])
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
-    
+
     // Apply sorting to eigenvalues
     let sorted_eigenvalues: Vec<f64> = indices.iter().map(|&i| eigenvalues[i]).collect();
-    
+
     // Extract eigenvectors in sorted order
     // output[row * n + col] = component row of eigenvector col
     let mut eigenvectors = vec![Complex64::ZERO; n * n];

@@ -8,7 +8,7 @@
 //!
 //! Usage:
 //! ```
-//! use blaze2d_core::profiler::{start_timer, stop_timer, print_profile};
+//! use blaze2d_core::profiler::{start_timer, stop_timer, print_profile, get_profile_json};
 //!
 //! start_timer("my_function");
 //! // ... do work ...
@@ -117,11 +117,12 @@ mod enabled {
     /// Get profiling results as JSON string for automated comparison.
     pub fn get_profile_json() -> String {
         let profiler = PROFILER.lock().unwrap();
-        
-        let session_ms = profiler.session_start
+
+        let session_ms = profiler
+            .session_start
             .map(|s| s.elapsed().as_secs_f64() * 1000.0)
             .unwrap_or(0.0);
-        
+
         let mut entries: Vec<_> = profiler.entries.iter().collect();
         entries.sort_by(|a, b| b.1.total_time.cmp(&a.1.total_time));
 
@@ -145,7 +146,11 @@ mod enabled {
                 entry.min_time.as_secs_f64() * 1_000_000.0
             };
             let max_us = entry.max_time.as_secs_f64() * 1_000_000.0;
-            let pct = if session_ms > 0.0 { total_ms / session_ms * 100.0 } else { 0.0 };
+            let pct = if session_ms > 0.0 {
+                total_ms / session_ms * 100.0
+            } else {
+                0.0
+            };
 
             json.push_str(&format!(
                 "    \"{}\": {{ \"calls\": {}, \"total_ms\": {:.3}, \"avg_us\": {:.3}, \"min_us\": {:.3}, \"max_us\": {:.3}, \"pct\": {:.2} }}{}\n",

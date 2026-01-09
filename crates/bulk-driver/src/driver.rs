@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -14,8 +14,8 @@ use log::{debug, error, warn};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-use blaze2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
 use blaze2d_core::drivers::ProgressInfo;
+use blaze2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
 use blaze2d_core::profiler::print_profile;
 
 #[cfg(feature = "cuda")]
@@ -35,7 +35,7 @@ use crate::channel::{
     BatchConfig, CompactBandResult, CompactBandResultExt, OutputChannel, StreamConfig,
 };
 use crate::config::{BulkConfig, BulkConfigNativeExt, OutputMode, SelectiveSpec, SolverType};
-use crate::expansion::{expand_jobs, ExpandedJob, ExpandedJobType, EAJobSpec};
+use crate::expansion::{EAJobSpec, ExpandedJob, ExpandedJobType, expand_jobs};
 use crate::output::OutputWriter;
 use crate::stream::{FilteredStreamChannel, SelectiveFilter, StreamChannel};
 
@@ -126,9 +126,15 @@ impl PreRunReport {
         let mut lines = Vec::new();
 
         // Header
-        lines.push(String::from("╭─────────────────────────────────────────────────╮"));
-        lines.push(String::from("│              Blaze Bulk Driver                  │"));
-        lines.push(String::from("╰─────────────────────────────────────────────────╯"));
+        lines.push(String::from(
+            "╭─────────────────────────────────────────────────╮",
+        ));
+        lines.push(String::from(
+            "│              Blaze Bulk Driver                  │",
+        ));
+        lines.push(String::from(
+            "╰─────────────────────────────────────────────────╯",
+        ));
         lines.push(String::new());
 
         // Job summary with solver type
@@ -136,7 +142,12 @@ impl PreRunReport {
             SolverType::Maxwell => "Maxwell",
             SolverType::EA => "EA",
         };
-        lines.push(format!("  Solver: {}  │  Jobs: {}  │  Threads: {}", solver_str, jobs.len(), thread_mode));
+        lines.push(format!(
+            "  Solver: {}  │  Jobs: {}  │  Threads: {}",
+            solver_str,
+            jobs.len(),
+            thread_mode
+        ));
         lines.push(String::new());
 
         // Fixed parameters (from base config) - only for Maxwell
@@ -172,10 +183,20 @@ impl PreRunReport {
         // Swept parameters
         let mut swept = Vec::new();
         if let Some(ref range) = config.ranges.eps_bg {
-            swept.push(format!("ε_bg: {:.1}→{:.1} ({})", range.min, range.max, range.count()));
+            swept.push(format!(
+                "ε_bg: {:.1}→{:.1} ({})",
+                range.min,
+                range.max,
+                range.count()
+            ));
         }
         if let Some(ref range) = config.ranges.resolution {
-            swept.push(format!("res: {}→{} ({})", range.min as i32, range.max as i32, range.count()));
+            swept.push(format!(
+                "res: {}→{} ({})",
+                range.min as i32,
+                range.max as i32,
+                range.count()
+            ));
         }
         if let Some(ref pols) = config.ranges.polarization {
             let pol_strs: Vec<_> = pols.iter().map(|p| format!("{:?}", p)).collect();
@@ -189,16 +210,40 @@ impl PreRunReport {
         // Atom parameter sweeps
         for (i, atom_range) in config.ranges.atoms.iter().enumerate() {
             if let Some(ref r) = atom_range.radius {
-                swept.push(format!("atom{}.r: {:.2}→{:.2} ({})", i, r.min, r.max, r.count()));
+                swept.push(format!(
+                    "atom{}.r: {:.2}→{:.2} ({})",
+                    i,
+                    r.min,
+                    r.max,
+                    r.count()
+                ));
             }
             if let Some(ref px) = atom_range.pos_x {
-                swept.push(format!("atom{}.x: {:.2}→{:.2} ({})", i, px.min, px.max, px.count()));
+                swept.push(format!(
+                    "atom{}.x: {:.2}→{:.2} ({})",
+                    i,
+                    px.min,
+                    px.max,
+                    px.count()
+                ));
             }
             if let Some(ref py) = atom_range.pos_y {
-                swept.push(format!("atom{}.y: {:.2}→{:.2} ({})", i, py.min, py.max, py.count()));
+                swept.push(format!(
+                    "atom{}.y: {:.2}→{:.2} ({})",
+                    i,
+                    py.min,
+                    py.max,
+                    py.count()
+                ));
             }
             if let Some(ref eps) = atom_range.eps_inside {
-                swept.push(format!("atom{}.ε: {:.1}→{:.1} ({})", i, eps.min, eps.max, eps.count()));
+                swept.push(format!(
+                    "atom{}.ε: {:.1}→{:.1} ({})",
+                    i,
+                    eps.min,
+                    eps.max,
+                    eps.count()
+                ));
             }
         }
 
@@ -211,7 +256,11 @@ impl PreRunReport {
             OutputMode::Full => String::from("full (one CSV per job)"),
             OutputMode::Selective => String::from("selective (merged CSV)"),
         };
-        lines.push(format!("  Output: {} → {}", output_info, config.output.directory.display()));
+        lines.push(format!(
+            "  Output: {} → {}",
+            output_info,
+            config.output.directory.display()
+        ));
 
         lines.push(String::new());
 
@@ -369,7 +418,9 @@ impl BulkDriver {
         let pb = ProgressBar::new(self.jobs.len() as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
                 .unwrap()
                 .progress_chars("█▓░"),
         );
@@ -578,7 +629,9 @@ impl BulkDriver {
         let pb = ProgressBar::new(self.jobs.len() as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
                 .unwrap()
                 .progress_chars("█▓░"),
         );
@@ -597,51 +650,59 @@ impl BulkDriver {
                 || {
                     // Initialize thread-local backend to avoid Mutex contention on FFT planner
                     #[cfg(feature = "cuda")]
-                    { CudaBackend::new() }
+                    {
+                        CudaBackend::new()
+                    }
                     #[cfg(not(feature = "cuda"))]
-                    { CpuBackend::new() }
+                    {
+                        CpuBackend::new()
+                    }
                 },
                 |backend, expanded_job| {
-                let job_start = Instant::now();
-                let result = self.execute_job(expanded_job, backend.clone());
-                let job_duration = job_start.elapsed();
+                    let job_start = Instant::now();
+                    let result = self.execute_job(expanded_job, backend.clone());
+                    let job_duration = job_start.elapsed();
 
-                // Record timing for adaptive management
-                if let Some(event) = adaptive_mgr_clone.record_job(job_duration) {
-                    if event.reason != AdjustmentReason::Initial && verbose {
-                        debug!(
-                            "[adaptive] {} → {} threads ({})",
-                            event.from_threads, event.to_threads, event.reason
-                        );
-                    }
-                }
-
-                match result {
-                    Ok(job_result) => {
-                        // Convert to compact result and send through channel
-                        let compact = CompactBandResult::from_job_result(expanded_job, &job_result);
-
-                        if let Err(e) = channel.send(compact) {
-                            error!("failed to send job {} result: {}", expanded_job.index, e);
-                            channel_errors.fetch_add(1, Ordering::Relaxed);
+                    // Record timing for adaptive management
+                    if let Some(event) = adaptive_mgr_clone.record_job(job_duration) {
+                        if event.reason != AdjustmentReason::Initial && verbose {
+                            debug!(
+                                "[adaptive] {} → {} threads ({})",
+                                event.from_threads, event.to_threads, event.reason
+                            );
                         }
-                        completed.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(e) => {
-                        failed.fetch_add(1, Ordering::Relaxed);
-                        errors.lock().push(e);
-                    }
-                }
 
-                pb.inc(1);
-            });
+                    match result {
+                        Ok(job_result) => {
+                            // Convert to compact result and send through channel
+                            let compact =
+                                CompactBandResult::from_job_result(expanded_job, &job_result);
+
+                            if let Err(e) = channel.send(compact) {
+                                error!("failed to send job {} result: {}", expanded_job.index, e);
+                                channel_errors.fetch_add(1, Ordering::Relaxed);
+                            }
+                            completed.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            failed.fetch_add(1, Ordering::Relaxed);
+                            errors.lock().push(e);
+                        }
+                    }
+
+                    pb.inc(1);
+                },
+            );
         });
 
         pb.finish_and_clear();
 
         // Close channel and get stats
         let channel_stats = match Arc::try_unwrap(channel_arc) {
-            Ok(ch) => ch.close().map_err(|e| DriverError::OutputError(e.to_string()))?,
+            Ok(ch) => ch
+                .close()
+                .map_err(|e| DriverError::OutputError(e.to_string()))?,
             Err(_) => {
                 return Err(DriverError::OutputError("channel still in use".to_string()));
             }
@@ -739,11 +800,8 @@ impl BulkDriver {
             OutputMode::Selective => self.config.output.filename.clone(),
         };
 
-        let batch_channel = BatchChannel::new(
-            batch_config,
-            output_path,
-            self.config.output.mode.clone(),
-        );
+        let batch_channel =
+            BatchChannel::new(batch_config, output_path, self.config.output.mode.clone());
 
         let channel = OutputChannel::Batch(Arc::new(batch_channel));
         self.run_with_channel(channel)
@@ -759,7 +817,7 @@ impl BulkDriver {
     ///
     /// ```ignore
     /// let receiver = driver.run_streaming()?;
-    /// 
+    ///
     /// // Process results as they arrive
     /// for result in receiver {
     ///     println!("Job {} complete", result.job_index);
@@ -767,7 +825,13 @@ impl BulkDriver {
     /// ```
     pub fn run_streaming(
         &self,
-    ) -> Result<(crossbeam_channel::Receiver<CompactBandResult>, std::thread::JoinHandle<Result<DriverStats, DriverError>>), DriverError>
+    ) -> Result<
+        (
+            crossbeam_channel::Receiver<CompactBandResult>,
+            std::thread::JoinHandle<Result<DriverStats, DriverError>>,
+        ),
+        DriverError,
+    >
     where
         Self: Sync,
     {
@@ -826,7 +890,13 @@ impl BulkDriver {
     pub fn run_streaming_filtered(
         &self,
         filter: SelectiveFilter,
-    ) -> Result<(crossbeam_channel::Receiver<CompactBandResult>, std::thread::JoinHandle<Result<DriverStats, DriverError>>), DriverError>
+    ) -> Result<
+        (
+            crossbeam_channel::Receiver<CompactBandResult>,
+            std::thread::JoinHandle<Result<DriverStats, DriverError>>,
+        ),
+        DriverError,
+    >
     where
         Self: Sync,
     {
@@ -872,7 +942,13 @@ impl BulkDriver {
     pub fn run_streaming_selective(
         &self,
         spec: &SelectiveSpec,
-    ) -> Result<(crossbeam_channel::Receiver<CompactBandResult>, std::thread::JoinHandle<Result<DriverStats, DriverError>>), DriverError>
+    ) -> Result<
+        (
+            crossbeam_channel::Receiver<CompactBandResult>,
+            std::thread::JoinHandle<Result<DriverStats, DriverError>>,
+        ),
+        DriverError,
+    >
     where
         Self: Sync,
     {
@@ -888,7 +964,12 @@ impl BulkDriver {
     }
 
     /// Execute a Maxwell band structure job.
-    fn execute_maxwell_job(&self, index: usize, job: &blaze2d_core::bandstructure::BandStructureJob, backend: Backend) -> Result<JobResult, JobError> {
+    fn execute_maxwell_job(
+        &self,
+        index: usize,
+        job: &blaze2d_core::bandstructure::BandStructureJob,
+        backend: Backend,
+    ) -> Result<JobResult, JobError> {
         let start = Instant::now();
 
         // Build run options from config
@@ -898,12 +979,7 @@ impl BulkDriver {
 
         // Run the solver
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            bandstructure::run_with_options(
-                backend,
-                job,
-                Verbosity::Quiet,
-                run_options,
-            )
+            bandstructure::run_with_options(backend, job, Verbosity::Quiet, run_options)
         }));
 
         match result {
@@ -930,7 +1006,12 @@ impl BulkDriver {
     }
 
     /// Execute an EA eigenvalue problem.
-    fn execute_ea_job(&self, index: usize, spec: &EAJobSpec, backend: Backend) -> Result<JobResult, JobError> {
+    fn execute_ea_job(
+        &self,
+        index: usize,
+        spec: &EAJobSpec,
+        backend: Backend,
+    ) -> Result<JobResult, JobError> {
         use blaze2d_core::drivers::single_solve;
         use blaze2d_core::operators::EAOperatorBuilder;
 
@@ -942,10 +1023,11 @@ impl BulkDriver {
                 .map_err(|e| format!("failed to read potential: {}", e))?;
             let mass_inv = read_f64_binary(&spec.mass_inv_path)
                 .map_err(|e| format!("failed to read mass_inv: {}", e))?;
-            let vg = spec.vg_path.as_ref().map(|p| {
-                read_f64_binary(p)
-                    .map_err(|e| format!("failed to read vg: {}", e))
-            }).transpose()?;
+            let vg = spec
+                .vg_path
+                .as_ref()
+                .map(|p| read_f64_binary(p).map_err(|e| format!("failed to read vg: {}", e)))
+                .transpose()?;
 
             let nx = spec.grid.nx;
             let ny = spec.grid.ny;
@@ -976,7 +1058,8 @@ impl BulkDriver {
 
             // Run the solve with preconditioner
             let mut precond = operator.build_preconditioner();
-            let solve_result = single_solve::solve(&mut operator, Some(&mut precond), &spec.solve_config);
+            let solve_result =
+                single_solve::solve(&mut operator, Some(&mut precond), &spec.solve_config);
 
             // Correct eigenvalues by removing gauge shift
             let corrected_eigenvalues = operator.correct_eigenvalues(&solve_result.eigenvalues);
@@ -1019,8 +1102,7 @@ impl BulkDriver {
 
     /// Check if this is a single EA job (should run without threading with progress).
     fn is_single_ea_job(&self) -> bool {
-        self.jobs.len() == 1
-            && matches!(&self.jobs[0].job_type, ExpandedJobType::EA(_))
+        self.jobs.len() == 1 && matches!(&self.jobs[0].job_type, ExpandedJobType::EA(_))
     }
 
     /// Execute a single EA job with a detailed progress bar.
@@ -1049,10 +1131,14 @@ impl BulkDriver {
             .map_err(|e| DriverError::ConfigError(format!("failed to read potential: {}", e)))?;
         let mass_inv = read_f64_binary(&spec.mass_inv_path)
             .map_err(|e| DriverError::ConfigError(format!("failed to read mass_inv: {}", e)))?;
-        let vg = spec.vg_path.as_ref().map(|p| {
-            read_f64_binary(p)
-                .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
-        }).transpose()?;
+        let vg = spec
+            .vg_path
+            .as_ref()
+            .map(|p| {
+                read_f64_binary(p)
+                    .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
+            })
+            .transpose()?;
 
         let nx = spec.grid.nx;
         let ny = spec.grid.ny;
@@ -1076,12 +1162,15 @@ impl BulkDriver {
         // Check if potential has negative values that would cause negative eigenvalues
         let (v_min_orig, v_max, _v_mean) = operator.potential_stats();
         let needs_gauge_shift = v_min_orig < 0.0;
-        
+
         // Apply gauge shift if needed to ensure positive eigenvalues
         // This allows the FFT preconditioner to work effectively
         let gauge_shift = if needs_gauge_shift {
             // Use a margin of 1% of the potential scale
-            let v_scale = (v_max - v_min_orig).max(v_max.abs()).max(v_min_orig.abs()).max(1e-10);
+            let v_scale = (v_max - v_min_orig)
+                .max(v_max.abs())
+                .max(v_min_orig.abs())
+                .max(1e-10);
             let margin = 0.01 * v_scale;
             operator.apply_gauge_shift_for_positive_spectrum(margin)
         } else {
@@ -1106,10 +1195,17 @@ impl BulkDriver {
         println!("  max_iter: {}", spec.solve_config.max_iterations);
         println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
         if needs_gauge_shift {
-            println!("  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})", 
-                gauge_shift, v_min_orig, v_min_orig + gauge_shift);
+            println!(
+                "  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})",
+                gauge_shift,
+                v_min_orig,
+                v_min_orig + gauge_shift
+            );
         }
-        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min_shifted, spectral_spread);
+        println!(
+            "  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}",
+            lambda_max, v_min_shifted, spectral_spread
+        );
         println!("  {}", precond_summary);
         println!();
 
@@ -1173,7 +1269,10 @@ impl BulkDriver {
         }
         if gauge_shift != 0.0 {
             println!();
-            println!("  (raw solver eigenvalues were shifted by +{:.6})", gauge_shift);
+            println!(
+                "  (raw solver eigenvalues were shifted by +{:.6})",
+                gauge_shift
+            );
         }
 
         // Setup output writer and write result
@@ -1184,7 +1283,7 @@ impl BulkDriver {
         let job_result = JobResult {
             index: expanded.index,
             result: JobResultType::EA(EAJobResult {
-                eigenvalues: corrected_eigenvalues,  // Store corrected eigenvalues
+                eigenvalues: corrected_eigenvalues, // Store corrected eigenvalues
                 eigenvectors: solve_result.eigenvectors,
                 grid_dims: [nx, ny],
                 n_iterations: solve_result.iterations,
@@ -1202,7 +1301,10 @@ impl BulkDriver {
             .map_err(|e| DriverError::OutputError(e.to_string()))?;
 
         println!();
-        println!("Output written to: {}", self.config.output.directory.display());
+        println!(
+            "Output written to: {}",
+            self.config.output.directory.display()
+        );
 
         Ok(DriverStats {
             total_jobs: 1,
@@ -1217,7 +1319,10 @@ impl BulkDriver {
     /// Execute a single EA job with progress bar and channel output.
     ///
     /// This combines the detailed progress display with streaming/batch output.
-    fn run_single_ea_with_channel(&self, channel: OutputChannel) -> Result<DriverStats, DriverError> {
+    fn run_single_ea_with_channel(
+        &self,
+        channel: OutputChannel,
+    ) -> Result<DriverStats, DriverError> {
         use blaze2d_core::drivers::single_solve;
         use blaze2d_core::operators::EAOperatorBuilder;
 
@@ -1238,10 +1343,14 @@ impl BulkDriver {
             .map_err(|e| DriverError::ConfigError(format!("failed to read potential: {}", e)))?;
         let mass_inv = read_f64_binary(&spec.mass_inv_path)
             .map_err(|e| DriverError::ConfigError(format!("failed to read mass_inv: {}", e)))?;
-        let vg = spec.vg_path.as_ref().map(|p| {
-            read_f64_binary(p)
-                .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
-        }).transpose()?;
+        let vg = spec
+            .vg_path
+            .as_ref()
+            .map(|p| {
+                read_f64_binary(p)
+                    .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
+            })
+            .transpose()?;
 
         let nx = spec.grid.nx;
         let ny = spec.grid.ny;
@@ -1265,12 +1374,15 @@ impl BulkDriver {
         // Check if potential has negative values that would cause negative eigenvalues
         let (v_min_orig, v_max, _v_mean) = operator.potential_stats();
         let needs_gauge_shift = v_min_orig < 0.0;
-        
+
         // Apply gauge shift if needed to ensure positive eigenvalues
         // This allows the FFT preconditioner to work effectively
         let gauge_shift = if needs_gauge_shift {
             // Use a margin of 1% of the potential scale
-            let v_scale = (v_max - v_min_orig).max(v_max.abs()).max(v_min_orig.abs()).max(1e-10);
+            let v_scale = (v_max - v_min_orig)
+                .max(v_max.abs())
+                .max(v_min_orig.abs())
+                .max(1e-10);
             let margin = 0.01 * v_scale;
             operator.apply_gauge_shift_for_positive_spectrum(margin)
         } else {
@@ -1295,10 +1407,17 @@ impl BulkDriver {
         println!("  max_iter: {}", spec.solve_config.max_iterations);
         println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
         if needs_gauge_shift {
-            println!("  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})", 
-                gauge_shift, v_min_orig, v_min_orig + gauge_shift);
+            println!(
+                "  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})",
+                gauge_shift,
+                v_min_orig,
+                v_min_orig + gauge_shift
+            );
         }
-        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min_shifted, spectral_spread);
+        println!(
+            "  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}",
+            lambda_max, v_min_shifted, spectral_spread
+        );
         println!("  {}", precond_summary);
         println!();
 
@@ -1359,7 +1478,7 @@ impl BulkDriver {
         let job_result = JobResult {
             index: expanded.index,
             result: JobResultType::EA(EAJobResult {
-                eigenvalues: corrected_eigenvalues,  // Store corrected eigenvalues
+                eigenvalues: corrected_eigenvalues, // Store corrected eigenvalues
                 eigenvectors: solve_result.eigenvectors,
                 grid_dims: [nx, ny],
                 n_iterations: solve_result.iterations,
@@ -1376,7 +1495,9 @@ impl BulkDriver {
         }
 
         // Close channel and get stats
-        let _channel_stats = channel.close().map_err(|e| DriverError::OutputError(e.to_string()))?;
+        let _channel_stats = channel
+            .close()
+            .map_err(|e| DriverError::OutputError(e.to_string()))?;
 
         Ok(DriverStats {
             total_jobs: 1,
@@ -1488,7 +1609,9 @@ impl BulkDriver {
         let pb = ProgressBar::new(self.jobs.len() as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
                 .unwrap()
                 .progress_chars("█▓░"),
         );
@@ -1502,39 +1625,43 @@ impl BulkDriver {
             self.jobs.par_iter().for_each_init(
                 || {
                     #[cfg(feature = "cuda")]
-                    { CudaBackend::new() }
+                    {
+                        CudaBackend::new()
+                    }
                     #[cfg(not(feature = "cuda"))]
-                    { CpuBackend::new() }
+                    {
+                        CpuBackend::new()
+                    }
                 },
                 |backend, expanded_job| {
-                let job_start = Instant::now();
-                let result = self.execute_job(expanded_job, backend.clone());
-                let job_duration = job_start.elapsed();
+                    let job_start = Instant::now();
+                    let result = self.execute_job(expanded_job, backend.clone());
+                    let job_duration = job_start.elapsed();
 
-
-                // Record timing for adaptive management
-                if let Some(event) = adaptive_mgr_clone.record_job(job_duration) {
-                    if event.reason != AdjustmentReason::Initial && verbose {
-                        debug!(
-                            "[adaptive] {} → {} threads ({})",
-                            event.from_threads, event.to_threads, event.reason
-                        );
+                    // Record timing for adaptive management
+                    if let Some(event) = adaptive_mgr_clone.record_job(job_duration) {
+                        if event.reason != AdjustmentReason::Initial && verbose {
+                            debug!(
+                                "[adaptive] {} → {} threads ({})",
+                                event.from_threads, event.to_threads, event.reason
+                            );
+                        }
                     }
-                }
 
-                match result {
-                    Ok(_job_result) => {
-                        // No output writing - just count
-                        completed.fetch_add(1, Ordering::Relaxed);
+                    match result {
+                        Ok(_job_result) => {
+                            // No output writing - just count
+                            completed.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            failed.fetch_add(1, Ordering::Relaxed);
+                            errors.lock().push(e);
+                        }
                     }
-                    Err(e) => {
-                        failed.fetch_add(1, Ordering::Relaxed);
-                        errors.lock().push(e);
-                    }
-                }
 
-                pb.inc(1);
-            });
+                    pb.inc(1);
+                },
+            );
         });
 
         pb.finish_and_clear();
@@ -1604,7 +1731,11 @@ impl BulkDriver {
 
     /// Run a stress test with simulated job execution (no actual computation).
     /// Useful for testing the adaptive thread manager.
-    pub fn stress_test(&self, job_duration: Duration, vary_duration: bool) -> Result<DriverStats, DriverError> {
+    pub fn stress_test(
+        &self,
+        job_duration: Duration,
+        vary_duration: bool,
+    ) -> Result<DriverStats, DriverError> {
         if self.jobs.is_empty() {
             return Ok(DriverStats::default());
         }
@@ -1622,9 +1753,13 @@ impl BulkDriver {
             &self.thread_mode_str(Some(&adaptive_mgr)),
         );
         report.print();
-        
+
         let vary_str = if vary_duration { " ±50%" } else { "" };
-        println!("  Mode: STRESS TEST (simulated {:.0}ms{} jobs)", job_duration.as_millis(), vary_str);
+        println!(
+            "  Mode: STRESS TEST (simulated {:.0}ms{} jobs)",
+            job_duration.as_millis(),
+            vary_str
+        );
         println!();
 
         let pool_threads = match &self.thread_mode {
@@ -1643,7 +1778,9 @@ impl BulkDriver {
         let pb = ProgressBar::new(self.jobs.len() as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
                 .unwrap()
                 .progress_chars("█▓░"),
         );
@@ -1661,7 +1798,7 @@ impl BulkDriver {
                 } else {
                     base_duration
                 };
-                
+
                 std::thread::sleep(actual_duration);
 
                 // Record for adaptive management
@@ -1747,9 +1884,7 @@ fn read_f64_binary(path: &std::path::Path) -> Result<Vec<f64>, std::io::Error> {
     // Read directly into the slice
     // SAFETY: f64 has no alignment requirements stricter than 8, and we're
     // reading exactly the right number of bytes
-    let bytes = unsafe {
-        std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, file_len)
-    };
+    let bytes = unsafe { std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, file_len) };
     file.read_exact(bytes)?;
 
     // Handle endianness if needed (assuming little-endian for now)
