@@ -1,0 +1,21 @@
+name: mpb-reference
+channels:
+  - conda-forge
+  - pip
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - h5py
+  - mpich
+  - pymeep=*=mpi_mpich_*
+  - mpb
+  - click
+  - ipykernel
+  - jinja2
+  - python-dotenv
+  - plotly
+  - seaborn
+  - rich

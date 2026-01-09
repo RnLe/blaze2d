@@ -10,6 +10,27 @@ Outperforms [MIT's MPB](https://github.com/NanoComp/mpb) in TM polarizations and
 
 ---
 
+## Quick Start
+
+```bash
+# Clone and test
+git clone https://github.com/RnLe/blaze2d.git
+cd blaze2d
+cargo test
+
+# Run a simulation
+cargo run --release -- --lattice square --eps-bg 13.0 --radius 0.3 --polarization TM --resolution 24
+
+# Reproduce benchmarks (requires conda/mamba for MPB)
+cd benchmarks
+make setup-env   # one-time: creates mpb-reference environment
+make quick       # ~2 min validation run
+```
+
+→ [Full Installation Guide](https://rnle.github.io/blaze2d/installation)
+
+---
+
 ## Usage
 
 Blaze2D offers two interfaces:
@@ -44,24 +65,11 @@ Features:
 
 ---
 
-## Architecture
-
-Blaze2D uses a frequency-domain eigensolver (LOBPCG) operating on Maxwell's curl-curl equation in 2D.
-The key architectural distinction from MPB is **job-level parallelism**: instead of parallelizing FFTs within a single k-point solve, Blaze2D runs independent k-point calculations across threads.
-
-This design eliminates thread synchronization overhead and scales efficiently for parameter sweeps.
-
-→ [Detailed Architecture](docs/architecture.md)
-
----
-
 ## Benchmarks
 
-Comparative benchmarks against MPB under matched conditions (same tolerance, resolution, band count):
+Comparative benchmarks against MPB under matched conditions (same tolerance, resolution, band count).
 
-*Coming very soon*
-
-→ [Full Benchmark Results](docs/benchmarks.md)
+→ [Technical Report with Full Results](https://rnle.github.io/blaze2d/blaze)
 
 ---
 

@@ -6,6 +6,9 @@ export default {
   blaze: {
     title: 'Introduction',
   },
+  installation: {
+    title: 'Installation',
+  },
   demo: {
     title: 'Demo',
   },

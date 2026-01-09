@@ -5,7 +5,6 @@ Benchmark Series 7: Multi-Threading Scaling
 This benchmark measures how performance scales with thread count for:
 1. Blaze2D bulk-driver (Rust rayon threads)
 2. MPB with OMP native multi-threading
-3. MPB with Python multiprocessing (OMP=1 per worker)
 
 Two problem sizes:
 - Low resolution: 16×16
@@ -450,7 +449,7 @@ def run_series(
     print(f"Thread counts: {thread_counts}")
     print(f"Jobs per run: 2× thread count")
     print(f"Iterations: {NUM_ITERATIONS}")
-    print(f"Solvers: Blaze2D, MPB-OMP, MPB-Multiproc")
+    print(f"Solvers: Blaze2D, MPB-OMP")
     print("=" * 70)
     
     # Build Blaze
@@ -481,7 +480,6 @@ def run_series(
             "resolution": res_val,
             "blaze": [],
             "mpb_omp": [],
-            "mpb_multiproc": [],
         }
         
         for threads in thread_counts:
@@ -515,20 +513,6 @@ def run_series(
                 "mean_throughput": omp_res.mean_throughput,
                 "std_throughput": omp_res.std_throughput,
                 "wall_times": omp_res.wall_times,
-            })
-            
-            # MPB with Multiprocessing
-            print(f"  MPB-Multiproc...", end=" ", flush=True)
-            mp_res = run_mpb_multiproc_benchmark(res_val, threads, num_jobs, NUM_ITERATIONS)
-            print(f"{mp_res.mean_throughput:.1f} ± {mp_res.std_throughput:.1f} jobs/s")
-            all_results["results"][res_name]["mpb_multiproc"].append({
-                "threads": threads,
-                "jobs": num_jobs,
-                "mean_time": mp_res.mean_time,
-                "std_time": mp_res.std_time,
-                "mean_throughput": mp_res.mean_throughput,
-                "std_throughput": mp_res.std_throughput,
-                "wall_times": mp_res.wall_times,
             })
     
     # Save results

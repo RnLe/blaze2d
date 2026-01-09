@@ -39,13 +39,11 @@ plt.rcParams.update({
 SOLVER_COLORS = {
     "Blaze2D": "#2ca02c",        # Green
     "MPB-OMP": "#1f77b4",        # Blue
-    "MPB-Multiproc": "#ff7f0e",  # Orange
 }
 
 SOLVER_MARKERS = {
     "Blaze2D": "o",
     "MPB-OMP": "s",
-    "MPB-Multiproc": "^",
 }
 
 
@@ -74,7 +72,6 @@ def plot_throughput_scaling(
         for solver_key, solver_name in [
             ("blaze", "Blaze2D"),
             ("mpb_omp", "MPB-OMP"),
-            ("mpb_multiproc", "MPB-Multiproc"),
         ]:
             data = res_data[solver_key]
             threads = [d["threads"] for d in data]
@@ -132,7 +129,6 @@ def plot_speedup(
         for solver_key, solver_name in [
             ("blaze", "Blaze2D"),
             ("mpb_omp", "MPB-OMP"),
-            ("mpb_multiproc", "MPB-Multiproc"),
         ]:
             data = res_data[solver_key]
             threads = [d["threads"] for d in data]
@@ -198,7 +194,6 @@ def plot_efficiency(
         for solver_key, solver_name in [
             ("blaze", "Blaze2D"),
             ("mpb_omp", "MPB-OMP"),
-            ("mpb_multiproc", "MPB-Multiproc"),
         ]:
             data = res_data[solver_key]
             threads = [d["threads"] for d in data]
@@ -254,7 +249,6 @@ def plot_max_threads_comparison(
     solver_order = [
         ("blaze", "Blaze2D"),
         ("mpb_omp", "MPB-OMP"),
-        ("mpb_multiproc", "MPB-Multiproc"),
     ]
     
     for ax, res_name in zip(axes, res_names):
@@ -323,7 +317,6 @@ def plot_combined_summary(
     solver_order = [
         ("blaze", "Blaze2D"),
         ("mpb_omp", "MPB-OMP"),
-        ("mpb_multiproc", "MPB-Multiproc"),
     ]
     
     for col, res_name in enumerate(res_names):
