@@ -1,9 +1,12 @@
 use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use blaze2d_backend_cpu::CpuBackend;
-use blaze2d_core::{backend::SpectralBackend, field::Field2D, grid::Grid2D};
-use num_complex::Complex64;
+use blaze2d_core::{
+    backend::SpectralBackend,
+    field::{Field2D, FieldScalar},
+    grid::Grid2D,
+};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 fn seeded_field(grid: Grid2D) -> Field2D {
     let mut field = Field2D::zeros(grid);
@@ -11,9 +14,9 @@ fn seeded_field(grid: Grid2D) -> Field2D {
     for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
         let ix = idx % nx;
         let iy = idx / nx;
-        let real = ((ix as f64 + 1.0) * 0.31).sin();
-        let imag = ((iy as f64 + 1.0) * 0.47).cos();
-        *value = Complex64::new(real, imag);
+        let real = ((ix as f64 + 1.0) * 0.31).sin() as f32;
+        let imag = ((iy as f64 + 1.0) * 0.47).cos() as f32;
+        *value = FieldScalar::new(real, imag);
     }
     field
 }

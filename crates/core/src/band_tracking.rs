@@ -37,8 +37,8 @@
 //! - σ_min < 0.1: near-degeneracy or crossing, tracking may be ambiguous
 
 use crate::eigensolver::subspace_prediction::{
-    compute_complex_overlap_matrix, polar_decomposition, polar_decomposition_with_singular_values,
-    RotationMatrix,
+    RotationMatrix, compute_complex_overlap_matrix, polar_decomposition,
+    polar_decomposition_with_singular_values,
 };
 use crate::field::Field2D;
 use log::debug;
@@ -709,10 +709,10 @@ pub fn apply_permutation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::FieldScalar;
     use crate::grid::Grid2D;
-    use num_complex::Complex64;
 
-    fn make_test_field(grid: Grid2D, values: Vec<Complex64>) -> Field2D {
+    fn make_test_field(grid: Grid2D, values: Vec<FieldScalar>) -> Field2D {
         Field2D::from_vec(grid, values)
     }
 
@@ -813,19 +813,19 @@ mod tests {
         let v1 = make_test_field(
             grid,
             vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
             ],
         );
         let v2 = make_test_field(
             grid,
             vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(-0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(-0.5, 0.0),
             ],
         );
 
@@ -847,19 +847,19 @@ mod tests {
         let v1 = make_test_field(
             grid,
             vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
             ],
         );
         let v2 = make_test_field(
             grid,
             vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(-0.5, 0.0),
+                FieldScalar::new(0.5, 0.0),
+                FieldScalar::new(-0.5, 0.0),
             ],
         );
 
@@ -879,9 +879,9 @@ mod tests {
     fn test_apply_permutation() {
         let grid = Grid2D::new(2, 2, 1.0, 1.0);
 
-        let v1 = make_test_field(grid, vec![Complex64::new(1.0, 0.0); 4]);
-        let v2 = make_test_field(grid, vec![Complex64::new(2.0, 0.0); 4]);
-        let v3 = make_test_field(grid, vec![Complex64::new(3.0, 0.0); 4]);
+        let v1 = make_test_field(grid, vec![FieldScalar::new(1.0, 0.0); 4]);
+        let v2 = make_test_field(grid, vec![FieldScalar::new(2.0, 0.0); 4]);
+        let v3 = make_test_field(grid, vec![FieldScalar::new(3.0, 0.0); 4]);
 
         let mut omegas = vec![0.1, 0.2, 0.3];
         let mut eigenvectors = vec![v1, v2, v3];

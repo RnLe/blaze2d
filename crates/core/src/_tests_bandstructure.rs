@@ -4,13 +4,11 @@
 
 use std::f64::consts::PI;
 
-use num_complex::Complex64;
-
 use super::backend::SpectralBackend;
 use super::bandstructure::{BandStructureJob, Verbosity, compute_k_path_distances, run};
 use super::dielectric::DielectricOptions;
 use super::eigensolver::EigensolverConfig;
-use super::field::Field2D;
+use super::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
 use super::geometry::{BasisAtom, Geometry2D};
 use super::grid::Grid2D;
 use super::lattice::Lattice2D;
@@ -39,23 +37,28 @@ impl SpectralBackend for TestBackend {
         naive_fft_2d(buffer, true);
     }
 
-    fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
+    fn scale(&self, alpha: AccumScalar, buffer: &mut Self::Buffer) {
         for value in buffer.as_mut_slice() {
-            *value *= alpha;
+            *value *= FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         }
     }
 
-    fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+    fn axpy(&self, alpha: AccumScalar, x: &Self::Buffer, y: &mut Self::Buffer) {
+        let alpha_f = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *dst += alpha * src;
+            *dst += alpha_f * src;
         }
     }
 
-    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> AccumScalar {
         x.as_slice()
             .iter()
             .zip(y.as_slice())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = AccumScalar::new(a.re as f64, a.im as f64);
+                let b64 = AccumScalar::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum()
     }
 }
@@ -68,12 +71,12 @@ fn naive_fft_2d(buffer: &mut Field2D, inverse: bool) {
     let n = (nx * ny) as f64;
     let sign = if inverse { 1.0 } else { -1.0 };
 
-    let input: Vec<Complex64> = buffer.as_slice().to_vec();
+    let input: Vec<FieldScalar> = buffer.as_slice().to_vec();
     let output = buffer.as_mut_slice();
 
     for ky in 0..ny {
         for kx in 0..nx {
-            let mut sum = Complex64::ZERO;
+            let mut sum = AccumScalar::ZERO;
             for jy in 0..ny {
                 for jx in 0..nx {
                     let idx = jy * nx + jx;
@@ -81,11 +84,13 @@ fn naive_fft_2d(buffer: &mut Field2D, inverse: bool) {
                         * 2.0
                         * PI
                         * ((kx * jx) as f64 / nx as f64 + (ky * jy) as f64 / ny as f64);
-                    sum += input[idx] * Complex64::new(phase.cos(), phase.sin());
+                    let inp64 = AccumScalar::new(input[idx].re as f64, input[idx].im as f64);
+                    sum += inp64 * AccumScalar::new(phase.cos(), phase.sin());
                 }
             }
             let out_idx = ky * nx + kx;
-            output[out_idx] = if inverse { sum / n } else { sum };
+            let result = if inverse { sum / n } else { sum };
+            output[out_idx] = FieldScalar::new(result.re as FieldReal, result.im as FieldReal);
         }
     }
 }

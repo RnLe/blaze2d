@@ -258,21 +258,34 @@ fn test_alternating_convergence() {
 
 use super::deflation::DeflationSubspace;
 use crate::backend::SpectralBackend;
-use crate::field::Field2D;
+use crate::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
 use crate::grid::Grid2D;
 use num_complex::Complex64;
 
 /// Helper: compute B-inner product <x, y>_B = x^H B y
-fn b_inner_product(x: &[Complex64], by: &[Complex64]) -> Complex64 {
+/// Uses f64 accumulation for numerical stability even in mixed precision mode.
+fn b_inner_product(x: &[FieldScalar], by: &[FieldScalar]) -> Complex64 {
     x.iter()
         .zip(by.iter())
-        .map(|(xi, byi)| xi.conj() * byi)
+        .map(|(xi, byi)| {
+            let xi_f64 = Complex64::new(xi.re as f64, xi.im as f64);
+            let byi_f64 = Complex64::new(byi.re as f64, byi.im as f64);
+            xi_f64.conj() * byi_f64
+        })
         .sum()
 }
 
 /// Helper: compute standard inner product <x, y> = x^H y
-fn inner_product(x: &[Complex64], y: &[Complex64]) -> Complex64 {
-    x.iter().zip(y.iter()).map(|(xi, yi)| xi.conj() * yi).sum()
+/// Uses f64 accumulation for numerical stability even in mixed precision mode.
+fn inner_product(x: &[FieldScalar], y: &[FieldScalar]) -> Complex64 {
+    x.iter()
+        .zip(y.iter())
+        .map(|(xi, yi)| {
+            let xi_f64 = Complex64::new(xi.re as f64, xi.im as f64);
+            let yi_f64 = Complex64::new(yi.re as f64, yi.im as f64);
+            xi_f64.conj() * yi_f64
+        })
+        .sum()
 }
 
 /// Mock backend for testing projection
@@ -289,19 +302,21 @@ impl SpectralBackend for MockProjectionBackend {
         Field2D::zeros(grid)
     }
 
-    fn scale(&self, alpha: Complex64, x: &mut Self::Buffer) {
+    fn scale(&self, alpha: AccumScalar, x: &mut Self::Buffer) {
+        let alpha_field = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for v in x.as_mut_slice() {
-            *v *= alpha;
+            *v *= alpha_field;
         }
     }
 
-    fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+    fn axpy(&self, alpha: AccumScalar, x: &Self::Buffer, y: &mut Self::Buffer) {
+        let alpha_field = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for (yi, xi) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *yi += alpha * xi;
+            *yi += alpha_field * xi;
         }
     }
 
-    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> AccumScalar {
         inner_product(x.as_slice(), y.as_slice())
     }
 }
@@ -326,7 +341,7 @@ fn test_project_single_real_basis() {
     // Create deflation subspace with one B-normalized vector
     // y = [1, 0, 0, 0], By = [1, 0, 0, 0] (B = I)
     let mut y = Field2D::zeros(grid);
-    y.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+    y.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
 
     let by = y.clone(); // B = I, so By = y
 
@@ -336,14 +351,14 @@ fn test_project_single_real_basis() {
     // Create test vector v = [1, 1, 1, 1]
     let mut v = Field2D::zeros(grid);
     for val in v.as_mut_slice() {
-        *val = Complex64::new(1.0, 0.0);
+        *val = FieldScalar::new(1.0, 0.0);
     }
     let mut bv = v.clone(); // B = I
 
     // Compute <y, v>_B before projection
     let overlap_before = b_inner_product(y.as_slice(), bv.as_slice());
     assert!(
-        (overlap_before.re - 1.0).abs() < 1e-10,
+        (overlap_before.re - 1.0).abs() < 1e-6,
         "overlap before should be 1.0"
     );
 
@@ -353,15 +368,15 @@ fn test_project_single_real_basis() {
     // Compute <y, v'>_B after projection - should be zero
     let overlap_after = b_inner_product(y.as_slice(), bv.as_slice());
     assert!(
-        overlap_after.norm() < 1e-10,
+        overlap_after.norm() < 1e-6,
         "overlap after projection should be ~0, got {:?}",
         overlap_after
     );
 
     // Verify v' = [0, 1, 1, 1] (the y component was removed)
-    assert!((v.as_slice()[0].re - 0.0).abs() < 1e-10, "v[0] should be 0");
+    assert!((v.as_slice()[0].re - 0.0).abs() < 1e-6, "v[0] should be 0");
     assert!(
-        (v.as_slice()[1].re - 1.0).abs() < 1e-10,
+        (v.as_slice()[1].re - 1.0).abs() < 1e-6,
         "v[1] should still be 1"
     );
 }
@@ -380,14 +395,14 @@ fn test_project_single_complex_basis() {
     // ||y||_B = sqrt((1+i)^* (1+i)) = sqrt(2)
     let norm_factor = 1.0 / 2.0_f64.sqrt();
     let mut y = Field2D::zeros(grid);
-    y.as_mut_slice()[0] = Complex64::new(norm_factor, norm_factor); // (1+i)/sqrt(2)
+    y.as_mut_slice()[0] = FieldScalar::new(norm_factor as FieldReal, norm_factor as FieldReal); // (1+i)/sqrt(2)
 
     let by = y.clone(); // B = I
 
     // Verify B-normalization: <y, y>_B = 1
     let y_norm_sq = b_inner_product(y.as_slice(), by.as_slice());
     assert!(
-        (y_norm_sq.re - 1.0).abs() < 1e-10 && y_norm_sq.im.abs() < 1e-10,
+        (y_norm_sq.re - 1.0).abs() < 1e-6 && y_norm_sq.im.abs() < 1e-6,
         "y should be B-normalized, got <y,y>_B = {:?}",
         y_norm_sq
     );
@@ -397,7 +412,7 @@ fn test_project_single_complex_basis() {
 
     // Create test vector v = [1, 0, 0, 0] (purely real)
     let mut v = Field2D::zeros(grid);
-    v.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+    v.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
     let mut bv = v.clone(); // B = I
 
     // Compute <y, v>_B before projection
@@ -405,7 +420,7 @@ fn test_project_single_complex_basis() {
     let overlap_before = b_inner_product(y.as_slice(), bv.as_slice());
     let expected = Complex64::new(norm_factor, -norm_factor);
     assert!(
-        (overlap_before - expected).norm() < 1e-10,
+        (overlap_before - expected).norm() < 1e-6,
         "overlap before should be (1-i)/sqrt(2), got {:?}",
         overlap_before
     );
@@ -416,7 +431,7 @@ fn test_project_single_complex_basis() {
     // Compute <y, v'>_B after projection - should be zero
     let overlap_after = b_inner_product(y.as_slice(), bv.as_slice());
     assert!(
-        overlap_after.norm() < 1e-10,
+        overlap_after.norm() < 1e-6,
         "overlap after projection should be ~0, got {:?} (norm={})",
         overlap_after,
         overlap_after.norm()
@@ -431,7 +446,7 @@ fn test_project_single_imaginary_basis() {
 
     // y = [i, 0, 0, 0] (already normalized since |i|=1)
     let mut y = Field2D::zeros(grid);
-    y.as_mut_slice()[0] = Complex64::new(0.0, 1.0);
+    y.as_mut_slice()[0] = FieldScalar::new(0.0, 1.0);
     let by = y.clone();
 
     let mut deflation: DeflationSubspace<MockProjectionBackend> = DeflationSubspace::new();
@@ -439,14 +454,14 @@ fn test_project_single_imaginary_basis() {
 
     // v = [1, 1, 0, 0]
     let mut v = Field2D::zeros(grid);
-    v.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
-    v.as_mut_slice()[1] = Complex64::new(1.0, 0.0);
+    v.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
+    v.as_mut_slice()[1] = FieldScalar::new(1.0, 0.0);
     let mut bv = v.clone();
 
     // <y, v>_B = conj(i) * 1 = -i
     let overlap_before = b_inner_product(y.as_slice(), bv.as_slice());
     assert!(
-        (overlap_before - Complex64::new(0.0, -1.0)).norm() < 1e-10,
+        (overlap_before - Complex64::new(0.0, -1.0)).norm() < 1e-6,
         "overlap before should be -i, got {:?}",
         overlap_before
     );
@@ -455,19 +470,19 @@ fn test_project_single_imaginary_basis() {
 
     let overlap_after = b_inner_product(y.as_slice(), bv.as_slice());
     assert!(
-        overlap_after.norm() < 1e-10,
+        overlap_after.norm() < 1e-6,
         "overlap after should be ~0, got {:?}",
         overlap_after
     );
 
     // v' should be [1 - (-i)*i, 1, 0, 0] = [1 - 1, 1, 0, 0] = [0, 1, 0, 0]
     assert!(
-        v.as_slice()[0].norm() < 1e-10,
+        v.as_slice()[0].norm() < 1e-6,
         "v[0] should be 0, got {:?}",
         v.as_slice()[0]
     );
     assert!(
-        (v.as_slice()[1] - Complex64::new(1.0, 0.0)).norm() < 1e-10,
+        (v.as_slice()[1] - FieldScalar::new(1.0, 0.0)).norm() < 1e-6,
         "v[1] should be 1, got {:?}",
         v.as_slice()[1]
     );
@@ -489,7 +504,7 @@ fn test_project_block_no_mass_complex() {
     // Same complex basis as before
     let norm_factor = 1.0 / 2.0_f64.sqrt();
     let mut y = Field2D::zeros(grid);
-    y.as_mut_slice()[0] = Complex64::new(norm_factor, norm_factor);
+    y.as_mut_slice()[0] = FieldScalar::new(norm_factor as FieldReal, norm_factor as FieldReal);
     let by = y.clone();
 
     let mut deflation: DeflationSubspace<MockProjectionBackend> = DeflationSubspace::new();
@@ -497,7 +512,7 @@ fn test_project_block_no_mass_complex() {
 
     // v = [1, 0, 0, 0]
     let mut v = Field2D::zeros(grid);
-    v.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+    v.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
 
     // Project using project_block_no_mass
     deflation.project_block_no_mass(&backend, std::slice::from_mut(&mut v));
@@ -506,7 +521,7 @@ fn test_project_block_no_mass_complex() {
     // Since B = I, we just need y^H v'
     let overlap_after = b_inner_product(y.as_slice(), v.as_slice());
     assert!(
-        overlap_after.norm() < 1e-10,
+        overlap_after.norm() < 1e-6,
         "project_block_no_mass: overlap after should be ~0, got {:?}",
         overlap_after
     );
@@ -520,14 +535,14 @@ fn test_projection_methods_equivalent() {
 
     // Complex basis
     let mut y = Field2D::zeros(grid);
-    y.as_mut_slice()[0] = Complex64::new(0.6, 0.8); // Not normalized
+    y.as_mut_slice()[0] = FieldScalar::new(0.6, 0.8); // Not normalized
     let by = y.clone();
 
     // Normalize
     let norm_sq = b_inner_product(y.as_slice(), by.as_slice()).re;
     let norm = norm_sq.sqrt();
     for val in y.as_mut_slice() {
-        *val /= norm;
+        *val /= norm as FieldReal;
     }
     let by = y.clone();
 
@@ -538,7 +553,7 @@ fn test_projection_methods_equivalent() {
     let mut v1 = Field2D::zeros(grid);
     let mut v2 = Field2D::zeros(grid);
     for i in 0..4 {
-        let val = Complex64::new(i as f64, (i as f64) * 0.5);
+        let val = FieldScalar::new(i as FieldReal, (i as FieldReal) * 0.5);
         v1.as_mut_slice()[i] = val;
         v2.as_mut_slice()[i] = val;
     }
@@ -552,7 +567,7 @@ fn test_projection_methods_equivalent() {
     for i in 0..4 {
         let diff = (v1.as_slice()[i] - v2.as_slice()[i]).norm();
         assert!(
-            diff < 1e-10,
+            diff < 1e-6,
             "Methods differ at index {}: {:?} vs {:?}",
             i,
             v1.as_slice()[i],
@@ -569,11 +584,11 @@ fn test_project_multiple_basis_vectors() {
 
     // Two orthonormal basis vectors
     let mut y1 = Field2D::zeros(grid);
-    y1.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+    y1.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
     let by1 = y1.clone();
 
     let mut y2 = Field2D::zeros(grid);
-    y2.as_mut_slice()[1] = Complex64::new(1.0, 0.0);
+    y2.as_mut_slice()[1] = FieldScalar::new(1.0, 0.0);
     let by2 = y2.clone();
 
     let mut deflation: DeflationSubspace<MockProjectionBackend> = DeflationSubspace::new();
@@ -583,7 +598,7 @@ fn test_project_multiple_basis_vectors() {
     // v = [1, 1, 1, 1]
     let mut v = Field2D::zeros(grid);
     for val in v.as_mut_slice() {
-        *val = Complex64::new(1.0, 0.0);
+        *val = FieldScalar::new(1.0, 0.0);
     }
     let mut bv = v.clone();
 
@@ -593,12 +608,12 @@ fn test_project_multiple_basis_vectors() {
     let overlap1 = b_inner_product(y1.as_slice(), bv.as_slice());
     let overlap2 = b_inner_product(y2.as_slice(), bv.as_slice());
 
-    assert!(overlap1.norm() < 1e-10, "overlap with y1 should be ~0");
-    assert!(overlap2.norm() < 1e-10, "overlap with y2 should be ~0");
+    assert!(overlap1.norm() < 1e-6, "overlap with y1 should be ~0");
+    assert!(overlap2.norm() < 1e-6, "overlap with y2 should be ~0");
 
     // v' should be [0, 0, 1, 1]
-    assert!(v.as_slice()[0].norm() < 1e-10);
-    assert!(v.as_slice()[1].norm() < 1e-10);
-    assert!((v.as_slice()[2].re - 1.0).abs() < 1e-10);
-    assert!((v.as_slice()[3].re - 1.0).abs() < 1e-10);
+    assert!(v.as_slice()[0].norm() < 1e-6);
+    assert!(v.as_slice()[1].norm() < 1e-6);
+    assert!((v.as_slice()[2].re - 1.0).abs() < 1e-6);
+    assert!((v.as_slice()[3].re - 1.0).abs() < 1e-6);
 }

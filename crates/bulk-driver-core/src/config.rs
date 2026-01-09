@@ -50,10 +50,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use blaze2d_core::{
-    dielectric::DielectricOptions,
-    eigensolver::EigensolverConfig,
-    grid::Grid2D,
-    io::PathSpec,
+    dielectric::DielectricOptions, eigensolver::EigensolverConfig, grid::Grid2D, io::PathSpec,
     polarization::Polarization,
 };
 
@@ -480,10 +477,10 @@ impl std::fmt::Display for SweepValue {
 pub struct SweepDimension {
     /// Parameter name (e.g., "eps_bg", "atom0.radius")
     pub name: String,
-    
+
     /// Order index (0 = outermost loop, higher = more inner)
     pub order: usize,
-    
+
     /// All values for this dimension
     pub values: Vec<SweepValue>,
 }
@@ -557,12 +554,7 @@ fn toml_to_sweep_value(value: &toml::Value, param: &str) -> Result<SweepValue, C
 }
 
 /// Valid parameter paths for sweeps.
-const VALID_GLOBAL_PARAMS: &[&str] = &[
-    "eps_bg",
-    "resolution",
-    "polarization",
-    "lattice_type",
-];
+const VALID_GLOBAL_PARAMS: &[&str] = &["eps_bg", "resolution", "polarization", "lattice_type"];
 
 /// Validate a parameter path.
 ///
@@ -1103,7 +1095,6 @@ pub struct BulkConfig {
     // ========================================================================
     // NEW FORMAT: Ordered sweeps with [[sweeps]] array
     // ========================================================================
-
     /// Ordered parameter sweeps (new format).
     ///
     /// Sweeps are processed as nested loops in array order:
@@ -1121,7 +1112,6 @@ pub struct BulkConfig {
     // ========================================================================
     // LEGACY FORMAT: [ranges] and [geometry] sections
     // ========================================================================
-
     /// Base geometry (non-swept parameters).
     /// Required for Maxwell solver, ignored for EA solver.
     /// DEPRECATED: Use `defaults.geometry` instead.
@@ -1141,7 +1131,6 @@ pub struct BulkConfig {
     // ========================================================================
     // Common configuration (used by both formats)
     // ========================================================================
-
     /// Computational grid
     pub grid: Grid2D,
 
@@ -1205,7 +1194,10 @@ impl BulkConfig {
             || self.ranges.polarization.is_some()
             || self.ranges.lattice_type.is_some()
             || self.ranges.atoms.iter().any(|a| {
-                a.radius.is_some() || a.pos_x.is_some() || a.pos_y.is_some() || a.eps_inside.is_some()
+                a.radius.is_some()
+                    || a.pos_x.is_some()
+                    || a.pos_y.is_some()
+                    || a.eps_inside.is_some()
             })
     }
 
@@ -1294,7 +1286,8 @@ impl BulkConfig {
         }
 
         // Validate atom indices are within bounds
-        let max_atom_index = self.sweeps
+        let max_atom_index = self
+            .sweeps
             .iter()
             .filter_map(|s| parse_atom_path(&s.parameter))
             .map(|(idx, _)| idx)
@@ -1388,8 +1381,20 @@ impl BulkConfig {
                 .enumerate()
                 .map(|(i, s)| {
                     let count = s.count();
-                    let loop_type = if i == 0 { "outer" } else if i == self.sweeps.len() - 1 { "inner" } else { "middle" };
-                    format!("{}: {} ({} values, {} loop)", i + 1, s.parameter, count, loop_type)
+                    let loop_type = if i == 0 {
+                        "outer"
+                    } else if i == self.sweeps.len() - 1 {
+                        "inner"
+                    } else {
+                        "middle"
+                    };
+                    format!(
+                        "{}: {} ({} values, {} loop)",
+                        i + 1,
+                        s.parameter,
+                        count,
+                        loop_type
+                    )
                 })
                 .collect()
         } else {

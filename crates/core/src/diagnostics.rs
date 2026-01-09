@@ -549,9 +549,7 @@ impl ConvergenceRecorder {
 
     /// Get elapsed time since start (or 0 if not started).
     pub fn elapsed_secs(&self) -> f64 {
-        self.start_time
-            .map(|t| t.elapsed_secs())
-            .unwrap_or(0.0)
+        self.start_time.map(|t| t.elapsed_secs()).unwrap_or(0.0)
     }
 
     /// Record an iteration snapshot.

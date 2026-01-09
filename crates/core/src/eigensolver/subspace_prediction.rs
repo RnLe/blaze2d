@@ -44,7 +44,7 @@
 use faer::Mat;
 
 #[cfg(feature = "wasm-linalg")]
-use nalgebra::{DMatrix, Complex as NaComplex};
+use nalgebra::{Complex as NaComplex, DMatrix};
 
 use log::debug;
 use num_complex::Complex64;
@@ -652,7 +652,11 @@ fn polar_decomposition_nalgebra(overlap: &OverlapMatrix, m: usize) -> (RotationM
     let v_mat = svd.v_t.as_ref().expect("SVD should return V^T");
 
     // Find smallest singular value
-    let sigma_min = svd.singular_values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let sigma_min = svd
+        .singular_values
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY, f64::min);
 
     // Compute rotation = U V^T (note: nalgebra stores V^T not V)
     let rotation_na = u_mat * v_mat;
@@ -702,7 +706,10 @@ pub fn polar_decomposition_with_singular_values(
 }
 
 #[cfg(feature = "native-linalg")]
-fn polar_decomposition_with_sv_faer(overlap: &OverlapMatrix, m: usize) -> (RotationMatrix, Vec<f64>, f64) {
+fn polar_decomposition_with_sv_faer(
+    overlap: &OverlapMatrix,
+    m: usize,
+) -> (RotationMatrix, Vec<f64>, f64) {
     let overlap_faer = Mat::<faer::c64>::from_fn(m, m, |i, j| {
         let c = overlap.get(i, j);
         faer::c64::new(c.re, c.im)
@@ -735,7 +742,10 @@ fn polar_decomposition_with_sv_faer(overlap: &OverlapMatrix, m: usize) -> (Rotat
 }
 
 #[cfg(feature = "wasm-linalg")]
-fn polar_decomposition_with_sv_nalgebra(overlap: &OverlapMatrix, m: usize) -> (RotationMatrix, Vec<f64>, f64) {
+fn polar_decomposition_with_sv_nalgebra(
+    overlap: &OverlapMatrix,
+    m: usize,
+) -> (RotationMatrix, Vec<f64>, f64) {
     let overlap_na = DMatrix::<NaComplex<f64>>::from_fn(m, m, |i, j| {
         let c = overlap.get(i, j);
         NaComplex::new(c.re, c.im)
@@ -1041,10 +1051,14 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
     let n = vectors[0].len();
 
     // Clone input vectors and upcast to f64 for the orthonormalization computation
-    let mut result: Vec<Vec<Complex64>> = vectors.iter()
-        .map(|v| v.as_slice().iter()
-            .map(|c| Complex64::new(c.re as f64, c.im as f64))
-            .collect())
+    let mut result: Vec<Vec<Complex64>> = vectors
+        .iter()
+        .map(|v| {
+            v.as_slice()
+                .iter()
+                .map(|c| Complex64::new(c.re as f64, c.im as f64))
+                .collect()
+        })
         .collect();
 
     // Modified Gram-Schmidt
@@ -1103,10 +1117,15 @@ fn b_norm(x: &[Complex64], eps: Option<&[f64]>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::FieldScalar;
     use crate::grid::Grid2D;
 
-    fn make_test_field(grid: Grid2D, values: Vec<Complex64>) -> Field2D {
+    fn make_test_field(grid: Grid2D, values: Vec<FieldScalar>) -> Field2D {
         Field2D::from_vec(grid, values)
+    }
+
+    fn fs(re: f64, im: f64) -> FieldScalar {
+        FieldScalar::new(re as f32, im as f32)
     }
 
     #[test]
@@ -1138,21 +1157,11 @@ mod tests {
 
         let v1 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0)],
         );
         let v2 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(-0.5, 0.0), fs(0.5, 0.0), fs(-0.5, 0.0)],
         );
 
         let prev = vec![v1.clone(), v2.clone()];
@@ -1288,21 +1297,11 @@ mod tests {
         // Create simple orthonormal vectors
         let v1 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0)],
         );
         let v2 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(-0.5, 0.0), fs(0.5, 0.0), fs(-0.5, 0.0)],
         );
 
         history.update([0.0, 0.0], &[v1.clone(), v2.clone()]);
@@ -1328,21 +1327,11 @@ mod tests {
         // Create simple orthonormal vectors
         let v1 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0)],
         );
         let v2 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(-0.5, 0.0), fs(0.5, 0.0), fs(-0.5, 0.0)],
         );
 
         history.update([0.0, 0.0], &[v1.clone(), v2.clone()]);
@@ -1365,21 +1354,11 @@ mod tests {
         let grid = Grid2D::new(2, 2, 1.0, 1.0);
         let v1 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0), fs(0.5, 0.0)],
         );
         let v2 = make_test_field(
             grid,
-            vec![
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-                Complex64::new(0.5, 0.0),
-                Complex64::new(-0.5, 0.0),
-            ],
+            vec![fs(0.5, 0.0), fs(-0.5, 0.0), fs(0.5, 0.0), fs(-0.5, 0.0)],
         );
 
         // Path: (0,0) -> (0.5,0) -> (0.4,0)
@@ -1402,21 +1381,11 @@ mod tests {
         // Create vectors where prev and curr differ
         let prev = vec![make_test_field(
             grid,
-            vec![
-                Complex64::new(1.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-            ],
+            vec![fs(1.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0)],
         )];
         let curr = vec![make_test_field(
             grid,
-            vec![
-                Complex64::new(2.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-            ],
+            vec![fs(2.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0)],
         )];
 
         // Identity rotation (aligned already)
@@ -1429,8 +1398,8 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         let predicted = result[0].as_slice();
-        assert!((predicted[0].re - 3.0).abs() < 1e-10);
-        assert!(predicted[0].im.abs() < 1e-10);
+        assert!((predicted[0].re - 3.0).abs() < 1e-4);
+        assert!(predicted[0].im.abs() < 1e-4);
     }
 
     #[test]
@@ -1440,21 +1409,11 @@ mod tests {
 
         let prev = vec![make_test_field(
             grid,
-            vec![
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-            ],
+            vec![fs(0.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0)],
         )];
         let curr = vec![make_test_field(
             grid,
-            vec![
-                Complex64::new(1.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-            ],
+            vec![fs(1.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0), fs(0.0, 0.0)],
         )];
 
         let mut rotation = RotationMatrix::new(1);
@@ -1465,6 +1424,6 @@ mod tests {
         let result = extrapolate_with_rotation(&prev, &curr, &rotation, 0.5);
 
         let predicted = result[0].as_slice();
-        assert!((predicted[0].re - 1.5).abs() < 1e-10);
+        assert!((predicted[0].re - 1.5).abs() < 1e-4);
     }
 }

@@ -11,7 +11,7 @@
 use std::sync::{Arc, Mutex};
 
 use blaze2d_core::backend::SpectralBackend;
-use blaze2d_core::field::{Field2D, FieldScalar, FieldReal};
+use blaze2d_core::field::{Field2D, FieldReal, FieldScalar};
 use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 use rustfft::Fft;
@@ -103,7 +103,7 @@ impl CpuBackend {
             FftDirection::Forward => "fft_2d::forward",
             FftDirection::Inverse => "fft_2d::inverse",
         });
-        
+
         let grid = buffer.grid();
         let nx = grid.nx;
         let ny = grid.ny;
@@ -135,13 +135,13 @@ impl CpuBackend {
         let scratch = &mut *scratch_guard;
 
         let data = buffer.as_mut_slice();
-        
+
         #[cfg(feature = "parallel")]
         let use_parallel = self.parallel_fft && grid.len() >= self.parallel_min_points;
-        
+
         #[cfg(not(feature = "parallel"))]
         let use_parallel = false;
-        
+
         if use_parallel {
             #[cfg(feature = "parallel")]
             {
@@ -177,7 +177,7 @@ impl CpuBackend {
                 *value *= scale;
             }
         }
-        
+
         blaze2d_core::profiler::stop_timer(match direction {
             FftDirection::Forward => "fft_2d::forward",
             FftDirection::Inverse => "fft_2d::inverse",
@@ -229,7 +229,8 @@ impl CpuBackend {
         };
 
         #[cfg(feature = "parallel")]
-        let use_parallel = self.parallel_fft && (grid.len() * buffers.len()) >= self.parallel_min_points;
+        let use_parallel =
+            self.parallel_fft && (grid.len() * buffers.len()) >= self.parallel_min_points;
 
         #[cfg(not(feature = "parallel"))]
         let use_parallel = false;
@@ -254,7 +255,13 @@ impl CpuBackend {
             // Reuse a single scratch buffer for all column transforms
             let mut scratch = vec![FieldScalar::default(); ny];
             for buffer in buffers.iter_mut() {
-                process_columns_serial_with_scratch_buffer(buffer.as_mut_slice(), nx, ny, &col_fft, &mut scratch);
+                process_columns_serial_with_scratch_buffer(
+                    buffer.as_mut_slice(),
+                    nx,
+                    ny,
+                    &col_fft,
+                    &mut scratch,
+                );
             }
         }
 
@@ -304,7 +311,12 @@ fn process_rows_parallel(data: &mut [FieldScalar], nx: usize, fft: Arc<dyn Fft<F
 }
 
 #[allow(dead_code)]
-fn process_columns_serial(data: &mut [FieldScalar], nx: usize, ny: usize, fft: &Arc<dyn Fft<FieldReal>>) {
+fn process_columns_serial(
+    data: &mut [FieldScalar],
+    nx: usize,
+    ny: usize,
+    fft: &Arc<dyn Fft<FieldReal>>,
+) {
     let mut scratch = vec![FieldScalar::default(); ny];
     process_columns_serial_with_scratch_buffer(data, nx, ny, fft, &mut scratch);
 }
@@ -318,11 +330,11 @@ fn process_columns_serial_with_scratch_buffer(
     scratch: &mut [FieldScalar],
 ) {
     debug_assert!(scratch.len() >= ny);
-    
-    // We only use the scratch for transposing. 
+
+    // We only use the scratch for transposing.
     // We let the FFT manage its own internal scratch (allocating if necessary) to avoid panics.
     let transpose_buf = &mut scratch[..ny];
-    
+
     for ix in 0..nx {
         for iy in 0..ny {
             transpose_buf[iy] = data[iy * nx + ix];
@@ -387,7 +399,7 @@ fn batch_fft_2d_parallel(
         // Collect all row data pointers for parallel iteration
         let total_rows = buffers.len() * ny;
         let mut row_slices: Vec<&mut [FieldScalar]> = Vec::with_capacity(total_rows);
-        
+
         for buffer in buffers.iter_mut() {
             for row in buffer.as_mut_slice().chunks_mut(nx) {
                 // SAFETY: We're collecting mutable references to non-overlapping rows.
@@ -395,29 +407,29 @@ fn batch_fft_2d_parallel(
                 row_slices.push(row);
             }
         }
-        
+
         let row_fft_clone = row_fft.clone();
         row_slices.par_iter_mut().for_each(|row| {
             row_fft_clone.process(*row);
         });
-        
+
         // Phase 2: Process columns using transpose trick for each buffer
         // This is done per-buffer since we need a transposed buffer for each
         for buffer in buffers.iter_mut() {
             let data = buffer.as_mut_slice();
             let mut transposed = vec![FieldScalar::default(); data.len()];
             transpose_into(data, &mut transposed, nx, ny);
-            
+
             // Process transposed rows (which are original columns) in parallel
             transposed.par_chunks_mut(ny).for_each(|row| {
                 col_fft.process(row);
             });
-            
+
             // Transpose back
             transpose_into(&transposed, data, ny, nx);
         }
     };
-    
+
     if let Some(pool) = pool {
         pool.install(&mut job);
     } else {
@@ -539,9 +551,13 @@ fn test_fft_normalization() {
             let x = ix as f64 / 8.0;
             let arg = 2.0 * PI * x;
             #[cfg(not(feature = "mixed-precision"))]
-            { Complex64::new(arg.cos(), arg.sin()) }
+            {
+                Complex64::new(arg.cos(), arg.sin())
+            }
             #[cfg(feature = "mixed-precision")]
-            { Complex32::new(arg.cos() as f32, arg.sin() as f32) }
+            {
+                Complex32::new(arg.cos() as f32, arg.sin() as f32)
+            }
         })
         .collect();
     let mut field = Field2D::from_vec(grid, data);
@@ -599,9 +615,13 @@ fn test_tm_operator_eigenvalue() {
             let x = ix as f64 / 8.0;
             let arg = 2.0 * PI * x;
             #[cfg(not(feature = "mixed-precision"))]
-            { Complex64::new(arg.cos(), arg.sin()) }
+            {
+                Complex64::new(arg.cos(), arg.sin())
+            }
             #[cfg(feature = "mixed-precision")]
-            { Complex32::new(arg.cos() as f32, arg.sin() as f32) }
+            {
+                Complex32::new(arg.cos() as f32, arg.sin() as f32)
+            }
         })
         .collect();
     let input = Field2D::from_vec(grid, input_data);
@@ -673,9 +693,13 @@ fn test_te_operator_eigenvalue() {
             let x = ix as f64 / 8.0;
             let arg = 2.0 * PI * x;
             #[cfg(not(feature = "mixed-precision"))]
-            { Complex64::new(arg.cos(), arg.sin()) }
+            {
+                Complex64::new(arg.cos(), arg.sin())
+            }
             #[cfg(feature = "mixed-precision")]
-            { Complex32::new(arg.cos() as f32, arg.sin() as f32) }
+            {
+                Complex32::new(arg.cos() as f32, arg.sin() as f32)
+            }
         })
         .collect();
     let input = Field2D::from_vec(grid, input_data);

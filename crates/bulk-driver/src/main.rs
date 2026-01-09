@@ -95,14 +95,14 @@ fn init_logging(verbose: bool, quiet: bool) {
     } else if verbose {
         LevelFilter::Debug
     } else {
-        LevelFilter::Warn  // Show our own warnings
+        LevelFilter::Warn // Show our own warnings
     };
 
     // Suppress noisy library logs unless verbose
     let lib_level = if verbose {
         LevelFilter::Debug
     } else {
-        LevelFilter::Error  // Only errors from core library
+        LevelFilter::Error // Only errors from core library
     };
 
     Builder::new()
@@ -119,7 +119,14 @@ fn init_logging(verbose: bool, quiet: bool) {
                 log::Level::Debug => ("\x1b[36m", "\x1b[0m"),
                 log::Level::Trace => ("\x1b[35m", "\x1b[0m"),
             };
-            writeln!(buf, "{}{:5}{} {}", color_start, level, color_end, record.args())
+            writeln!(
+                buf,
+                "{}{:5}{} {}",
+                color_start,
+                level,
+                color_end,
+                record.args()
+            )
         })
         .init();
 }

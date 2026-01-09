@@ -8,9 +8,8 @@ use super::normalization::{
     project_out, svqb_orthonormalize, zero_buffer,
 };
 use crate::backend::SpectralBackend;
-use crate::field::Field2D;
+use crate::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
 use crate::grid::Grid2D;
-use num_complex::Complex64;
 
 // ============================================================================
 // Test Backend
@@ -31,23 +30,28 @@ impl SpectralBackend for TestBackend {
 
     fn inverse_fft_2d(&self, _buffer: &mut Self::Buffer) {}
 
-    fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
+    fn scale(&self, alpha: AccumScalar, buffer: &mut Self::Buffer) {
         for value in buffer.as_mut_slice() {
-            *value *= alpha;
+            *value *= FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         }
     }
 
-    fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+    fn axpy(&self, alpha: AccumScalar, x: &Self::Buffer, y: &mut Self::Buffer) {
+        let alpha_f = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *dst += alpha * src;
+            *dst += alpha_f * src;
         }
     }
 
-    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> AccumScalar {
         x.as_slice()
             .iter()
             .zip(y.as_slice())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = AccumScalar::new(a.re as f64, a.im as f64);
+                let b64 = AccumScalar::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum()
     }
 }
@@ -56,7 +60,7 @@ impl SpectralBackend for TestBackend {
 // Helper Functions
 // ============================================================================
 
-fn make_field(grid: Grid2D, values: &[Complex64]) -> Field2D {
+fn make_field(grid: Grid2D, values: &[FieldScalar]) -> Field2D {
     let mut field = Field2D::zeros(grid);
     for (i, &v) in values.iter().enumerate() {
         if i < field.as_slice().len() {
@@ -66,8 +70,8 @@ fn make_field(grid: Grid2D, values: &[Complex64]) -> Field2D {
     field
 }
 
-fn c(re: f64, im: f64) -> Complex64 {
-    Complex64::new(re, im)
+fn c(re: f64, im: f64) -> FieldScalar {
+    FieldScalar::new(re as FieldReal, im as FieldReal)
 }
 
 // ============================================================================
@@ -83,11 +87,7 @@ fn test_b_norm_unit_vector() {
     let mass = vector.clone(); // Identity B
 
     let norm = b_norm(&backend, &vector, &mass);
-    assert!(
-        (norm - 1.0).abs() < 1e-10,
-        "Expected norm 1.0, got {}",
-        norm
-    );
+    assert!((norm - 1.0).abs() < 1e-6, "Expected norm 1.0, got {}", norm);
 }
 
 #[test]
@@ -100,11 +100,7 @@ fn test_b_norm_scaled_vector() {
     let mass = vector.clone();
 
     let norm = b_norm(&backend, &vector, &mass);
-    assert!(
-        (norm - 5.0).abs() < 1e-10,
-        "Expected norm 5.0, got {}",
-        norm
-    );
+    assert!((norm - 5.0).abs() < 1e-6, "Expected norm 5.0, got {}", norm);
 }
 
 #[test]
@@ -117,11 +113,7 @@ fn test_b_norm_complex_vector() {
     let mass = vector.clone();
 
     let norm = b_norm(&backend, &vector, &mass);
-    assert!(
-        (norm - 2.0).abs() < 1e-10,
-        "Expected norm 2.0, got {}",
-        norm
-    );
+    assert!((norm - 2.0).abs() < 1e-6, "Expected norm 2.0, got {}", norm);
 }
 
 // ============================================================================
@@ -139,13 +131,13 @@ fn test_normalize_to_unit_b_norm() {
     let original_norm = normalize_to_unit_b_norm(&backend, &mut vector, &mut mass);
 
     assert!(
-        (original_norm - 5.0).abs() < 1e-10,
+        (original_norm - 5.0).abs() < 1e-6,
         "Original norm should be 5.0"
     );
 
     let new_norm = b_norm(&backend, &vector, &mass);
     assert!(
-        (new_norm - 1.0).abs() < 1e-10,
+        (new_norm - 1.0).abs() < 1e-6,
         "New norm should be 1.0, got {}",
         new_norm
     );
@@ -162,13 +154,13 @@ fn test_normalize_zero_vector() {
     let original_norm = normalize_to_unit_b_norm(&backend, &mut vector, &mut mass);
 
     assert!(
-        original_norm.abs() < 1e-10,
+        original_norm.abs() < 1e-6,
         "Zero vector should have zero norm"
     );
 
     // Vector should still be zero
     for val in vector.as_slice() {
-        assert!(val.norm() < 1e-10);
+        assert!(val.norm() < 1e-6);
     }
 }
 
@@ -197,7 +189,7 @@ fn test_normalize_with_custom_tolerance() {
 
     // With large tolerance (1e-8), should NOT normalize
     let norm2 = normalize_to_unit_b_norm_with_tol(&backend, &mut vector, &mut mass, 1e-8);
-    assert!(norm2.abs() < 1e-10, "Should return 0 when below tolerance");
+    assert!(norm2.abs() < 1e-6, "Should return 0 when below tolerance");
 }
 
 // ============================================================================
@@ -215,7 +207,7 @@ fn test_b_inner_product_orthogonal() {
 
     let inner = b_inner_product(&backend, &x, &by);
     assert!(
-        inner.norm() < 1e-10,
+        inner.norm() < 1e-6,
         "Orthogonal vectors should have zero inner product"
     );
 }
@@ -230,10 +222,10 @@ fn test_b_inner_product_parallel() {
 
     let inner = b_inner_product(&backend, &x, &bx);
     assert!(
-        (inner.re - 1.0).abs() < 1e-10,
+        (inner.re - 1.0).abs() < 1e-6,
         "Self inner product should be 1.0"
     );
-    assert!(inner.im.abs() < 1e-10, "Self inner product should be real");
+    assert!(inner.im.abs() < 1e-6, "Self inner product should be real");
 }
 
 // ============================================================================
@@ -254,8 +246,8 @@ fn test_project_out_orthogonal() {
     project_out(&backend, &mut vector, &mut mass, &basis, &basis_mass);
 
     // Should remain unchanged
-    assert!((vector.as_slice()[0].norm()).abs() < 1e-10);
-    assert!((vector.as_slice()[1].re - 1.0).abs() < 1e-10);
+    assert!((vector.as_slice()[0].norm()).abs() < 1e-6);
+    assert!((vector.as_slice()[1].re - 1.0).abs() < 1e-6);
 }
 
 #[test]
@@ -274,7 +266,7 @@ fn test_project_out_parallel() {
     // Should become zero
     for val in vector.as_slice() {
         assert!(
-            val.norm() < 1e-10,
+            val.norm() < 1e-6,
             "Projected parallel vector should be zero"
         );
     }
@@ -294,8 +286,8 @@ fn test_project_out_partial() {
     project_out(&backend, &mut vector, &mut mass, &basis, &basis_mass);
 
     // First component should be projected out, second should remain
-    assert!(vector.as_slice()[0].norm() < 1e-10);
-    assert!((vector.as_slice()[1].re - 1.0).abs() < 1e-10);
+    assert!(vector.as_slice()[0].norm() < 1e-6);
+    assert!((vector.as_slice()[1].re - 1.0).abs() < 1e-6);
 }
 
 // ============================================================================
@@ -312,7 +304,7 @@ fn test_orthogonalize_against_empty_basis() {
 
     let norm = orthogonalize_against_basis(&backend, &mut vector, &mut mass, &[], &[]);
 
-    assert!((norm - 5.0).abs() < 1e-10, "Norm should be unchanged");
+    assert!((norm - 5.0).abs() < 1e-6, "Norm should be unchanged");
 }
 
 #[test]
@@ -338,12 +330,12 @@ fn test_orthonormalize_success() {
 
     // Should be normalized
     let norm = b_norm(&backend, &vector, &mass);
-    assert!((norm - 1.0).abs() < 1e-10);
+    assert!((norm - 1.0).abs() < 1e-6);
 
     // Should be orthogonal to basis
     let original_basis = make_field(grid, &[c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(0.0, 0.0)]);
     let inner = b_inner_product(&backend, &vector, &original_basis);
-    assert!(inner.norm() < 1e-10);
+    assert!(inner.norm() < 1e-6);
 }
 
 #[test]
@@ -379,7 +371,7 @@ fn test_zero_buffer() {
     zero_buffer(&mut buf);
 
     for val in &buf {
-        assert_eq!(*val, Complex64::ZERO);
+        assert_eq!(*val, FieldScalar::ZERO);
     }
 }
 
@@ -419,7 +411,7 @@ fn test_svqb_single_vector() {
     // Should be normalized
     let norm = b_norm(&backend, &vectors[0], &mass_vectors[0]);
     assert!(
-        (norm - 1.0).abs() < 1e-10,
+        (norm - 1.0).abs() < 1e-6,
         "Should be unit norm, got {}",
         norm
     );
@@ -446,7 +438,7 @@ fn test_svqb_orthogonal_vectors() {
     for i in 0..2 {
         let norm = b_norm(&backend, &vectors[i], &mass_vectors[i]);
         assert!(
-            (norm - 1.0).abs() < 1e-10,
+            (norm - 1.0).abs() < 1e-6,
             "Vector {} should have unit norm",
             i
         );
@@ -454,7 +446,7 @@ fn test_svqb_orthogonal_vectors() {
 
     // Should be orthogonal
     let inner = b_inner_product(&backend, &vectors[0], &mass_vectors[1]);
-    assert!(inner.norm() < 1e-10, "Vectors should be orthogonal");
+    assert!(inner.norm() < 1e-6, "Vectors should be orthogonal");
 }
 
 #[test]
@@ -482,11 +474,11 @@ fn test_svqb_nearly_parallel_vectors() {
 
     // First vector should be normalized
     let norm = b_norm(&backend, &vectors[0], &mass_vectors[0]);
-    assert!((norm - 1.0).abs() < 1e-10);
+    assert!((norm - 1.0).abs() < 1e-6);
 
     // Second slot should be zeroed
     for val in vectors[1].as_slice() {
-        assert!(val.norm() < 1e-10);
+        assert!(val.norm() < 1e-6);
     }
 }
 
@@ -562,7 +554,7 @@ fn test_svqb_complex_eigenvectors() {
     for i in 0..2 {
         let norm = b_norm(&backend, &vectors[i], &mass_vectors[i]);
         assert!(
-            (norm - 1.0).abs() < 1e-10,
+            (norm - 1.0).abs() < 1e-6,
             "Vector {} should have unit norm, got {}",
             i,
             norm
@@ -571,7 +563,7 @@ fn test_svqb_complex_eigenvectors() {
 
     let inner = b_inner_product(&backend, &vectors[0], &mass_vectors[1]);
     assert!(
-        inner.norm() < 1e-10,
+        inner.norm() < 1e-6,
         "Complex vectors should be orthogonal, got {}",
         inner.norm()
     );
@@ -633,7 +625,7 @@ fn test_svqb_twofold_degeneracy() {
     // Critically: output must be orthonormal even for nearly parallel input
     let inner = b_inner_product(&backend, &vectors[0], &mass_vectors[1]);
     assert!(
-        inner.norm() < 1e-10,
+        inner.norm() < 1e-6,
         "Output must be orthogonal, got inner product {}",
         inner.norm()
     );
@@ -698,7 +690,7 @@ fn test_svqb_threefold_degeneracy() {
     for i in 0..result.output_rank {
         let norm = b_norm(&backend, &vectors[i], &mass_vectors[i]);
         assert!(
-            (norm - 1.0).abs() < 1e-10,
+            (norm - 1.0).abs() < 1e-6,
             "Vector {} not normalized: {}",
             i,
             norm
@@ -707,7 +699,7 @@ fn test_svqb_threefold_degeneracy() {
         for j in (i + 1)..result.output_rank {
             let inner = b_inner_product(&backend, &vectors[i], &mass_vectors[j]);
             assert!(
-                inner.norm() < 1e-10,
+                inner.norm() < 1e-6,
                 "Vectors {} and {} not orthogonal: {}",
                 i,
                 j,
@@ -749,7 +741,7 @@ fn test_svqb_mixed_scales() {
     for i in 0..2 {
         let norm = b_norm(&backend, &vectors[i], &mass_vectors[i]);
         assert!(
-            (norm - 1.0).abs() < 1e-10,
+            (norm - 1.0).abs() < 1e-6,
             "Vector {} should be normalized, got {}",
             i,
             norm
@@ -816,12 +808,12 @@ fn test_svqb_preserves_subspace() {
     for i in 0..2 {
         let data = vectors[i].as_slice();
         assert!(
-            data[2].norm() < 1e-10,
+            data[2].norm() < 1e-6,
             "Vector {} leaked into component 2",
             i
         );
         assert!(
-            data[3].norm() < 1e-10,
+            data[3].norm() < 1e-6,
             "Vector {} leaked into component 3",
             i
         );
@@ -857,7 +849,7 @@ fn test_svqb_hermitian_with_phases() {
     for i in 0..3 {
         let norm = b_norm(&backend, &vectors[i], &mass_vectors[i]);
         assert!(
-            (norm - 1.0).abs() < 1e-10,
+            (norm - 1.0).abs() < 1e-6,
             "Vector {} not normalized: {}",
             i,
             norm
@@ -866,7 +858,7 @@ fn test_svqb_hermitian_with_phases() {
         for j in (i + 1)..3 {
             let inner = b_inner_product(&backend, &vectors[i], &mass_vectors[j]);
             assert!(
-                inner.norm() < 1e-10,
+                inner.norm() < 1e-6,
                 "Vectors {} and {} not orthogonal: {}",
                 i,
                 j,
@@ -944,12 +936,12 @@ fn test_svqb_large_block() {
     // Full orthonormality check
     for i in 0..8 {
         let norm = b_norm(&backend, &vectors[i], &mass_vectors[i]);
-        assert!((norm - 1.0).abs() < 1e-10, "Vector {} not normalized", i);
+        assert!((norm - 1.0).abs() < 1e-6, "Vector {} not normalized", i);
 
         for j in (i + 1)..8 {
             let inner = b_inner_product(&backend, &vectors[i], &mass_vectors[j]);
             assert!(
-                inner.norm() < 1e-10,
+                inner.norm() < 1e-6,
                 "Vectors {} and {} not orthogonal",
                 i,
                 j
@@ -983,6 +975,6 @@ fn test_svqb_numerical_stability_repeated() {
     // Note: phase may differ, so check that they span the same subspace
     let norm1 = b_norm(&backend, &vectors[0], &mass_vectors[0]);
     let norm2 = b_norm(&backend, &vectors[1], &mass_vectors[1]);
-    assert!((norm1 - 1.0).abs() < 1e-10);
-    assert!((norm2 - 1.0).abs() < 1e-10);
+    assert!((norm1 - 1.0).abs() < 1e-6);
+    assert!((norm2 - 1.0).abs() < 1e-6);
 }

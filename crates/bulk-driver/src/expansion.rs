@@ -22,7 +22,7 @@
 
 // Re-export everything from core
 pub use blaze2d_bulk_driver_core::expansion::{
-    expand_jobs, AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams,
+    AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams, expand_jobs,
 };
 
 // ============================================================================
@@ -38,7 +38,9 @@ mod tests {
     };
     use blaze2d_core::grid::Grid2D;
     use blaze2d_core::polarization::Polarization;
-    use blaze2d_core::{dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec};
+    use blaze2d_core::{
+        dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec,
+    };
 
     fn make_test_config() -> crate::config::BulkConfig {
         crate::config::BulkConfig {

@@ -66,14 +66,14 @@ use crate::preconditioners::OperatorPreconditioner;
 pub enum ShiftStrategy {
     /// Use the mean potential (legacy behavior, may be unstable for V̄ ≈ 0).
     MeanPotential,
-    
+
     /// Shift to target lowest eigenvalue of P⁻¹H near 1.
     /// σ = |V_min| + margin
     TargetLowestEigenvalue {
         /// Additional margin above |V_min| for stability.
         margin: f64,
     },
-    
+
     /// Spectral-range aware shift that accounts for kinetic contribution.
     /// σ = |V_min| + c × η² × m̄ × k_char²
     SpectralRange {
@@ -82,10 +82,10 @@ pub enum ShiftStrategy {
         /// Characteristic wavenumber (defaults to k_mean if None).
         k_char: Option<f64>,
     },
-    
+
     /// Fixed shift value (for manual tuning or testing).
     Fixed(f64),
-    
+
     /// Automatic selection based on operator statistics.
     /// This is the recommended default.
     Auto,
@@ -102,25 +102,25 @@ impl Default for ShiftStrategy {
 pub struct EAPreconditionerConfig {
     /// Shift strategy to use.
     pub shift_strategy: ShiftStrategy,
-    
+
     /// Minimum shift value (regularization floor).
     /// Prevents near-zero denominators.
     pub min_shift: f64,
-    
+
     /// Maximum allowed condition number for the preconditioner spectrum.
     /// If exceeded, the shift is increased.
     pub max_condition_number: f64,
-    
+
     /// Whether to use geometric mean for mass instead of arithmetic mean.
     /// Recommended when mass ratio (m_max/m_min) > 10.
     pub use_geometric_mean_mass: bool,
-    
+
     /// Computed shift value (set during from_operator_stats).
     computed_shift: Option<f64>,
-    
+
     /// Computed effective mass (set during from_operator_stats).
     computed_mass: Option<f64>,
-    
+
     /// Diagnostic information about the shift computation.
     pub diagnostics: Option<ShiftDiagnostics>,
 }
@@ -163,31 +163,31 @@ impl EAPreconditionerConfig {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Set the shift strategy.
     pub fn with_strategy(mut self, strategy: ShiftStrategy) -> Self {
         self.shift_strategy = strategy;
         self
     }
-    
+
     /// Set the minimum shift value.
     pub fn with_min_shift(mut self, min_shift: f64) -> Self {
         self.min_shift = min_shift.max(1e-15);
         self
     }
-    
+
     /// Set the maximum allowed condition number.
     pub fn with_max_condition_number(mut self, kappa_max: f64) -> Self {
         self.max_condition_number = kappa_max.max(1.0);
         self
     }
-    
+
     /// Enable geometric mean for mass (recommended for large mass ratios).
     pub fn with_geometric_mean_mass(mut self, enable: bool) -> Self {
         self.use_geometric_mean_mass = enable;
         self
     }
-    
+
     /// Compute optimal configuration from operator statistics.
     ///
     /// This is the recommended way to create a configuration. It analyzes
@@ -213,14 +213,14 @@ impl EAPreconditionerConfig {
     ) -> Self {
         let mut config = Self::default();
         let mut warnings = Vec::new();
-        
+
         // Compute potential statistics
         let v_range = v_max - v_min;
         let v_scale = v_range.max(v_max.abs()).max(v_min.abs()).max(1e-10);
-        
+
         // Compute mass statistics
         let mass_ratio = m_max / m_min.max(1e-15);
-        
+
         // Decide whether to use geometric mean for mass
         if mass_ratio > 10.0 {
             config.use_geometric_mean_mass = true;
@@ -229,17 +229,17 @@ impl EAPreconditionerConfig {
                 mass_ratio
             ));
         }
-        
+
         // Compute effective mass
         let effective_mass = if config.use_geometric_mean_mass {
             (m_min * m_max).sqrt()
         } else {
             m_mean
         };
-        
+
         // Kinetic prefactor
         let kinetic_prefactor = 0.5 * eta * eta * effective_mass;
-        
+
         // Determine shift strategy based on potential characteristics
         //
         // KEY INSIGHT: For LOBPCG, we need P^{-1}H to have all positive eigenvalues
@@ -257,61 +257,60 @@ impl EAPreconditionerConfig {
         //   - For negative eigenvalues: use σ < 0
         //   - P^{-1}(k) = 1/(σ + kinetic) with σ < 0 can still be positive if |σ| < kinetic
         //
-        // ALTERNATIVE: For negative eigenvalue problems, it may be better to 
+        // ALTERNATIVE: For negative eigenvalue problems, it may be better to
         // NOT use a preconditioner at all, since the standard FFT preconditioner
         // is designed for positive eigenvalues.
         //
         // For now, try: σ = 0 + small regularization (minimal interference)
-        
+
         let shift = if v_mean.abs() < 1e-10 * v_scale {
             // Zero-mean potential (common in moiré systems)
             warnings.push("Zero-mean potential detected - using minimal shift".to_string());
-            
+
             // Use minimal shift to avoid division by zero but minimize preconditioning effect
             // This makes the preconditioner nearly identity at low-k
             let minimal_shift = 0.001 * v_scale.max(kinetic_prefactor);
             minimal_shift
-            
         } else if v_mean < 0.0 || v_min < 0.0 {
             // Negative eigenvalue regime
             warnings.push("Negative potential detected - using minimal shift".to_string());
-            
+
             // Use minimal shift
             let minimal_shift = 0.001 * v_scale.max(kinetic_prefactor);
             minimal_shift
-            
         } else {
             // Positive potential: eigenvalues are positive
             // Standard approach: shift ≈ V_mean
             let margin = 0.01 * v_scale;
             v_mean + margin
         };
-        
+
         // Apply minimum shift floor
         let shift = shift.max(config.min_shift);
-        
+
         // Check condition number and adjust if needed
         // Condition number of P⁻¹: κ ≈ P⁻¹(k_max) / P⁻¹(k=0) = (σ + kinetic_max) / σ
         // Rough estimate: k_max ≈ π/dx, so kinetic_max ≈ kinetic_prefactor × (π/dx)²
         // But we don't have dx here, so use a heuristic based on mass ratio
         let estimated_kappa = 1.0 + (kinetic_prefactor * 1000.0) / shift;
-        
+
         let shift = if estimated_kappa > config.max_condition_number {
             // Increase shift to reduce condition number
             let new_shift = kinetic_prefactor * 1000.0 / (config.max_condition_number - 1.0);
             warnings.push(format!(
                 "Shift increased from {:.4e} to {:.4e} to limit κ",
-                shift, new_shift.max(shift)
+                shift,
+                new_shift.max(shift)
             ));
             new_shift.max(shift)
         } else {
             shift
         };
-        
+
         // Store computed values
         config.computed_shift = Some(shift);
         config.computed_mass = Some(effective_mass);
-        
+
         // Create diagnostics
         config.diagnostics = Some(ShiftDiagnostics {
             strategy_used: "Auto (from_operator_stats)".to_string(),
@@ -322,20 +321,20 @@ impl EAPreconditionerConfig {
             m_range: [m_min, m_max],
             warnings,
         });
-        
+
         config
     }
-    
+
     /// Get the computed shift value.
     pub fn shift(&self) -> f64 {
         self.computed_shift.unwrap_or(self.min_shift)
     }
-    
+
     /// Get the computed effective mass.
     pub fn effective_mass(&self) -> f64 {
         self.computed_mass.unwrap_or(1.0)
     }
-    
+
     /// Format diagnostics as a human-readable string.
     pub fn format_diagnostics(&self) -> String {
         match &self.diagnostics {
@@ -440,7 +439,7 @@ impl<B: SpectralBackend> FFTPreconditioner<B> {
             _marker: std::marker::PhantomData,
         }
     }
-    
+
     /// Create a new FFT preconditioner with full configuration.
     ///
     /// This is the recommended constructor for production use.
@@ -484,7 +483,7 @@ impl<B: SpectralBackend> FFTPreconditioner<B> {
             _marker: std::marker::PhantomData,
         }
     }
-    
+
     /// Create a preconditioner directly from operator statistics.
     ///
     /// This is the most convenient constructor that handles all edge cases.
@@ -511,9 +510,7 @@ impl<B: SpectralBackend> FFTPreconditioner<B> {
         m_mean: f64,
     ) -> Self {
         let config = EAPreconditionerConfig::from_operator_stats(
-            v_min, v_max, v_mean,
-            m_min, m_max, m_mean,
-            eta,
+            v_min, v_max, v_mean, m_min, m_max, m_mean, eta,
         );
         Self::with_config(nx, ny, dx, dy, eta, config)
     }
@@ -522,46 +519,58 @@ impl<B: SpectralBackend> FFTPreconditioner<B> {
     pub fn inv_spectrum(&self) -> &[f64] {
         &self.inv_spectrum
     }
-    
+
     /// Get the shift value used.
     pub fn shift(&self) -> f64 {
         self.shift
     }
-    
+
     /// Get the effective mass used.
     pub fn effective_mass(&self) -> f64 {
         self.effective_mass
     }
-    
+
     /// Get the configuration.
     pub fn config(&self) -> &EAPreconditionerConfig {
         &self.config
     }
-    
+
     /// Get the grid dimensions.
     pub fn grid_dims(&self) -> (usize, usize) {
         (self.nx, self.ny)
     }
-    
+
     /// Compute the condition number of the preconditioner.
     ///
     /// Returns κ(P⁻¹) = max(P⁻¹) / min(P⁻¹) = (σ + kinetic_max) / σ
     pub fn condition_number(&self) -> f64 {
-        let p_inv_min = self.inv_spectrum.iter().cloned().fold(f64::INFINITY, f64::min);
-        let p_inv_max = self.inv_spectrum.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        
+        let p_inv_min = self
+            .inv_spectrum
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min);
+        let p_inv_max = self
+            .inv_spectrum
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
+
         if p_inv_min > 1e-15 {
             p_inv_max / p_inv_min
         } else {
             f64::INFINITY
         }
     }
-    
+
     /// Format a summary of the preconditioner for logging.
     pub fn format_summary(&self) -> String {
         format!(
             "FFT Preconditioner: {}×{}, σ={:.4e}, m_eff={:.4}, κ(P⁻¹)={:.1}",
-            self.nx, self.ny, self.shift, self.effective_mass, self.condition_number()
+            self.nx,
+            self.ny,
+            self.shift,
+            self.effective_mass,
+            self.condition_number()
         )
     }
 }
@@ -599,11 +608,10 @@ pub fn fft_freq(i: usize, n: usize, d: f64) -> f64 {
 // Tests
 // ============================================================================
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_config_zero_mean_potential() {
         // Zero-mean potential: With the new gauge-shift approach, the EAOperator
@@ -612,108 +620,122 @@ mod tests {
         // This test verifies that the preconditioner uses a minimal shift for
         // legacy compatibility when called without gauge shifting.
         let config = EAPreconditionerConfig::from_operator_stats(
-            -0.075, 0.033, 0.0,  // V: min, max, mean=0
-            1.0, 100.0, 50.0,     // M: min, max, mean
-            0.02,                  // eta
+            -0.075, 0.033, 0.0, // V: min, max, mean=0
+            1.0, 100.0, 50.0, // M: min, max, mean
+            0.02, // eta
         );
-        
+
         // With minimal-shift strategy for zero-mean, shift is small but positive
-        assert!(config.shift() > 0.0, "Shift should be positive for zero-mean V");
+        assert!(
+            config.shift() > 0.0,
+            "Shift should be positive for zero-mean V"
+        );
         // Note: With gauge shifting, the EAOperator shifts V before calling this,
         // so V_min becomes positive and we'd fall into the positive-potential case.
     }
-    
+
     #[test]
     fn test_config_negative_mean_potential() {
         // Negative-mean potential: With the new gauge-shift approach, the EAOperator
         // should shift the potential before building the preconditioner.
         // This test verifies minimal-shift behavior for legacy compatibility.
         let config = EAPreconditionerConfig::from_operator_stats(
-            -0.1, -0.01, -0.05,  // V: all negative
-            1.0, 10.0, 5.0,       // M
-            0.02,                  // eta
+            -0.1, -0.01, -0.05, // V: all negative
+            1.0, 10.0, 5.0,  // M
+            0.02, // eta
         );
-        
+
         // Minimal shift should be positive (for numerical stability)
         assert!(config.shift() > 0.0, "Shift should be positive");
         // Note: The shift may be small because without gauge shifting,
         // the preconditioner uses minimal interference strategy.
     }
-    
+
     #[test]
     fn test_config_large_mass_ratio() {
         // Large mass ratio should trigger geometric mean
         let config = EAPreconditionerConfig::from_operator_stats(
-            0.1, 1.0, 0.5,        // V: positive
-            1.0, 100.0, 50.0,     // M: 100x ratio
-            0.02,                  // eta
+            0.1, 1.0, 0.5, // V: positive
+            1.0, 100.0, 50.0, // M: 100x ratio
+            0.02, // eta
         );
-        
-        assert!(config.use_geometric_mean_mass, "Should use geometric mean for 100x ratio");
+
+        assert!(
+            config.use_geometric_mean_mass,
+            "Should use geometric mean for 100x ratio"
+        );
         let geo_mean = (1.0_f64 * 100.0).sqrt();
         assert!((config.effective_mass() - geo_mean).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_config_positive_potential() {
         // Positive potential should use mean with small margin
         let config = EAPreconditionerConfig::from_operator_stats(
-            0.1, 1.0, 0.5,       // V: all positive
-            1.0, 2.0, 1.5,        // M: small ratio
-            0.02,                  // eta
+            0.1, 1.0, 0.5, // V: all positive
+            1.0, 2.0, 1.5,  // M: small ratio
+            0.02, // eta
         );
-        
+
         assert!(config.shift() > 0.5, "Shift should be near V_mean");
         assert!(config.shift() < 1.0, "Shift should not be too large");
     }
-    
+
     #[test]
     fn test_preconditioner_with_gauge_shifted_potential() {
         // Test the intended use case: potential has been gauge-shifted
         // so V_min is now positive (e.g., original V_min = -0.1, shifted to 0.01)
         let config = EAPreconditionerConfig::from_operator_stats(
-            0.01, 0.21, 0.11,     // V: shifted, now all positive
-            1.0, 10.0, 5.0,
-            0.02,
+            0.01, 0.21, 0.11, // V: shifted, now all positive
+            1.0, 10.0, 5.0, 0.02,
         );
-        
+
         let shift = config.shift();
-        
+
         // Shift should be near V_mean for positive potentials
-        assert!(shift > 0.1, "Shift should be near V_mean = 0.11, got {}", shift);
+        assert!(
+            shift > 0.1,
+            "Shift should be near V_mean = 0.11, got {}",
+            shift
+        );
         assert!(shift < 0.25, "Shift should not be too large, got {}", shift);
-        
+
         // Diagnostics should be present
-        assert!(config.diagnostics.is_some(), "Diagnostics should be present");
+        assert!(
+            config.diagnostics.is_some(),
+            "Diagnostics should be present"
+        );
     }
-    
+
     #[test]
     fn test_preconditioner_condition_number_positive_v() {
         // Test condition number calculation with positive potential
         let config = EAPreconditionerConfig::from_operator_stats(
-            0.1, 1.0, 0.5,        // V: positive
-            1.0, 10.0, 5.0,
-            0.02,
+            0.1, 1.0, 0.5, // V: positive
+            1.0, 10.0, 5.0, 0.02,
         );
-        
+
         let shift = config.shift();
         let effective_mass = config.effective_mass();
         let eta = 0.02;
         let dx = 0.1;
         let nx = 64;
-        
+
         // k_max at Nyquist
         let k_max = std::f64::consts::PI * nx as f64 / (nx as f64 * dx);
         let prefactor = 0.5 * eta * eta * effective_mass;
-        
-        let p_inv_min = shift;  // At k=0
-        let p_inv_max = shift + prefactor * k_max * k_max;  // At k_max
+
+        let p_inv_min = shift; // At k=0
+        let p_inv_max = shift + prefactor * k_max * k_max; // At k_max
         let expected_kappa = p_inv_max / p_inv_min;
-        
+
         // Verify the config produces reasonable values
         assert!(shift > 0.0, "Shift should be positive");
         assert!(expected_kappa > 1.0, "Condition number should be > 1");
-        assert!(expected_kappa < 1e6, "Condition number should be bounded, got {}", expected_kappa);
+        assert!(
+            expected_kappa < 1e6,
+            "Condition number should be bounded, got {}",
+            expected_kappa
+        );
     }
 }
-

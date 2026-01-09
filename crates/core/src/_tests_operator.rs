@@ -6,7 +6,7 @@ use num_complex::Complex64;
 
 use super::backend::SpectralBackend;
 use super::dielectric::{Dielectric2D, DielectricOptions};
-use super::field::Field2D;
+use super::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
 use super::geometry::{BasisAtom, Geometry2D};
 use super::grid::Grid2D;
 use super::lattice::Lattice2D;
@@ -32,23 +32,29 @@ impl SpectralBackend for TestBackend {
         discrete_fft(buffer, true);
     }
 
-    fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
+    fn scale(&self, alpha: AccumScalar, buffer: &mut Self::Buffer) {
+        let alpha_field = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for value in buffer.as_mut_slice() {
-            *value *= alpha;
+            *value *= alpha_field;
         }
     }
 
-    fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+    fn axpy(&self, alpha: AccumScalar, x: &Self::Buffer, y: &mut Self::Buffer) {
+        let alpha_field = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *dst += alpha * src;
+            *dst += alpha_field * src;
         }
     }
 
-    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> AccumScalar {
         x.as_slice()
             .iter()
             .zip(y.as_slice())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = Complex64::new(a.re as f64, a.im as f64);
+                let b64 = Complex64::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum()
     }
 }
@@ -58,7 +64,7 @@ fn discrete_fft(buffer: &mut Field2D, inverse: bool) {
     let nx = grid.nx;
     let ny = grid.ny;
     let data = buffer.as_mut_slice();
-    let mut output = vec![Complex64::default(); data.len()];
+    let mut output = vec![FieldScalar::default(); data.len()];
     let norm = if inverse { 1.0 / (nx * ny) as f64 } else { 1.0 };
     for ky in 0..ny {
         for kx in 0..nx {
@@ -71,10 +77,12 @@ fn discrete_fft(buffer: &mut Field2D, inverse: bool) {
                     } else {
                         -2.0 * PI * ((kx * x) as f64 / nx as f64 + (ky * y) as f64 / ny as f64)
                     };
-                    sum += data[idx] * Complex64::from_polar(1.0, phase);
+                    let d = Complex64::new(data[idx].re as f64, data[idx].im as f64);
+                    sum += d * Complex64::from_polar(1.0, phase);
                 }
             }
-            output[ky * nx + kx] = sum * norm;
+            let result = sum * norm;
+            output[ky * nx + kx] = FieldScalar::new(result.re as FieldReal, result.im as FieldReal);
         }
     }
     data.copy_from_slice(&output);
@@ -88,7 +96,8 @@ fn plane_wave(grid: Grid2D, mx: i32, my: i32) -> Field2D {
             let phase = 2.0
                 * PI
                 * (mx as f64 * ix as f64 / grid.nx as f64 + my as f64 * iy as f64 / grid.ny as f64);
-            field.as_mut_slice()[idx] = Complex64::from_polar(1.0, phase);
+            let c = Complex64::from_polar(1.0, phase);
+            field.as_mut_slice()[idx] = FieldScalar::new(c.re as FieldReal, c.im as FieldReal);
         }
     }
     field
@@ -133,7 +142,7 @@ fn deterministic_field(grid: Grid2D, seed: u64) -> Field2D {
         let t = (idx as f64 + 1.0) * (seed as f64 + 0.5);
         let real = (0.37 * t).sin();
         let imag = (0.61 * t).cos();
-        *value = Complex64::new(real, imag);
+        *value = FieldScalar::new(real as FieldReal, imag as FieldReal);
     }
     field
 }
@@ -142,7 +151,11 @@ fn inner_product(a: &Field2D, b: &Field2D) -> Complex64 {
     a.as_slice()
         .iter()
         .zip(b.as_slice())
-        .map(|(lhs, rhs)| lhs.conj() * rhs)
+        .map(|(lhs, rhs)| {
+            let l = Complex64::new(lhs.re as f64, lhs.im as f64);
+            let r = Complex64::new(rhs.re as f64, rhs.im as f64);
+            l.conj() * r
+        })
         .sum()
 }
 
@@ -150,7 +163,7 @@ fn field_norm(field: &Field2D) -> f64 {
     field
         .as_slice()
         .iter()
-        .map(|value| value.norm_sqr())
+        .map(|value| (value.re * value.re + value.im * value.im) as f64)
         .sum::<f64>()
         .sqrt()
 }
@@ -164,14 +177,14 @@ fn shifted_eigenvalue(grid: Grid2D, bloch_k: [f64; 2], mx: i32, my: i32) -> f64 
     kx * kx + ky * ky
 }
 
-fn assert_complex_close(lhs: Complex64, rhs: Complex64, tol: f64) {
+fn assert_complex_close(lhs: AccumScalar, rhs: AccumScalar, tol: f64) {
     assert!(
         (lhs - rhs).norm() < tol,
         "complex numbers differ: {lhs:?} vs {rhs:?}"
     );
 }
 
-fn assert_fields_close(a: &Field2D, b: &Field2D, tol: f64) {
+fn assert_fields_close(a: &Field2D, b: &Field2D, tol: f32) {
     for (lhs, rhs) in a.as_slice().iter().zip(b.as_slice()) {
         assert!(
             (*lhs - *rhs).norm() < tol,
@@ -191,9 +204,9 @@ fn toy_laplacian_matches_plane_wave_eigenvalue() {
     let eigenvalue = (2.0 * PI).powi(2) * (1.0 + 1.0);
     let mut expected = input.clone();
     for value in expected.as_mut_slice() {
-        *value *= eigenvalue;
+        *value *= eigenvalue as FieldReal;
     }
-    assert_fields_close(&output, &expected, 1e-9);
+    assert_fields_close(&output, &expected, 1e-4);
 }
 
 #[test]
@@ -208,9 +221,9 @@ fn theta_tm_uniform_medium_matches_laplacian() {
     let eigenvalue = (2.0 * PI).powi(2);
     let mut expected = input.clone();
     for value in expected.as_mut_slice() {
-        *value *= eigenvalue;
+        *value *= eigenvalue as FieldReal;
     }
-    assert_fields_close(&output, &expected, 1e-9);
+    assert_fields_close(&output, &expected, 1e-4);
 }
 
 #[test]
@@ -225,9 +238,9 @@ fn theta_te_uniform_medium_matches_curl_curl() {
     let eigenvalue = (2.0 * PI).powi(2) / 8.0;
     let mut expected = input.clone();
     for value in expected.as_mut_slice() {
-        *value *= eigenvalue;
+        *value *= eigenvalue as FieldReal;
     }
-    assert_fields_close(&output, &expected, 1e-9);
+    assert_fields_close(&output, &expected, 1e-4);
 }
 
 #[test]
@@ -242,9 +255,9 @@ fn theta_te_respects_bloch_shift_for_constant_field() {
     let eigenvalue = PI * PI / 5.0;
     let mut expected = input.clone();
     for value in expected.as_mut_slice() {
-        *value *= eigenvalue;
+        *value *= eigenvalue as FieldReal;
     }
-    assert_fields_close(&output, &expected, 1e-9);
+    assert_fields_close(&output, &expected, 1e-4);
 }
 
 #[test]
@@ -260,9 +273,9 @@ fn theta_tm_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
     let eigenvalue = shifted_eigenvalue(grid, bloch, 1, -2);
     let mut expected = input.clone();
     for value in expected.as_mut_slice() {
-        *value *= eigenvalue;
+        *value *= eigenvalue as FieldReal;
     }
-    assert_fields_close(&output, &expected, 1e-9);
+    assert_fields_close(&output, &expected, 1e-4);
 }
 
 #[test]
@@ -279,9 +292,9 @@ fn theta_te_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
     let eigenvalue = shifted_eigenvalue(grid, bloch, -1, 2) / eps_bg;
     let mut expected = input.clone();
     for value in expected.as_mut_slice() {
-        *value *= eigenvalue;
+        *value *= eigenvalue as FieldReal;
     }
-    assert_fields_close(&output, &expected, 1e-9);
+    assert_fields_close(&output, &expected, 1e-4);
 }
 
 #[test]
@@ -299,7 +312,7 @@ fn theta_te_operator_is_hermitian_in_non_uniform_dielectric() {
     theta.apply(&field_b, &mut by);
     let lhs = inner_product(&field_a, &by);
     let rhs = inner_product(&ax, &field_b);
-    assert_complex_close(lhs, rhs, 1e-9);
+    assert_complex_close(lhs, rhs, 1e-5);
 }
 
 #[test]
@@ -317,7 +330,7 @@ fn theta_tm_operator_is_hermitian_for_bloch_shift() {
     theta.apply(&field_b, &mut by);
     let lhs = inner_product(&field_a, &by);
     let rhs = inner_product(&ax, &field_b);
-    assert_complex_close(lhs, rhs, 1e-9);
+    assert_complex_close(lhs, rhs, 1e-3); // Relaxed for f32 precision
 }
 
 #[test]
@@ -332,9 +345,9 @@ fn theta_tm_mass_matches_dielectric_profile() {
     theta.apply_mass(&input, &mut output);
     let mut expected = input.clone();
     for (value, eps_val) in expected.as_mut_slice().iter_mut().zip(eps.iter()) {
-        *value *= eps_val;
+        *value *= *eps_val as FieldReal;
     }
-    assert_fields_close(&output, &expected, 1e-9);
+    assert_fields_close(&output, &expected, 1e-4);
 }
 
 #[test]
@@ -346,7 +359,7 @@ fn theta_te_mass_is_identity() {
     let input = deterministic_field(grid, 21);
     let mut output = theta.alloc_field();
     theta.apply_mass(&input, &mut output);
-    assert_fields_close(&output, &input, 1e-9);
+    assert_fields_close(&output, &input, 1e-5);
 }
 
 #[test]
@@ -565,7 +578,7 @@ fn tm_uniform_medium_rayleigh_quotient_matches_analytic() {
 
         let rel_error = (lambda - expected).abs() / expected.max(1e-10);
         assert!(
-            rel_error < 1e-10,
+            rel_error < 1e-6,
             "TM uniform medium: mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}"
         );
     }
@@ -596,7 +609,7 @@ fn te_uniform_medium_rayleigh_quotient_matches_analytic() {
 
         let rel_error = (lambda - expected).abs() / expected.max(1e-10);
         assert!(
-            rel_error < 1e-10,
+            rel_error < 1e-6,
             "TE uniform medium: mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}"
         );
     }
@@ -625,7 +638,7 @@ fn tm_uniform_medium_at_arbitrary_k_point() {
 
         let rel_error = (lambda - expected).abs() / expected.max(1e-10);
         assert!(
-            rel_error < 1e-10,
+            rel_error < 1e-6,
             "TM at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
             bloch[0],
             bloch[1]
@@ -655,7 +668,7 @@ fn te_uniform_medium_at_arbitrary_k_point() {
 
         let rel_error = (lambda - expected).abs() / expected.max(1e-10);
         assert!(
-            rel_error < 1e-10,
+            rel_error < 1e-6,
             "TE at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
             bloch[0],
             bloch[1]
@@ -689,7 +702,7 @@ fn te_and_tm_match_in_uniform_medium() {
 
         let rel_diff = (lambda_te - lambda_tm).abs() / lambda_te.max(1e-10);
         assert!(
-            rel_diff < 1e-10,
+            rel_diff < 1e-6,
             "TE vs TM mismatch in uniform medium: mode ({mx},{my}) λ_TE={lambda_te:.10e} λ_TM={lambda_tm:.10e} rel_diff={rel_diff:.2e}"
         );
     }
@@ -710,9 +723,9 @@ fn band_window_from_eigenvalues_basic() {
     let eigenvalues = vec![0.1, 0.2, 0.3, 0.4, 0.5];
     let window = BandWindow::from_eigenvalues(&eigenvalues).unwrap();
 
-    assert!((window.lambda_min - 0.1).abs() < 1e-10);
-    assert!((window.lambda_max - 0.5).abs() < 1e-10);
-    assert!((window.lambda_median - 0.3).abs() < 1e-10);
+    assert!((window.lambda_min - 0.1).abs() < 1e-6);
+    assert!((window.lambda_max - 0.5).abs() < 1e-6);
+    assert!((window.lambda_median - 0.3).abs() < 1e-6);
 }
 
 #[test]
@@ -722,7 +735,7 @@ fn band_window_filters_near_zero() {
     let window = BandWindow::from_eigenvalues(&eigenvalues).unwrap();
 
     // Should skip the zeros and start from 0.1
-    assert!((window.lambda_min - 0.1).abs() < 1e-10);
+    assert!((window.lambda_min - 0.1).abs() < 1e-6);
 }
 
 #[test]
@@ -744,8 +757,8 @@ fn spectral_stats_with_band_window() {
 
     assert!(stats.band_window.is_some());
     let window = stats.band_window.as_ref().unwrap();
-    assert!((window.lambda_min - 0.05).abs() < 1e-10);
-    assert!((window.lambda_max - 0.2).abs() < 1e-10);
+    assert!((window.lambda_min - 0.05).abs() < 1e-6);
+    assert!((window.lambda_max - 0.2).abs() < 1e-6);
 }
 
 #[test]
@@ -759,7 +772,7 @@ fn adaptive_shift_blended_with_band_window() {
     let shift_smin = stats.adaptive_shift();
     let shift_blend_1 = stats.adaptive_shift_blended(1.0, DEFAULT_BAND_WINDOW_SCALE);
     assert!(
-        (shift_smin - shift_blend_1).abs() < 1e-10,
+        (shift_smin - shift_blend_1).abs() < 1e-6,
         "β=1.0 should give pure s_min shift"
     );
 
@@ -768,7 +781,7 @@ fn adaptive_shift_blended_with_band_window() {
     let shift_band = window.compute_shift(DEFAULT_BAND_WINDOW_SCALE);
     let shift_blend_0 = stats.adaptive_shift_blended(0.0, DEFAULT_BAND_WINDOW_SCALE);
     assert!(
-        (shift_band - shift_blend_0).abs() < 1e-10,
+        (shift_band - shift_blend_0).abs() < 1e-6,
         "β=0.0 should give pure band-window shift"
     );
 
@@ -776,7 +789,7 @@ fn adaptive_shift_blended_with_band_window() {
     let shift_blend_half = stats.adaptive_shift_blended(0.5, DEFAULT_BAND_WINDOW_SCALE);
     let expected_blend = 0.5 * shift_smin + 0.5 * shift_band;
     assert!(
-        (shift_blend_half - expected_blend).abs() < 1e-10,
+        (shift_blend_half - expected_blend).abs() < 1e-6,
         "β=0.5 should give average of s_min and band-window shifts"
     );
 }
@@ -790,7 +803,7 @@ fn adaptive_shift_auto_uses_band_window_when_available() {
     let stats_no_window = SpectralStats::compute(&k_plus_g_sq);
     let shift_no_window = stats_no_window.adaptive_shift_auto();
     let expected_smin = SHIFT_SMIN_FRACTION * stats_no_window.s_min;
-    assert!((shift_no_window - expected_smin).abs() < 1e-10);
+    assert!((shift_no_window - expected_smin).abs() < 1e-6);
 
     // With band window: should use blended shift
     let stats_with_window = SpectralStats::compute(&k_plus_g_sq).with_band_window(&eigenvalues);
@@ -810,9 +823,9 @@ fn preconditioned_rq_stats_computation() {
 
     let stats = PreconditionedRQStats::compute(rq_original, rq_preconditioned);
 
-    assert!((stats.rq_min - 0.8).abs() < 1e-10);
-    assert!((stats.rq_max - 1.3).abs() < 1e-10);
-    assert!((stats.rq_mean - 1.05).abs() < 1e-10);
+    assert!((stats.rq_min - 0.8).abs() < 1e-6);
+    assert!((stats.rq_max - 1.3).abs() < 1e-6);
+    assert!((stats.rq_mean - 1.05).abs() < 1e-6);
     assert!(stats.rq_spread > 0.0); // spread = (1.3 - 0.8) / 1.05 ≈ 0.476
 
     // Check variance is reasonable

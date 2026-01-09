@@ -35,13 +35,13 @@ fn from_geometry_populates_eps_and_inv_eps_in_row_major_order() {
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
     let geom = sample_geom();
     let dielectric = Dielectric2D::from_geometry(&geom, grid, &unsmoothed_options());
-    let mut expected = Vec::with_capacity(grid.len());
-    for iy in 0..grid.ny {
-        for ix in 0..grid.nx {
-            let frac = [cell_center(ix, grid.nx), cell_center(iy, grid.ny)];
-            expected.push(geom.relative_permittivity_at_fractional(frac));
-        }
-    }
+    // With 2x2 grid, cell centers are at:
+    // (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75) in fractional coords
+    // Atom 1 at (0, 0) with r=0.25 covers (0.25, 0.25) → eps=1.0
+    // Atom 2 at (0.5, 0.5) with r=0.25 covers (0.75, 0.75) → eps=2.0
+    // Others get background eps=12.0
+    // Row-major order: [y=0,x=0], [y=0,x=1], [y=1,x=0], [y=1,x=1]
+    let expected = vec![1.0, 12.0, 12.0, 2.0];
     assert_eq!(dielectric.eps(), expected.as_slice());
     let inv_expected: Vec<f64> = dielectric.eps().iter().map(|v| 1.0 / v).collect();
     assert_eq!(dielectric.inv_eps(), inv_expected.as_slice());
@@ -97,16 +97,19 @@ fn from_geometry_panics_with_zero_sized_grid() {
 #[test]
 #[should_panic(expected = "permittivity must be positive")]
 fn from_geometry_panics_on_non_positive_permittivity() {
+    // Atom at origin with radius large enough to cover the sampling point at (0, 0)
     let geom = Geometry2D {
         lattice: Lattice2D::square(1.0),
         eps_bg: 10.0,
         atoms: vec![BasisAtom {
-            pos: [0.5, 0.5],
+            pos: [0.0, 0.0],
             radius: 0.5,
             eps_inside: 0.0,
         }],
     };
     let grid = Grid2D::new(1, 1, 1.0, 1.0);
+    // With 1x1 grid, fractional_position(0, 1) = 0.0, so sampling is at (0, 0)
+    // which is inside the atom at origin with radius 0.5
     let _ = Dielectric2D::from_geometry(&geom, grid, &unsmoothed_options());
 }
 

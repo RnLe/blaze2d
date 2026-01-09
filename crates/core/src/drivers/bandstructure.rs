@@ -582,7 +582,8 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
 
         // Prepare warm-start slice (if available from previous k-point)
         // Use subspace prediction if enabled, otherwise fall back to simple copy
-        let predicted_vectors: Option<Vec<Field2D>>;
+        // Note: _predicted_vectors owns the data that warm_slice borrows from
+        let _predicted_vectors: Option<Vec<Field2D>>;
         let warm_slice: Option<&[Field2D]> = if let Some(ref mut history) = subspace_history {
             // Use subspace prediction for warm-start
             let prediction = history.predict(k_frac, eps_for_tracking.as_deref());
@@ -591,18 +592,18 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
                     "[bandstructure] k#{:03} using {:?} prediction (σ_min={:.4})",
                     k_idx, prediction.method_used, prediction.singular_value_min
                 );
-                predicted_vectors = Some(prediction.predicted_vectors);
-                predicted_vectors.as_deref()
+                _predicted_vectors = Some(prediction.predicted_vectors);
+                _predicted_vectors.as_deref()
             } else {
-                predicted_vectors = None;
+                _predicted_vectors = None;
                 None
             }
         } else if !warm_start_store.is_empty() {
             // Simple copy warm-start (original behavior)
-            predicted_vectors = None;
+            _predicted_vectors = None;
             Some(warm_start_store.as_slice())
         } else {
-            predicted_vectors = None;
+            _predicted_vectors = None;
             None
         };
 
@@ -662,17 +663,17 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         };
 
         // Detect symmetry sectors
-        // We enable "simplify" mode to limit to Even/Odd only (max 2 sectors) 
+        // We enable "simplify" mode to limit to Even/Odd only (max 2 sectors)
         // to avoid overhead on small N problems.
         let sectors = if options.enable_symmetry {
-             crate::symmetry::enumerate_sectors(
-                 k_frac, 
-                 job.geom.lattice.classify(), 
-                 1e-6,
-                 true // Simplify: restrict to max 1 mirror axis (2 sectors)
-             )
+            crate::symmetry::enumerate_sectors(
+                k_frac,
+                job.geom.lattice.classify(),
+                1e-6,
+                true, // Simplify: restrict to max 1 mirror axis (2 sectors)
+            )
         } else {
-             crate::symmetry::SectorSchedule::trivial(k_frac)
+            crate::symmetry::SectorSchedule::trivial(k_frac)
         };
 
         // Solve each sector and collect results
@@ -680,69 +681,72 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         let mut k_iterations = 0;
 
         for sector in &sectors.sectors {
-             if options.enable_symmetry && !sector.is_trivial() {
-                 debug!("[bandstructure] Solving sector: {}", sector.label);
-             }
+            if options.enable_symmetry && !sector.is_trivial() {
+                debug!("[bandstructure] Solving sector: {}", sector.label);
+            }
 
-             // Configure solver for this sector
-             // Optimization: reduce n_bands if using multiple symmetry sectors
-             // Simplified logic: Even split with minimal buffer.
-             let mut sector_config = eigensolver_config.clone();
-             if options.enable_symmetry && sectors.sectors.len() > 1 {
-                 let n_total = job.eigensolver.n_bands;
-                 // ceil(N/2) roughly, assuming 2 sectors. 
-                 // If N=12 -> target=6. If N=6 -> target=3.
-                 // We add +1 just to be safe against slight asymmetry (e.g. 7 even, 5 odd).
-                 let target = (n_total / 2) + 1;
-                 
-                 sector_config.n_bands = target;
-                 debug!(
-                     "[bandstructure] Sector optimization: target {} bands (reduced from {})",
-                     target, n_total
-                 );
-             }
+            // Configure solver for this sector
+            // Optimization: reduce n_bands if using multiple symmetry sectors
+            // Simplified logic: Even split with minimal buffer.
+            let mut sector_config = eigensolver_config.clone();
+            if options.enable_symmetry && sectors.sectors.len() > 1 {
+                let n_total = job.eigensolver.n_bands;
+                // ceil(N/2) roughly, assuming 2 sectors.
+                // If N=12 -> target=6. If N=6 -> target=3.
+                // We add +1 just to be safe against slight asymmetry (e.g. 7 even, 5 odd).
+                let target = (n_total / 2) + 1;
 
-             // Create symmetry projector (if applicable)
-             let projector = crate::symmetry::projector_for_sector(job.grid, sector);
+                sector_config.n_bands = target;
+                debug!(
+                    "[bandstructure] Sector optimization: target {} bands (reduced from {})",
+                    target, n_total
+                );
+            }
 
-             // Filter warm start vectors through the projector
-             // This ensures we only pass vectors that belong to this symmetry sector,
-             // preventing the solver from being initialized with orthogonal (zeroed) vectors.
-             let filtered_warm_storage;
-             let warm_start_ref = if let (Some(ws), Some(proj)) = (warm_slice, &projector) {
-                 // Project and filter out null vectors
-                 let filtered: Vec<crate::field::Field2D> = ws.iter()
-                     .map(|f| {
-                         let mut p = f.clone();
-                         proj.apply(&mut p);
-                         p
-                     })
-                     .filter(|f| {
-                         // Check L2 norm squared > threshold (upcast for mixed-precision)
-                         let norm_sq: f64 = f.as_slice().iter()
-                             .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
-                             .sum();
-                         norm_sq > 1e-6
-                     })
-                     .take(sector_config.n_bands)
-                     .collect();
+            // Create symmetry projector (if applicable)
+            let projector = crate::symmetry::projector_for_sector(job.grid, sector);
 
-                 if !filtered.is_empty() {
-                     filtered_warm_storage = Some(filtered);
-                     filtered_warm_storage.as_deref()
-                 } else {
-                     None
-                 }
-             } else {
-                 warm_slice
-             };
+            // Filter warm start vectors through the projector
+            // This ensures we only pass vectors that belong to this symmetry sector,
+            // preventing the solver from being initialized with orthogonal (zeroed) vectors.
+            let filtered_warm_storage;
+            let warm_start_ref = if let (Some(ws), Some(proj)) = (warm_slice, &projector) {
+                // Project and filter out null vectors
+                let filtered: Vec<crate::field::Field2D> = ws
+                    .iter()
+                    .map(|f| {
+                        let mut p = f.clone();
+                        proj.apply(&mut p);
+                        p
+                    })
+                    .filter(|f| {
+                        // Check L2 norm squared > threshold (upcast for mixed-precision)
+                        let norm_sq: f64 = f
+                            .as_slice()
+                            .iter()
+                            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
+                            .sum();
+                        norm_sq > 1e-6
+                    })
+                    .take(sector_config.n_bands)
+                    .collect();
 
-             let mut solver = Eigensolver::new(
+                if !filtered.is_empty() {
+                    filtered_warm_storage = Some(filtered);
+                    filtered_warm_storage.as_deref()
+                } else {
+                    None
+                }
+            } else {
+                warm_slice
+            };
+
+            let mut solver = Eigensolver::new(
                 &mut theta,
-                sector_config, 
-                preconditioner_opt
-                    .as_mut()
-                    .map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
+                sector_config,
+                preconditioner_opt.as_mut().map(|p| {
+                    &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>
+                }),
                 warm_start_ref,
             );
 
@@ -755,9 +759,9 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             k_iterations += result.iterations;
 
             // Collect results from this sector
-            let active_evals = result.eigenvalues; 
+            let active_evals = result.eigenvalues;
             let active_vecs = solver.all_eigenvectors(); // Note: Includes deflated vectors
-             
+
             // Pair up eigenvalues and eigenvectors
             // Eigensolver guarantees result.eigenvalues and all_eigenvectors() are aligned and same length
             for (ev, vec) in active_evals.into_iter().zip(active_vecs.into_iter()) {
@@ -766,8 +770,9 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         }
 
         // Sort merged results by eigenvalue (ascending)
-        sector_eigenpairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        
+        sector_eigenpairs
+            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
         // Truncate to requested number of bands
         let n_requested = job.eigensolver.n_bands;
         if sector_eigenpairs.len() > n_requested {
@@ -775,7 +780,8 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         }
 
         // Unzip into separate vectors
-        let (final_evals, mut eigenvectors): (Vec<f64>, Vec<Field2D>) = sector_eigenpairs.into_iter().unzip();
+        let (final_evals, mut eigenvectors): (Vec<f64>, Vec<Field2D>) =
+            sector_eigenpairs.into_iter().unzip();
 
         // Convert eigenvalues (ω²) to frequencies (ω)
         let mut omegas: Vec<f64> = final_evals
@@ -1177,7 +1183,8 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
         // Prepare warm-start using subspace prediction or simple copy
-        let predicted_vectors: Option<Vec<Field2D>>;
+        // Note: _predicted_vectors owns the data that warm_slice borrows from
+        let _predicted_vectors: Option<Vec<Field2D>>;
         let warm_start_used: bool;
         let warm_slice: Option<&[Field2D]> = if prev_was_gamma {
             // Skip warm-start when coming from Γ: those eigenvectors don't overlap well with k≠0
@@ -1185,7 +1192,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
                 "[bandstructure] k#{:03}: skipping warm-start (previous was Γ-point)",
                 k_idx
             );
-            predicted_vectors = None;
+            _predicted_vectors = None;
             warm_start_used = false;
             None
         } else if let Some(ref mut history) = subspace_history {
@@ -1196,26 +1203,24 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
                     "[bandstructure] k#{:03} using {:?} prediction (σ_min={:.4})",
                     k_idx, prediction.method_used, prediction.singular_value_min
                 );
-                predicted_vectors = Some(prediction.predicted_vectors);
+                _predicted_vectors = Some(prediction.predicted_vectors);
                 warm_start_used = true;
-                predicted_vectors.as_deref()
+                _predicted_vectors.as_deref()
             } else {
-                predicted_vectors = None;
+                _predicted_vectors = None;
                 warm_start_used = false;
                 None
             }
         } else if !warm_start_store.is_empty() {
             // Simple copy warm-start (original behavior)
-            predicted_vectors = None;
+            _predicted_vectors = None;
             warm_start_used = true;
             Some(warm_start_store.as_slice())
         } else {
-            predicted_vectors = None;
+            _predicted_vectors = None;
             warm_start_used = false;
             None
         };
-        // Silence unused variable warning
-        let _ = warm_start_used;
 
         // Create label for this k-point run
         let run_label = format!("{}_k{:03}", study_name, k_idx);

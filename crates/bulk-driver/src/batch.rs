@@ -26,10 +26,10 @@
 //!     ..Default::default()
 //! };
 //! let channel = BatchChannel::new(config, output_path);
-//! 
+//!
 //! // Send results (batched automatically)
 //! channel.send(result)?;
-//! 
+//!
 //! // Close and wait for writer to finish
 //! let stats = channel.close()?;
 //! ```
@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use log::{debug, error, info, warn};
 use parking_lot::Mutex;
 
@@ -366,7 +366,11 @@ fn background_writer(
 }
 
 /// Write a single result to its own CSV file (full mode).
-fn write_full_result(output_dir: &PathBuf, result: &CompactBandResult, format: OutputFormat) -> usize {
+fn write_full_result(
+    output_dir: &PathBuf,
+    result: &CompactBandResult,
+    format: OutputFormat,
+) -> usize {
     let filename = format!("job_{:06}.csv", result.job_index);
     let path = output_dir.join(filename);
 
@@ -541,14 +545,18 @@ fn write_csv_selective(path: &PathBuf, results: &[CompactBandResult]) -> usize {
     let param_cols = first.params.to_columns();
 
     // Check if any results are Maxwell type
-    let has_maxwell = results.iter().any(|r| matches!(r.result_type, CompactResultType::Maxwell(_)));
+    let has_maxwell = results
+        .iter()
+        .any(|r| matches!(r.result_type, CompactResultType::Maxwell(_)));
 
     if has_maxwell {
         // Maxwell-style output with k-points
         let max_bands = results
             .iter()
             .filter_map(|r| match &r.result_type {
-                CompactResultType::Maxwell(m) => Some(m.bands.iter().map(|b| b.len()).max().unwrap_or(0)),
+                CompactResultType::Maxwell(m) => {
+                    Some(m.bands.iter().map(|b| b.len()).max().unwrap_or(0))
+                }
                 _ => None,
             })
             .max()

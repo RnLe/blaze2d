@@ -56,9 +56,9 @@
 //! let result2 = solve_with_warmstart(&mut operator2, None, &job, &result1.eigenvectors);
 //! ```
 
+use crate::timing::Timer;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use crate::timing::Timer;
 
 use crate::backend::SpectralBackend;
 use crate::diagnostics::{ConvergenceRun, ConvergenceStudy};
