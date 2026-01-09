@@ -4,7 +4,6 @@ Plot Multi-Core Benchmark Results
 
 Generates comparison plots for multi-core benchmarks:
 - Blaze2D (Rayon parallelism, 16 threads)
-- MPB Multiprocess (16 subprocess workers, each single-threaded)
 - MPB OpenBLAS (default OpenBLAS multi-threading)
 
 Output:
@@ -29,7 +28,6 @@ plt.style.use('seaborn-v0_8-whitegrid')
 COLORS = {
     'blaze2d': '#3498DB',           # Blue
     'blaze2d_full': '#1A5276',       # Dark blue (full precision)
-    'mpb_multiprocess': '#E74C3C',  # Red
     'mpb_openblas': '#F39C12',      # Orange
     'speedup': '#2ECC71',           # Green
 }
@@ -37,7 +35,6 @@ COLORS = {
 SOLVER_LABELS = {
     'blaze2d': 'Blaze2D (Mixed f32/f64)',
     'blaze2d_full': 'Blaze2D (Full f64)',
-    'mpb_multiprocess': 'MPB (Multiprocess)',
     'mpb_openblas': 'MPB (OpenBLAS)',
 }
 
@@ -60,7 +57,6 @@ def load_results(results_dir: Path) -> dict:
     results = {
         'blaze2d': {},
         'blaze2d_full': {},
-        'mpb_multiprocess': {},
         'mpb_openblas': {},
     }
     
@@ -76,12 +72,6 @@ def load_results(results_dir: Path) -> dict:
         if blaze_full_file.exists():
             with open(blaze_full_file) as f:
                 results['blaze2d_full'][config] = json.load(f)
-        
-        # Load MPB Multiprocess results
-        mp_file = results_dir / f"mpb_multiprocess_{config}.json"
-        if mp_file.exists():
-            with open(mp_file) as f:
-                results['mpb_multiprocess'][config] = json.load(f)
         
         # Load MPB OpenBLAS results
         ob_file = results_dir / f"mpb_openblas_{config}.json"
@@ -125,7 +115,7 @@ def plot_time_comparison(results: dict, output_dir: Path):
         print("No matching results found for time comparison")
         return
     
-    solvers = [s for s in ['blaze2d', 'mpb_multiprocess', 'mpb_openblas'] 
+    solvers = [s for s in ['blaze2d', 'mpb_openblas'] 
                if any(c in results[s] for c in configs)]
     
     x = np.arange(len(configs))
@@ -170,7 +160,7 @@ def plot_throughput(results: dict, output_dir: Path):
         print("No matching results found for throughput plot")
         return
     
-    solvers = [s for s in ['blaze2d', 'mpb_multiprocess', 'mpb_openblas']
+    solvers = [s for s in ['blaze2d', 'mpb_openblas']
                if any(c in results[s] for c in configs)]
     
     x = np.arange(len(configs))
@@ -217,35 +207,19 @@ def plot_throughput(results: dict, output_dir: Path):
 
 
 def plot_speedup(results: dict, output_dir: Path):
-    """Create speedup bar chart (Blaze2D speedup over both MPB modes)."""
+    """Create speedup bar chart (Blaze2D speedup over MPB OpenBLAS)."""
     fig, ax = plt.subplots(figsize=(12, 7))
     
     configs = get_available_configs(results)
     configs_with_all = [c for c in configs 
-                        if c in results['blaze2d'] and 
-                        (c in results['mpb_multiprocess'] or c in results['mpb_openblas'])]
+                        if c in results['blaze2d'] and c in results['mpb_openblas']]
     
     if not configs_with_all:
         print("No matching results found for speedup plot")
         return
     
     x = np.arange(len(configs_with_all))
-    width = 0.35
-    
-    # Speedup vs MPB Multiprocess
-    speedups_mp = []
-    speedup_errs_mp = []
-    for config in configs_with_all:
-        if config in results['mpb_multiprocess'] and config in results['blaze2d']:
-            mpb = results['mpb_multiprocess'][config]
-            blaze = results['blaze2d'][config]
-            sp, sp_err = compute_speedup(mpb['mean_ms'], mpb['std_ms'],
-                                         blaze['mean_ms'], blaze['std_ms'])
-            speedups_mp.append(sp)
-            speedup_errs_mp.append(sp_err)
-        else:
-            speedups_mp.append(0)
-            speedup_errs_mp.append(0)
+    width = 0.5
     
     # Speedup vs MPB OpenBLAS
     speedups_ob = []
@@ -263,22 +237,11 @@ def plot_speedup(results: dict, output_dir: Path):
             speedup_errs_ob.append(0)
     
     # Plot bars
-    if any(s > 0 for s in speedups_mp):
-        bars1 = ax.bar(x - width/2, speedups_mp, width, yerr=speedup_errs_mp,
-                      label='vs MPB Multiprocess', color=COLORS['mpb_multiprocess'],
-                      capsize=4, alpha=0.8)
-        for bar, sp in zip(bars1, speedups_mp):
-            if sp > 0:
-                ax.annotate(f'{sp:.2f}×',
-                           xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
-                           xytext=(0, 3), textcoords="offset points",
-                           ha='center', va='bottom', fontsize=10, fontweight='bold')
-    
     if any(s > 0 for s in speedups_ob):
-        bars2 = ax.bar(x + width/2, speedups_ob, width, yerr=speedup_errs_ob,
+        bars = ax.bar(x, speedups_ob, width, yerr=speedup_errs_ob,
                       label='vs MPB OpenBLAS', color=COLORS['mpb_openblas'],
                       capsize=4, alpha=0.8)
-        for bar, sp in zip(bars2, speedups_ob):
+        for bar, sp in zip(bars, speedups_ob):
             if sp > 0:
                 ax.annotate(f'{sp:.2f}×',
                            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
@@ -311,14 +274,14 @@ def plot_summary(results: dict, output_dir: Path):
         print("No matching results found for summary plot")
         return
     
-    solvers = [s for s in ['blaze2d', 'mpb_multiprocess', 'mpb_openblas']
+    solvers = [s for s in ['blaze2d', 'mpb_openblas']
                if any(c in results[s] for c in configs)]
     
     # Left: Throughput comparison
     ax1 = axes[0]
     x = np.arange(len(configs))
-    width = 0.25
-    offsets = np.linspace(-width, width, len(solvers))
+    width = 0.35
+    offsets = np.linspace(-width/2, width/2, len(solvers))
     
     for i, solver in enumerate(solvers):
         throughputs = []
@@ -343,44 +306,37 @@ def plot_summary(results: dict, output_dir: Path):
     # Right: Speedup
     ax2 = axes[1]
     
-    # Calculate average speedups
-    avg_speedups = {}
-    for baseline in ['mpb_multiprocess', 'mpb_openblas']:
-        speedups = []
-        for config in configs:
-            if config in results['blaze2d'] and config in results[baseline]:
-                blaze = results['blaze2d'][config]
-                mpb = results[baseline][config]
-                sp, _ = compute_speedup(mpb['mean_ms'], mpb['std_ms'],
-                                        blaze['mean_ms'], blaze['std_ms'])
-                if sp > 0 and sp < float('inf'):
-                    speedups.append(sp)
-        if speedups:
-            avg_speedups[baseline] = np.mean(speedups)
+    # Calculate average speedup vs OpenBLAS
+    speedups = []
+    for config in configs:
+        if config in results['blaze2d'] and config in results['mpb_openblas']:
+            blaze = results['blaze2d'][config]
+            mpb = results['mpb_openblas'][config]
+            sp, _ = compute_speedup(mpb['mean_ms'], mpb['std_ms'],
+                                    blaze['mean_ms'], blaze['std_ms'])
+            if sp > 0 and sp < float('inf'):
+                speedups.append(sp)
     
-    if avg_speedups:
-        baselines = list(avg_speedups.keys())
-        speedup_vals = [avg_speedups[b] for b in baselines]
-        colors = [COLORS[b] for b in baselines]
-        labels = ['vs ' + SOLVER_LABELS[b].split('(')[1].rstrip(')') for b in baselines]
+    if speedups:
+        avg_speedup = np.mean(speedups)
         
-        bars = ax2.bar(range(len(baselines)), speedup_vals, color=colors, alpha=0.8,
+        bars = ax2.bar([0], [avg_speedup], color=COLORS['mpb_openblas'], alpha=0.8,
                       edgecolor='black', linewidth=1)
         ax2.axhline(y=1, color='gray', linestyle='--', linewidth=1, alpha=0.7)
         
-        ax2.set_xticks(range(len(baselines)))
-        ax2.set_xticklabels(labels, fontsize=10)
+        ax2.set_xticks([0])
+        ax2.set_xticklabels(['vs OpenBLAS'], fontsize=10)
         ax2.set_ylabel('Average Speedup', fontsize=11)
         ax2.set_title('Blaze2D Average Speedup', fontsize=12, fontweight='bold')
         ax2.set_ylim(bottom=0)
         
-        for bar, sp in zip(bars, speedup_vals):
-            ax2.annotate(f'{sp:.2f}×',
+        for bar in bars:
+            ax2.annotate(f'{avg_speedup:.2f}×',
                         xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
                         xytext=(0, 3), textcoords="offset points",
                         ha='center', va='bottom', fontsize=12, fontweight='bold')
     
-    fig.suptitle('Multi-Core Benchmark: Blaze2D vs MPB (16 threads/workers)',
+    fig.suptitle('Multi-Core Benchmark: Blaze2D vs MPB (16 threads)',
                  fontsize=14, fontweight='bold', y=1.02)
     
     plt.tight_layout()
@@ -394,18 +350,16 @@ def print_summary_table(results: dict):
     """Print a summary table to console."""
     configs = get_available_configs(results)
     
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 80)
     print("MULTI-CORE BENCHMARK SUMMARY")
-    print("=" * 100)
-    print(f"{'Config':<12} {'Blaze2D':<18} {'MPB Multiproc':<18} {'MPB OpenBLAS':<18} {'Speedup (vs MP)':<15}")
-    print("-" * 100)
+    print("=" * 80)
+    print(f"{'Config':<12} {'Blaze2D':<18} {'MPB OpenBLAS':<18} {'Speedup':<15}")
+    print("-" * 80)
     
-    all_speedups_mp = []
     all_speedups_ob = []
     
     for config in configs:
         blaze_str = "N/A"
-        mp_str = "N/A"
         ob_str = "N/A"
         sp_str = "N/A"
         
@@ -413,39 +367,25 @@ def print_summary_table(results: dict):
             d = results['blaze2d'][config]
             blaze_str = f"{d['mean_ms']:>6.1f} ± {d['std_ms']:<5.1f}"
         
-        if config in results['mpb_multiprocess']:
-            d = results['mpb_multiprocess'][config]
-            mp_str = f"{d['mean_ms']:>6.1f} ± {d['std_ms']:<5.1f}"
-        
         if config in results['mpb_openblas']:
             d = results['mpb_openblas'][config]
             ob_str = f"{d['mean_ms']:>6.1f} ± {d['std_ms']:<5.1f}"
         
-        # Calculate speedup vs multiprocess
-        if config in results['blaze2d'] and config in results['mpb_multiprocess']:
-            blaze = results['blaze2d'][config]
-            mpb = results['mpb_multiprocess'][config]
-            sp, sp_err = compute_speedup(mpb['mean_ms'], mpb['std_ms'],
-                                         blaze['mean_ms'], blaze['std_ms'])
-            sp_str = f"{sp:>5.2f}×"
-            all_speedups_mp.append(sp)
-        
+        # Calculate speedup vs OpenBLAS
         if config in results['blaze2d'] and config in results['mpb_openblas']:
             blaze = results['blaze2d'][config]
             mpb = results['mpb_openblas'][config]
             sp, _ = compute_speedup(mpb['mean_ms'], mpb['std_ms'],
                                     blaze['mean_ms'], blaze['std_ms'])
+            sp_str = f"{sp:>5.2f}×"
             all_speedups_ob.append(sp)
         
-        print(f"{CONFIG_LABELS[config]:<12} {blaze_str:<18} {mp_str:<18} {ob_str:<18} {sp_str:<15}")
+        print(f"{CONFIG_LABELS[config]:<12} {blaze_str:<18} {ob_str:<18} {sp_str:<15}")
     
-    print("-" * 100)
-    avg_mp = np.mean(all_speedups_mp) if all_speedups_mp else 0
+    print("-" * 80)
     avg_ob = np.mean(all_speedups_ob) if all_speedups_ob else 0
-    print(f"{'Average':<12} {'':<18} {'':<18} {'':<18} {avg_mp:>5.2f}×")
-    if all_speedups_ob:
-        print(f"{'(vs OpenBLAS)':<12} {'':<18} {'':<18} {'':<18} {avg_ob:>5.2f}×")
-    print("=" * 100)
+    print(f"{'Average':<12} {'':<18} {'':<18} {avg_ob:>5.2f}×")
+    print("=" * 80)
 
 
 def main():
