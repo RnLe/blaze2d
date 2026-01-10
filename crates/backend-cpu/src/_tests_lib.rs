@@ -81,7 +81,7 @@ fn validate_uniform_reference(mpb_file: &str, polarization: Polarization) {
         let kp = &reference.k_path[idx];
         let bloch = [2.0 * PI * kp.kx, 2.0 * PI * kp.ky];
         let bloch_norm = (bloch[0] * bloch[0] + bloch[1] * bloch[1]).sqrt();
-        let gamma_context = GammaContext::new(eigen_opts.gamma.should_deflate(bloch_norm));
+        let gamma_context = eigen_opts.gamma.context_for_bloch(bloch_norm);
         let mut theta =
             ThetaOperator::new(CpuBackend::new(), dielectric.clone(), polarization, bloch);
         let result = solve_lowest_eigenpairs(
@@ -251,12 +251,13 @@ fn gamma_deflation_removes_constant_mode() {
         &mut laplacian,
         &opts,
         None,
-        GammaContext::default(),
+        GammaContext::gamma_without_deflation(),
         None,
         None,
         None,
         None,
     );
+    dbg!(&baseline.omegas);
     assert!(
         baseline.omegas[0] < 5e-5,
         "should capture zero band without deflation (got {:.3e})",

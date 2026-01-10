@@ -155,6 +155,7 @@ fn diagonal_operator_recovers_sorted_bands() {
         None,
         None,
     );
+    println!("diag result omegas = {:?}, iterations = {}", result.omegas, result.iterations);
     approx_eq(&result.omegas, &[0.5, 1.0, 2.0], 1e-9);
     assert!(result.iterations <= opts.max_iter);
 }

@@ -15,8 +15,8 @@ use crate::{
     backend::{SpectralBackend, SpectralBuffer},
     dielectric::{Dielectric2D, DielectricOptions},
     eigensolver::{
-        DeflationWorkspace, EigenOptions, GammaContext, PreconditionerKind,
-        ResidualSnapshotRequest, solve_lowest_eigenpairs,
+        DeflationWorkspace, EigenOptions, PreconditionerKind, ResidualSnapshotRequest,
+        solve_lowest_eigenpairs,
     },
     field::Field2D,
     geometry::Geometry2D,
@@ -622,7 +622,7 @@ fn run_impl_inner<B: SpectralBackend + Clone>(
             }
         }
         let bloch_norm = (bloch[0] * bloch[0] + bloch[1] * bloch[1]).sqrt();
-        let gamma_context = GammaContext::new(job.eigensolver.gamma.should_deflate(bloch_norm));
+        let gamma_context = job.eigensolver.gamma.context_for_bloch(bloch_norm);
         let workspace_ref: Option<&DeflationWorkspace<B>> = None;
         let deflation_size = 0;
         let warm_slice = if warm_start_limit > 0 && !warm_start_store.is_empty() {
