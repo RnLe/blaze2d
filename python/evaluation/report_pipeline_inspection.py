@@ -70,7 +70,9 @@ class Summary:
         }
 
 
-def safe_float(value: str) -> float:
+def safe_float(value: Optional[str]) -> float:
+    if value is None:
+        return math.nan
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -311,6 +313,10 @@ class IterationReport:
     projection_dims: Optional[Dict[str, Dict[str, float]]] = None
     projection_condition: Optional[Dict[str, float]] = None
     projection_fallbacks: int = 0
+    projection_history: Optional[Dict[str, float]] = None
+    projection_requested: Optional[Dict[str, float]] = None
+    projection_min_mass: Optional[Dict[str, float]] = None
+    projection_max_mass: Optional[Dict[str, float]] = None
 
 
 @dataclass
@@ -337,6 +343,10 @@ def analyze_iteration_trace(path: Path) -> IterationReport:
     projection_orig = Summary()
     projection_reduced = Summary()
     projection_condition = Summary()
+    projection_history = Summary()
+    projection_requested = Summary()
+    projection_min_mass = Summary()
+    projection_max_mass = Summary()
     projection_fallbacks = 0
     preconditioner_trials = 0
     for row in load_csv(path):
@@ -350,6 +360,10 @@ def analyze_iteration_trace(path: Path) -> IterationReport:
         projection_orig.add(safe_float(row.get("projection_original_dim")))
         projection_reduced.add(safe_float(row.get("projection_reduced_dim")))
         projection_condition.add(safe_float(row.get("projection_condition_estimate")))
+        projection_history.add(safe_float(row.get("projection_history_dim")))
+        projection_requested.add(safe_float(row.get("projection_requested_dim")))
+        projection_min_mass.add(safe_float(row.get("projection_min_mass_eigenvalue")))
+        projection_max_mass.add(safe_float(row.get("projection_max_mass_eigenvalue")))
         if row.get("projection_fallback_used") not in {None, "", "0", "False", "false"}:
             projection_fallbacks += 1
     zig_zag = 0
@@ -374,6 +388,10 @@ def analyze_iteration_trace(path: Path) -> IterationReport:
         },
         projection_condition=projection_condition.describe(),
         projection_fallbacks=projection_fallbacks,
+        projection_history=projection_history.describe(),
+        projection_requested=projection_requested.describe(),
+        projection_min_mass=projection_min_mass.describe(),
+        projection_max_mass=projection_max_mass.describe(),
     )
 
 
@@ -499,14 +517,46 @@ class PipelineReport:
             and trace.projection_condition.get("max", math.inf) > 1e10
         ]
         for trace in noisy_projection:
-            cond = trace.projection_condition.get("max", math.nan)
+            cond_stats = trace.projection_condition or {}
+            cond = cond_stats.get("max", math.nan)
             self.warnings.append(
                 f"Ill-conditioned Rayleigh–Ritz mass matrix (cond≈{cond:.2e}) in {Path(trace.path).name}"
             )
         fallback_traces = [trace for trace in self.iterations if trace.projection_fallbacks > 0]
         for trace in fallback_traces:
+            frac = trace.projection_fallbacks / max(1, trace.iterations)
             self.warnings.append(
-                f"Rayleigh–Ritz fallback used {trace.projection_fallbacks}× in {Path(trace.path).name}"
+                f"Rayleigh–Ritz fallback used {trace.projection_fallbacks}× ({frac:.0%}) in {Path(trace.path).name}"
+            )
+        near_singular = []
+        for trace in self.iterations:
+            min_stats = trace.projection_min_mass
+            if not min_stats:
+                continue
+            lam_min = min_stats.get("min")
+            if lam_min is None or not math.isfinite(lam_min) or lam_min >= 1e-8:
+                continue
+            near_singular.append((trace, lam_min))
+        for trace, lam_min in near_singular:
+            self.warnings.append(
+                f"Rayleigh–Ritz min λ_mass≈{lam_min:.2e} (possible nullspace) in {Path(trace.path).name}"
+            )
+        trimmed = []
+        for trace in self.iterations:
+            dims = trace.projection_dims or {}
+            orig_stats = dims.get("original")
+            reduced_stats = dims.get("reduced")
+            orig_val = pick_stat(orig_stats)
+            reduced_val = pick_stat(reduced_stats)
+            if not (math.isfinite(orig_val) and math.isfinite(reduced_val) and orig_val > 0):
+                continue
+            ratio = reduced_val / orig_val
+            if ratio < 0.75:
+                trimmed.append((trace, ratio))
+        for trace, ratio in trimmed:
+            loss = 1 - ratio
+            self.warnings.append(
+                f"Rayleigh–Ritz projection trims {loss:.0%} of the subspace in {Path(trace.path).name}"
             )
         if self.fft_raw:
             raw_min = (self.fft_raw.raw or {}).get("min") if self.fft_raw.raw else None
@@ -538,6 +588,18 @@ def format_stats(title: str, stats: Optional[Dict[str, float]]) -> str:
         f"  {title}: min={stats['min']:.3e}, max={stats['max']:.3e}, "
         f"mean={stats['mean']:.3e}, p99={stats['p99']:.3e}"
     )
+
+
+def pick_stat(stats: Optional[Dict[str, float]], primary: str = "median", fallback: str = "mean") -> float:
+    if not stats:
+        return math.nan
+    first = stats.get(primary)
+    if first is not None and math.isfinite(first):
+        return first
+    second = stats.get(fallback)
+    if second is not None and math.isfinite(second):
+        return second
+    return math.nan
 
 
 def render_report(report: PipelineReport) -> str:
@@ -650,18 +712,43 @@ def render_report(report: PipelineReport) -> str:
             if trace.projection_condition:
                 cond = trace.projection_condition
                 lines.append(
-                    f"      projection cond: min={cond['min']:.2e}, max={cond['max']:.2e}"
+                    f"      projection cond: min={cond.get('min', math.nan):.2e}, max={cond.get('max', math.nan):.2e}"
                 )
+            dims_line = None
             if trace.projection_dims:
-                orig = trace.projection_dims.get("original", {})
-                reduced = trace.projection_dims.get("reduced", {})
-                if orig and reduced:
-                    lines.append(
-                        f"      projection dims: orig~{orig.get('median', orig.get('mean', math.nan)):.1f} "
-                        f"→ reduced~{reduced.get('median', reduced.get('mean', math.nan)):.1f}"
-                    )
+                orig_stats = trace.projection_dims.get("original")
+                reduced_stats = trace.projection_dims.get("reduced")
+                orig_val = pick_stat(orig_stats)
+                reduced_val = pick_stat(reduced_stats)
+                if math.isfinite(orig_val) and math.isfinite(reduced_val):
+                    dims_line = f"      projection dims: orig~{orig_val:.1f} → reduced~{reduced_val:.1f}"
+                    extras: List[str] = []
+                    req_val = pick_stat(trace.projection_requested)
+                    if math.isfinite(req_val):
+                        extras.append(f"req~{req_val:.1f}")
+                    history_val = pick_stat(trace.projection_history)
+                    if math.isfinite(history_val):
+                        extras.append(f"history~{history_val:.1f}")
+                    if extras:
+                        dims_line += " (" + ", ".join(extras) + ")"
+            if dims_line:
+                lines.append(dims_line)
+            mass_line_bits: List[str] = []
+            min_stats = trace.projection_min_mass or {}
+            max_stats = trace.projection_max_mass or {}
+            lam_min = min_stats.get("min")
+            lam_max = max_stats.get("max")
+            if lam_min is not None and math.isfinite(lam_min):
+                mass_line_bits.append(f"λ_min={lam_min:.2e}")
+            if lam_max is not None and math.isfinite(lam_max):
+                mass_line_bits.append(f"λ_max={lam_max:.2e}")
+            if mass_line_bits:
+                lines.append("      projection mass: " + ", ".join(mass_line_bits))
             if trace.projection_fallbacks:
-                lines.append(f"      projection fallbacks: {trace.projection_fallbacks}")
+                frac = trace.projection_fallbacks / max(1, trace.iterations)
+                lines.append(
+                    f"      projection fallbacks: {trace.projection_fallbacks} ({frac:.0%})"
+                )
     lines.append("")
     return "\n".join(lines)
 
