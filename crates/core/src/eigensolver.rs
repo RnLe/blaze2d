@@ -617,8 +617,9 @@ where
     );
     #[cfg(test)]
     eprintln!(
-        "[eigensolver-debug] initial block size={} requested={}", 
-        x_entries.len(), block_size
+        "[eigensolver-debug] initial block size={} requested={}",
+        x_entries.len(),
+        block_size
     );
     #[cfg(test)]
     if operator.grid().len() <= 4 {
@@ -1121,8 +1122,19 @@ fn enforce_constraints<O, B>(
         operator.apply_mass(vector, mass_vector);
     }
     if let Some(mode) = gamma_mode {
-        reorthogonalize_with_mass(operator.backend(), vector, &mode.vector, &mode.mass_vector);
-        operator.apply_mass(vector, mass_vector);
+        let mut passes = 0;
+        loop {
+            reorthogonalize_with_mass(operator.backend(), vector, &mode.vector, &mode.mass_vector);
+            operator.apply_mass(vector, mass_vector);
+            let overlap = operator
+                .backend()
+                .dot(vector, &mode.mass_vector)
+                .norm();
+            passes += 1;
+            if overlap <= 1e-12 || passes >= 3 {
+                break;
+            }
+        }
     }
     if let Some(space) = deflation {
         space.project(operator.backend(), vector, mass_vector);
@@ -1458,7 +1470,11 @@ where
         if dim <= 4 {
             eprintln!(
                 "[rayleigh-ritz-debug] dim={} values={:?} reduced={} requested={} fallback={}",
-                dim, final_values, final_stats.reduced_dim, final_stats.requested_dim, fallback_used
+                dim,
+                final_values,
+                final_stats.reduced_dim,
+                final_stats.requested_dim,
+                fallback_used
             );
         }
     }
@@ -2408,12 +2424,24 @@ fn reorthogonalize_block<O, B>(
             let (earlier, rest) = block.split_at_mut(idx);
             let entry = &mut rest[0];
 
-            project_against_entries(backend, &mut entry.vector, &mut entry.mass, reference);
-            project_against_entries(backend, &mut entry.vector, &mut entry.mass, earlier);
-            let norm = normalize_with_mass_precomputed(backend, &mut entry.vector, &mut entry.mass);
-            if norm <= 1e-12 {
-                remove = true;
-            } else {
+            const MAX_REORTHOG_PASSES: usize = 3;
+            const OVERLAP_TOL: f64 = 1e-12;
+
+            for _ in 0..MAX_REORTHOG_PASSES {
+                project_against_entries(backend, &mut entry.vector, &mut entry.mass, reference);
+                project_against_entries(backend, &mut entry.vector, &mut entry.mass, earlier);
+                let norm =
+                    normalize_with_mass_precomputed(backend, &mut entry.vector, &mut entry.mass);
+                if norm <= 1e-12 {
+                    remove = true;
+                    break;
+                }
+                let overlap = max_mass_overlap(backend, entry, reference, earlier);
+                if overlap <= OVERLAP_TOL {
+                    break;
+                }
+            }
+            if !remove {
                 zero_buffer(entry.applied.as_mut_slice());
                 operator.apply(&entry.vector, &mut entry.applied);
             }
@@ -2424,6 +2452,19 @@ fn reorthogonalize_block<O, B>(
             idx += 1;
         }
     }
+}
+
+fn max_mass_overlap<B: SpectralBackend>(
+    backend: &B,
+    entry: &BlockEntry<B>,
+    reference: &[BlockEntry<B>],
+    earlier: &[BlockEntry<B>],
+) -> f64 {
+    reference
+        .iter()
+        .chain(earlier.iter())
+        .map(|basis| backend.dot(&entry.vector, &basis.mass).norm())
+        .fold(0.0, f64::max)
 }
 
 fn finalize_modes<O, B>(
