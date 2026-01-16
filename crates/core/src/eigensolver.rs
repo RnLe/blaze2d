@@ -617,8 +617,9 @@ where
     );
     #[cfg(test)]
     eprintln!(
-        "[eigensolver-debug] initial block size={} requested={}", 
-        x_entries.len(), block_size
+        "[eigensolver-debug] initial block size={} requested={}",
+        x_entries.len(),
+        block_size
     );
     #[cfg(test)]
     if operator.grid().len() <= 4 {
@@ -1121,8 +1122,19 @@ fn enforce_constraints<O, B>(
         operator.apply_mass(vector, mass_vector);
     }
     if let Some(mode) = gamma_mode {
-        reorthogonalize_with_mass(operator.backend(), vector, &mode.vector, &mode.mass_vector);
-        operator.apply_mass(vector, mass_vector);
+        let mut passes = 0;
+        loop {
+            reorthogonalize_with_mass(operator.backend(), vector, &mode.vector, &mode.mass_vector);
+            operator.apply_mass(vector, mass_vector);
+            let overlap = operator
+                .backend()
+                .dot(vector, &mode.mass_vector)
+                .norm();
+            passes += 1;
+            if overlap <= 1e-12 || passes >= 3 {
+                break;
+            }
+        }
     }
     if let Some(space) = deflation {
         space.project(operator.backend(), vector, mass_vector);
@@ -1458,7 +1470,11 @@ where
         if dim <= 4 {
             eprintln!(
                 "[rayleigh-ritz-debug] dim={} values={:?} reduced={} requested={} fallback={}",
-                dim, final_values, final_stats.reduced_dim, final_stats.requested_dim, fallback_used
+                dim,
+                final_values,
+                final_stats.reduced_dim,
+                final_stats.requested_dim,
+                fallback_used
             );
         }
     }
@@ -1886,8 +1902,10 @@ impl ProjectionStats {
         if self.original_dim == 0 {
             return false;
         }
-        let min_required = self.requested_dim.min(self.original_dim).max(1);
-        self.reduced_dim >= min_required
+        // Even if stabilization trims the subspace below the requested
+        // dimension, proceed as long as we have at least one stable
+        // direction; otherwise, fall back to a safer solve path.
+        self.reduced_dim > 0
     }
 
     fn to_public(self, history_dim: usize, fallback_used: bool) -> ProjectionDiagnostics {
@@ -1927,6 +1945,7 @@ fn stabilize_projected_system(
     let (mass_vals, mass_vecs) = jacobi_eigendecomposition(mass_block, block_dim, tol);
     let mut min_mass_eval = f64::INFINITY;
     let mut max_mass_eval = 0.0_f64;
+    let mut has_small_or_negative = false;
     for &val in &mass_vals {
         if val > 0.0 {
             if val < min_mass_eval {
@@ -1935,15 +1954,29 @@ fn stabilize_projected_system(
             if val > max_mass_eval {
                 max_mass_eval = val;
             }
+        } else if val.is_finite() {
+            has_small_or_negative = true;
         }
     }
-    if dim <= want.max(1) {
+    let max_val = mass_vals.iter().cloned().fold(0.0_f64, f64::max);
+    if max_val <= 0.0 {
+        return None;
+    }
+    const REL_TOL: f64 = 1e-8;
+    const ABS_TOL: f64 = 1e-12;
+    let cutoff = (max_val * REL_TOL).max(ABS_TOL);
+    let cond = if has_small_or_negative || min_mass_eval <= cutoff {
+        f64::INFINITY
+    } else if min_mass_eval > 0.0 {
+        max_mass_eval / min_mass_eval
+    } else {
+        f64::INFINITY
+    };
+    let can_skip_stabilization =
+        dim <= want.max(1) && min_mass_eval > cutoff && cond <= PROJECTION_CONDITION_LIMIT;
+    if can_skip_stabilization {
         stats.reduced_dim = dim;
-        stats.min_mass_eigenvalue = if min_mass_eval.is_finite() {
-            min_mass_eval
-        } else {
-            0.0
-        };
+        stats.min_mass_eigenvalue = min_mass_eval;
         stats.max_mass_eigenvalue = max_mass_eval;
         let mut transform = vec![Complex64::default(); dim * dim];
         for i in 0..dim {
@@ -1959,13 +1992,6 @@ fn stabilize_projected_system(
             stats,
         ));
     }
-    let max_val = mass_vals.iter().cloned().fold(0.0_f64, f64::max);
-    if max_val <= 0.0 {
-        return None;
-    }
-    const REL_TOL: f64 = 1e-8;
-    const ABS_TOL: f64 = 1e-12;
-    let cutoff = (max_val * REL_TOL).max(ABS_TOL);
     let mut selected: Vec<(usize, f64)> = mass_vals
         .iter()
         .enumerate()
@@ -2041,19 +2067,72 @@ fn stabilize_projected_system(
     if !stats.min_mass_eigenvalue.is_finite() {
         stats.min_mass_eigenvalue = 0.0;
     }
-    let reduced_dim = columns.len();
+    let mut reduced_dim = columns.len();
     let mut transform = vec![Complex64::default(); dim * reduced_dim];
     for (col_idx, data) in columns.iter().enumerate() {
         for row in 0..dim {
             transform[row * reduced_dim + col_idx] = data[row];
         }
     }
-    let temp_op = complex_matmul(dim, dim, reduced_dim, op_proj, &transform);
-    let op_reduced =
+
+    let mut temp_op = complex_matmul(dim, dim, reduced_dim, op_proj, &transform);
+    let mut op_reduced =
         complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
-    let temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
-    let mass_reduced =
+    let mut temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
+    let mut mass_reduced =
         complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_mass);
+
+    // Drop directions whose reduced mass eigenvalues fall below the cutoff to
+    // avoid feeding nearly singular systems into the generalized eigen solve.
+    let (mass_eval_block, _) = jacobi_eigendecomposition(
+        expand_complex_hermitian(&mass_reduced, reduced_dim),
+        reduced_dim * 2,
+        tol,
+    );
+    let filtered_indices: Vec<usize> = mass_eval_block
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &val)| if val > cutoff { Some(idx) } else { None })
+        .collect();
+    if filtered_indices.len() < reduced_dim && !filtered_indices.is_empty() {
+        let new_dim = filtered_indices.len();
+        let mut filtered_transform = vec![Complex64::default(); dim * new_dim];
+        for (out_col, &keep_idx) in filtered_indices.iter().enumerate() {
+            for row in 0..dim {
+                filtered_transform[row * new_dim + out_col] =
+                    transform[row * reduced_dim + keep_idx];
+            }
+        }
+        transform = filtered_transform;
+        reduced_dim = new_dim;
+        temp_op = complex_matmul(dim, dim, reduced_dim, op_proj, &transform);
+        op_reduced = complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
+        temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
+        mass_reduced =
+            complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_mass);
+    }
+    let final_mass_evals = jacobi_eigendecomposition(
+        expand_complex_hermitian(&mass_reduced, reduced_dim),
+        reduced_dim * 2,
+        tol,
+    )
+    .0;
+    stats.reduced_dim = reduced_dim;
+    stats.min_mass_eigenvalue = final_mass_evals
+        .iter()
+        .cloned()
+        .filter(|v| *v > 0.0)
+        .fold(f64::INFINITY, f64::min);
+    if !stats.min_mass_eigenvalue.is_finite() {
+        stats.min_mass_eigenvalue = 0.0;
+    }
+    stats.max_mass_eigenvalue = final_mass_evals
+        .iter()
+        .cloned()
+        .fold(0.0_f64, f64::max);
+    if has_small_or_negative {
+        stats.min_mass_eigenvalue = 0.0;
+    }
     Some((
         StabilizedProjection {
             op_matrix: op_reduced,
@@ -2408,12 +2487,24 @@ fn reorthogonalize_block<O, B>(
             let (earlier, rest) = block.split_at_mut(idx);
             let entry = &mut rest[0];
 
-            project_against_entries(backend, &mut entry.vector, &mut entry.mass, reference);
-            project_against_entries(backend, &mut entry.vector, &mut entry.mass, earlier);
-            let norm = normalize_with_mass_precomputed(backend, &mut entry.vector, &mut entry.mass);
-            if norm <= 1e-12 {
-                remove = true;
-            } else {
+            const MAX_REORTHOG_PASSES: usize = 3;
+            const OVERLAP_TOL: f64 = 1e-12;
+
+            for _ in 0..MAX_REORTHOG_PASSES {
+                project_against_entries(backend, &mut entry.vector, &mut entry.mass, reference);
+                project_against_entries(backend, &mut entry.vector, &mut entry.mass, earlier);
+                let norm =
+                    normalize_with_mass_precomputed(backend, &mut entry.vector, &mut entry.mass);
+                if norm <= 1e-12 {
+                    remove = true;
+                    break;
+                }
+                let overlap = max_mass_overlap(backend, entry, reference, earlier);
+                if overlap <= OVERLAP_TOL {
+                    break;
+                }
+            }
+            if !remove {
                 zero_buffer(entry.applied.as_mut_slice());
                 operator.apply(&entry.vector, &mut entry.applied);
             }
@@ -2424,6 +2515,19 @@ fn reorthogonalize_block<O, B>(
             idx += 1;
         }
     }
+}
+
+fn max_mass_overlap<B: SpectralBackend>(
+    backend: &B,
+    entry: &BlockEntry<B>,
+    reference: &[BlockEntry<B>],
+    earlier: &[BlockEntry<B>],
+) -> f64 {
+    reference
+        .iter()
+        .chain(earlier.iter())
+        .map(|basis| backend.dot(&entry.vector, &basis.mass).norm())
+        .fold(0.0, f64::max)
 }
 
 fn finalize_modes<O, B>(
@@ -2862,5 +2966,132 @@ mod eigensolver_internal_tests {
         assert_eq!(opts.effective_block_size(), 7);
         opts.block_size = 10;
         assert_eq!(opts.effective_block_size(), 10);
+    }
+}
+
+#[cfg(test)]
+mod projection_stability_tests {
+    use super::rayleigh_ritz;
+    use super::Complex64;
+    use super::{BlockEntry, LinearOperator, SpectralBackend};
+    use crate::field::Field2D;
+    use crate::grid::Grid2D;
+
+    #[derive(Clone, Copy, Default)]
+    struct IdentityBackend;
+
+    impl SpectralBackend for IdentityBackend {
+        type Buffer = Field2D;
+
+        fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {
+            Field2D::zeros(grid)
+        }
+
+        fn forward_fft_2d(&self, _buffer: &mut Self::Buffer) {}
+
+        fn inverse_fft_2d(&self, _buffer: &mut Self::Buffer) {}
+
+        fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
+            for value in buffer.as_mut_slice() {
+                *value *= alpha;
+            }
+        }
+
+        fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+            for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
+                *dst += alpha * src;
+            }
+        }
+
+        fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+            x.as_slice()
+                .iter()
+                .zip(y.as_slice())
+                .map(|(a, b)| a.conj() * b)
+                .sum()
+        }
+    }
+
+    struct IdentityOp {
+        backend: IdentityBackend,
+        grid: Grid2D,
+    }
+
+    impl IdentityOp {
+        fn new(size: usize) -> Self {
+            Self {
+                backend: IdentityBackend,
+                grid: Grid2D::new(size, 1, 1.0, 1.0),
+            }
+        }
+    }
+
+    impl LinearOperator<IdentityBackend> for IdentityOp {
+        fn apply(&mut self, input: &Field2D, output: &mut Field2D) {
+            output.as_mut_slice().copy_from_slice(input.as_slice());
+        }
+
+        fn apply_mass(&mut self, input: &Field2D, output: &mut Field2D) {
+            output.as_mut_slice().copy_from_slice(input.as_slice());
+        }
+
+        fn alloc_field(&self) -> Field2D {
+            self.backend.alloc_field(self.grid)
+        }
+
+        fn backend(&self) -> &IdentityBackend {
+            &self.backend
+        }
+
+        fn backend_mut(&mut self) -> &mut IdentityBackend {
+            &mut self.backend
+        }
+
+        fn grid(&self) -> Grid2D {
+            self.grid
+        }
+    }
+
+    #[test]
+    fn trims_singular_mass_when_dim_matches_request() {
+        let mut op = IdentityOp::new(2);
+
+        let mut v1 = op.alloc_field();
+        v1.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+        let mut m1 = op.alloc_field();
+        op.apply_mass(&v1, &mut m1);
+        let mut a1 = op.alloc_field();
+        op.apply(&v1, &mut a1);
+
+        let mut v2 = op.alloc_field();
+        // Deliberately inject a nearly null direction to emulate a singular
+        // mass matrix.
+        v2.as_mut_slice()[0] = Complex64::new(0.0, 0.0);
+        v2.as_mut_slice()[1] = Complex64::new(0.0, 0.0);
+        let mut m2 = op.alloc_field();
+        op.apply_mass(&v2, &mut m2);
+        let mut a2 = op.alloc_field();
+        op.apply(&v2, &mut a2);
+
+        let entries = vec![
+            BlockEntry {
+                vector: v1,
+                mass: m1,
+                applied: a1,
+            },
+            BlockEntry {
+                vector: v2,
+                mass: m2,
+                applied: a2,
+            },
+        ];
+        let subspace = super::build_subspace_entries(&entries, &[], &[]);
+
+        let (values, _, diag) = rayleigh_ritz(&mut op, &subspace, 2, 0, 1e-12);
+
+        assert!(diag.min_mass_eigenvalue == 0.0);
+        assert!(diag.condition_estimate.is_infinite());
+        assert!(diag.fallback_used, "unstable mass matrix should trigger fallback");
+        assert!(values.len() >= 1, "at least one mode should survive");
     }
 }
