@@ -1962,8 +1962,12 @@ fn stabilize_projected_system(
     if max_val <= 0.0 {
         return None;
     }
-    const REL_TOL: f64 = 1e-8;
-    const ABS_TOL: f64 = 1e-12;
+    // Filter out directions whose mass eigenvalues are too small to yield a
+    // well-conditioned projected problem. A slightly more aggressive cutoff
+    // helps prevent the Rayleigh–Ritz stage from injecting wildly scaled
+    // vectors when the block has accumulated near-null directions.
+    const REL_TOL: f64 = 1e-6;
+    const ABS_TOL: f64 = 1e-10;
     let cutoff = (max_val * REL_TOL).max(ABS_TOL);
     let cond = if has_small_or_negative || min_mass_eval <= cutoff {
         f64::INFINITY
@@ -2132,6 +2136,17 @@ fn stabilize_projected_system(
         .fold(0.0_f64, f64::max);
     if has_small_or_negative {
         stats.min_mass_eigenvalue = 0.0;
+    }
+    if stats.reduced_dim < min_required {
+        return None;
+    }
+    let final_cond = if stats.min_mass_eigenvalue > 0.0 {
+        stats.max_mass_eigenvalue / stats.min_mass_eigenvalue
+    } else {
+        f64::INFINITY
+    };
+    if !final_cond.is_finite() || final_cond > PROJECTION_CONDITION_LIMIT {
+        return None;
     }
     Some((
         StabilizedProjection {
