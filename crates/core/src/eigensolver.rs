@@ -1126,10 +1126,7 @@ fn enforce_constraints<O, B>(
         loop {
             reorthogonalize_with_mass(operator.backend(), vector, &mode.vector, &mode.mass_vector);
             operator.apply_mass(vector, mass_vector);
-            let overlap = operator
-                .backend()
-                .dot(vector, &mode.mass_vector)
-                .norm();
+            let overlap = operator.backend().dot(vector, &mode.mass_vector).norm();
             passes += 1;
             if overlap <= 1e-12 || passes >= 3 {
                 break;
@@ -1865,6 +1862,8 @@ fn build_projected_matrices<B: SpectralBackend>(
             }
         }
     }
+    enforce_hermitian(&mut op_proj, dim);
+    enforce_hermitian(&mut mass_proj, dim);
     #[cfg(test)]
     if dim <= 4 {
         eprintln!("[rayleigh-ritz-debug] op_proj={:?}", op_proj);
@@ -1962,8 +1961,12 @@ fn stabilize_projected_system(
     if max_val <= 0.0 {
         return None;
     }
-    const REL_TOL: f64 = 1e-8;
-    const ABS_TOL: f64 = 1e-12;
+    // Filter out directions whose mass eigenvalues are too small to yield a
+    // well-conditioned projected problem. A slightly more aggressive cutoff
+    // helps prevent the Rayleigh–Ritz stage from injecting wildly scaled
+    // vectors when the block has accumulated near-null directions.
+    const REL_TOL: f64 = 1e-6;
+    const ABS_TOL: f64 = 1e-10;
     let cutoff = (max_val * REL_TOL).max(ABS_TOL);
     let cond = if has_small_or_negative || min_mass_eval <= cutoff {
         f64::INFINITY
@@ -2106,10 +2109,16 @@ fn stabilize_projected_system(
         transform = filtered_transform;
         reduced_dim = new_dim;
         temp_op = complex_matmul(dim, dim, reduced_dim, op_proj, &transform);
-        op_reduced = complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
+        op_reduced =
+            complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_op);
         temp_mass = complex_matmul(dim, dim, reduced_dim, mass_proj, &transform);
-        mass_reduced =
-            complex_matmul_conj_transpose_left(dim, reduced_dim, reduced_dim, &transform, &temp_mass);
+        mass_reduced = complex_matmul_conj_transpose_left(
+            dim,
+            reduced_dim,
+            reduced_dim,
+            &transform,
+            &temp_mass,
+        );
     }
     let final_mass_evals = jacobi_eigendecomposition(
         expand_complex_hermitian(&mass_reduced, reduced_dim),
@@ -2126,12 +2135,20 @@ fn stabilize_projected_system(
     if !stats.min_mass_eigenvalue.is_finite() {
         stats.min_mass_eigenvalue = 0.0;
     }
-    stats.max_mass_eigenvalue = final_mass_evals
-        .iter()
-        .cloned()
-        .fold(0.0_f64, f64::max);
+    stats.max_mass_eigenvalue = final_mass_evals.iter().cloned().fold(0.0_f64, f64::max);
     if has_small_or_negative {
         stats.min_mass_eigenvalue = 0.0;
+    }
+    if stats.reduced_dim < min_required {
+        return None;
+    }
+    let final_cond = if stats.min_mass_eigenvalue > 0.0 {
+        stats.max_mass_eigenvalue / stats.min_mass_eigenvalue
+    } else {
+        f64::INFINITY
+    };
+    if !final_cond.is_finite() || final_cond > PROJECTION_CONDITION_LIMIT {
+        return None;
     }
     Some((
         StabilizedProjection {
@@ -2183,6 +2200,20 @@ fn expand_complex_hermitian(matrix: &[Complex64], dim: usize) -> Vec<f64> {
         }
     }
     block
+}
+
+fn enforce_hermitian(matrix: &mut [Complex64], dim: usize) {
+    for i in 0..dim {
+        let diag = matrix[i * dim + i];
+        matrix[i * dim + i] = Complex64::new(diag.re, 0.0);
+        for j in (i + 1)..dim {
+            let upper = matrix[i * dim + j];
+            let lower = matrix[j * dim + i].conj();
+            let average = (upper + lower) * 0.5;
+            matrix[i * dim + j] = average;
+            matrix[j * dim + i] = average.conj();
+        }
+    }
 }
 
 fn complex_matmul(
@@ -2971,8 +3002,8 @@ mod eigensolver_internal_tests {
 
 #[cfg(test)]
 mod projection_stability_tests {
-    use super::rayleigh_ritz;
     use super::Complex64;
+    use super::rayleigh_ritz;
     use super::{BlockEntry, LinearOperator, SpectralBackend};
     use crate::field::Field2D;
     use crate::grid::Grid2D;
@@ -3091,7 +3122,10 @@ mod projection_stability_tests {
 
         assert!(diag.min_mass_eigenvalue == 0.0);
         assert!(diag.condition_estimate.is_infinite());
-        assert!(diag.fallback_used, "unstable mass matrix should trigger fallback");
+        assert!(
+            diag.fallback_used,
+            "unstable mass matrix should trigger fallback"
+        );
         assert!(values.len() >= 1, "at least one mode should survive");
     }
 }
