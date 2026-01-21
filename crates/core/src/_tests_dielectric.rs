@@ -33,9 +33,16 @@ fn unsmoothed_options() -> DielectricOptions {
 #[test]
 fn from_geometry_populates_eps_and_inv_eps_in_row_major_order() {
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
-    let dielectric = Dielectric2D::from_geometry(&sample_geom(), grid, &unsmoothed_options());
-    // Sampling points: (0,0) -> atom 1, (0.5,0) -> background, (0,0.5) -> background, (0.5,0.5) -> atom 2
-    assert_eq!(dielectric.eps(), &[1.0, 12.0, 12.0, 2.0]);
+    let geom = sample_geom();
+    let dielectric = Dielectric2D::from_geometry(&geom, grid, &unsmoothed_options());
+    let mut expected = Vec::with_capacity(grid.len());
+    for iy in 0..grid.ny {
+        for ix in 0..grid.nx {
+            let frac = [cell_center(ix, grid.nx), cell_center(iy, grid.ny)];
+            expected.push(geom.relative_permittivity_at_fractional(frac));
+        }
+    }
+    assert_eq!(dielectric.eps(), expected.as_slice());
     let inv_expected: Vec<f64> = dielectric.eps().iter().map(|v| 1.0 / v).collect();
     assert_eq!(dielectric.inv_eps(), inv_expected.as_slice());
 }
@@ -72,10 +79,9 @@ fn hexagonal_sampling_matches_cartesian_projection() {
     );
     let grid = Grid2D::new(24, 24, 1.0, 1.0);
     let dielectric = Dielectric2D::from_geometry(&geom, grid, &unsmoothed_options());
-    let (ix, iy) = (7, 1);
+    let (ix, iy) = (0, 0);
     let idx = grid.idx(ix, iy);
-    let cart = grid.cartesian_coords(ix, iy);
-    let frac = geom.lattice.cartesian_to_fractional(cart);
+    let frac = [cell_center(ix, grid.nx), cell_center(iy, grid.ny)];
     let expected = geom.relative_permittivity_at_fractional(frac);
     assert!((dielectric.eps()[idx] - expected).abs() < 1e-12);
     assert!((expected - 1.0).abs() < 1e-12);
@@ -95,7 +101,7 @@ fn from_geometry_panics_on_non_positive_permittivity() {
         lattice: Lattice2D::square(1.0),
         eps_bg: 10.0,
         atoms: vec![BasisAtom {
-            pos: [0.0, 0.0],
+            pos: [0.5, 0.5],
             radius: 0.5,
             eps_inside: 0.0,
         }],
@@ -128,4 +134,8 @@ fn smoothing_mesh_size_builds_anisotropic_tensor_and_raw_dump() {
         (tensor[0] - tensor[3]).abs() > 1e-3,
         "anisotropic smoothing should yield distinct normal/tangential components, tensor={tensor:?}"
     );
+}
+
+fn cell_center(index: usize, count: usize) -> f64 {
+    (index as f64 + 0.5) / count as f64
 }

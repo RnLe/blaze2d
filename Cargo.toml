@@ -6,6 +6,7 @@ members = [
     "crates/backend-cuda",
     "crates/cli",
     "crates/python",
+    "crates/validation",
 ]
 resolver = "2"
 
