@@ -10,7 +10,7 @@ a1 = [1.0, 0.0]
 a2 = [0.0, 1.0]
 
 [[geometry.atoms]]
-pos = [0.0, 0.0]
+pos = [0.5, 0.5]
 radius = 0.3
 eps_inside = 1.0
 
@@ -22,13 +22,9 @@ ly = 1.0
 
 [path]
 preset = "square"
-segments_per_leg = 8
+segments_per_leg = 4
 
 [eigensolver]
 n_bands = 8
-max_iter = 100
+max_iter = 1000
 tol = 1e-6
-
-[metrics]
-enabled = true
-output = "reference-data/square_te_eps13_r0p3_res24_k6_b8_mpb2d_metrics.jsonl"

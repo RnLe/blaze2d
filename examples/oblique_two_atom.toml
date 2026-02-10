@@ -1,9 +1,36 @@
 # Oblique lattice with a two-atom basis
-lattice = { kind = "oblique", a1 = [1.0, 0.0], a2 = [0.5, 0.8660254] }
-background_eps = 10.5
-atoms = [
-    { pos = [0.0, 0.0], radius = 0.18, eps_inside = 1.0 },
-    { pos = [0.5, 0.5], radius = 0.12, eps_inside = 1.0 }
-]
-grid = { nx = 64, ny = 64 }
-pol = "TM"
+# Demonstrates non-rectangular Bravais lattices with multiple atoms per cell
+
+polarization = "TM"
+
+[geometry]
+eps_bg = 10.5
+
+[geometry.lattice]
+a1 = [1.0, 0.0]
+a2 = [0.5, 0.8660254037844386]  # 60° oblique angle
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.18
+eps_inside = 1.0
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.12
+eps_inside = 1.0
+
+[grid]
+nx = 64
+ny = 64
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "hexagonal"
+segments_per_leg = 10
+
+[eigensolver]
+n_bands = 6
+max_iter = 200
+tol = 1e-6

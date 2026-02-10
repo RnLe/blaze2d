@@ -1,3 +1,5 @@
+//! Tests for the io module.
+
 #![cfg(test)]
 
 use super::bandstructure::BandStructureJob;
@@ -44,8 +46,6 @@ fn job_config_with_explicit_k_path_converts_directly() {
         k_path: vec![[0.0, 0.0], [0.5, 0.0]],
         path: None,
         eigensolver: Default::default(),
-        metrics: Default::default(),
-        inspection: Default::default(),
         dielectric: Default::default(),
     };
     let job: BandStructureJob = config.into();
@@ -65,8 +65,6 @@ fn job_config_uses_path_preset_when_k_path_missing() {
             segments_per_leg: 2,
         }),
         eigensolver: Default::default(),
-        metrics: Default::default(),
-        inspection: Default::default(),
         dielectric: Default::default(),
     };
     let job: BandStructureJob = config.into();
@@ -85,8 +83,6 @@ fn job_config_panics_without_k_path_or_preset() {
         k_path: Vec::new(),
         path: None,
         eigensolver: Default::default(),
-        metrics: Default::default(),
-        inspection: Default::default(),
         dielectric: Default::default(),
     };
     let _: BandStructureJob = config.into();

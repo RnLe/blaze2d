@@ -1,4 +1,4 @@
-# Hexagonal lattice with eps_bg=13, r/a=0.3 for TM polarization
+# Hexagonal lattice eps_bg=13, r/a=0.3, high-res grid for TM
 
 polarization = "TM"
 
@@ -15,16 +15,16 @@ radius = 0.3
 eps_inside = 1.0
 
 [grid]
-nx = 32
-ny = 32
+nx = 48
+ny = 48
 lx = 1.0
 ly = 1.0
 
 [path]
 preset = "hexagonal"
-segments_per_leg = 12
+segments_per_leg = 8
 
 [eigensolver]
-n_bands = 10
-max_iter = 200
-tol = 1e-8
+n_bands = 8
+max_iter = 500
+tol = 1e-6

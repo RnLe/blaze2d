@@ -1,8 +1,31 @@
-# Hexagonal lattice example
-lattice = { kind = "hexagonal", a = 1.0 }
-background_eps = 12.0
-atoms = [
-    { pos = [0.0, 0.0], radius = 0.3, eps_inside = 1.0 }
-]
-grid = { nx = 48, ny = 48 }
-pol = "TE"
+# Hexagonal lattice of air holes in a high-epsilon background
+# TE polarization - good for demonstrating band gaps
+
+polarization = "TE"
+
+[geometry]
+eps_bg = 12.0
+
+[geometry.lattice]
+a1 = [1.0, 0.0]
+a2 = [0.5, 0.8660254037844386]  # 60° angle for hexagonal
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.3
+eps_inside = 1.0
+
+[grid]
+nx = 48
+ny = 48
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "hexagonal"
+segments_per_leg = 12
+
+[eigensolver]
+n_bands = 8
+max_iter = 200
+tol = 1e-6
