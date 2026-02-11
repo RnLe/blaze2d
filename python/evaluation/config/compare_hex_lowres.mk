@@ -8,9 +8,7 @@ REFERENCE_TARGETS := \
 	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
 	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb.json \
 	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb2d.csv \
-	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv \
-	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_pipeline \
-	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_pipeline
+	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv
 
 MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py \
 	--output $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
@@ -34,19 +32,15 @@ MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py 
 	--lattice hexagonal
 
 
-MPB2D_COMMAND := cargo run -p mpb2d-cli -- \
+MPB2D_COMMAND := cargo run --release -p mpb2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_te_res24.toml \
 	--output $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb2d.csv \
-	--dump-pipeline $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_pipeline \
 	$(SMOOTHING_ARGS) \
-	--preconditioner structured_diagonal \
 	--path hexagonal \
 	--segments-per-leg 4 \
-	&& cargo run -p mpb2d-cli -- \
+	&& cargo run --release -p mpb2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_tm_res24.toml \
 	--output $(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv \
-	--dump-pipeline $(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_pipeline \
 	$(SMOOTHING_ARGS) \
-	--preconditioner structured_diagonal \
 	--path hexagonal \
 	--segments-per-leg 4
