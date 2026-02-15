@@ -96,8 +96,11 @@ fn plane_wave(grid: Grid2D, mx: i32, my: i32) -> Field2D {
 }
 
 fn uniform_dielectric(grid: Grid2D, eps: f64) -> Dielectric2D {
+    // Use a lattice that matches the grid dimensions so G-vectors are consistent.
+    // The lattice vectors should match the computational domain:
+    // a1 = [lx, 0], a2 = [0, ly] for a rectangular domain.
     let geom = Geometry2D {
-        lattice: Lattice2D::square(1.0),
+        lattice: Lattice2D::rectangular(grid.lx, grid.ly),
         eps_bg: eps,
         atoms: Vec::new(),
     };
@@ -105,8 +108,9 @@ fn uniform_dielectric(grid: Grid2D, eps: f64) -> Dielectric2D {
 }
 
 fn patterned_dielectric(grid: Grid2D) -> Dielectric2D {
+    // Use a rectangular lattice that matches the grid dimensions.
     let geom = Geometry2D {
-        lattice: Lattice2D::square(1.0),
+        lattice: Lattice2D::rectangular(grid.lx, grid.ly),
         eps_bg: 12.0,
         atoms: vec![
             BasisAtom {

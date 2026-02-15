@@ -1,46 +1,61 @@
 # Evaluation-specific configuration for compare_hex_lowres.
-# Loaded by python/evaluation/Makefile to orchestrate MPB + mpb2d runs.
+# Mirrors compare_square_lowres but uses a hexagonal lattice reference/problem.
 
 EVAL_NAME := compare_hex_lowres
-SMOOTHING_ARGS := --mesh-size 4
+SMOOTHING_ARGS := --mesh-size 4 
+
+HEX_DESC := eps13_r0p3_res24_k10_b8
+HEX_TE_PREFIX := $(REFERENCE_DIR)/hex_te_$(HEX_DESC)
+HEX_TM_PREFIX := $(REFERENCE_DIR)/hex_tm_$(HEX_DESC)
+
+# MPB parameters for epsilon export
+MPB_RESOLUTION := 24
+MPB_RADIUS := 0.3
+MPB_EPS_BG := 13.0
+MPB_EPS_HOLE := 1.0
+MPB_LATTICE := hexagonal
 
 REFERENCE_TARGETS := \
-	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
-	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb.json \
-	$(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb2d.csv \
-	$(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv
+	$(HEX_TE_PREFIX)_mpb.json \
+	$(HEX_TM_PREFIX)_mpb.json \
+	$(HEX_TE_PREFIX)_mpb2d.csv \
+	$(HEX_TM_PREFIX)_mpb2d.csv
 
 MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py \
-	--output $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb.json \
+	--output $(HEX_TE_PREFIX)_mpb.json \
 	--resolution 24 \
 	--num-bands 8 \
-	--k-density 6 \
+	--k-density 10 \
 	--radius 0.3 \
 	--eps-bg 13.0 \
 	--eps-hole 1.0 \
 	--polarization te \
 	--lattice hexagonal \
 	&& mamba run -n mpb-reference python ../generate_square_tm_bands.py \
-	--output $(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb.json \
+	--output $(HEX_TM_PREFIX)_mpb.json \
 	--resolution 24 \
 	--num-bands 8 \
-	--k-density 6 \
+	--k-density 10 \
 	--radius 0.3 \
 	--eps-bg 13.0 \
 	--eps-hole 1.0 \
 	--polarization tm \
 	--lattice hexagonal
 
-
-MPB2D_COMMAND := cargo run --release -p mpb2d-cli -- \
+# Split commands for potential future benchmark support
+MPB2D_TE_CMD := cargo run --release -p mpb2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_te_res24.toml \
-	--output $(REFERENCE_DIR)/hex_te_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	--output $(HEX_TE_PREFIX)_mpb2d.csv \
 	$(SMOOTHING_ARGS) \
 	--path hexagonal \
-	--segments-per-leg 4 \
-	&& cargo run --release -p mpb2d-cli -- \
+	--segments-per-leg 10
+
+MPB2D_TM_CMD := cargo run --release -p mpb2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_tm_res24.toml \
-	--output $(REFERENCE_DIR)/hex_tm_eps13_r0p3_res24_k6_b8_mpb2d.csv \
+	--output $(HEX_TM_PREFIX)_mpb2d.csv \
 	$(SMOOTHING_ARGS) \
 	--path hexagonal \
-	--segments-per-leg 4
+	--segments-per-leg 10
+
+# Combined command
+MPB2D_COMMAND := $(MPB2D_TE_CMD) && $(MPB2D_TM_CMD)
