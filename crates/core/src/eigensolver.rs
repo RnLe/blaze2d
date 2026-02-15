@@ -35,7 +35,7 @@ mod _tests_initialization;
 mod _tests_normalization;
 
 // Re-exports from submodules
-pub use deflation::{DeflationSubspace, LockingConfig, LockingResult, check_for_locking};
+pub use deflation::{DeflationSubspace, LockingResult, check_for_locking};
 pub use dense::{DenseEigenResult, solve_hermitian_eigen};
 pub use initialization::{
     BlockEntry, GAMMA_TOLERANCE, InitializationConfig, InitializationResult, create_gamma_mode,
@@ -62,7 +62,6 @@ use crate::field::Field2D;
 use crate::grid::Grid2D;
 use crate::operator::LinearOperator;
 use crate::preconditioner::OperatorPreconditioner;
-use crate::symmetry::SymmetryProjector;
 
 // ============================================================================
 // Configuration
@@ -82,13 +81,6 @@ pub struct EigensolverConfig {
     pub block_size: usize,
 
     // === Feature Toggles (for diagnostics/ablation studies) ===
-    /// Enable/disable the W (history) directions in LOBPCG.
-    /// When false, reduces to preconditioned steepest descent.
-    #[serde(default = "default_true")]
-    pub use_w_history: bool,
-    /// Enable/disable locking (deflation) of converged bands.
-    #[serde(default = "default_true")]
-    pub use_locking: bool,
     /// Enable/disable convergence diagnostics recording.
     /// When true, per-iteration data is collected for analysis.
     #[serde(default)]
@@ -96,11 +88,6 @@ pub struct EigensolverConfig {
     /// Optional k-point index for logging (set by bandstructure code).
     #[serde(skip)]
     pub k_index: Option<usize>,
-}
-
-/// Helper for serde default values.
-fn default_true() -> bool {
-    true
 }
 
 /// Slack to add to block size beyond n_bands for better convergence.
@@ -112,8 +99,7 @@ const BLOCK_SIZE_SLACK: usize = 2;
 /// We deflate it out to prevent convergence issues and free up a slot for a
 /// physical mode. This is safe when Γ is the **first** k-point in the path
 /// (no warm-start to poison), and the converged Γ eigenvectors then serve as
-/// valid warm-starts for subsequent k-points (even-even parity is compatible
-/// with single-mirror sectors).
+/// valid warm-starts for subsequent k-points.
 const ENABLE_GAMMA_DEFLATION: bool = true;
 
 impl Default for EigensolverConfig {
@@ -123,8 +109,6 @@ impl Default for EigensolverConfig {
             max_iter: 200,
             tol: 1e-6,
             block_size: 0,
-            use_w_history: true,
-            use_locking: true,
             record_diagnostics: false,
             k_index: None,
         }
@@ -141,18 +125,6 @@ impl EigensolverConfig {
             self.block_size
         };
         target.max(required)
-    }
-
-    /// Builder method: disable W history directions.
-    pub fn without_w_history(mut self) -> Self {
-        self.use_w_history = false;
-        self
-    }
-
-    /// Builder method: disable locking.
-    pub fn without_locking(mut self) -> Self {
-        self.use_locking = false;
-        self
     }
 
     /// Builder method: enable diagnostics recording.
@@ -425,8 +397,6 @@ where
     operator: &'a mut O,
     /// Solver configuration.
     config: EigensolverConfig,
-    /// Locking configuration.
-    locking_config: LockingConfig,
     /// Optional preconditioner M^{-1}.
     preconditioner: Option<&'a mut dyn OperatorPreconditioner<B>>,
     /// Optional warm-start vectors from previous k-point.
@@ -446,10 +416,6 @@ where
     iteration: usize,
     /// Whether the solver has been initialized.
     initialized: bool,
-    /// Optional symmetry projector for constraining to an irrep.
-    /// When set, the solver projects all vectors onto the symmetry subspace
-    /// to avoid mode mixing between different irreps.
-    symmetry_projector: Option<SymmetryProjector>,
 }
 
 impl<'a, O, B> Eigensolver<'a, O, B>
@@ -470,16 +436,9 @@ where
         preconditioner: Option<&'a mut dyn OperatorPreconditioner<B>>,
         warm_start: Option<&'a [Field2D]>,
     ) -> Self {
-        // Locking uses the same tolerance as convergence (config.tol)
-        let locking_config = LockingConfig {
-            min_iterations: 5,
-            enabled: true,
-        };
-
         Self {
             operator,
             config,
-            locking_config,
             preconditioner,
             warm_start,
             x_block: Vec::new(),
@@ -489,60 +448,6 @@ where
             previous_eigenvalues: Vec::new(),
             iteration: 0,
             initialized: false,
-            symmetry_projector: None,
-        }
-    }
-
-    /// Create a new eigensolver with custom locking configuration.
-    pub fn with_locking_config(mut self, locking_config: LockingConfig) -> Self {
-        self.locking_config = locking_config;
-        self
-    }
-
-    /// Disable locking (deflation of converged bands).
-    pub fn without_locking(mut self) -> Self {
-        self.locking_config.enabled = false;
-        self
-    }
-
-    /// Set the symmetry projector for this solver.
-    ///
-    /// When a symmetry projector is set, all vectors are projected onto the
-    /// symmetry subspace at key points in the LOBPCG iteration:
-    /// - Initial guess vectors
-    /// - Residuals after computation
-    /// - Preconditioned residuals
-    /// - Updated Ritz vectors and history directions
-    ///
-    /// This constrains the solver to work within a single irrep, avoiding
-    /// mode mixing between different symmetry classes (e.g., even/odd modes).
-    pub fn with_symmetry_projector(mut self, projector: SymmetryProjector) -> Self {
-        self.symmetry_projector = Some(projector);
-        self
-    }
-
-    /// Set the symmetry projector (optional version).
-    pub fn with_symmetry(mut self, projector: Option<SymmetryProjector>) -> Self {
-        self.symmetry_projector = projector;
-        self
-    }
-
-    /// Check if a symmetry projector is active.
-    pub fn has_symmetry_projector(&self) -> bool {
-        self.symmetry_projector.is_some()
-    }
-
-    /// Apply symmetry projection to a single buffer (if projector is set).
-    fn apply_symmetry<Buf: SpectralBuffer>(&self, buffer: &mut Buf) {
-        if let Some(ref proj) = self.symmetry_projector {
-            proj.apply(buffer);
-        }
-    }
-
-    /// Apply symmetry projection to a block of buffers (if projector is set).
-    fn apply_symmetry_block(&self, buffers: &mut [B::Buffer]) {
-        if let Some(ref proj) = self.symmetry_projector {
-            proj.apply_block(buffers);
         }
     }
 
@@ -569,50 +474,9 @@ where
         if initialization::is_gamma_point(bloch, initialization::GAMMA_TOLERANCE) {
             if ENABLE_GAMMA_DEFLATION {
                 // Create B-normalized constant mode y₀
-                let (mut y0, mut by0, _norm) = initialization::create_gamma_mode(self.operator);
+                let (y0, by0, _norm) = initialization::create_gamma_mode(self.operator);
 
-                // CRITICAL: Apply symmetry projection to Gamma mode if using symmetry.
-                // The constant mode is naturally even-parity, but we must ensure it lives
-                // in the same irrep as the solver's target. For odd parity, the constant
-                // mode will be zeroed out (which is correct - it's not in that irrep).
-                if let Some(ref proj) = self.symmetry_projector {
-                    // Check if using odd parity at Γ and warn user
-                    let has_odd_parity = proj
-                        .reflections()
-                        .iter()
-                        .any(|r| r.parity == crate::symmetry::Parity::Odd);
-                    if has_odd_parity {
-                        info!(
-                            "[eigensolver] Γ-point with ODD parity: the constant mode (ω=0) is EVEN and will be excluded. \
-                            The lowest eigenvalue in the odd irrep will be significantly higher. \
-                            Use EVEN parity for ground-state band structures."
-                        );
-                    }
-
-                    proj.apply(&mut y0);
-                    // Recompute B*y0 after projection
-                    self.operator.apply_mass(&y0, &mut by0);
-
-                    // Re-normalize after symmetry projection
-                    let backend = self.operator.backend();
-                    let norm = normalization::b_norm(backend, &y0, &by0);
-                    if norm > 1e-12 {
-                        let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
-                        backend.scale(scale, &mut y0);
-                        backend.scale(scale, &mut by0);
-                    } else {
-                        // Gamma mode is not in target irrep (e.g., odd parity)
-                        // This is expected - the constant mode is even, so it's projected
-                        // to zero in the odd parity subspace. We should NOT deflate it.
-                        debug!(
-                            "[eigensolver] Γ-point: constant mode projected to zero by symmetry (parity={:?}), not deflating",
-                            proj.reflections().first().map(|r| &r.parity)
-                        );
-                        // Skip adding to deflation - the mode doesn't exist in our irrep
-                    }
-                }
-
-                // Only add to deflation if the mode survives symmetry projection
+                // Add to deflation if the mode is valid
                 let norm = {
                     let backend = self.operator.backend();
                     normalization::b_norm(backend, &y0, &by0)
@@ -687,36 +551,6 @@ where
             }
         }
 
-        // Step 4: Apply symmetry projection to initial block (if projector is set)
-        // This constrains the initial guess to the target irrep
-        if self.symmetry_projector.is_some() {
-            for entry in &mut x_block {
-                self.apply_symmetry(&mut entry.vector);
-            }
-            // Re-apply B operator and A operator after symmetry projection
-            for entry in &mut x_block {
-                self.operator.apply_mass(&entry.vector, &mut entry.mass);
-                self.operator.apply(&entry.vector, &mut entry.applied);
-            }
-            // Re-normalize after symmetry projection
-            {
-                let backend = self.operator.backend();
-                for entry in &mut x_block {
-                    let norm = normalization::b_norm(backend, &entry.vector, &entry.mass);
-                    if norm > 1e-12 {
-                        let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
-                        backend.scale(scale, &mut entry.vector);
-                        backend.scale(scale, &mut entry.mass);
-                        backend.scale(scale, &mut entry.applied);
-                    }
-                }
-            }
-            debug!(
-                "[eigensolver] Applied symmetry projection to {} initial vectors",
-                x_block.len()
-            );
-        }
-
         self.x_block = x_block;
         self.initialized = true;
 
@@ -781,102 +615,6 @@ where
     /// Check if a preconditioner is available.
     pub fn has_preconditioner(&self) -> bool {
         self.preconditioner.is_some()
-    }
-
-
-
-    /// Check if the preconditioner commutes with symmetry projection.
-    ///
-    /// For optimal LOBPCG convergence with symmetry, the preconditioner M⁻¹
-    /// should commute with the symmetry projector P_sym:
-    ///
-    /// ```text
-    /// P_sym M⁻¹ v ≈ M⁻¹ P_sym v
-    /// ```
-    ///
-    /// If they don't commute, the preconditioner will inject components outside
-    /// the target irrep, which must be projected out. This can slow convergence.
-    ///
-    /// This check is performed once at the start of solve() using a random
-    /// test vector from the current X block.
-    fn check_preconditioner_symmetry_commutation(&mut self) {
-        // Only check if both symmetry and preconditioner are active
-        let projector = match &self.symmetry_projector {
-            Some(p) => p,
-            None => return,
-        };
-
-        if self.preconditioner.is_none() {
-            return;
-        }
-
-        if self.x_block.is_empty() {
-            return;
-        }
-
-        // Use first X vector as test vector (it's already in the symmetry subspace)
-        let test_vec = &self.x_block[0].vector;
-        let backend = self.operator.backend();
-
-        // Compute: v1 = P_sym(M⁻¹(v))
-        let mut v1 = test_vec.clone();
-        if let Some(ref mut precond) = self.preconditioner {
-            precond.apply(backend, &mut v1);
-        }
-        let v1_before_sym = v1.clone();
-        projector.apply(&mut v1);
-
-        // Compute: v2 = M⁻¹(P_sym(v))
-        // Since test_vec is already symmetry-projected, P_sym(v) = v
-        let mut v2 = test_vec.clone();
-        if let Some(ref mut precond) = self.preconditioner {
-            precond.apply(backend, &mut v2);
-        }
-
-        // Compute relative difference: ||v1 - v2|| / ||v2||
-        // But actually, we want to measure how much the preconditioner
-        // breaks symmetry: ||P_sym(M⁻¹ v) - M⁻¹ v|| / ||M⁻¹ v||
-        // This measures the "leakage" outside the symmetry subspace.
-
-        // Compute ||M⁻¹ v||
-        let norm_precond = backend.dot(&v1_before_sym, &v1_before_sym).re.sqrt();
-
-        // Compute ||P_sym(M⁻¹ v) - M⁻¹ v|| = ||v1 - v1_before_sym||
-        let mut diff = v1_before_sym.clone();
-        backend.axpy(num_complex::Complex64::new(-1.0, 0.0), &v1, &mut diff);
-        let norm_diff = backend.dot(&diff, &diff).re.sqrt();
-
-        let relative_leakage = if norm_precond > 1e-15 {
-            norm_diff / norm_precond
-        } else {
-            0.0
-        };
-
-        // Threshold for warning
-        const COMMUTATION_WARN_THRESHOLD: f64 = 1e-6;
-        const COMMUTATION_ERROR_THRESHOLD: f64 = 1e-2;
-
-        if relative_leakage > COMMUTATION_ERROR_THRESHOLD {
-            warn!(
-                "[symmetry] Preconditioner does NOT commute with symmetry! \
-                Relative leakage = {:.2e} (>{:.0e}). \
-                This will significantly slow convergence. \
-                Consider using a symmetry-compatible preconditioner.",
-                relative_leakage, COMMUTATION_ERROR_THRESHOLD
-            );
-        } else if relative_leakage > COMMUTATION_WARN_THRESHOLD {
-            warn!(
-                "[symmetry] Preconditioner has weak symmetry commutation. \
-                Relative leakage = {:.2e}. \
-                This may slow convergence slightly.",
-                relative_leakage
-            );
-        } else {
-            debug!(
-                "[symmetry] Preconditioner commutes with symmetry (leakage = {:.2e})",
-                relative_leakage
-            );
-        }
     }
 
     // ========================================================================
@@ -1051,36 +789,11 @@ where
                 continue;
             }
 
-            // Get the band's data - we need to clone and potentially symmetry-project
+            // Get the band's data
             let entry = &self.x_block[band_idx];
-            let mut vector = entry.vector.clone();
-            let mut mass = entry.mass.clone();
+            let vector = entry.vector.clone();
+            let mass = entry.mass.clone();
             let eigenvalue = self.eigenvalues[band_idx];
-
-            // CRITICAL: Apply symmetry projection before adding to deflation.
-            // This ensures the deflation subspace stays symmetry-adapted,
-            // which is required for P_Y and P_sym to commute.
-            if let Some(ref proj) = self.symmetry_projector {
-                proj.apply(&mut vector);
-                // Recompute B*vector after projection
-                self.operator.apply_mass(&vector, &mut mass);
-
-                // Re-normalize after symmetry projection
-                let backend = self.operator.backend();
-                let norm = normalization::b_norm(backend, &vector, &mass);
-                if norm > 1e-12 {
-                    let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
-                    backend.scale(scale, &mut vector);
-                    backend.scale(scale, &mut mass);
-                } else {
-                    // Vector projected to zero - shouldn't happen for converged bands
-                    warn!(
-                        "[deflation] Band {} projected to zero by symmetry, skipping lock",
-                        band_idx
-                    );
-                    continue;
-                }
-            }
 
             // The "global" band index includes previously locked bands
             let global_band_idx = self.deflation.len() + band_idx;
@@ -1137,8 +850,8 @@ where
     fn collect_subspace(&self, p_block: &[B::Buffer]) -> (Vec<B::Buffer>, (usize, usize, usize)) {
         let m = self.x_block.len();
 
-        // Use W directions only if enabled in config and available
-        let has_w = self.config.use_w_history && !self.w_block.is_empty();
+        // W directions are always used when available (LOBPCG default)
+        let has_w = !self.w_block.is_empty();
         let w_size = if has_w { self.w_block.len() } else { 0 };
 
         let subspace_dim = m + p_block.len() + w_size;
@@ -1170,7 +883,7 @@ where
     /// Returns 2m on first iteration (no W), 3m otherwise.
     pub fn subspace_dimension(&self) -> usize {
         let m = self.x_block.len();
-        let has_w = self.config.use_w_history && !self.w_block.is_empty();
+        let has_w = !self.w_block.is_empty();
         if has_w { 3 * m } else { 2 * m }
     }
 
@@ -1419,45 +1132,37 @@ where
     /// - All requested bands have converged (relative residual < tol)
     /// - Maximum iterations reached
     ///
-    /// # Minimal Projection Strategy
+    /// # Deflation Strategy
     ///
-    /// The algorithm uses a minimal projection strategy for deflation and symmetry:
+    /// The algorithm uses deflation to remove converged components:
     ///
     /// **Residuals (R):**
     /// - Apply deflation once: R ← P_Y R
-    /// - Apply symmetry once (if enabled): R ← P_sym R
     ///
     /// **Preconditioned residuals (P):**
     /// - Apply preconditioner first: P = M^{-1} R
     /// - Apply deflation once: P ← P_Y P
-    /// - Apply symmetry once (if enabled): P ← P_sym P
     ///
     /// **Search subspace (Z = [X, P, W]):**
-    /// - No re-projection needed: X, P, W are already in the deflated + symmetric
+    /// - No re-projection needed: X, P, W are already in the deflated
     ///   subspace from previous iterations
     /// - Just orthonormalize via SVQB
-    ///
-    /// This minimal strategy works because the deflation subspace Y is kept
-    /// symmetry-adapted (locked vectors are symmetry-projected before adding),
-    /// so P_Y and P_sym commute: P_sym P_Y = P_Y P_sym.
     ///
     /// # Algorithm Steps
     ///
     /// 1. **Compute residuals**: R_k = A*X_k - B*X_k * Λ_k
     /// 2. **Apply deflation to R**: R_k ← P_Y R_k
-    /// 3. **Apply symmetry to R** (optional): R_k ← P_sym R_k
-    /// 4. **Compute B-norms**: ||R_k||_B for convergence check
-    /// 5. **Check convergence**: relative residual < tol?
-    /// 6. **Lock converged bands** (optional): move to deflation subspace
-    /// 7. **Precondition residuals**: P_k = M^{-1} R_k
-    /// 8. **Apply deflation to P**: P_k ← P_Y P_k
-    /// 9. **Apply symmetry to P** (optional): P_k ← P_sym P_k
-    /// 10. **Build search subspace**: Z_k = [X_k, P_k, W_k]
-    /// 11. **B-orthonormalize**: Q_k = SVQB(Z_k)
-    /// 12. **Project operator**: A_s = Q_k^* A Q_k
-    /// 13. **Dense eigenproblem**: A_s Y = Y Θ
-    /// 14. **Update Ritz vectors**: X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
-    /// 15. **Update history directions**: W_{k+1} = Q_k * Y_2
+    /// 3. **Compute B-norms**: ||R_k||_B for convergence check
+    /// 4. **Check convergence**: relative eigenvalue change < tol?
+    /// 5. **Lock converged bands** (optional): move to deflation subspace
+    /// 6. **Precondition residuals**: P_k = M^{-1} R_k
+    /// 7. **Apply deflation to P**: P_k ← P_Y P_k
+    /// 8. **Build search subspace**: Z_k = [X_k, P_k, W_k]
+    /// 9. **B-orthonormalize**: Q_k = SVQB(Z_k)
+    /// 10. **Project operator**: A_s = Q_k^* A Q_k
+    /// 11. **Dense eigenproblem**: A_s Y = Y Θ
+    /// 12. **Update Ritz vectors**: X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
+    /// 13. **Update history directions**: W_{k+1} = Q_k * Y_2
     ///
     /// # Returns
     /// An `EigensolverResult` containing the computed eigenvalues and convergence info.
@@ -1466,9 +1171,6 @@ where
         if !self.initialized {
             self.initialize();
         }
-
-        // Check preconditioner-symmetry commutation (once at start)
-        // self.check_preconditioner_symmetry_commutation();
 
         let n_bands_requested = self.config.n_bands;
         let n_bands = n_bands_requested.min(self.x_block.len());
@@ -1495,32 +1197,19 @@ where
             // ================================================================
             // Step 2: Apply deflation to residuals R_k ← P_Y R_k
             // This removes components along locked eigenvectors.
-            // Applied FIRST because Y is now symmetry-adapted, so P_Y and
-            // P_sym commute. Deflation removes the nullspace components.
             // ================================================================
             self.apply_deflation(&mut residuals);
 
             // ================================================================
-            // Step 3: Apply symmetry projection to residuals R_k ← P_sym R_k
-            // Applied AFTER deflation to clean up any numerical noise.
-            // Since Y is symmetry-adapted, P_sym P_Y = P_Y P_sym.
-            // ================================================================
-            self.apply_symmetry_block(&mut residuals);
-
-            // ================================================================
-            // Step 4: Compute B-norms of deflated residuals
+            // Step 3: Compute B-norms of deflated residuals
             // This is the correct metric: we measure what's left after
             // projecting out the locked subspace
             // ================================================================
             let residual_b_norms = self.compute_residual_b_norms(&residuals);
-
-            // ================================================================
-            // Step 5: Compute relative residuals (for diagnostics)
-            // ================================================================
             let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
 
             // ================================================================
-            // Step 5b: Convergence check based on eigenvalue changes
+            // Step 4: Check convergence based on eigenvalue changes
             // Skip iter 0 and 1: we need at least 2 Ritz updates to have
             // meaningful eigenvalue changes (iter 0 initializes, iter 1 first real update)
             // ================================================================
@@ -1581,19 +1270,17 @@ where
             }
 
             // ================================================================
-            // Step 6: Lock converged bands (optional)
+            // Step 5: Lock converged bands
             // Lock bands that have converged to the deflation subspace
             // Uses eigenvalue-based convergence criterion
             // Only try locking from iteration 2 onward (need eigenvalue history)
             // ================================================================
-            if iter >= 2 && self.locking_config.enabled && self.config.use_locking {
+            if iter >= 2 {
                 // Recompute eigenvalue changes for locking decision
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
-                    iter,
                     self.config.tol,
-                    &self.locking_config,
                 );
 
                 if locking_result.has_locks() {
@@ -1618,26 +1305,23 @@ where
             }
 
             // ================================================================
-            // Step 7: Precondition residuals P_k = M^{-1} R_k
+            // Step 6: Precondition residuals P_k = M^{-1} R_k
             // ================================================================
             let mut p_block = self.precondition_residuals(&residuals);
 
             // ================================================================
-            // Step 8+9: Apply deflation and symmetry to P
+            // Step 7: Apply deflation to P
             // P_k ← P_Y P_k (preconditioner may have reintroduced components along Y)
-            // P_k ← P_sym P_k (preconditioning may have broken symmetry)
-            // NOTE: Order matters less since Y is symmetry-adapted, so P_Y and P_sym commute.
             // ================================================================
             self.apply_deflation(&mut p_block);
-            self.apply_symmetry_block(&mut p_block);
 
             // ================================================================
-            // Step 10: Build search subspace Z_k = [X_k, P_k, W_k]
+            // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
             // ================================================================
             let (subspace, block_sizes) = self.collect_subspace(&p_block);
 
             // ================================================================
-            // Step 11: B-orthonormalize to get Q_k with Q_k^* B Q_k = I
+            // Step 9: B-orthonormalize to get Q_k with Q_k^* B Q_k = I
             // Uses SVQB to handle near-linear-dependence and rank deficiency
             // ================================================================
             let (q_block, bq_block, svqb_result) =
@@ -1674,13 +1358,13 @@ where
             }
 
             // ================================================================
-            // Step 12: Form projected operator A_s = Q_k^* A Q_k
+            // Step 10: Form projected operator A_s = Q_k^* A Q_k
             // Note: B_s = Q_k^* B Q_k = I by construction (SVQB ensures this)
             // ================================================================
             let a_projected = self.project_operator(&q_block, &bq_block);
 
             // ================================================================
-            // Step 13: Solve dense eigenproblem A_s Y = Y Θ
+            // Step 11: Solve dense eigenproblem A_s Y = Y Θ
             // ================================================================
             let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
 
@@ -1692,15 +1376,10 @@ where
                 .collect();
 
             // ================================================================
-            // Step 14a: Store current eigenvalues BEFORE Ritz update
-            // This allows next iteration to compute Δλ = |λ_new - λ_old|
+            // Step 12: Update Ritz vectors X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
+            // Store previous eigenvalues first for convergence tracking
             // ================================================================
             self.store_previous_eigenvalues();
-
-            // ================================================================
-            // Step 14b: Update X block with new Ritz vectors
-            // X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
-            // ================================================================
             self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
 
             // Warn if any frequencies increased (potential variational principle violation)
@@ -1745,7 +1424,7 @@ where
             }
 
             // ================================================================
-            // Step 15: Compute new history directions W_{k+1} = Q_k * Y_2
+            // Step 13: Compute new history directions W_{k+1} = Q_k * Y_2
             // ================================================================
             self.update_history_directions(&q_block, &dense_result);
 
@@ -2010,7 +1689,7 @@ where
     /// Create a RunConfig from the current solver state.
     ///
     /// This captures all configuration parameters for diagnostic recording.
-    /// Note: The preconditioner type defaults to FourierDiagonal if a preconditioner
+    /// Note: The preconditioner type defaults to FourierDiagonalKernelCompensated if a preconditioner
     /// is present. For more control, use `create_run_config_with_precond_type`.
     pub fn create_run_config(&self, label: impl Into<String>) -> RunConfig {
         use crate::diagnostics::PreconditionerType;
@@ -2020,7 +1699,7 @@ where
 
         // Default preconditioner type based on presence
         let precond_type = if self.preconditioner.is_some() {
-            PreconditionerType::Structured
+            PreconditionerType::FourierDiagonalKernelCompensated
         } else {
             PreconditionerType::None
         };
@@ -2036,9 +1715,7 @@ where
             )
             .with_toggles(
                 precond_type,
-                self.config.use_w_history,
                 self.warm_start.is_some(),
-                self.config.use_locking,
             )
             .with_k_point(
                 0, // Will be overwritten by caller if part of k-path
@@ -2070,9 +1747,7 @@ where
             )
             .with_toggles(
                 precond_type,
-                self.config.use_w_history,
                 self.warm_start.is_some(),
-                self.config.use_locking,
             )
             .with_k_point(
                 0,
@@ -2090,27 +1765,21 @@ where
     /// for later analysis and plotting. Use this when you want to study
     /// convergence behavior in detail.
     ///
-    /// # Minimal Projection Strategy
+    /// # Deflation Strategy
     ///
-    /// The algorithm uses a minimal projection strategy for deflation and symmetry:
+    /// The algorithm uses deflation to remove converged components:
     ///
     /// **Residuals (R):**
     /// - Apply deflation once: R ← P_Y R
-    /// - Apply symmetry once (if enabled): R ← P_sym R
     ///
     /// **Preconditioned residuals (P):**
     /// - Apply preconditioner first: P = M^{-1} R
     /// - Apply deflation once: P ← P_Y P
-    /// - Apply symmetry once (if enabled): P ← P_sym P
     ///
     /// **Search subspace (Z = [X, P, W]):**
-    /// - No re-projection needed: X, P, W are already in the deflated + symmetric
+    /// - No re-projection needed: X, P, W are already in the deflated
     ///   subspace from previous iterations
     /// - Just orthonormalize via SVQB
-    ///
-    /// This minimal strategy works because the deflation subspace Y is kept
-    /// symmetry-adapted (locked vectors are symmetry-projected before adding),
-    /// so P_Y and P_sym commute: P_sym P_Y = P_Y P_sym.
     ///
     /// # Arguments
     /// - `label`: A human-readable label for this run (e.g., "baseline", "no_precond")
@@ -2135,9 +1804,6 @@ where
         if !self.initialized {
             self.initialize();
         }
-
-        // Check preconditioner-symmetry commutation (once at start)
-        self.check_preconditioner_symmetry_commutation();
 
         let n_bands_requested = self.config.n_bands;
         let n_bands = n_bands_requested.min(self.x_block.len());
@@ -2173,32 +1839,19 @@ where
             // ================================================================
             // Step 2: Apply deflation to residuals R_k ← P_Y R_k
             // This removes components along locked eigenvectors.
-            // Applied FIRST because Y is now symmetry-adapted, so P_Y and
-            // P_sym commute. Deflation removes the nullspace components.
             // ================================================================
             self.apply_deflation(&mut residuals);
 
             // ================================================================
-            // Step 3: Apply symmetry projection to residuals R_k ← P_sym R_k
-            // Applied AFTER deflation to clean up any numerical noise.
-            // Since Y is symmetry-adapted, P_sym P_Y = P_Y P_sym.
-            // ================================================================
-            self.apply_symmetry_block(&mut residuals);
-
-            // ================================================================
-            // Step 4: Compute B-norms of deflated residuals
+            // Step 3: Compute B-norms of deflated residuals
             // This is the correct metric: we measure what's left after
             // projecting out the locked subspace
             // ================================================================
             let residual_b_norms = self.compute_residual_b_norms(&residuals);
-
-            // ================================================================
-            // Step 5: Compute relative residuals (for diagnostics)
-            // ================================================================
             let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
 
             // ================================================================
-            // Step 5b: Convergence check based on eigenvalue changes
+            // Step 4: Check convergence based on eigenvalue changes
             // Skip iter 0 and 1: we need at least 2 Ritz updates to have
             // meaningful eigenvalue changes (iter 0 initializes, iter 1 first real update)
             // ================================================================
@@ -2270,18 +1923,16 @@ where
             }
 
             // ================================================================
-            // Step 6: Check for locking (optional)
+            // Step 5: Lock converged bands
             // Uses eigenvalue-based convergence criterion
             // Only try locking from iteration 2 onward (need eigenvalue history)
             // ================================================================
-            if iter >= 2 && self.locking_config.enabled && self.config.use_locking {
+            if iter >= 2 {
                 // Recompute eigenvalue changes for locking decision
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
-                    iter,
                     self.config.tol,
-                    &self.locking_config,
                 );
 
                 if locking_result.has_locks() {
@@ -2302,25 +1953,23 @@ where
             }
 
             // ================================================================
-            // Step 7: Precondition residuals P_k = M^{-1} R_k
+            // Step 6: Precondition residuals P_k = M^{-1} R_k
             // ================================================================
             let mut p_block = self.precondition_residuals(&residuals);
 
             // ================================================================
-            // Step 8+9: Apply deflation and symmetry to P
+            // Step 7: Apply deflation to P
             // P_k ← P_Y P_k (preconditioner may have reintroduced components along Y)
-            // P_k ← P_sym P_k (preconditioning may have broken symmetry)
             // ================================================================
             self.apply_deflation(&mut p_block);
-            self.apply_symmetry_block(&mut p_block);
 
             // ================================================================
-            // Step 10: Build search subspace Z_k = [X_k, P_k, W_k]
+            // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
             // ================================================================
             let (subspace, block_sizes) = self.collect_subspace(&p_block);
 
             // ================================================================
-            // Step 11: B-orthonormalize to get Q_k
+            // Step 9: B-orthonormalize to get Q_k
             // ================================================================
             let (q_block, bq_block, svqb_result) =
                 self.orthonormalize_subspace_owned(subspace, block_sizes);
@@ -2363,12 +2012,12 @@ where
             recorder.record_iteration(snapshot);
 
             // ================================================================
-            // Step 12: Form projected operator A_s = Q_k^* A Q_k
+            // Step 10: Form projected operator A_s = Q_k^* A Q_k
             // ================================================================
             let a_projected = self.project_operator(&q_block, &bq_block);
 
             // ================================================================
-            // Step 13: Solve dense eigenproblem A_s Y = Y Θ
+            // Step 11: Solve dense eigenproblem A_s Y = Y Θ
             // ================================================================
             let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
 
@@ -2380,15 +2029,10 @@ where
                 .collect();
 
             // ================================================================
-            // Step 14a: Store current eigenvalues BEFORE Ritz update
-            // This allows next iteration to compute Δλ = |λ_new - λ_old|
+            // Step 12: Update Ritz vectors X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
+            // Store previous eigenvalues first for convergence tracking
             // ================================================================
             self.store_previous_eigenvalues();
-
-            // ================================================================
-            // Step 14b: Update X block with new Ritz vectors
-            // X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
-            // ================================================================
             self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
 
             // Warn if any frequencies increased (potential variational principle violation)
@@ -2433,7 +2077,7 @@ where
             }
 
             // ================================================================
-            // Step 15: Update history directions W_{k+1}
+            // Step 13: Update history directions W_{k+1}
             // ================================================================
             self.update_history_directions(&q_block, &dense_result);
 

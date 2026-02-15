@@ -9,13 +9,14 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, ValueEnum};
 use env_logger::Builder;
+use log::{error, info, warn};
 use mpb2d_backend_cpu::CpuBackend;
 use mpb2d_core::{
     bandstructure::{self, BandStructureResult, RunOptions, Verbosity},
-    diagnostics::{PreconditionerShiftMode, PreconditionerType},
+    diagnostics::PreconditionerType,
     dielectric::Dielectric2D,
     io::{JobConfig, PathPreset},
-    symmetry,
+    symmetry::standard_path,
 };
 
 // ============================================================================
@@ -49,10 +50,6 @@ struct Cli {
     #[arg(long)]
     mesh_size: Option<usize>,
 
-    /// Disable dielectric smoothing (shorthand for --mesh-size=1)
-    #[arg(long)]
-    no_smoothing: bool,
-
     // ========================================================================
     // Diagnostics Options
     // ========================================================================
@@ -68,18 +65,10 @@ struct Cli {
     #[arg(long)]
     study_name: Option<String>,
 
-    /// Preconditioner type: auto (default), none, fourier-diagonal, kernel-compensated, structured, or transverse-projection
-    /// Auto selects kernel-compensated for TE, transverse-projection for TM
+    /// Preconditioner type: auto (default), none, fourier-diagonal-kernel-compensated, or transverse-projection
+    /// Auto selects fourier-diagonal-kernel-compensated for TE, transverse-projection for TM
     #[arg(long, value_enum, default_value = "auto")]
     preconditioner: PrecondArg,
-
-    /// Disable W (history) directions in LOBPCG (use steepest descent)
-    #[arg(long)]
-    no_w_history: bool,
-
-    /// Disable locking (deflation) of converged bands
-    #[arg(long)]
-    no_locking: bool,
 
     /// Write logs to a file instead of stderr
     ///
@@ -88,64 +77,6 @@ struct Cli {
     /// variable (e.g., RUST_LOG=debug).
     #[arg(long)]
     log_file: Option<PathBuf>,
-
-    /// Use legacy global preconditioner shift (σ = 1e-3)
-    ///
-    /// By default, the preconditioner uses an adaptive k-dependent shift:
-    /// σ(k) = β * s_median(k), where s_median is the median of |k+G|².
-    /// This flag reverts to the legacy fixed shift for compatibility.
-    #[arg(long)]
-    legacy_shift: bool,
-
-    /// Enable transformed TE mode (use similarity transform instead of generalized eigenproblem)
-    ///
-    /// By default, TE mode uses the generalized eigenproblem A x = λ B x where B = ε(r).
-    /// This is mathematically correct and matches MPB's eigenvalue spectrum.
-    ///
-    /// This flag enables the similarity transform A' = ε^{-1/2} A ε^{-1/2} to convert
-    /// to a standard eigenproblem A'y = λy. CAUTION: This transform is broken because
-    /// pointwise ε^{-1/2} is NOT the true matrix square root of the plane-wave mass
-    /// matrix, causing systematic eigenvalue shifts compared to MPB.
-    #[arg(long)]
-    transformed_te: bool,
-
-    /// [DEPRECATED] Use --transformed-te instead. This flag is now a no-op since
-    /// untransformed TE is the default.
-    #[arg(long, hide = true)]
-    no_transformed_te: bool,
-
-    /// Enable symmetry projections in LOBPCG
-    ///
-    /// By default, symmetry projections are disabled for simpler, more predictable
-    /// behavior. This flag enables symmetry handling at high-symmetry k-points.
-    /// When combined with --multi-sector, the solver runs one LOBPCG per symmetry
-    /// sector and merges results for complete, correct bands comparable to MPB.
-    #[arg(long)]
-    symmetry: bool,
-
-    /// Enable multi-sector symmetry handling
-    ///
-    /// When symmetry is enabled (--symmetry), this flag enables multi-sector mode
-    /// which runs one LOBPCG per symmetry sector at each k-point and merges all
-    /// eigenpairs. This gives complete bands (both even and odd modes).
-    ///
-    /// Without this flag, symmetry uses single-parity projection, which only finds
-    /// modes matching the configured parity (default: even). Results may be
-    /// incomplete, missing modes from other symmetry sectors.
-    #[arg(long)]
-    multi_sector: bool,
-
-    /// Traverse the k-path twice for improved convergence
-    ///
-    /// In round-trip mode, the k-path is traversed twice. The first pass builds
-    /// up well-converged warm-start vectors at each k-point. The second pass then
-    /// benefits from these improved initial guesses, especially at high-symmetry
-    /// points like Γ. Only the second pass results are returned.
-    ///
-    /// This is useful when convergence is poor at the first k-point (e.g., starting
-    /// at Γ), as the warm start from the first pass significantly improves the second.
-    #[arg(long)]
-    round_trip: bool,
 
     // ========================================================================
     // Export Options
@@ -205,17 +136,13 @@ impl From<PathArg> for PathPreset {
 /// CLI-friendly preconditioner type argument
 #[derive(Clone, Debug, ValueEnum, Default)]
 enum PrecondArg {
-    /// Auto-select based on polarization (TE=kernel-compensated, TM=transverse-projection)
+    /// Auto-select based on polarization (TE=fourier-diagonal-kernel-compensated, TM=transverse-projection)
     #[default]
     Auto,
     /// No preconditioner
     None,
-    /// Fourier diagonal (homogeneous approximation)
-    FourierDiagonal,
-    /// Structured preconditioner with spatial weights
-    Structured,
-    /// Kernel-compensated (same as fourier-diagonal with proper null-space handling)
-    KernelCompensated,
+    /// Fourier-diagonal kernel-compensated (with proper null-space handling at Γ)
+    FourierDiagonalKernelCompensated,
     /// Transverse projection (MPB's full 6-FFT algorithm)
     TransverseProjection,
 }
@@ -225,9 +152,7 @@ impl From<PrecondArg> for PreconditionerType {
         match value {
             PrecondArg::Auto => PreconditionerType::Auto,
             PrecondArg::None => PreconditionerType::None,
-            PrecondArg::FourierDiagonal => PreconditionerType::FourierDiagonal,
-            PrecondArg::Structured => PreconditionerType::Structured,
-            PrecondArg::KernelCompensated => PreconditionerType::KernelCompensated,
+            PrecondArg::FourierDiagonalKernelCompensated => PreconditionerType::FourierDiagonalKernelCompensated,
             PrecondArg::TransverseProjection => PreconditionerType::TransverseProjection,
         }
     }
@@ -284,7 +209,7 @@ fn initialize_logging(log_file: Option<&Path>) -> Result<(), Box<dyn std::error:
                 .parse_default_env() // Allow RUST_LOG to override
                 .init();
 
-            eprintln!("[cli] logging to file: {}", path.display());
+            info!("logging to file: {}", path.display());
         }
         None => {
             // Standard stderr logging with compact format (no timestamp, no module path)
@@ -325,7 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Validate diagnostics options
     if cli.record_diagnostics && cli.diagnostics_output.is_none() {
-        eprintln!("error: --diagnostics-output is required when using --record-diagnostics");
+        error!("--diagnostics-output is required when using --record-diagnostics");
         std::process::exit(1);
     }
 
@@ -333,15 +258,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if (cli.iteration_csv.is_some() || cli.iteration_csv_combined.is_some())
         && !cli.record_diagnostics
     {
-        eprintln!(
-            "error: --iteration-csv and --iteration-csv-combined require --record-diagnostics"
-        );
+        error!("--iteration-csv and --iteration-csv-combined require --record-diagnostics");
         std::process::exit(1);
     }
 
     // Load configuration
     if !cli.quiet {
-        eprintln!("[cli] loading config {}", cli.config.display());
+        info!("loading config {}", cli.config.display());
     }
     let raw = fs::read_to_string(&cli.config)?;
     let mut config: JobConfig = toml::from_str(&raw)?;
@@ -349,7 +272,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply k-path override if specified
     if let Some(preset) = cli.path.clone() {
         let path_type = PathPreset::from(preset.clone());
-        let samples = symmetry::standard_path(
+        let samples = standard_path(
             &config.geometry.lattice,
             path_type.into(),
             cli.segments_per_leg,
@@ -357,8 +280,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.k_path = samples;
         config.path = None;
         if !cli.quiet {
-            eprintln!(
-                "[cli] overriding k-path via preset {:?} (segments_per_leg={})",
+            info!(
+                "overriding k-path via preset {:?} (segments_per_leg={})",
                 preset, cli.segments_per_leg
             );
         }
@@ -369,8 +292,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let clamped = mesh_size.max(1);
         config.dielectric.smoothing.mesh_size = clamped;
         if !cli.quiet {
-            eprintln!(
-                "[cli] overriding dielectric mesh_size -> {}{}",
+            info!(
+                "overriding dielectric mesh_size -> {}{}",
                 clamped,
                 if clamped == 1 {
                     " (smoothing disabled)"
@@ -380,36 +303,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
-    if cli.no_smoothing {
-        config.dielectric.smoothing.mesh_size = 1;
-        if !cli.quiet {
-            eprintln!("[cli] disabling dielectric smoothing (mesh_size=1)");
-        }
-    }
-
-    // Apply eigensolver toggle overrides
-    if cli.no_w_history {
-        config.eigensolver.use_w_history = false;
-        if !cli.quiet {
-            eprintln!("[cli] disabling W history (steepest descent mode)");
-        }
-    }
-    if cli.no_locking {
-        config.eigensolver.use_locking = false;
-        if !cli.quiet {
-            eprintln!("[cli] disabling locking (no band deflation)");
-        }
-    }
-
-    // Determine shift mode
-    let shift_mode = if cli.legacy_shift {
-        if !cli.quiet {
-            eprintln!("[cli] using legacy preconditioner shift (σ = 1e-3)");
-        }
-        PreconditionerShiftMode::Legacy
-    } else {
-        PreconditionerShiftMode::Adaptive
-    };
 
     // Create the job
     let job = bandstructure::BandStructureJob::from(config.clone());
@@ -421,23 +314,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(ref eps_path) = cli.export_epsilon {
             if !cli.quiet {
-                eprintln!("[cli] exporting epsilon data to {}", eps_path.display());
+                info!("exporting epsilon data to {}", eps_path.display());
             }
             dielectric.save_csv(eps_path)?;
         }
 
         if let Some(ref tensor_path) = cli.export_epsilon_tensor {
             if !cli.quiet {
-                eprintln!(
-                    "[cli] exporting epsilon tensor data to {}",
+                info!(
+                    "exporting epsilon tensor data to {}",
                     tensor_path.display()
                 );
             }
             match dielectric.save_tensor_csv(tensor_path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                    eprintln!("warning: {}", e);
-                    eprintln!("         (tensor data requires smoothing to be enabled)");
+                    warn!("{}", e);
+                    warn!("tensor data requires smoothing to be enabled");
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -447,20 +340,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Skip solver if --skip-solve is set
     if cli.skip_solve {
         if cli.export_epsilon.is_none() && cli.export_epsilon_tensor.is_none() {
-            eprintln!("warning: --skip-solve specified but no export options given");
-            eprintln!("         use --export-epsilon and/or --export-epsilon-tensor");
+            warn!("--skip-solve specified but no export options given");
+            warn!("use --export-epsilon and/or --export-epsilon-tensor");
         }
         if !cli.quiet {
-            eprintln!("[cli] skipping eigensolver (--skip-solve)");
+            info!("skipping eigensolver (--skip-solve)");
         }
         return Ok(());
     }
 
     if !cli.quiet {
         if let Some(dest) = &cli.output {
-            eprintln!("[cli] writing CSV to {}", dest.display());
+            info!("writing CSV to {}", dest.display());
         } else {
-            eprintln!("[cli] streaming CSV to stdout");
+            info!("streaming CSV to stdout");
         }
     }
 
@@ -472,52 +365,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build run options
     let precond_type = PreconditionerType::from(cli.preconditioner.clone());
-    let mut run_options = RunOptions::new()
-        .with_preconditioner(precond_type)
-        .with_shift_mode(shift_mode);
-
-    // Default: untransformed TE (generalized eigenproblem A x = λ B x, B = ε)
-    // The transformed version causes systematic eigenvalue shifts because pointwise
-    // ε^{-1/2} is NOT the true matrix square root of the plane-wave mass matrix.
-    if cli.transformed_te {
-        run_options = run_options.with_transformed_te();
-        if !cli.quiet {
-            eprintln!("[cli] WARNING: using transformed TE mode (BROKEN - eigenvalues will be shifted)");
-        }
-    } else if !cli.quiet {
-        eprintln!("[cli] using untransformed TE mode (generalized eigenproblem, default)");
-    }
-
-    if cli.symmetry {
-        run_options = run_options.with_symmetry();
-        // Symmetry enabled - check multi-sector mode
-        if cli.multi_sector {
-            run_options = run_options.with_multi_sector();
-            if !cli.quiet {
-                eprintln!("[cli] symmetry enabled, multi-sector mode (complete bands)");
-            }
-        } else {
-            // Single-parity mode (legacy)
-            run_options = run_options.without_multi_sector();
-            if !cli.quiet {
-                eprintln!("[cli] symmetry enabled, single-parity mode");
-                eprintln!("[cli]   NOTE: results may be incomplete (only one parity sector)");
-                eprintln!("[cli]   Use --multi-sector for complete bands");
-            }
-        }
-    } else {
-        // Default: no symmetry projections
-        if !cli.quiet {
-            eprintln!("[cli] symmetry projections disabled (default)");
-        }
-    }
-
-    if cli.round_trip {
-        run_options = run_options.with_round_trip();
-        if !cli.quiet {
-            eprintln!("[cli] round-trip mode enabled (k-path traversed twice)");
-        }
-    }
+    let run_options = RunOptions::new()
+        .with_preconditioner(precond_type);
 
     // Run the solver (with or without diagnostics)
     let result = if cli.record_diagnostics {
@@ -530,9 +379,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         if !cli.quiet {
-            eprintln!(
-                "[cli] recording diagnostics: study={} preconditioner={:?} shift={:?}",
-                study_name, precond_type, shift_mode
+            info!(
+                "recording diagnostics: study={} preconditioner={:?}",
+                study_name, precond_type
             );
         }
 
@@ -547,7 +396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Save diagnostics to JSON
         let diag_path = cli.diagnostics_output.as_ref().unwrap();
         if !cli.quiet {
-            eprintln!("[cli] writing diagnostics to {}", diag_path.display());
+            info!("writing diagnostics to {}", diag_path.display());
         }
 
         diag_result.study.save_json(diag_path)?;
@@ -555,8 +404,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Save iteration CSV if requested
         if let Some(ref csv_path) = cli.iteration_csv {
             if !cli.quiet {
-                eprintln!(
-                    "[cli] writing per-k-point iteration CSV to {}",
+                info!(
+                    "writing per-k-point iteration CSV to {}",
                     csv_path.display()
                 );
             }
@@ -565,8 +414,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(ref csv_path) = cli.iteration_csv_combined {
             if !cli.quiet {
-                eprintln!(
-                    "[cli] writing combined iteration CSV to {}",
+                info!(
+                    "writing combined iteration CSV to {}",
                     csv_path.display()
                 );
             }
@@ -574,8 +423,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if !cli.quiet {
-            eprintln!(
-                "[cli] diagnostics saved: {} runs, {} k-points",
+            info!(
+                "diagnostics saved: {} runs, {} k-points",
                 diag_result.study.runs.len(),
                 diag_result.result.k_path.len()
             );
@@ -591,9 +440,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !cli.quiet {
         if let Some(path) = cli.output {
-            eprintln!("wrote {} rows to {}", result.k_path.len(), path.display());
+            info!("wrote {} rows to {}", result.k_path.len(), path.display());
         } else {
-            eprintln!("wrote {} rows to stdout", result.k_path.len());
+            info!("wrote {} rows to stdout", result.k_path.len());
         }
     }
 

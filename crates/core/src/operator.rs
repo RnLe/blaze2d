@@ -14,15 +14,13 @@ use crate::{
     grid::Grid2D,
     polarization::Polarization,
     preconditioner::{
-        FOURIER_DIAGONAL_SHIFT, FourierDiagonalPreconditioner, SpectralStats,
+        FourierDiagonalPreconditioner, SpectralStats,
         TransverseProjectionPreconditioner,
     },
 };
 
 pub(crate) const K_PLUS_G_NEAR_ZERO_FLOOR: f64 = 1e-9;
 pub(crate) const TE_PRECONDITIONER_MASS_FRACTION: f64 = 1e-2;
-pub(crate) const STRUCTURED_WEIGHT_MIN: f64 = 1e-3;
-pub(crate) const STRUCTURED_WEIGHT_MAX: f64 = 1e3;
 
 pub trait LinearOperator<B: SpectralBackend> {
     fn apply(&mut self, input: &B::Buffer, output: &mut B::Buffer);
@@ -68,14 +66,6 @@ pub struct ThetaOperator<B: SpectralBackend> {
     grad_x: B::Buffer,
     grad_y: B::Buffer,
     k_plus_g_was_clamped: Vec<bool>,
-    /// Whether to use the transformed TE formulation (B = I).
-    /// When true, the TE operator becomes A' = ε^{-1/2} · A · ε^{-1/2}
-    /// and the mass operator becomes identity.
-    use_transformed_te: bool,
-    /// Precomputed ε^{1/2}(r) for the transformation (only for TE with transformation).
-    eps_sqrt: Option<Vec<f64>>,
-    /// Precomputed ε^{-1/2}(r) for the transformation (only for TE with transformation).
-    eps_inv_sqrt: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,44 +88,19 @@ impl OperatorSnapshotData {
 }
 
 impl<B: SpectralBackend> ThetaOperator<B> {
-    /// Create a new ThetaOperator with the generalized eigenproblem formulation.
+    /// Create a new ThetaOperator for band structure calculation.
     ///
-    /// For TE mode, this uses A·x = λ·B·x where B = ε(r).
-    /// For TM mode, B = I (already standard).
+    /// This operator implements Maxwell's equations for 2D photonic crystals:
+    /// - TE mode: Uses generalized eigenproblem A·x = λ·B·x where B = ε(r).
+    ///   NOTE: A transformed formulation (A' = ε^{-1/2}·A·ε^{-1/2}, B' = I) was tried
+    ///   but causes systematic eigenvalue shifts because pointwise ε^{-1/2} is NOT
+    ///   the true matrix square root of the plane-wave mass matrix.
+    /// - TM mode: B = I (standard eigenproblem).
     pub fn new(
         backend: B,
         dielectric: Dielectric2D,
         polarization: Polarization,
         bloch_k: [f64; 2],
-    ) -> Self {
-        Self::new_internal(backend, dielectric, polarization, bloch_k, false)
-    }
-
-    /// Create a new ThetaOperator with the transformed TE formulation (B = I).
-    ///
-    /// For TE mode, this transforms the problem so that:
-    /// - A' = ε^{-1/2} · A · ε^{-1/2}  (transformed stiffness)
-    /// - B' = I (identity mass)
-    ///
-    /// This converts the generalized eigenproblem to a standard one,
-    /// simplifying orthogonalization and Rayleigh quotients.
-    ///
-    /// For TM mode, this is equivalent to `new()` since B = I already.
-    pub fn new_transformed(
-        backend: B,
-        dielectric: Dielectric2D,
-        polarization: Polarization,
-        bloch_k: [f64; 2],
-    ) -> Self {
-        Self::new_internal(backend, dielectric, polarization, bloch_k, true)
-    }
-
-    fn new_internal(
-        backend: B,
-        dielectric: Dielectric2D,
-        polarization: Polarization,
-        bloch_k: [f64; 2],
-        use_transformed_te: bool,
     ) -> Self {
         let grid = dielectric.grid;
         let wave_tables = cached_wave_tables(grid);
@@ -153,16 +118,6 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let scratch = backend.alloc_field(grid);
         let grad_x = backend.alloc_field(grid);
         let grad_y = backend.alloc_field(grid);
-
-        // Precompute ε^{1/2} and ε^{-1/2} if using transformed TE
-        let (eps_sqrt, eps_inv_sqrt) = if use_transformed_te && polarization == Polarization::TE {
-            let eps = dielectric.eps();
-            let sqrt: Vec<f64> = eps.iter().map(|&e| e.sqrt()).collect();
-            let inv_sqrt: Vec<f64> = eps.iter().map(|&e| 1.0 / e.sqrt()).collect();
-            (Some(sqrt), Some(inv_sqrt))
-        } else {
-            (None, None)
-        };
 
         Self {
             backend,
@@ -182,15 +137,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             grad_x,
             grad_y,
             k_plus_g_was_clamped,
-            use_transformed_te,
-            eps_sqrt,
-            eps_inv_sqrt,
         }
-    }
-
-    /// Returns whether this operator uses the transformed TE formulation.
-    pub fn is_transformed(&self) -> bool {
-        self.use_transformed_te && self.polarization == Polarization::TE
     }
 
     /// Returns whether this operator is at the Γ-point (k ≈ 0).
@@ -200,14 +147,6 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     pub fn is_gamma(&self) -> bool {
         const GAMMA_TOL: f64 = 1e-12;
         self.bloch[0].abs() < GAMMA_TOL && self.bloch[1].abs() < GAMMA_TOL
-    }
-
-    /// Get ε^{1/2} values if using transformed TE mode.
-    ///
-    /// For transformed TE, the kernel of A' = ε^{-1/2} A ε^{-1/2} is v₀ = ε^{1/2} u₀,
-    /// where u₀ is the constant mode. This accessor is needed for proper Γ deflation.
-    pub fn eps_sqrt(&self) -> Option<&[f64]> {
-        self.eps_sqrt.as_deref()
     }
 
     pub fn alloc_field(&self) -> B::Buffer {
@@ -230,15 +169,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         SpectralStats::compute(&self.k_plus_g_sq)
     }
 
-    /// Build homogeneous preconditioner with legacy global shift.
-    ///
-    /// Uses a fixed σ = 1e-3 shift for regularization, which doesn't
-    /// scale with the k-point's spectral properties.
-    pub fn build_homogeneous_preconditioner(&self) -> FourierDiagonalPreconditioner {
-        self.build_homogeneous_preconditioner_with_shift(FOURIER_DIAGONAL_SHIFT)
-    }
-
-    /// Build homogeneous preconditioner with k-dependent shift.
+    /// Build homogeneous preconditioner with k-dependent (adaptive) shift.
     ///
     /// Uses σ(k) = β * s_median(k), where s_median is the median of |k+G|².
     /// This ensures the shift scales with the local spectral range.
@@ -280,24 +211,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
         match self.polarization {
             Polarization::TE => {
-                // For transformed TE, use ε^{1/2} weights + kernel-compensation
-                // This combines the best of both approaches
-                if self.is_transformed() {
-                    if let Some(eps_sqrt) = &self.eps_sqrt {
-                        let inverse_diagonal = build_inverse_diagonal(
-                            &self.k_plus_g_sq,
-                            shift,
-                            1.0, // No eps_eff scaling - weights handle it
-                            0.0, // No mass floor needed
-                            near_zero_mask, // Kernel-compensation: zero near-zero modes ONLY at Γ
-                        );
-                        return FourierDiagonalPreconditioner::with_weights(
-                            inverse_diagonal,
-                            eps_sqrt.clone(),
-                        );
-                    }
-                }
-                // Untransformed TE: generalized eigenproblem (A x = λ B x, B = ε)
+                // TE: generalized eigenproblem (A x = λ B x, B = ε)
                 let eps_eff = self.effective_te_epsilon();
                 let mass_floor = te_preconditioner_mass_floor(eps_eff);
                 let inverse_diagonal = build_inverse_diagonal(
@@ -318,110 +232,15 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
     }
 
-    /// Build structured preconditioner with legacy global shift.
+    /// Build the MPB-style transverse-projection preconditioner with adaptive shift.
     ///
-    /// Uses a fixed σ = 1e-3 shift for regularization.
-    pub fn build_structured_preconditioner(&self) -> FourierDiagonalPreconditioner {
-        self.build_structured_preconditioner_with_shift(FOURIER_DIAGONAL_SHIFT)
-    }
-
-    /// Build structured preconditioner with k-dependent shift.
-    ///
-    /// Uses σ(k) = β * s_median(k), where s_median is the median of |k+G|².
-    pub fn build_structured_preconditioner_adaptive(&self) -> FourierDiagonalPreconditioner {
-        let stats = self.spectral_stats();
-        let shift = stats.adaptive_shift();
-        log::debug!(
-            "preconditioner: adaptive shift σ(k)={:.2e} (α={:.1}, s_min={:.2e}, s_med={:.2e}, s_max={:.2e})",
-            shift,
-            crate::preconditioner::SHIFT_SMIN_FRACTION,
-            stats.s_min,
-            stats.s_median,
-            stats.s_max
-        );
-        self.build_structured_preconditioner_with_shift(shift)
-    }
-
-    /// Build structured preconditioner with a specific shift value.
-    ///
-    /// For transformed TE mode, uses ε^{1/2} as weights to approximate (A')^{-1}:
-    ///   M^{-1} = ε^{1/2} · F^{-1} · D · F · ε^{1/2}
-    /// where D = 1/(|k+G|² + σ²). This directly approximates the inverse of
-    /// A' = ε^{-1/2} · (-∇²) · ε^{-1/2}.
-    ///
-    /// # Kernel Compensation Strategy
-    ///
-    /// Same as homogeneous preconditioner: only zero near-zero modes at Γ.
-    fn build_structured_preconditioner_with_shift(
-        &self,
-        shift: f64,
-    ) -> FourierDiagonalPreconditioner {
-        // Only zero near-zero modes at Γ-point where they're actually in the null space.
-        // Away from Γ, these modes have |k+G|² = |k|² > 0 and must NOT be zeroed.
-        let near_zero_mask = if self.is_gamma() {
-            Some(self.k_plus_g_was_clamped.as_slice())
-        } else {
-            None // No kernel compensation away from Γ - use regularization floor only
-        };
-
-        match self.polarization {
-            Polarization::TE => {
-                // For transformed TE, use ε^{1/2} directly as weights
-                // This gives M^{-1} ≈ (A')^{-1} = ε^{1/2} · (-∇²)^{-1} · ε^{1/2}
-                if self.is_transformed() {
-                    if let Some(eps_sqrt) = &self.eps_sqrt {
-                        // Use 1/(|k+G|² + σ²) without eps_eff scaling
-                        // The ε^{1/2} weights handle the dielectric structure
-                        let inverse_diagonal = build_inverse_diagonal(
-                            &self.k_plus_g_sq,
-                            shift,
-                            1.0, // No eps_eff scaling - weights handle it
-                            0.0, // No mass floor needed
-                            near_zero_mask, // Kernel-compensation ONLY at Γ
-                        );
-                        return FourierDiagonalPreconditioner::with_weights(
-                            inverse_diagonal,
-                            eps_sqrt.clone(),
-                        );
-                    }
-                }
-                // Untransformed TE: generalized eigenproblem (A x = λ B x, B = ε)
-                // Use ε/ε_eff weights for structured preconditioning
-                let eps_eff = self.effective_te_epsilon();
-                let mass_floor = te_preconditioner_mass_floor(eps_eff);
-                let inverse_diagonal = build_inverse_diagonal(
-                    &self.k_plus_g_sq,
-                    shift,
-                    eps_eff,
-                    mass_floor,
-                    near_zero_mask, // Kernel-compensation ONLY at Γ
-                );
-                let weights = build_structured_weights_te(&self.dielectric, eps_eff);
-                FourierDiagonalPreconditioner::with_weights(inverse_diagonal, weights)
-            }
-            Polarization::TM => {
-                let eps_eff = self.effective_tm_epsilon();
-                let inverse_diagonal =
-                    build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff, 0.0, near_zero_mask);
-                let weights = build_structured_weights_tm(&self.dielectric);
-                FourierDiagonalPreconditioner::with_weights(inverse_diagonal, weights)
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn build_fourier_diagonal_preconditioner(&self) -> FourierDiagonalPreconditioner {
-        self.build_homogeneous_preconditioner()
-    }
-
-    /// Build the MPB-style transverse-projection preconditioner.
+    /// Uses σ(k) = α * s_min(k), where s_min is the smallest nonzero |k+G|².
+    /// This ensures proper scaling at different k-points.
     ///
     /// This is the most effective preconditioner for TM mode, as it accounts for
     /// the spatial variation of ε(r) in the approximate inverse. For TE mode,
     /// it falls back to a Fourier-diagonal preconditioner since the operator is
     /// already diagonal in Fourier space.
-    ///
-    /// Uses the legacy global shift (σ = 1e-3) for regularization.
     ///
     /// # Performance
     ///
@@ -430,16 +249,6 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     ///
     /// The extra cost for TM is typically offset by the dramatic reduction in
     /// iteration count (often 5-10× fewer iterations).
-    pub fn build_transverse_projection_preconditioner(
-        &self,
-    ) -> TransverseProjectionPreconditioner<B> {
-        self.build_transverse_projection_preconditioner_with_shift(FOURIER_DIAGONAL_SHIFT)
-    }
-
-    /// Build the MPB-style transverse-projection preconditioner with adaptive shift.
-    ///
-    /// Uses σ(k) = α * s_min(k), where s_min is the smallest nonzero |k+G|².
-    /// This ensures proper scaling at different k-points.
     pub fn build_transverse_projection_preconditioner_adaptive(
         &self,
     ) -> TransverseProjectionPreconditioner<B> {
@@ -815,70 +624,34 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
     /// Apply the TE operator: A·x = |k+G|²·x (Laplacian in Fourier space)
     ///
-    /// For transformed mode: A' = ε^{-1/2} · A · ε^{-1/2}
+    /// NOTE: A transformed formulation (A' = ε^{-1/2} · A · ε^{-1/2}) was attempted
+    /// to convert the generalized eigenproblem to a standard one, but this caused
+    /// eigenvalue shifts and numerical issues. We use the untransformed generalized
+    /// eigenproblem formulation instead.
     fn apply_te(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
-        if self.use_transformed_te {
-            // Transformed TE: A' = ε^{-1/2} · A · ε^{-1/2}
-            // Step 1: multiply by ε^{-1/2} in real space
-            let eps_inv_sqrt = self.eps_inv_sqrt.as_ref().unwrap();
-            copy_buffer(&mut self.scratch, input);
-            for (value, &inv_sqrt) in self
-                .scratch
-                .as_mut_slice()
-                .iter_mut()
-                .zip(eps_inv_sqrt.iter())
-            {
-                *value *= inv_sqrt;
-            }
-
-            // Step 2: apply Laplacian in Fourier space
-            self.backend.forward_fft_2d(&mut self.scratch);
-            for (value, &k_sq) in self
-                .scratch
-                .as_mut_slice()
-                .iter_mut()
-                .zip(self.k_plus_g_sq.iter())
-            {
-                *value *= k_sq;
-            }
-            self.backend.inverse_fft_2d(&mut self.scratch);
-
-            // Step 3: multiply by ε^{-1/2} in real space
-            for (value, &inv_sqrt) in self
-                .scratch
-                .as_mut_slice()
-                .iter_mut()
-                .zip(eps_inv_sqrt.iter())
-            {
-                *value *= inv_sqrt;
-            }
-
-            copy_buffer(output, &self.scratch);
-        } else {
-            // Standard TE: A·x = |k+G|²·x
-            copy_buffer(&mut self.scratch, input);
-            self.backend.forward_fft_2d(&mut self.scratch);
-            let data = self.scratch.as_mut_slice();
-            #[cfg(debug_assertions)]
-            {
-                static ONCE: std::sync::Once = std::sync::Once::new();
-                ONCE.call_once(|| {
-                    let max_k_sq = self.k_plus_g_sq.iter().cloned().fold(0.0_f64, f64::max);
-                    let mut sorted: Vec<f64> = self.k_plus_g_sq.iter().cloned().collect();
-                    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                    eprintln!(
-                        "[operator-debug] TE k_plus_g_sq first 8: {:?}",
-                        &sorted[..sorted.len().min(8)]
-                    );
-                    eprintln!("[operator-debug] TE k_plus_g_sq max={:.4}", max_k_sq);
-                });
-            }
-            for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
-                *value *= k_sq;
-            }
-            self.backend.inverse_fft_2d(&mut self.scratch);
-            copy_buffer(output, &self.scratch);
+        // Standard TE: A·x = |k+G|²·x
+        copy_buffer(&mut self.scratch, input);
+        self.backend.forward_fft_2d(&mut self.scratch);
+        let data = self.scratch.as_mut_slice();
+        #[cfg(debug_assertions)]
+        {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            ONCE.call_once(|| {
+                let max_k_sq = self.k_plus_g_sq.iter().cloned().fold(0.0_f64, f64::max);
+                let mut sorted: Vec<f64> = self.k_plus_g_sq.iter().cloned().collect();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                log::debug!(
+                    "[operator] TE k_plus_g_sq first 8: {:?}",
+                    &sorted[..sorted.len().min(8)]
+                );
+                log::debug!("[operator] TE k_plus_g_sq max={:.4}", max_k_sq);
+            });
         }
+        for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
+            *value *= k_sq;
+        }
+        self.backend.inverse_fft_2d(&mut self.scratch);
+        copy_buffer(output, &self.scratch);
     }
 
     fn capture_tm_snapshot(&mut self, input: &B::Buffer) -> OperatorSnapshotData {
@@ -1006,14 +779,9 @@ impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
         match self.polarization {
             Polarization::TM => copy_buffer(output, input),
             Polarization::TE => {
-                if self.is_transformed() {
-                    // Transformed TE mode: B = I (standard eigenproblem)
-                    copy_buffer(output, input);
-                } else {
-                    // Generalized eigenproblem: B = ε
-                    copy_buffer(output, input);
-                    apply_scalar_eps(output.as_mut_slice(), self.dielectric.eps());
-                }
+                // TE: Generalized eigenproblem with B = ε (mass matrix)
+                copy_buffer(output, input);
+                apply_scalar_eps(output.as_mut_slice(), self.dielectric.eps());
             }
         }
     }
@@ -1039,13 +807,10 @@ impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
     }
 
     fn gamma_kernel_transform(&self) -> Option<&[f64]> {
-        // For transformed TE, the kernel of A' = ε^{-1/2} A ε^{-1/2} is v₀ = ε^{1/2} u₀
-        // where u₀ is the constant mode. We return ε^{1/2} as the transformation factor.
-        if self.is_transformed() {
-            self.eps_sqrt.as_deref()
-        } else {
-            None
-        }
+        // No kernel transformation needed for untransformed operators.
+        // (A transformed TE formulation would use ε^{1/2} here, but that approach
+        // caused eigenvalue shifts and was removed.)
+        None
     }
 }
 
@@ -1292,8 +1057,8 @@ fn build_shifted_k_plus_g_tables(
         let mut unique_gx: Vec<f64> = gx_base.iter().cloned().collect();
         unique_gx.sort_by(|a, b| a.partial_cmp(b).unwrap());
         unique_gx.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
-        eprintln!(
-            "[k-debug] unique G_x values (first 8): {:?}",
+        log::debug!(
+            "[k-vectors] unique G_x values (first 8): {:?}",
             &unique_gx[..unique_gx.len().min(8)]
         );
     }
@@ -1656,33 +1421,6 @@ fn cached_wave_tables(grid: Grid2D) -> Arc<GridWaveTables> {
     let tables = Arc::new(GridWaveTables::new(grid));
     guard.insert(key, tables.clone());
     tables
-}
-
-fn build_structured_weights_te(dielectric: &Dielectric2D, eps_eff: f64) -> Vec<f64> {
-    let eps = dielectric.eps();
-    if eps.is_empty() || eps_eff <= 0.0 {
-        return vec![1.0; dielectric.grid.len()];
-    }
-    eps.iter().map(|&val| clamp_weight(val / eps_eff)).collect()
-}
-
-fn build_structured_weights_tm(dielectric: &Dielectric2D) -> Vec<f64> {
-    let inv_eps = dielectric.inv_eps();
-    if inv_eps.is_empty() {
-        return vec![1.0; dielectric.grid.len()];
-    }
-    let avg_inv = arithmetic_mean(inv_eps).unwrap_or(0.0);
-    if avg_inv <= 0.0 {
-        return vec![1.0; dielectric.grid.len()];
-    }
-    inv_eps
-        .iter()
-        .map(|&val| clamp_weight(val / avg_inv))
-        .collect()
-}
-
-fn clamp_weight(value: f64) -> f64 {
-    value.max(STRUCTURED_WEIGHT_MIN).min(STRUCTURED_WEIGHT_MAX)
 }
 
 fn arithmetic_mean(values: &[f64]) -> Option<f64> {

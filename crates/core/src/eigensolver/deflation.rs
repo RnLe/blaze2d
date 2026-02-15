@@ -350,29 +350,6 @@ impl<B: SpectralBackend> Default for DeflationSubspace<B> {
 // Locking Logic
 // ============================================================================
 
-/// Configuration for the locking strategy.
-///
-/// Note: The locking tolerance is NOT stored here - it uses the same
-/// convergence tolerance from `EigensolverConfig.tol`. This ensures
-/// consistency: a band that's "converged" is also "locked".
-#[derive(Debug, Clone)]
-pub struct LockingConfig {
-    /// Minimum iterations before locking is allowed.
-    /// Prevents premature locking of bands that haven't stabilized.
-    pub min_iterations: usize,
-    /// Whether locking is enabled at all.
-    pub enabled: bool,
-}
-
-impl Default for LockingConfig {
-    fn default() -> Self {
-        Self {
-            min_iterations: 5,
-            enabled: true,
-        }
-    }
-}
-
 /// Result of checking which bands should be locked.
 #[derive(Debug, Clone)]
 pub struct LockingResult {
@@ -389,36 +366,26 @@ impl LockingResult {
     }
 }
 
-/// Determine which bands should be locked based on residuals.
+/// Determine which bands should be locked based on eigenvalue changes.
+///
+/// A band is locked when its relative eigenvalue change drops below the
+/// convergence tolerance, indicating it has stabilized.
 ///
 /// # Arguments
-/// * `relative_residuals` - Relative residual for each active band
-/// * `iteration` - Current iteration number
+/// * `relative_eigenvalue_changes` - Relative eigenvalue change |Δλ|/|λ| for each active band
 /// * `tol` - Convergence tolerance (same as EigensolverConfig.tol)
-/// * `config` - Locking configuration (min_iterations, enabled)
 ///
 /// # Returns
 /// A `LockingResult` indicating which bands to lock and which to keep.
 pub fn check_for_locking(
-    relative_residuals: &[f64],
-    iteration: usize,
+    relative_eigenvalue_changes: &[f64],
     tol: f64,
-    config: &LockingConfig,
 ) -> LockingResult {
     let mut bands_to_lock = Vec::new();
     let mut bands_to_keep = Vec::new();
 
-    if !config.enabled || iteration < config.min_iterations {
-        // Keep all bands active
-        bands_to_keep = (0..relative_residuals.len()).collect();
-        return LockingResult {
-            bands_to_lock,
-            bands_to_keep,
-        };
-    }
-
-    for (i, &res) in relative_residuals.iter().enumerate() {
-        if res < tol {
+    for (i, &change) in relative_eigenvalue_changes.iter().enumerate() {
+        if change < tol {
             bands_to_lock.push(i);
         } else {
             bands_to_keep.push(i);

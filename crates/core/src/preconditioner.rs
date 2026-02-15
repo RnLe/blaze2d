@@ -8,23 +8,23 @@
 //!
 //! # Preconditioner Hierarchy
 //!
-//! This module provides several preconditioner variants with different cost/effectiveness
-//! trade-offs:
+//! This module provides two preconditioner variants:
 //!
 //! 1. **[`FourierDiagonalPreconditioner`]**: Simple Fourier-space scaling by `1/|k+G|²`.
 //!    - O(N log N) cost per application (2 FFTs)
 //!    - Treats ε as uniform - limited effectiveness for high contrast
+//!    - Includes kernel compensation: zeros DC mode at Γ-point
+//!    - Default for TE mode
 //!
 //! 2. **[`TransverseProjectionPreconditioner`]**: MPB-style physics-informed preconditioner.
 //!    - O(N log N) cost per application (6 FFTs for both TE and TM)
 //!    - Accounts for spatial ε(r) variation via approximate inverse
 //!    - Achieves dramatic condition number reduction (10-100× better than diagonal)
-//!    - **Used for BOTH polarizations** - MPB uses the same algorithm for TE and TM
+//!    - Default for TM mode
 //!    - Based on Johnson & Joannopoulos, Optics Express 8, 173 (2001)
 //!
 //! # MPB Transverse-Projection Algorithm
 //!
-//! MPB uses the **same** FFT-based preconditioner for both TE and TM polarizations.
 //! The algorithm approximates the inverse of the curl–(1/ε)–curl operator:
 //!
 //! 1. FFT residual r to k-space: r̂
@@ -35,17 +35,12 @@
 //! 6. **Invert second curl**: ĥ = -i(k+G) · Ŷ / |k+G|² (scalar)
 //! 7. IFFT to get final result h(r)
 //!
-//! For our TE mode (MPB's TM), MPB internally converts the problem to the same
-//! curl–(1/ε)–curl form, so the same preconditioner applies.
-//!
 //! # When to Use Each Preconditioner
 //!
 //! | Scenario | Recommended Preconditioner |
 //! |----------|---------------------------|
-//! | Low contrast (ε < 4) | FourierDiagonal (sufficient) |
-//! | High contrast (ε > 4) | TransverseProjection |
-//! | Large grids (256×256+) | TransverseProjection (always) |
-//! | Maximum performance | TransverseProjection |
+//! | TE mode (any contrast) | FourierDiagonalKernelCompensated (default) |
+//! | TM mode (any contrast) | TransverseProjection (default) |
 
 use num_complex::Complex64;
 
@@ -53,10 +48,6 @@ use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::dielectric::Dielectric2D;
 use crate::grid::Grid2D;
 use crate::polarization::Polarization;
-
-/// Legacy global shift for preconditioner regularization.
-/// Used when `use_legacy_shift = true`.
-pub(crate) const FOURIER_DIAGONAL_SHIFT: f64 = 1e-3;
 
 /// Fraction of s_min to use for adaptive shift: σ(k) = α * s_min(k).
 /// At Γ-point, s_min is the squared magnitude of the first reciprocal shell.
@@ -134,58 +125,41 @@ pub trait OperatorPreconditioner<B: SpectralBackend> {
     fn apply(&mut self, backend: &B, buffer: &mut B::Buffer);
 }
 
+/// Fourier-diagonal preconditioner with kernel compensation.
+///
+/// This preconditioner applies a diagonal scaling in Fourier space:
+/// M⁻¹(q) = ε_eff / (|q|² + σ²)
+///
+/// # Kernel Compensation
+///
+/// At the Γ-point (k=0), the DC mode (|k+G|²=0) is in the null space of the
+/// Laplacian-type operator. This preconditioner explicitly zeros that mode,
+/// relying on deflation to handle the null space properly. Away from Γ,
+/// the shift σ² provides natural regularization since |k|² > 0.
+///
+/// # Adaptive Shift
+///
+/// The shift σ² is computed adaptively based on spectral statistics:
+/// σ(k) = α × s_min(k), where s_min is the smallest nonzero |k+G|².
+/// This ensures the preconditioner scales properly at each k-point.
 #[derive(Debug, Clone)]
 pub struct FourierDiagonalPreconditioner {
     inverse_diagonal: Vec<f64>,
-    /// Square root of spatial weights for symmetric application.
-    /// If present, applies W^{1/2} before and after the Fourier-space operation
-    /// to maintain Hermiticity: M⁻¹ = W^{1/2} · F⁻¹ · D · F · W^{1/2}
-    spatial_weights_sqrt: Option<Vec<f64>>,
 }
 
 impl FourierDiagonalPreconditioner {
     pub(crate) fn new(inverse_diagonal: Vec<f64>) -> Self {
-        Self {
-            inverse_diagonal,
-            spatial_weights_sqrt: None,
-        }
-    }
-
-    pub(crate) fn with_weights(inverse_diagonal: Vec<f64>, spatial_weights: Vec<f64>) -> Self {
-        // Store sqrt of weights for symmetric application
-        let sqrt_weights: Vec<f64> = spatial_weights.iter().map(|&w| w.sqrt()).collect();
-        Self {
-            inverse_diagonal,
-            spatial_weights_sqrt: Some(sqrt_weights),
-        }
+        Self { inverse_diagonal }
     }
 
     pub fn inverse_diagonal(&self) -> &[f64] {
         &self.inverse_diagonal
     }
-
-    pub fn spatial_weights(&self) -> Option<Vec<f64>> {
-        // Return the squared weights (original weights) for inspection
-        self.spatial_weights_sqrt
-            .as_ref()
-            .map(|sqrt_w| sqrt_w.iter().map(|&w| w * w).collect())
-    }
-
-    pub fn spatial_weights_sqrt(&self) -> Option<&[f64]> {
-        self.spatial_weights_sqrt.as_deref()
-    }
 }
 
 impl<B: SpectralBackend> OperatorPreconditioner<B> for FourierDiagonalPreconditioner {
     fn apply(&mut self, backend: &B, buffer: &mut B::Buffer) {
-        // Apply W^{1/2} in real space (before FFT)
-        if let Some(sqrt_weights) = &self.spatial_weights_sqrt {
-            for (value, &sqrt_w) in buffer.as_mut_slice().iter_mut().zip(sqrt_weights.iter()) {
-                *value *= sqrt_w;
-            }
-        }
-
-        // Apply F⁻¹ · D · F (Fourier-diagonal part)
+        // Apply F⁻¹ · D · F (Fourier-diagonal operation)
         backend.forward_fft_2d(buffer);
         for (value, scale) in buffer
             .as_mut_slice()
@@ -195,13 +169,6 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for FourierDiagonalPreconditi
             *value *= *scale;
         }
         backend.inverse_fft_2d(buffer);
-
-        // Apply W^{1/2} in real space (after IFFT) - symmetric with before
-        if let Some(sqrt_weights) = &self.spatial_weights_sqrt {
-            for (value, &sqrt_w) in buffer.as_mut_slice().iter_mut().zip(sqrt_weights.iter()) {
-                *value *= sqrt_w;
-            }
-        }
     }
 }
 

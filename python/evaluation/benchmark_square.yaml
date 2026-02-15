@@ -111,7 +111,7 @@ runs:
     total_iterations: 335
     total_time_s: 0.710
     time_per_iter_ms: 2.100
-    description: "Added constantly two more slack vectors to all blocks. Less iterations but significantly higher time per iteration."
+    description: "Added permanently two more slack vectors to all blocks. Less iterations but significantly higher time per iteration."
   - timestamp: "2025-11-29T02:12:31+01:00"
     polarization: "TM"
     min_iter: 24
@@ -119,7 +119,7 @@ runs:
     total_iterations: 828
     total_time_s: 2.140
     time_per_iter_ms: 2.600
-    description: "Added constantly two more slack vectors to all blocks. Less iterations but significantly higher time per iteration."
+    description: "Added permanently two more slack vectors to all blocks. Less iterations but significantly higher time per iteration."
 
   - timestamp: "2025-11-29T02:59:12+01:00"
     polarization: "TE"
@@ -138,3 +138,19 @@ runs:
     time_per_iter_ms: 1.600
     description: "Switched to relative eigenvalue convergence criterion (1-e6) instead of residual norm. Dramatically improved convergence."
 
+  - timestamp: "2025-11-29T17:38:22+01:00"
+    polarization: "TE"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 159
+    total_time_s: 0.180
+    time_per_iter_ms: 1.100
+    description: "Cleaned up the code (removed symmetry decision logic). Converges slightly better now? What the heck?"
+  - timestamp: "2025-11-29T17:38:22+01:00"
+    polarization: "TM"
+    min_iter: 7
+    max_iter: 21
+    total_iterations: 302
+    total_time_s: 0.460
+    time_per_iter_ms: 1.500
+    description: "Cleaned up the code (removed symmetry decision logic). Converges slightly better now? What the heck?"

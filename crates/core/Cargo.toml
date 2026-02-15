@@ -18,7 +18,3 @@ log.workspace = true
 criterion.workspace = true
 mpb2d-backend-cpu = { path = "../backend-cpu" }
 toml.workspace = true
-
-[[bench]]
-name = "eigensolver"
-harness = false

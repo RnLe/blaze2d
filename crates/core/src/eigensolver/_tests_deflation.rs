@@ -1,7 +1,7 @@
 //! Tests for the deflation module.
 //!
 //! These tests cover:
-//! - Basic locking configuration and logic
+//! - Basic locking logic
 //! - DeflationSubspace operations with a mock backend
 //! - Physics-relevant edge cases for photonic crystal band calculations
 //!
@@ -13,72 +13,17 @@
 //! - The Γ point (k=0) has special symmetry properties
 //! - Band gaps create natural separation between band groups
 
-use super::deflation::{LockingConfig, LockingResult, check_for_locking};
-
-// ============================================================================
-// Locking Configuration Tests
-// ============================================================================
-
-#[test]
-fn test_locking_config_default() {
-    let config = LockingConfig::default();
-    assert!(config.enabled);
-    assert!(config.min_iterations > 0);
-}
-
-#[test]
-fn test_locking_config_custom() {
-    let config = LockingConfig {
-        min_iterations: 10,
-        enabled: true,
-    };
-    assert_eq!(config.min_iterations, 10);
-}
+use super::deflation::{LockingResult, check_for_locking};
 
 // ============================================================================
 // check_for_locking Tests
 // ============================================================================
 
 #[test]
-fn test_check_for_locking_disabled() {
-    let config = LockingConfig {
-        enabled: false,
-        ..Default::default()
-    };
-    let residuals = vec![1e-8, 1e-8, 1e-8];
-    let tol = 1e-6;
-    let result = check_for_locking(&residuals, 100, tol, &config);
-    assert!(result.bands_to_lock.is_empty());
-    assert_eq!(result.bands_to_keep.len(), 3);
-}
-
-#[test]
-fn test_check_for_locking_min_iterations() {
-    let config = LockingConfig {
-        min_iterations: 10,
-        ..Default::default()
-    };
-    let residuals = vec![1e-10, 1e-10, 1e-10];
-    let tol = 1e-6;
-
-    // Before min_iterations: no locking
-    let result = check_for_locking(&residuals, 5, tol, &config);
-    assert!(result.bands_to_lock.is_empty());
-
-    // After min_iterations: lock all
-    let result = check_for_locking(&residuals, 10, tol, &config);
-    assert_eq!(result.bands_to_lock.len(), 3);
-}
-
-#[test]
 fn test_check_for_locking_partial() {
-    let config = LockingConfig {
-        min_iterations: 0,
-        enabled: true,
-    };
-    let residuals = vec![1e-8, 1e-4, 1e-9, 1e-3];
+    let eigenvalue_changes = vec![1e-8, 1e-4, 1e-9, 1e-3];
     let tol = 1e-6;
-    let result = check_for_locking(&residuals, 10, tol, &config);
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // Bands 0 and 2 should lock (below 1e-6)
     assert_eq!(result.bands_to_lock, vec![0, 2]);
@@ -87,11 +32,10 @@ fn test_check_for_locking_partial() {
 }
 
 #[test]
-fn test_check_for_locking_empty_residuals() {
-    let config = LockingConfig::default();
-    let residuals: Vec<f64> = vec![];
+fn test_check_for_locking_empty() {
+    let eigenvalue_changes: Vec<f64> = vec![];
     let tol = 1e-6;
-    let result = check_for_locking(&residuals, 10, tol, &config);
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     assert!(result.bands_to_lock.is_empty());
     assert!(result.bands_to_keep.is_empty());
@@ -99,19 +43,15 @@ fn test_check_for_locking_empty_residuals() {
 
 #[test]
 fn test_check_for_locking_single_band() {
-    let config = LockingConfig {
-        min_iterations: 0,
-        enabled: true,
-    };
     let tol = 1e-6;
 
     // Single band converged
-    let result = check_for_locking(&[1e-8], 10, tol, &config);
+    let result = check_for_locking(&[1e-8], tol);
     assert_eq!(result.bands_to_lock, vec![0]);
     assert!(result.bands_to_keep.is_empty());
 
     // Single band not converged
-    let result = check_for_locking(&[1e-4], 10, tol, &config);
+    let result = check_for_locking(&[1e-4], tol);
     assert!(result.bands_to_lock.is_empty());
     assert_eq!(result.bands_to_keep, vec![0]);
 }
@@ -139,40 +79,25 @@ fn test_locking_result_has_locks() {
 /// Lower bands converge first, higher bands converge later.
 #[test]
 fn test_photonic_crystal_typical_convergence_order() {
-    let config = LockingConfig {
-        min_iterations: 5,
-        enabled: true,
-    };
     let tol = 1e-6;
 
     // Typical pattern: band 1 converges first, then 2, 3, 4...
-    // Iteration 10: only bands 1-2 converged
-    let residuals_iter10 = vec![1e-8, 1e-7, 1e-4, 1e-3, 1e-2, 1e-1];
-    let result = check_for_locking(&residuals_iter10, 10, tol, &config);
+    // Only bands 0-1 have converged (eigenvalue changes below tol)
+    let eigenvalue_changes = vec![1e-8, 1e-7, 1e-4, 1e-3, 1e-2, 1e-1];
+    let result = check_for_locking(&eigenvalue_changes, tol);
     assert_eq!(result.bands_to_lock, vec![0, 1]);
     assert_eq!(result.bands_to_keep, vec![2, 3, 4, 5]);
-
-    // Iteration 50: bands 1-4 converged
-    let residuals_iter50 = vec![1e-10, 1e-9, 1e-8, 1e-7, 1e-3, 1e-2];
-    let result = check_for_locking(&residuals_iter50, 50, tol, &config);
-    assert_eq!(result.bands_to_lock, vec![0, 1, 2, 3]);
-    assert_eq!(result.bands_to_keep, vec![4, 5]);
 }
 
 /// Test near-degenerate bands (band crossing/anti-crossing).
 /// In photonic crystals, bands can be very close in eigenvalue at certain k-points.
 #[test]
 fn test_near_degenerate_bands() {
-    let config = LockingConfig {
-        min_iterations: 5,
-        enabled: true,
-    };
     let tol = 1e-6;
 
-    // At a band crossing, two bands might have very similar residuals
-    // Both converge at the same rate
-    let residuals = vec![1e-8, 1e-8, 1e-3, 1e-3];
-    let result = check_for_locking(&residuals, 20, tol, &config);
+    // At a band crossing, two bands might have very similar convergence rates
+    let eigenvalue_changes = vec![1e-8, 1e-8, 1e-3, 1e-3];
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // Both degenerate bands should lock together
     assert_eq!(result.bands_to_lock, vec![0, 1]);
@@ -183,84 +108,29 @@ fn test_near_degenerate_bands() {
 /// Bands below the gap converge much faster than bands above.
 #[test]
 fn test_convergence_across_band_gap() {
-    let config = LockingConfig {
-        min_iterations: 5,
-        enabled: true,
-    };
     let tol = 1e-6;
 
-    // Bands 1-3 are below the gap (well converged)
-    // Bands 4-6 are above the gap (still converging)
-    let residuals = vec![
+    // Bands 0-2 are below the gap (well converged)
+    // Bands 3-5 are above the gap (still converging)
+    let eigenvalue_changes = vec![
         1e-10, 1e-9, 1e-8, // Below gap: very converged
-        1e-3, 1e-2, 1e-1, // Above gap: still far
+        1e-3, 1e-2, 1e-1,  // Above gap: still far
     ];
 
-    let result = check_for_locking(&residuals, 30, tol, &config);
+    let result = check_for_locking(&eigenvalue_changes, tol);
     assert_eq!(result.bands_to_lock, vec![0, 1, 2]);
     assert_eq!(result.bands_to_keep, vec![3, 4, 5]);
 }
 
-/// Test the Γ point special case (k=0).
-/// At Γ, there's often a trivial constant mode with λ≈0.
-/// This test simulates what happens when band 1 is this trivial mode.
-#[test]
-fn test_gamma_point_trivial_mode() {
-    let config = LockingConfig {
-        min_iterations: 0, // Allow immediate locking for Γ mode
-        enabled: true,
-    };
-    let tol = 1e-6;
-
-    // Band 0: trivial Γ mode, essentially zero residual from iteration 1
-    // Bands 1-3: real photonic modes, converging normally
-    let residuals = vec![
-        1e-14, // Γ mode: machine precision (should lock immediately)
-        1e-4,  // First real band
-        1e-3,  // Second real band
-        1e-2,  // Third real band
-    ];
-
-    let result = check_for_locking(&residuals, 1, tol, &config);
-    assert_eq!(result.bands_to_lock, vec![0]); // Only Γ mode locks
-    assert_eq!(result.bands_to_keep, vec![1, 2, 3]);
-}
-
-/// Test extremely slow convergence for high bands.
-/// In photonic crystals, higher bands can take many iterations.
-#[test]
-fn test_slow_convergence_high_bands() {
-    let config = LockingConfig {
-        min_iterations: 100, // Require many iterations before locking
-        enabled: true,
-    };
-    let tol = 1e-6;
-
-    // Even if residuals look converged, don't lock before min_iterations
-    let residuals = vec![1e-10, 1e-10, 1e-10, 1e-10];
-
-    let result = check_for_locking(&residuals, 50, tol, &config);
-    assert!(result.bands_to_lock.is_empty());
-    assert_eq!(result.bands_to_keep.len(), 4);
-
-    // After min_iterations, lock all
-    let result = check_for_locking(&residuals, 100, tol, &config);
-    assert_eq!(result.bands_to_lock.len(), 4);
-}
-
-/// Test stalled convergence (residual plateaus).
+/// Test stalled convergence (eigenvalue changes plateau).
 /// This can happen when the subspace becomes rank-deficient.
 #[test]
 fn test_stalled_convergence() {
-    let config = LockingConfig {
-        min_iterations: 5,
-        enabled: true,
-    };
     let tol = 1e-6;
 
     // All bands stalled just above tolerance
-    let stalled_residuals = vec![1e-5, 1e-5, 1e-5, 1e-5];
-    let result = check_for_locking(&stalled_residuals, 200, tol, &config);
+    let stalled_changes = vec![1e-5, 1e-5, 1e-5, 1e-5];
+    let result = check_for_locking(&stalled_changes, tol);
 
     // Nothing should lock (all above tolerance)
     assert!(result.bands_to_lock.is_empty());
@@ -270,15 +140,11 @@ fn test_stalled_convergence() {
 /// Test tolerance exactly at boundary.
 #[test]
 fn test_tolerance_boundary() {
-    let config = LockingConfig {
-        min_iterations: 0,
-        enabled: true,
-    };
     let tol = 1e-6;
 
     // Exactly at tolerance should NOT lock (strictly less than)
-    let residuals = vec![1e-6, 0.999999e-6, 1.000001e-6];
-    let result = check_for_locking(&residuals, 10, tol, &config);
+    let eigenvalue_changes = vec![1e-6, 0.999999e-6, 1.000001e-6];
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // Only the one strictly below tolerance should lock
     assert_eq!(result.bands_to_lock, vec![1]); // 0.999999e-6 < 1e-6
@@ -288,14 +154,10 @@ fn test_tolerance_boundary() {
 /// Test very tight tolerance (for high-precision calculations).
 #[test]
 fn test_tight_tolerance() {
-    let config = LockingConfig {
-        min_iterations: 0,
-        enabled: true,
-    };
     let tol = 1e-12; // Very tight
 
-    let residuals = vec![1e-10, 1e-11, 1e-13, 1e-14];
-    let result = check_for_locking(&residuals, 100, tol, &config);
+    let eigenvalue_changes = vec![1e-10, 1e-11, 1e-13, 1e-14];
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // Only bands 2, 3 are below 1e-12
     assert_eq!(result.bands_to_lock, vec![2, 3]);
@@ -305,49 +167,37 @@ fn test_tight_tolerance() {
 /// Test loose tolerance (for quick surveys).
 #[test]
 fn test_loose_tolerance() {
-    let config = LockingConfig {
-        min_iterations: 0,
-        enabled: true,
-    };
     let tol = 1e-3; // Very loose
 
-    let residuals = vec![1e-4, 1e-3, 5e-4, 2e-3];
-    let result = check_for_locking(&residuals, 10, tol, &config);
+    let eigenvalue_changes = vec![1e-4, 1e-3, 5e-4, 2e-3];
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // Bands 0, 2 are below 1e-3
     assert_eq!(result.bands_to_lock, vec![0, 2]);
     assert_eq!(result.bands_to_keep, vec![1, 3]);
 }
 
-/// Test with NaN/Inf residuals (should not lock these).
+/// Test with NaN/Inf eigenvalue changes (should not lock these).
 #[test]
-fn test_nan_inf_residuals() {
-    let config = LockingConfig {
-        min_iterations: 0,
-        enabled: true,
-    };
+fn test_nan_inf_eigenvalue_changes() {
     let tol = 1e-6;
 
-    let residuals = vec![1e-8, f64::NAN, f64::INFINITY, 1e-10];
-    let result = check_for_locking(&residuals, 10, tol, &config);
+    let eigenvalue_changes = vec![1e-8, f64::NAN, f64::INFINITY, 1e-10];
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // NaN and Inf should NOT lock (NaN < 1e-6 is false, Inf < 1e-6 is false)
     assert_eq!(result.bands_to_lock, vec![0, 3]);
     assert_eq!(result.bands_to_keep, vec![1, 2]);
 }
 
-/// Test negative residuals (should not happen, but handle gracefully).
+/// Test negative eigenvalue changes (should not happen, but handle gracefully).
 #[test]
-fn test_negative_residuals() {
-    let config = LockingConfig {
-        min_iterations: 0,
-        enabled: true,
-    };
+fn test_negative_eigenvalue_changes() {
     let tol = 1e-6;
 
-    // Negative residuals shouldn't happen, but they're < tol, so would lock
-    let residuals = vec![-1e-8, 1e-8, -1.0, 1e-4];
-    let result = check_for_locking(&residuals, 10, tol, &config);
+    // Negative changes shouldn't happen, but they're < tol, so would lock
+    let eigenvalue_changes = vec![-1e-8, 1e-8, -1.0, 1e-4];
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // Bands 0, 1, 2 are below 1e-6 (including negatives)
     assert_eq!(result.bands_to_lock, vec![0, 1, 2]);
@@ -357,20 +207,16 @@ fn test_negative_residuals() {
 /// Test many bands (typical for large supercell calculations).
 #[test]
 fn test_many_bands() {
-    let config = LockingConfig {
-        min_iterations: 5,
-        enabled: true,
-    };
     let tol = 1e-6;
 
     // 20 bands with varying convergence
-    let mut residuals = Vec::with_capacity(20);
+    let mut eigenvalue_changes = Vec::with_capacity(20);
     for i in 0..20 {
         // Lower bands converge faster (exponential decay with band index)
-        residuals.push(1e-8 * (10.0_f64).powi(i as i32 / 3));
+        eigenvalue_changes.push(1e-8 * (10.0_f64).powi(i as i32 / 3));
     }
 
-    let result = check_for_locking(&residuals, 50, tol, &config);
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     // First ~6 bands should be below 1e-6
     assert!(!result.bands_to_lock.is_empty());
@@ -378,70 +224,25 @@ fn test_many_bands() {
 
     // Verify locked bands are the lowest-indexed ones
     for &band in &result.bands_to_lock {
-        assert!(residuals[band] < tol);
+        assert!(eigenvalue_changes[band] < tol);
     }
     for &band in &result.bands_to_keep {
-        assert!(residuals[band] >= tol);
+        assert!(eigenvalue_changes[band] >= tol);
     }
 }
 
 /// Test alternating convergence pattern (can happen with symmetry).
 #[test]
 fn test_alternating_convergence() {
-    let config = LockingConfig {
-        min_iterations: 5,
-        enabled: true,
-    };
     let tol = 1e-6;
 
     // Alternating pattern: even bands converged, odd bands not
     // This can happen when certain symmetry modes converge faster
-    let residuals = vec![1e-8, 1e-3, 1e-9, 1e-2, 1e-7, 1e-4];
-    let result = check_for_locking(&residuals, 20, tol, &config);
+    let eigenvalue_changes = vec![1e-8, 1e-3, 1e-9, 1e-2, 1e-7, 1e-4];
+    let result = check_for_locking(&eigenvalue_changes, tol);
 
     assert_eq!(result.bands_to_lock, vec![0, 2, 4]);
     assert_eq!(result.bands_to_keep, vec![1, 3, 5]);
-}
-
-/// Test iteration-by-iteration progression.
-#[test]
-fn test_iteration_progression() {
-    let config = LockingConfig {
-        min_iterations: 5,
-        enabled: true,
-    };
-    let tol = 1e-6;
-
-    // Simulate residual decrease over iterations
-    let residual_history = vec![
-        (1, vec![1e-1, 1e-1, 1e-1]),
-        (5, vec![1e-3, 1e-2, 1e-1]),     // At min_iterations
-        (10, vec![1e-6, 1e-4, 1e-2]),    // Band 0 at boundary
-        (20, vec![1e-8, 1e-6, 1e-3]),    // Bands 0,1 at boundary
-        (50, vec![1e-10, 1e-8, 1e-6]),   // All approaching
-        (100, vec![1e-12, 1e-10, 1e-8]), // All converged
-    ];
-
-    for (iter, residuals) in residual_history {
-        let result = check_for_locking(&residuals, iter, tol, &config);
-
-        // Verify monotonic progression of locking
-        if iter < 5 {
-            assert!(
-                result.bands_to_lock.is_empty(),
-                "iter {}: shouldn't lock before min_iter",
-                iter
-            );
-        }
-        if iter >= 100 {
-            assert_eq!(
-                result.bands_to_lock.len(),
-                3,
-                "iter {}: all should lock eventually",
-                iter
-            );
-        }
-    }
 }
 
 // ============================================================================

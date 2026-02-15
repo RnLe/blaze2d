@@ -1,10 +1,41 @@
-//! Symmetry projectors and multi-sector scheduling for LOBPCG eigensolver.
+//! Symmetry utilities and k-path generation for photonic band structure calculations.
 //!
-//! # Overview
+//! # Module Status: Archived Symmetry Projection Code
 //!
-//! This module provides symmetry-based projectors that constrain the LOBPCG
-//! eigensolver to work within specific irreducible representations (irreps)
-//! of the point group symmetry. This achieves several benefits:
+//! This module contains two distinct functionalities:
+//!
+//! ## Active: K-Path Generation
+//!
+//! The k-path utilities (`standard_path`, `PathType`, etc.) are actively used by
+//! the CLI and band structure runner to generate k-point paths along high-symmetry
+//! directions in the Brillouin zone. These remain essential for band structure
+//! calculations.
+//!
+//! ## Archived: Symmetry Projectors (Not Used)
+//!
+//! The symmetry projector code (`SymmetryProjector`, `SymmetrySector`, `Parity`,
+//! `enumerate_sectors`, etc.) is **kept for reference but NOT actively used** in
+//! the eigensolver. The symmetry projection approach was removed because:
+//!
+//! 1. **No Performance Win**: In practice, applying symmetry projections at every
+//!    LOBPCG iteration adds overhead without proportional convergence speedup.
+//!    The matrix-free operator application is already efficient, and the projector
+//!    operations (FFT transforms to apply mirror symmetry) are not free.
+//!
+//! 2. **Complexity vs Benefit**: Multi-sector scheduling (running LOBPCG once per
+//!    irrep, then merging results) requires significant bookkeeping and does not
+//!    provide meaningful advantages for typical 2D photonic crystal calculations.
+//!
+//! 3. **Warm-Start Compatibility**: The simple k-path approach with warm-starting
+//!    from previous k-points works well without symmetry constraints, and LOBPCG
+//!    naturally finds the lowest eigenvalues regardless of their symmetry class.
+//!
+//! The code is preserved here as documentation of the approach and for potential
+//! future use if symmetry-based eigenvalue filtering becomes necessary.
+//!
+//! # Original Design (for reference)
+//!
+//! The symmetry projector approach was designed to:
 //!
 //! 1. **Block-diagonalization**: The Hilbert space splits into orthogonal
 //!    invariant subspaces, reducing the effective problem size.
@@ -60,6 +91,12 @@
 //! - Both mirrors: applicable at Γ, X, M points
 //!
 //! At generic k-points, the little group is trivial and no symmetry applies.
+//!
+//! ---
+//!
+//! **Note**: The CLI flags `--symmetry` and `--multi-sector` were removed.
+//! The eigensolver no longer applies symmetry projections during iteration.
+//! Only the k-path generation utilities below are actively used.
 
 use log::debug;
 use num_complex::Complex64;

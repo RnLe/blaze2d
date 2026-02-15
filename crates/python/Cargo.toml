@@ -14,5 +14,6 @@ default = []
 bindings = ["dep:pyo3"]
 
 [dependencies]
+log.workspace = true
 mpb2d-core = { path = "../core" }
 pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
