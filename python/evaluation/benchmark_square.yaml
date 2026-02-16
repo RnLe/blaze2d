@@ -155,3 +155,19 @@ runs:
     time_per_iter_ms: 1.500
     description: "Cleaned up the code (removed symmetry decision logic). Converges slightly better now? What the heck?"
 
+  - timestamp: "2025-11-30T10:43:30+01:00"
+    polarization: "TE"
+    min_iter: 7
+    max_iter: 21
+    total_iterations: 302
+    total_time_s: 0.460
+    time_per_iter_ms: 1.500
+    description: "Switched TE/TM naming to match standard convention. No code changes."
+  - timestamp: "2025-11-30T10:43:31+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 15
+    total_iterations: 159
+    total_time_s: 0.170
+    time_per_iter_ms: 1.100
+    description: "Switched TE/TM naming to match standard convention. No code changes."

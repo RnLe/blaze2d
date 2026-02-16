@@ -45,10 +45,10 @@ use crate::field::Field2D;
 /// * `backend` - The spectral backend for vector operations
 /// * `prev_vecs` - Eigenvectors from the previous k-point
 /// * `curr_vecs` - Eigenvectors from the current k-point
-/// * `eps` - The dielectric function ε(r) for B-weighting (TE mode) or None (TM mode)
+/// * `eps` - The dielectric function ε(r) for B-weighting (TM mode) or None (TE mode)
 ///
-/// For TM mode (B = I), pass `eps = None`.
-/// For TE mode (B = ε), pass `eps = Some(&dielectric_values)`.
+/// For TE mode (B = I), pass `eps = None`.
+/// For TM mode (B = ε), pass `eps = Some(&dielectric_values)`.
 pub fn compute_overlap_matrix<B: SpectralBackend>(
     _backend: &B,
     prev_vecs: &[Field2D],

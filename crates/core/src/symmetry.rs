@@ -212,10 +212,10 @@ pub struct ReflectionConstraint {
     pub parity: Parity,
 }
 
-// NOTE: Both TE (E_z) and TM (H_z) are true scalar fields under point group
+// NOTE: Both TE (H_z) and TM (E_z) are true scalar fields under point group
 // operations. Under a mirror reflection R: r → R·r, both fields transform as:
-//   E_z(r) → E_z(R·r)    (no sign change)
 //   H_z(r) → H_z(R·r)    (no sign change)
+//   E_z(r) → E_z(R·r)    (no sign change)
 //
 // Therefore, the parity constraint applies identically to both polarizations.
 // There is no pseudo-vector sign flip needed for either case.

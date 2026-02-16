@@ -198,11 +198,11 @@ fn toy_laplacian_matches_plane_wave_eigenvalue() {
 }
 
 #[test]
-fn theta_te_uniform_medium_matches_laplacian() {
+fn theta_tm_uniform_medium_matches_laplacian() {
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
     let dielectric = uniform_dielectric(grid, 12.0);
     let backend = TestBackend;
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, [0.0, 0.0]);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
     let input = plane_wave(grid, 1, 0);
     let mut output = theta.alloc_field();
     theta.apply(&input, &mut output);
@@ -215,11 +215,11 @@ fn theta_te_uniform_medium_matches_laplacian() {
 }
 
 #[test]
-fn theta_tm_uniform_medium_matches_laplacian() {
+fn theta_te_uniform_medium_matches_curl_curl() {
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
     let dielectric = uniform_dielectric(grid, 8.0);
     let backend = TestBackend;
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, [0.0, 0.0]);
     let input = plane_wave(grid, 0, 1);
     let mut output = theta.alloc_field();
     theta.apply(&input, &mut output);
@@ -232,11 +232,11 @@ fn theta_tm_uniform_medium_matches_laplacian() {
 }
 
 #[test]
-fn theta_tm_respects_bloch_shift_for_constant_field() {
+fn theta_te_respects_bloch_shift_for_constant_field() {
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
     let dielectric = uniform_dielectric(grid, 5.0);
     let backend = TestBackend;
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [PI, 0.0]);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, [PI, 0.0]);
     let input = plane_wave(grid, 0, 0);
     let mut output = theta.alloc_field();
     theta.apply(&input, &mut output);
@@ -249,12 +249,12 @@ fn theta_tm_respects_bloch_shift_for_constant_field() {
 }
 
 #[test]
-fn theta_te_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
+fn theta_tm_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
     let grid = Grid2D::new(6, 5, 1.6, 0.9);
     let dielectric = uniform_dielectric(grid, 7.0);
     let backend = TestBackend;
     let bloch = [0.3 * PI, -0.45 * PI];
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
     let input = plane_wave(grid, 1, -2);
     let mut output = theta.alloc_field();
     theta.apply(&input, &mut output);
@@ -267,13 +267,13 @@ fn theta_te_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
 }
 
 #[test]
-fn theta_tm_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
+fn theta_te_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
     let grid = Grid2D::new(5, 6, 1.4, 0.85);
     let eps_bg = 5.5;
     let dielectric = uniform_dielectric(grid, eps_bg);
     let backend = TestBackend;
     let bloch = [-0.2 * PI, 0.35 * PI];
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
     let input = plane_wave(grid, -1, 2);
     let mut output = theta.alloc_field();
     theta.apply(&input, &mut output);
@@ -286,12 +286,12 @@ fn theta_tm_plane_wave_matches_shifted_eigenvalue_on_rectangular_grid() {
 }
 
 #[test]
-fn theta_tm_operator_is_hermitian_in_non_uniform_dielectric() {
+fn theta_te_operator_is_hermitian_in_non_uniform_dielectric() {
     let grid = Grid2D::new(4, 5, 1.0, 1.0);
     let dielectric = patterned_dielectric(grid);
     let backend = TestBackend;
     let bloch = [0.15 * PI, -0.28 * PI];
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
     let field_a = deterministic_field(grid, 3);
     let field_b = deterministic_field(grid, 7);
     let mut ax = theta.alloc_field();
@@ -304,12 +304,12 @@ fn theta_tm_operator_is_hermitian_in_non_uniform_dielectric() {
 }
 
 #[test]
-fn theta_te_operator_is_hermitian_for_bloch_shift() {
+fn theta_tm_operator_is_hermitian_for_bloch_shift() {
     let grid = Grid2D::new(4, 4, 1.2, 0.95);
     let dielectric = uniform_dielectric(grid, 9.0);
     let backend = TestBackend;
     let bloch = [0.4 * PI, 0.1 * PI];
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
     let field_a = deterministic_field(grid, 11);
     let field_b = deterministic_field(grid, 5);
     let mut ax = theta.alloc_field();
@@ -322,12 +322,12 @@ fn theta_te_operator_is_hermitian_for_bloch_shift() {
 }
 
 #[test]
-fn theta_te_mass_matches_dielectric_profile() {
+fn theta_tm_mass_matches_dielectric_profile() {
     let grid = Grid2D::new(3, 5, 1.0, 1.0);
     let dielectric = patterned_dielectric(grid);
     let eps = dielectric.eps().to_vec();
     let backend = TestBackend;
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, [0.0, 0.0]);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
     let input = deterministic_field(grid, 13);
     let mut output = theta.alloc_field();
     theta.apply_mass(&input, &mut output);
@@ -339,11 +339,11 @@ fn theta_te_mass_matches_dielectric_profile() {
 }
 
 #[test]
-fn theta_tm_mass_is_identity() {
+fn theta_te_mass_is_identity() {
     let grid = Grid2D::new(3, 3, 1.0, 1.0);
     let dielectric = patterned_dielectric(grid);
     let backend = TestBackend;
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, [0.0, 0.0]);
     let input = deterministic_field(grid, 21);
     let mut output = theta.alloc_field();
     theta.apply_mass(&input, &mut output);
@@ -351,7 +351,7 @@ fn theta_tm_mass_is_identity() {
 }
 
 #[test]
-fn jacobi_preconditioner_scales_te_plane_wave() {
+fn jacobi_preconditioner_scales_tm_plane_wave() {
     // Test that preconditioner applies a finite positive scaling to a plane wave.
     // The exact scale depends on adaptive shift (computed from spectral stats),
     // so we just verify the scaling is in a reasonable range.
@@ -359,7 +359,7 @@ fn jacobi_preconditioner_scales_te_plane_wave() {
     let dielectric = uniform_dielectric(grid, 2.0);
     let backend = TestBackend;
     let bloch = [0.25 * PI, -0.1 * PI];
-    let theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
     let mut preconditioner = theta.build_homogeneous_preconditioner_adaptive();
     let mut field = plane_wave(grid, 1, -1);
     let original_norm = field_norm(&field);
@@ -375,14 +375,14 @@ fn jacobi_preconditioner_scales_te_plane_wave() {
 }
 
 #[test]
-fn jacobi_preconditioner_uses_tm_effective_epsilon() {
-    // Test that TM preconditioner applies a finite positive scaling.
+fn jacobi_preconditioner_uses_te_effective_epsilon() {
+    // Test that TE preconditioner applies a finite positive scaling.
     // The exact scale depends on adaptive shift, so we just verify reasonable behavior.
     let grid = Grid2D::new(4, 4, 1.1, 1.0);
     let dielectric = patterned_dielectric(grid);
     let backend = TestBackend;
     let bloch = [0.0, 0.3 * PI];
-    let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
     let mut preconditioner = theta.build_homogeneous_preconditioner_adaptive();
     let mut field = plane_wave(grid, 0, 1);
     let original_norm = field_norm(&field);
@@ -402,7 +402,7 @@ fn fourier_preconditioner_crushes_residual_norm() {
     let dielectric = uniform_dielectric(grid, 2.5);
     let backend = TestBackend;
     let bloch = [0.15 * PI, -0.1 * PI];
-    let theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
     let mut preconditioner = theta.build_homogeneous_preconditioner_adaptive();
     let mut residual = plane_wave(grid, 3, -2);
     let before_norm = field_norm(&residual);
@@ -424,7 +424,7 @@ fn homogeneous_preconditioner_reduces_high_frequency_residual() {
     let dielectric = patterned_dielectric(grid);
     let backend = TestBackend;
     let bloch = [0.1 * PI, 0.05 * PI];
-    let theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    let theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
     // Use HOMOGENEOUS preconditioner (no spatial weights)
     let mut preconditioner = theta.build_homogeneous_preconditioner_adaptive();
 
@@ -464,7 +464,7 @@ fn homogeneous_preconditioner_reduces_high_frequency_residual() {
 /// For LOBPCG to work well, K^{-1}A should have a bounded condition number.
 ///
 /// Note: The homogeneous (Fourier-diagonal) preconditioner scales by 1/(|k+G|² + shift),
-/// where shift is adaptively computed. For TM mode with eigenvalue |k+G|²/ε, the
+/// where shift is adaptively computed. For TE mode with eigenvalue |k+G|²/ε, the
 /// preconditioned eigenvalue is approximately 1/ε but may vary due to the shift term.
 /// The key property is that K^{-1}A preserves eigenvector direction (high cosine_sq).
 #[test]
@@ -474,7 +474,7 @@ fn preconditioner_approximates_operator_inverse() {
     let dielectric = uniform_dielectric(grid, eps_const);
     let backend = TestBackend;
     let bloch = [0.0, 0.0];
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
     let mut preconditioner = theta.build_homogeneous_preconditioner_adaptive();
 
     // For a plane wave, A*v = λ*v where λ = |k+G|²/ε
@@ -515,10 +515,10 @@ fn preconditioner_approximates_operator_inverse() {
 // These tests verify that for uniform ε(r) = ε_const, the computed Rayleigh
 // quotients match the analytic eigenvalues exactly:
 //
-// TE (untransformed):  λ = |k+G|² / ε_const  (generalized A x = λ B x, A=-∇², B=ε)
-// TM:                  λ = |k+G|² / ε_const  (standard A x = λ x, A=-∇·(ε⁻¹∇))
+// TM (untransformed):  λ = |k+G|² / ε_const  (generalized A x = λ B x, A=-∇², B=ε)
+// TE:                  λ = |k+G|² / ε_const  (standard A x = λ x, A=-∇·(ε⁻¹∇))
 //
-// If these tests pass, the TE A,B are internally consistent. Any systematic
+// If these tests pass, the TM A,B are internally consistent. Any systematic
 // shift in the photonic crystal case would then be due to dielectric interface
 // discretization differences, not a bug in the Rayleigh quotient.
 
@@ -533,37 +533,6 @@ fn rayleigh_quotient(theta: &mut ThetaOperator<TestBackend>, v: &Field2D) -> f64
     let denominator = inner_product(&bv, v);
 
     numerator.re / denominator.re
-}
-
-/// Test TE uniform medium eigenvalues at Γ point.
-/// For ε_const = 5.0, plane wave |mx, my⟩ should have λ = |k+G|² / ε_const.
-#[test]
-fn te_uniform_medium_rayleigh_quotient_matches_analytic() {
-    let grid = Grid2D::new(8, 8, 1.0, 1.0);
-    let eps_const = 5.0;
-    let dielectric = uniform_dielectric(grid, eps_const);
-    let backend = TestBackend;
-    let bloch = [0.0, 0.0]; // Γ point
-
-    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
-
-    // Test several plane waves
-    let test_modes = [(1, 0), (0, 1), (1, 1), (2, 1), (-1, 2)];
-
-    for (mx, my) in test_modes {
-        let v = plane_wave(grid, mx, my);
-        let lambda = rayleigh_quotient(&mut theta, &v);
-
-        // Analytic: λ = |k+G|² / ε = |2π·(mx/Lx, my/Ly)|² / ε
-        let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
-        let expected = k_plus_g_sq / eps_const;
-
-        let rel_error = (lambda - expected).abs() / expected.max(1e-10);
-        assert!(
-            rel_error < 1e-10,
-            "TE uniform medium: mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}"
-        );
-    }
 }
 
 /// Test TM uniform medium eigenvalues at Γ point.
@@ -585,7 +554,7 @@ fn tm_uniform_medium_rayleigh_quotient_matches_analytic() {
         let v = plane_wave(grid, mx, my);
         let lambda = rayleigh_quotient(&mut theta, &v);
 
-        // Analytic: λ = |k+G|² / ε (for TM, operator already includes 1/ε)
+        // Analytic: λ = |k+G|² / ε = |2π·(mx/Lx, my/Ly)|² / ε
         let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
         let expected = k_plus_g_sq / eps_const;
 
@@ -597,37 +566,39 @@ fn tm_uniform_medium_rayleigh_quotient_matches_analytic() {
     }
 }
 
-/// Test TE uniform medium at arbitrary k-point.
-/// The shift k affects |k+G|² but the eigenvalue formula is the same.
+/// Test TE uniform medium eigenvalues at Γ point.
+/// For ε_const = 5.0, plane wave |mx, my⟩ should have λ = |k+G|² / ε_const.
 #[test]
-fn te_uniform_medium_at_arbitrary_k_point() {
-    let grid = Grid2D::new(6, 6, 1.2, 0.9);
-    let eps_const = 7.5;
+fn te_uniform_medium_rayleigh_quotient_matches_analytic() {
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let eps_const = 5.0;
     let dielectric = uniform_dielectric(grid, eps_const);
     let backend = TestBackend;
-    let bloch = [0.35 * PI, -0.2 * PI]; // Off Γ
+    let bloch = [0.0, 0.0]; // Γ point
 
     let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
 
-    let test_modes = [(0, 0), (1, 0), (-1, 1), (2, -1)];
+    // Test several plane waves
+    let test_modes = [(1, 0), (0, 1), (1, 1), (2, 1), (-1, 2)];
 
     for (mx, my) in test_modes {
         let v = plane_wave(grid, mx, my);
         let lambda = rayleigh_quotient(&mut theta, &v);
 
+        // Analytic: λ = |k+G|² / ε (for TE, operator already includes 1/ε)
         let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
         let expected = k_plus_g_sq / eps_const;
 
         let rel_error = (lambda - expected).abs() / expected.max(1e-10);
         assert!(
             rel_error < 1e-10,
-            "TE at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
-            bloch[0], bloch[1]
+            "TE uniform medium: mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}"
         );
     }
 }
 
 /// Test TM uniform medium at arbitrary k-point.
+/// The shift k affects |k+G|² but the eigenvalue formula is the same.
 #[test]
 fn tm_uniform_medium_at_arbitrary_k_point() {
     let grid = Grid2D::new(6, 6, 1.2, 0.9);
@@ -651,6 +622,35 @@ fn tm_uniform_medium_at_arbitrary_k_point() {
         assert!(
             rel_error < 1e-10,
             "TM at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
+            bloch[0], bloch[1]
+        );
+    }
+}
+
+/// Test TE uniform medium at arbitrary k-point.
+#[test]
+fn te_uniform_medium_at_arbitrary_k_point() {
+    let grid = Grid2D::new(6, 6, 1.2, 0.9);
+    let eps_const = 7.5;
+    let dielectric = uniform_dielectric(grid, eps_const);
+    let backend = TestBackend;
+    let bloch = [0.35 * PI, -0.2 * PI]; // Off Γ
+
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TE, bloch);
+
+    let test_modes = [(0, 0), (1, 0), (-1, 1), (2, -1)];
+
+    for (mx, my) in test_modes {
+        let v = plane_wave(grid, mx, my);
+        let lambda = rayleigh_quotient(&mut theta, &v);
+
+        let k_plus_g_sq = shifted_eigenvalue(grid, bloch, mx, my);
+        let expected = k_plus_g_sq / eps_const;
+
+        let rel_error = (lambda - expected).abs() / expected.max(1e-10);
+        assert!(
+            rel_error < 1e-10,
+            "TE at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
             bloch[0], bloch[1]
         );
     }
