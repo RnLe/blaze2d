@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, ValueEnum};
 use env_logger::Builder;
 use log::{error, info, warn};
-use mpb2d_backend_cpu::CpuBackend;
 use mpb2d_core::{
     bandstructure::{self, BandStructureResult, RunOptions, Verbosity},
     diagnostics::PreconditionerType,
@@ -18,6 +17,12 @@ use mpb2d_core::{
     io::{JobConfig, PathPreset},
     symmetry::standard_path,
 };
+
+#[cfg(feature = "cuda")]
+use mpb2d_backend_cuda::CudaBackend;
+
+#[cfg(not(feature = "cuda"))]
+use mpb2d_backend_cpu::CpuBackend;
 
 // ============================================================================
 // CLI Arguments
@@ -368,6 +373,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_options = RunOptions::new()
         .with_preconditioner(precond_type);
 
+    // Select backend: use CUDA if available, otherwise CPU
+    #[cfg(feature = "cuda")]
+    let backend = {
+        if !cli.quiet {
+            info!("using CUDA backend");
+        }
+        CudaBackend::new()
+    };
+    #[cfg(not(feature = "cuda"))]
+    let backend = {
+        if !cli.quiet {
+            info!("using CPU backend");
+        }
+        CpuBackend::new()
+    };
+
     // Run the solver (with or without diagnostics)
     let result = if cli.record_diagnostics {
         // Derive study name from config filename if not specified
@@ -386,7 +407,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let diag_result = bandstructure::run_with_diagnostics_and_options(
-            CpuBackend::new(),
+            backend.clone(),
             &job,
             verbosity,
             &study_name,
@@ -432,7 +453,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         diag_result.result
     } else {
-        bandstructure::run_with_options(CpuBackend::new(), &job, verbosity, run_options)
+        bandstructure::run_with_options(backend, &job, verbosity, run_options)
     };
 
     // Write CSV output

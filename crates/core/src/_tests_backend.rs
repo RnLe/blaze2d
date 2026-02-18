@@ -6,6 +6,7 @@ use super::backend::{SpectralBackend, SpectralBuffer};
 use super::field::Field2D;
 use super::grid::Grid2D;
 
+#[derive(Clone)]
 struct DummyBackend;
 
 impl DummyBackend {

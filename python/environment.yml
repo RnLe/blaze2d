@@ -17,3 +17,4 @@ dependencies:
   - python-dotenv
   - plotly
   - seaborn
+  - rich

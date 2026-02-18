@@ -276,6 +276,7 @@ fn inner_product(x: &[Complex64], y: &[Complex64]) -> Complex64 {
 }
 
 /// Mock backend for testing projection
+#[derive(Clone)]
 struct MockProjectionBackend;
 
 impl SpectralBackend for MockProjectionBackend {

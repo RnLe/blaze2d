@@ -429,18 +429,69 @@ impl SpectralBackend for CudaBackend {
     }
 
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer) {
-        // TODO: Implement with cuFFT
-        // For now, sync to host - FFT not implemented yet
-        buffer.sync_to_host();
-        // Placeholder: FFT would happen here
-        buffer.sync_to_device();
+        // Use CPU FFT via rustfft - cuFFT has too much overhead for small grids
+        use rustfft::FftPlanner;
+        
+        let grid = buffer.grid();
+        let (nx, ny) = (grid.nx, grid.ny);
+        
+        // Get data on host side for FFT
+        let data = buffer.as_mut_slice();
+        let mut planner = FftPlanner::<f64>::new();
+        let fft_x = planner.plan_fft_forward(nx);
+        let fft_y = planner.plan_fft_forward(ny);
+        
+        // Row FFTs
+        for row in 0..ny {
+            let start = row * nx;
+            let end = start + nx;
+            fft_x.process(&mut data[start..end]);
+        }
+        
+        // Column FFTs (need to gather/scatter)
+        let mut col_buf = vec![Complex64::ZERO; ny];
+        for col in 0..nx {
+            for row in 0..ny {
+                col_buf[row] = data[row * nx + col];
+            }
+            fft_y.process(&mut col_buf);
+            for row in 0..ny {
+                data[row * nx + col] = col_buf[row];
+            }
+        }
     }
 
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer) {
-        // TODO: Implement with cuFFT
-        buffer.sync_to_host();
-        // Placeholder: IFFT would happen here
-        buffer.sync_to_device();
+        // Use CPU FFT via rustfft
+        use rustfft::FftPlanner;
+        
+        let grid = buffer.grid();
+        let (nx, ny) = (grid.nx, grid.ny);
+        let scale = 1.0 / (nx * ny) as f64;
+        
+        let data = buffer.as_mut_slice();
+        let mut planner = FftPlanner::<f64>::new();
+        let fft_x = planner.plan_fft_inverse(nx);
+        let fft_y = planner.plan_fft_inverse(ny);
+        
+        // Row FFTs
+        for row in 0..ny {
+            let start = row * nx;
+            let end = start + nx;
+            fft_x.process(&mut data[start..end]);
+        }
+        
+        // Column FFTs (need to gather/scatter)
+        let mut col_buf = vec![Complex64::ZERO; ny];
+        for col in 0..nx {
+            for row in 0..ny {
+                col_buf[row] = data[row * nx + col];
+            }
+            fft_y.process(&mut col_buf);
+            for row in 0..ny {
+                data[row * nx + col] = col_buf[row] * scale;
+            }
+        }
     }
 
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {

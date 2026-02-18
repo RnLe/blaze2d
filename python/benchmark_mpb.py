@@ -11,6 +11,9 @@ using the same configuration as the Rust resolution_scaling benchmark:
 
 It also reads criterion benchmark results from the Rust backend if available.
 
+Additionally, it runs mpb2d-cli for comparison and computes relative eigenvalue
+errors between MPB and mpb2d solvers using Hungarian matching.
+
 Output: CSV file with columns: resolution, polarization, source, time_ms
 """
 
@@ -20,10 +23,44 @@ import argparse
 import csv
 import importlib
 import json
+import os
+import subprocess
+import sys
+import tempfile
 import time
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
+
+
+@contextmanager
+def suppress_output():
+    """Context manager to suppress stdout and stderr."""
+    # Save original file descriptors
+    stdout_fd = sys.stdout.fileno()
+    stderr_fd = sys.stderr.fileno()
+    
+    # Save copies of the original fds
+    saved_stdout_fd = os.dup(stdout_fd)
+    saved_stderr_fd = os.dup(stderr_fd)
+    
+    try:
+        # Open /dev/null
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        
+        # Redirect stdout and stderr to /dev/null
+        os.dup2(devnull, stdout_fd)
+        os.dup2(devnull, stderr_fd)
+        os.close(devnull)
+        
+        yield
+    finally:
+        # Restore original stdout and stderr
+        os.dup2(saved_stdout_fd, stdout_fd)
+        os.dup2(saved_stderr_fd, stderr_fd)
+        os.close(saved_stdout_fd)
+        os.close(saved_stderr_fd)
 
 
 def _load_runtime_modules():
@@ -46,8 +83,17 @@ def _load_plotting_modules():
         return None
 
 
+def _load_scipy_optimize():
+    try:
+        from scipy.optimize import linear_sum_assignment
+        return linear_sum_assignment
+    except ModuleNotFoundError:
+        return None
+
+
 np, mp, mpb = _load_runtime_modules()
 plt = _load_plotting_modules()
+linear_sum_assignment = _load_scipy_optimize()
 
 
 # Configuration matching Rust benchmark
@@ -94,8 +140,18 @@ def build_geometry() -> List[Any]:
     return [mp.Cylinder(radius=RADIUS, material=mp.Medium(epsilon=EPS_HOLE), height=mp.inf)]
 
 
-def run_benchmark(resolution: int, polarization: str) -> float:
-    """Run a single MPB calculation and return elapsed time in milliseconds."""
+def run_benchmark(resolution: int, polarization: str, quiet: bool = True) -> Tuple[float, List[List[float]]]:
+    """Run a single MPB calculation and return elapsed time in milliseconds and eigenvalues.
+    
+    Args:
+        resolution: Grid resolution.
+        polarization: "tm" or "te".
+        quiet: If True, suppress MPB's verbose output.
+    
+    Returns:
+        Tuple of (elapsed_ms, bands) where bands is a list of lists of frequencies.
+        bands[k_idx][band_idx] = frequency at k-point k_idx for band band_idx.
+    """
     k_pts = build_k_path(K_DENSITY)
     geometry = build_geometry()
     lattice = mp.Lattice(size=mp.Vector3(1, 1, 0))
@@ -110,18 +166,32 @@ def run_benchmark(resolution: int, polarization: str) -> float:
         dimensions=2,
     )
     
-    # Time the actual solve
+    # Time the actual solve (with optional output suppression)
     start = time.perf_counter()
     
-    if polarization == "tm":
-        solver.run_tm()
+    if quiet:
+        with suppress_output():
+            if polarization == "tm":
+                solver.run_tm()
+            else:
+                solver.run_te()
     else:
-        solver.run_te()
+        if polarization == "tm":
+            solver.run_tm()
+        else:
+            solver.run_te()
     
     end = time.perf_counter()
     
     elapsed_ms = (end - start) * 1000.0
-    return elapsed_ms
+    
+    # Extract eigenvalues - solver.all_freqs is list of k-points, each with list of bands
+    # Note: MPB returns normalized frequencies ω/(2πc/a)
+    bands = []
+    for freqs in solver.all_freqs:
+        bands.append([float(f) for f in freqs])
+    
+    return elapsed_ms, bands
 
 
 def read_criterion_results(criterion_dir: Path, resolutions: List[int]) -> List[dict]:
@@ -183,26 +253,216 @@ def read_criterion_results(criterion_dir: Path, resolutions: List[int]) -> List[
     return results
 
 
-def create_benchmark_plot(results: List[dict], output_path: Path) -> None:
-    """Create a benchmark comparison plot with two subplots.
+# ============================================================================
+# mpb2d Integration Functions
+# ============================================================================
+
+def generate_toml_config(resolution: int, polarization: str) -> str:
+    """Generate a TOML configuration file for mpb2d-cli."""
+    return f"""# Auto-generated benchmark config: resolution={resolution}, polarization={polarization.upper()}
+polarization = "{polarization.upper()}"
+
+[geometry]
+eps_bg = {EPS_BG}
+
+[geometry.lattice]
+a1 = [1.0, 0.0]
+a2 = [0.0, 1.0]
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = {RADIUS}
+eps_inside = {EPS_HOLE}
+
+[grid]
+nx = {resolution}
+ny = {resolution}
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "square"
+segments_per_leg = {K_DENSITY}
+
+[eigensolver]
+n_bands = {NUM_BANDS}
+max_iter = 1000
+tol = 1e-6
+"""
+
+
+def run_mpb2d(resolution: int, polarization: str, workspace_root: Path) -> Tuple[Optional[List[List[float]]], float]:
+    """Run mpb2d-cli for a given configuration and return eigenvalues and timing.
     
-    Left: Linear y-scale for absolute comparison
-    Right: Log y-scale for relative scaling behavior
+    Returns:
+        Tuple of (bands, elapsed_ms) where bands is a list of lists of frequencies,
+        or (None, 0.0) if mpb2d-cli fails.
+        bands[k_idx][band_idx] = frequency at k-point k_idx for band band_idx.
+    """
+    cli_path = workspace_root / "target" / "release" / "mpb2d-cli"
+    if not cli_path.exists():
+        cli_path = workspace_root / "target" / "debug" / "mpb2d-cli"
+    
+    if not cli_path.exists():
+        warnings.warn(f"mpb2d-cli not found at {cli_path}")
+        return None, 0.0
+    
+    # Create temporary files for config and output
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+        toml_content = generate_toml_config(resolution, polarization)
+        f.write(toml_content)
+        config_path = Path(f.name)
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+        output_path = Path(f.name)
+    
+    try:
+        # Run mpb2d-cli with timing
+        start = time.perf_counter()
+        result = subprocess.run(
+            [str(cli_path), "--config", str(config_path), "--output", str(output_path), "--quiet"],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+        )
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        
+        if result.returncode != 0:
+            warnings.warn(f"mpb2d-cli failed for res={resolution} pol={polarization}: {result.stderr}")
+            return None, elapsed_ms
+        
+        # Parse output CSV
+        bands = []
+        with open(output_path, 'r') as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                warnings.warn(f"Empty CSV output for res={resolution} pol={polarization}")
+                return None, elapsed_ms
+            band_columns = [name for name in reader.fieldnames if name.startswith("band")]
+            for row in reader:
+                k_bands = []
+                for col in band_columns:
+                    value = row[col]
+                    k_bands.append(float(value) if value else float("nan"))
+                bands.append(k_bands)
+        
+        return bands, elapsed_ms
+    
+    except subprocess.TimeoutExpired:
+        warnings.warn(f"mpb2d-cli timed out for res={resolution} pol={polarization}")
+        return None, 0.0
+    except Exception as e:
+        warnings.warn(f"mpb2d-cli error for res={resolution} pol={polarization}: {e}")
+        return None, 0.0
+    finally:
+        # Cleanup
+        config_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
+
+
+def compute_hungarian_deviations(mpb_bands: List[List[float]], mpb2d_bands: List[List[float]]) -> List[float]:
+    """Compute per-band deviations using Hungarian matching algorithm.
+    
+    For each k-point, finds the optimal assignment of mpb2d bands to mpb bands
+    that minimizes total deviation, then returns all individual deviations.
+    
+    Args:
+        mpb_bands: bands[k_idx][band_idx] = frequency for MPB reference
+        mpb2d_bands: bands[k_idx][band_idx] = frequency for mpb2d solver
+    
+    Returns:
+        List of all deviations |mpb2d - mpb| after optimal matching.
+    """
+    if linear_sum_assignment is None:
+        warnings.warn("scipy not available, cannot compute Hungarian matching")
+        return []
+    
+    all_deviations = []
+    
+    for k_idx, (mpb_k, mpb2d_k) in enumerate(zip(mpb_bands, mpb2d_bands)):
+        # Convert to numpy arrays
+        mpb_vals = np.array(mpb_k, dtype=float)
+        mpb2d_vals = np.array(mpb2d_k, dtype=float)
+        
+        # Skip if any NaN
+        if np.any(np.isnan(mpb_vals)) or np.any(np.isnan(mpb2d_vals)):
+            continue
+        
+        # Skip if all values are near zero (Gamma point)
+        if np.max(np.abs(mpb_vals)) < 1e-6:
+            continue
+        
+        # Build cost matrix: |mpb[i] - mpb2d[j]|
+        cost = np.abs(mpb_vals[:, None] - mpb2d_vals[None, :])
+        
+        # Hungarian algorithm for optimal assignment
+        row_ind, col_ind = linear_sum_assignment(cost)
+        
+        # Collect deviations after optimal matching
+        for i, j in zip(row_ind, col_ind):
+            deviation = abs(mpb_vals[i] - mpb2d_vals[j])
+            all_deviations.append(deviation)
+    
+    return all_deviations
+
+
+def compute_relative_error(mpb_bands: List[List[float]], mpb2d_bands: List[List[float]], debug: bool = False) -> float:
+    """Compute mean relative error using trace comparison.
+    
+    For each k-point, computes the trace (sum of all eigenvalues) and compares.
+    This is robust against band reordering issues.
+    
+    Returns:
+        Mean relative error of traces across all k-points.
+    """
+    if debug:
+        print(f"  DEBUG: mpb_bands has {len(mpb_bands)} k-points, first k-point has {len(mpb_bands[0]) if mpb_bands else 0} bands")
+        print(f"  DEBUG: mpb2d_bands has {len(mpb2d_bands)} k-points, first k-point has {len(mpb2d_bands[0]) if mpb2d_bands else 0} bands")
+        if mpb_bands and mpb2d_bands:
+            print(f"  DEBUG: mpb_bands[0] = {mpb_bands[0][:4]}...")
+            print(f"  DEBUG: mpb2d_bands[0] = {mpb2d_bands[0][:4]}...")
+    
+    errors = []
+    
+    for k_idx, (mpb_k, mpb2d_k) in enumerate(zip(mpb_bands, mpb2d_bands)):
+        # Compute trace (sum of eigenvalues) at each k-point
+        mpb_trace = sum(v for v in mpb_k if not (v != v))  # skip NaN
+        mpb2d_trace = sum(v for v in mpb2d_k if not (v != v))  # skip NaN
+        
+        if debug and k_idx < 3:
+            print(f"  DEBUG: k={k_idx}: mpb_trace={mpb_trace:.6f}, mpb2d_trace={mpb2d_trace:.6f}")
+        
+        # Skip if trace is too small (near Gamma point with zero modes)
+        if mpb_trace > 1e-6:
+            rel_err = abs(mpb2d_trace - mpb_trace) / mpb_trace
+            errors.append(rel_err)
+    
+    return float(np.mean(errors)) if errors else float('nan')
+
+
+def create_benchmark_plot(results: List[dict], error_results: List[dict], output_path: Path) -> None:
+    """Create a benchmark comparison plot with 2x3 subplots.
+    
+    Top row: TM polarization (linear left, log middle, deviation distribution right)
+    Bottom row: TE polarization (linear left, log middle, deviation distribution right)
+    
+    The error plots show Hungarian-matched deviation distributions as sideways histograms
+    for each resolution, with equal spacing between resolutions.
     
     Colors:
-    - mpb: Blues (dark blue TM, light blue TE)
-    - mpb2d CPU: Greens (dark green TM, light green TE)  
-    - mpb2d GPU: Oranges (dark orange TM, light orange TE)
+    - mpb: Blue
+    - mpb2d CPU: Green
+    - mpb2d GPU: Orange
     """
     if plt is None:
         warnings.warn("matplotlib not available, skipping plot generation")
         return
     
-    # Color scheme: (TM color, TE color) for each source
+    # Color scheme for each source
     color_scheme = {
-        "mpb": ("#1f4e79", "#5b9bd5"),           # Dark blue, light blue
-        "mpb2d CPU": ("#2e7d32", "#81c784"),     # Dark green, light green
-        "mpb2d GPU": ("#e65100", "#ffb74d"),     # Dark orange, light orange
+        "mpb": "#1f4e79",           # Dark blue
+        "mpb2d CPU": "#2e7d32",     # Dark green
+        "mpb2d GPU": "#e65100",     # Dark orange
     }
     
     # Marker scheme
@@ -212,13 +472,9 @@ def create_benchmark_plot(results: List[dict], output_path: Path) -> None:
         "mpb2d GPU": "^",    # Triangle
     }
     
-    # Line style: solid for TM, dashed for TE
-    linestyle_scheme = {
-        "TM": "-",
-        "TE": "--",
-    }
-    
-    fig, (ax_lin, ax_log) = plt.subplots(1, 2, figsize=(14, 6))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    ax_tm_lin, ax_tm_log, ax_tm_err = axes[0]
+    ax_te_lin, ax_te_log, ax_te_err = axes[1]
     
     # Group results by (source, polarization)
     from collections import defaultdict
@@ -231,84 +487,143 @@ def create_benchmark_plot(results: List[dict], output_path: Path) -> None:
     
     # Sort resolutions for x-ticks
     sorted_resolutions = sorted(all_resolutions)
-    min_res = min(sorted_resolutions) if sorted_resolutions else 24
     
-    # Plot each group on both axes
+    # Plot timing data - use categorical x-axis (equal spacing)
+    x_positions = list(range(len(sorted_resolutions)))
+    res_to_x = {res: i for i, res in enumerate(sorted_resolutions)}
+    
     for (source, pol), data in sorted(grouped.items()):
         data.sort(key=lambda x: x[0])  # Sort by resolution
-        resolutions = [d[0] for d in data]
+        x_vals = [res_to_x[d[0]] for d in data]
         times_ms = [d[1] for d in data]
         times_s = [d[1] / 1000.0 for d in data]  # Convert to seconds for linear plot
         
-        # Get colors based on source and polarization
-        tm_color, te_color = color_scheme.get(source, ("#888888", "#cccccc"))
-        color = tm_color if pol == "TM" else te_color
+        color = color_scheme.get(source, "#888888")
         marker = marker_scheme.get(source, "o")
-        linestyle = linestyle_scheme.get(pol, "-")
+        label = source
         
-        label = f"{source} {pol}"
+        # Select axes based on polarization
+        if pol == "TM":
+            ax_lin, ax_log = ax_tm_lin, ax_tm_log
+        else:
+            ax_lin, ax_log = ax_te_lin, ax_te_log
         
         # Plot on linear axis (in seconds)
-        ax_lin.plot(resolutions, times_s, 
+        ax_lin.plot(x_vals, times_s, 
                     color=color, 
                     marker=marker, 
-                    linestyle=linestyle,
+                    linestyle="-",
                     linewidth=2,
                     markersize=8,
                     label=label)
         
         # Plot on log axis (in milliseconds)
-        ax_log.plot(resolutions, times_ms, 
+        ax_log.plot(x_vals, times_ms, 
                     color=color, 
                     marker=marker, 
-                    linestyle=linestyle,
+                    linestyle="-",
                     linewidth=2,
                     markersize=8,
                     label=label)
     
-    # Helper function to add axis break markers
-    def add_axis_break(ax, break_pos, y_max):
-        """Add zig-zag break markers on x-axis."""
-        # Break marker parameters
-        d = 0.015  # Size of diagonal lines
-        kwargs = dict(transform=ax.transAxes, color='k', clip_on=False, linewidth=1)
-        
-        # Calculate x position in axes coordinates
-        xlim = ax.get_xlim()
-        x_axes = (break_pos - xlim[0]) / (xlim[1] - xlim[0])
-        
-        # Draw the break marks (two small diagonal lines)
-        ax.plot((x_axes - d, x_axes + d), (-d, +d), **kwargs)
-        ax.plot((x_axes - d, x_axes + d), (-d - 0.01, +d - 0.01), **kwargs)
+    # Group error data by polarization and resolution
+    error_grouped = defaultdict(dict)  # pol -> {resolution: deviations}
+    for r in error_results:
+        pol = r["polarization"]
+        res = r["resolution"]
+        if "deviations" in r:
+            error_grouped[pol][res] = r["deviations"]
     
-    # Configure linear plot (left) - in seconds
-    ax_lin.set_xlabel("Resolution", fontsize=12)
-    ax_lin.set_ylabel("Time (s)", fontsize=12)
-    ax_lin.set_title("Linear Scale", fontsize=14)
-    # Start x-axis just before the first resolution with a small gap for the break
-    x_start = min_res - 4
-    ax_lin.set_xlim(left=x_start)
-    ax_lin.set_ylim(bottom=0)
-    ax_lin.set_xticks(sorted_resolutions)
-    ax_lin.grid(True, alpha=0.3)
-    ax_lin.legend(loc="upper left", fontsize=9)
-    # Add break marker
-    add_axis_break(ax_lin, x_start + 2, ax_lin.get_ylim()[1])
+    # Plot deviation distributions as sideways scatter/violin for each resolution
+    error_color = "#7b1fa2"  # Purple for deviations
     
-    # Configure log plot (right) - in milliseconds
-    ax_log.set_xlabel("Resolution", fontsize=12)
-    ax_log.set_ylabel("Time (ms)", fontsize=12)
-    ax_log.set_title("Log Scale", fontsize=14)
-    ax_log.set_yscale("log")
-    ax_log.set_xlim(left=x_start)
-    ax_log.set_xticks(sorted_resolutions)
-    ax_log.grid(True, alpha=0.3, which='both')
-    ax_log.legend(loc="upper left", fontsize=9)
-    # Add 1 second reference line (1000 ms)
-    ax_log.axhline(y=1000, color='#404040', linewidth=2.5, linestyle='-', zorder=1)
-    ax_log.text(sorted_resolutions[-1] + 2, 1000, '1 s', fontsize=10, va='center', color='#404040', fontweight='bold')
-    # Add break marker
-    add_axis_break(ax_log, x_start + 2, ax_log.get_ylim()[1])
+    for pol in ["TM", "TE"]:
+        ax_err = ax_tm_err if pol == "TM" else ax_te_err
+        
+        if pol in error_grouped:
+            for res, deviations in error_grouped[pol].items():
+                if res not in res_to_x or not deviations:
+                    continue
+                
+                x_pos = res_to_x[res]
+                devs = np.array(deviations)
+                
+                # Filter out zeros for log scale
+                devs = devs[devs > 0]
+                if len(devs) == 0:
+                    continue
+                
+                # Create a horizontal scatter with slight jitter for visibility
+                jitter = np.random.uniform(-0.25, 0.25, len(devs))
+                ax_err.scatter(x_pos + jitter, devs, 
+                              color=error_color, 
+                              alpha=0.4, 
+                              s=15, 
+                              edgecolors='none')
+                
+                # Add box plot statistics (median, quartiles)
+                median = np.median(devs)
+                q1, q3 = np.percentile(devs, [25, 75])
+                
+                # Draw median line
+                ax_err.hlines(median, x_pos - 0.3, x_pos + 0.3, 
+                             colors=error_color, linewidth=2, zorder=5)
+                # Draw IQR box
+                ax_err.vlines(x_pos, q1, q3, colors=error_color, linewidth=4, alpha=0.6, zorder=4)
+    
+    # Configure all axes
+    for ax_lin, ax_log, ax_err, pol_label in [(ax_tm_lin, ax_tm_log, ax_tm_err, "TM"), 
+                                               (ax_te_lin, ax_te_log, ax_te_err, "TE")]:
+        # Linear plot
+        ax_lin.set_xlabel("Resolution", fontsize=12)
+        ax_lin.set_ylabel("Time (s)", fontsize=12)
+        ax_lin.set_title(f"{pol_label} Polarization - Linear Scale", fontsize=14)
+        ax_lin.set_xticks(x_positions)
+        ax_lin.set_xticklabels([str(r) for r in sorted_resolutions])
+        ax_lin.set_ylim(bottom=0)
+        ax_lin.grid(True, alpha=0.3)
+        ax_lin.legend(loc="upper left", fontsize=9)
+        
+        # Log plot
+        ax_log.set_xlabel("Resolution", fontsize=12)
+        ax_log.set_ylabel("Time (ms)", fontsize=12)
+        ax_log.set_title(f"{pol_label} Polarization - Log Scale", fontsize=14)
+        ax_log.set_yscale("log")
+        ax_log.set_xticks(x_positions)
+        ax_log.set_xticklabels([str(r) for r in sorted_resolutions])
+        ax_log.grid(True, alpha=0.3, which='both')
+        ax_log.legend(loc="upper left", fontsize=9)
+        # Add 1 second reference line (1000 ms) with attached label
+        ax_log.axhline(y=1000, color='#909090', linewidth=1.5, linestyle='-', zorder=1)
+        if x_positions:
+            x_center = (x_positions[0] + x_positions[-1]) / 2
+            ax_log.text(x_center, 1000, '1 s', fontsize=10, ha='center', va='center', 
+                       color='#606060', fontweight='bold',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none'))
+        
+        # Error plot - Hungarian deviation distribution
+        ax_err.set_xlabel("Resolution", fontsize=12)
+        ax_err.set_ylabel("Deviation |ω_mpb2d - ω_mpb|", fontsize=12)
+        ax_err.set_title(f"{pol_label} Polarization - Eigenvalue Deviation", fontsize=14)
+        ax_err.set_yscale("log")
+        ax_err.set_xticks(x_positions)
+        ax_err.set_xticklabels([str(r) for r in sorted_resolutions])
+        ax_err.grid(True, alpha=0.3, which='both')
+        
+        # Add reference lines at key deviation thresholds with attached labels
+        ax_err.axhline(y=1e-2, color='#a0a0a0', linewidth=1.5, linestyle='-', zorder=1)
+        ax_err.axhline(y=1e-3, color='#a0a0a0', linewidth=1.5, linestyle='-', zorder=1)
+        ax_err.axhline(y=1e-4, color='#a0a0a0', linewidth=1.5, linestyle='-', zorder=1)
+        
+        # Add centered labels on the reference lines with white background
+        if x_positions:
+            x_center = (x_positions[0] + x_positions[-1]) / 2
+            ax_err.text(x_center, 1e-2, '1 %', fontsize=9, ha='center', va='center', 
+                       color='#707070', bbox=dict(boxstyle='round,pad=0.2', facecolor='white', edgecolor='none'))
+            ax_err.text(x_center, 1e-3, '0.1 %', fontsize=9, ha='center', va='center', 
+                       color='#707070', bbox=dict(boxstyle='round,pad=0.2', facecolor='white', edgecolor='none'))
+            ax_err.text(x_center, 1e-4, '0.01 %', fontsize=9, ha='center', va='center', 
+                       color='#707070', bbox=dict(boxstyle='round,pad=0.2', facecolor='white', edgecolor='none'))
     
     fig.suptitle("MPB Benchmark: Resolution Scaling Comparison", fontsize=16, y=1.02)
     plt.tight_layout()
@@ -352,6 +667,11 @@ def main() -> None:
         help="Skip running MPB benchmarks (only read criterion results).",
     )
     parser.add_argument(
+        "--skip-error-analysis",
+        action="store_true",
+        help="Skip eigenvalue error analysis (only do timing benchmarks).",
+    )
+    parser.add_argument(
         "--plot-output",
         type=Path,
         default=None,
@@ -369,29 +689,51 @@ def main() -> None:
         output = Path(__file__).parent / output
     output.parent.mkdir(parents=True, exist_ok=True)
     
+    # Workspace root for finding mpb2d-cli
+    workspace_root = Path(__file__).parent.parent
+    
+    # Build mpb2d-cli (CPU backend - CUDA FFT not yet implemented)
+    # NOTE: The CUDA backend has BLAS operations but FFT is not implemented yet,
+    # so eigensolving doesn't work with CUDA. Using CPU backend for now.
+    print("Building mpb2d-cli (CPU backend)...")
+    build_result = subprocess.run(
+        ["cargo", "build", "--release", "-p", "mpb2d-cli"],
+        cwd=workspace_root,
+        capture_output=True,
+        text=True,
+    )
+    if build_result.returncode != 0:
+        print(f"Error building mpb2d-cli:\n{build_result.stderr}")
+        raise SystemExit(1)
+    print("Build complete.")
+    
     results = []
+    mpb_eigenvalues = {}  # (resolution, polarization) -> bands
     
     # Run MPB benchmarks or read existing data
     if not args.skip_mpb:
         print(f"MPB Benchmark: Square lattice, eps={EPS_BG}, r/a={RADIUS}, {NUM_BANDS} bands")
         print(f"k-path: Γ → X → M → Γ ({K_DENSITY} points/segment)")
+        
+        # Build task list
+        mpb_tasks = [(res, pol) for res in args.resolutions for pol in args.polarizations]
+        
         print("-" * 60)
-        
-        for resolution in args.resolutions:
-            for polarization in args.polarizations:
-                print(f"Running: resolution={resolution}, polarization={polarization.upper()}...", end=" ", flush=True)
-                
-                elapsed_ms = run_benchmark(resolution, polarization)
-                
-                results.append({
-                    "resolution": resolution,
-                    "polarization": polarization.upper(),
-                    "source": "mpb",
-                    "time_ms": elapsed_ms,
-                })
-                
-                print(f"{elapsed_ms:.2f} ms")
-        
+        for resolution, polarization in mpb_tasks:
+            print(f"Running: resolution={resolution}, polarization={polarization.upper()}...", end=" ", flush=True)
+            
+            elapsed_ms, bands = run_benchmark(resolution, polarization)
+            
+            results.append({
+                "resolution": resolution,
+                "polarization": polarization.upper(),
+                "source": "mpb",
+                "time_ms": elapsed_ms,
+            })
+            
+            mpb_eigenvalues[(resolution, polarization.upper())] = bands
+            
+            print(f"{elapsed_ms:.2f} ms")
         print("-" * 60)
     else:
         # Read existing MPB data from CSV if available
@@ -421,8 +763,6 @@ def main() -> None:
     # Read criterion results
     criterion_dir = args.criterion_dir
     if criterion_dir is None:
-        # Auto-detect: look for target/criterion relative to script
-        workspace_root = Path(__file__).parent.parent
         criterion_dir = workspace_root / "target" / "criterion"
     
     if criterion_dir.exists():
@@ -441,6 +781,74 @@ def main() -> None:
             f"Criterion results directory not found: {criterion_dir}\n"
             "Run 'cargo bench --bench resolution_scaling -p mpb2d-backend-cpu --features cuda' first."
         )
+    
+    # ========================================================================
+    # Eigenvalue Error Analysis: Run mpb2d and compare with MPB
+    # ========================================================================
+    error_results = []
+    
+    if not args.skip_error_analysis and mpb_eigenvalues:
+        print("\n" + "=" * 60)
+        print("Eigenvalue Error Analysis: mpb2d vs MPB")
+        print("=" * 60)
+        
+        # Build task list for mpb2d runs
+        mpb2d_tasks = [
+            (res, pol) for res in args.resolutions for pol in args.polarizations
+            if (res, pol.upper()) in mpb_eigenvalues
+        ]
+        
+        for resolution, polarization in mpb2d_tasks:
+            pol_upper = polarization.upper()
+            
+            print(f"Running mpb2d: resolution={resolution}, polarization={pol_upper}...", end=" ", flush=True)
+            
+            mpb2d_bands, elapsed_ms = run_mpb2d(resolution, polarization, workspace_root)
+            
+            if mpb2d_bands is None:
+                print("FAILED")
+                continue
+            
+            mpb_bands = mpb_eigenvalues[(resolution, pol_upper)]
+            
+            # Compute relative error - debug first comparison
+            is_first = len(error_results) == 0
+            mean_rel_error = compute_relative_error(mpb_bands, mpb2d_bands, debug=is_first)
+            
+            # Compute Hungarian-matched deviations for detailed analysis
+            deviations = compute_hungarian_deviations(mpb_bands, mpb2d_bands)
+            
+            error_results.append({
+                "resolution": resolution,
+                "polarization": pol_upper,
+                "mean_rel_error": mean_rel_error,
+                "time_ms": elapsed_ms,
+                "deviations": deviations,  # Store raw deviations for plotting
+            })
+            
+            if deviations:
+                median_dev = np.median(deviations)
+                max_dev = np.max(deviations)
+                print(f"median dev = {median_dev:.2e}, max dev = {max_dev:.2e}, time = {elapsed_ms:.2f} ms")
+            else:
+                print(f"mean relative error = {mean_rel_error:.2e}, time = {elapsed_ms:.2f} ms")
+        
+        print("=" * 60)
+        
+        # Save error results to CSV (without deviations array)
+        error_csv_path = output.with_name(output.stem + "_errors.csv")
+        with open(error_csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["resolution", "polarization", "mean_rel_error", "time_ms"])
+            writer.writeheader()
+            for r in error_results:
+                writer.writerow({k: v for k, v in r.items() if k != "deviations"})
+        print(f"Error results written to: {error_csv_path}")
+    
+    elif args.skip_error_analysis:
+        print("\nSkipping eigenvalue error analysis (--skip-error-analysis)")
+    elif not mpb_eigenvalues:
+        print("\nNo MPB eigenvalue data available for error analysis.")
+        print("Run without --skip-mpb to enable error analysis.")
     
     # Sort results by resolution, then polarization, then source
     source_order = {"mpb": 0, "mpb2d CPU": 1, "mpb2d GPU": 2}
@@ -463,7 +871,7 @@ def main() -> None:
         elif not plot_output.is_absolute():
             plot_output = Path(__file__).parent / plot_output
         
-        create_benchmark_plot(results, plot_output)
+        create_benchmark_plot(results, error_results, plot_output)
 
 
 if __name__ == "__main__":

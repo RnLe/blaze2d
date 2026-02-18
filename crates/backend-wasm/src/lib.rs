@@ -7,6 +7,7 @@ use num_complex::Complex64;
 #[cfg(feature = "bindings")]
 use wasm_bindgen::prelude::*;
 
+#[derive(Clone)]
 #[cfg_attr(feature = "bindings", wasm_bindgen)]
 pub struct WasmBackend;
 
