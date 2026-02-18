@@ -947,18 +947,22 @@ where
     ///
     /// Note: B_s = Q_k^* B Q_k = I by construction (SVQB ensures B-orthonormality),
     /// so we don't need to compute it explicitly.
+    ///
+    /// # GPU Optimization
+    /// When the `cuda` feature is enabled, the inner product computation
+    /// A_s[i,j] = ⟨q_i, A*q_j⟩ is batched using `gram_matrix()`, which maps
+    /// to a single cuBLAS ZGEMM call on GPU: A_s = Q^H × (A*Q).
     fn project_operator(
         &mut self,
         q_block: &[B::Buffer],
         _bq_block: &[B::Buffer], // Not used since B_s = I, but kept for future use
     ) -> Vec<num_complex::Complex64> {
         let r = q_block.len();
+        if r == 0 {
+            return vec![];
+        }
 
-        // A_s[i,j] = <q_i, A q_j> = q_i^* (A q_j)
-        // The matrix is Hermitian, so A_s[j,i] = conj(A_s[i,j])
-        let mut a_projected = vec![num_complex::Complex64::new(0.0, 0.0); r * r];
-
-        // First compute A * q_j for all j
+        // First compute A * q_j for all j (requires operator application - can't batch on GPU yet)
         let mut aq_block: Vec<B::Buffer> = Vec::with_capacity(r);
         for q in q_block {
             let mut aq = self.operator.alloc_field();
@@ -966,16 +970,37 @@ where
             aq_block.push(aq);
         }
 
-        // Now compute all inner products (no more mutable borrow needed)
+        // A_s[i,j] = <q_i, A q_j> = q_i^* (A q_j)
+        // The matrix is Hermitian, so A_s[j,i] = conj(A_s[i,j])
         let backend = self.operator.backend();
-        for j in 0..r {
+
+        #[cfg(feature = "cuda")]
+        {
+            // GPU path: use batched gram_matrix (single ZGEMM call)
+            let a_projected_row_major = backend.gram_matrix(q_block, &aq_block);
+
+            // Convert from row-major (gram_matrix output) to column-major (expected by dense solver)
+            let mut a_projected = vec![num_complex::Complex64::ZERO; r * r];
             for i in 0..r {
-                let inner = backend.dot(&q_block[i], &aq_block[j]);
-                a_projected[i + j * r] = inner; // Column-major: A[i,j] at index i + j*r
+                for j in 0..r {
+                    a_projected[i + j * r] = a_projected_row_major[i * r + j];
+                }
             }
+            a_projected
         }
 
-        a_projected
+        #[cfg(not(feature = "cuda"))]
+        {
+            // CPU path: use individual dot products (better compiler optimization)
+            let mut a_projected = vec![num_complex::Complex64::ZERO; r * r];
+            for j in 0..r {
+                for i in 0..r {
+                    let inner = backend.dot(&q_block[i], &aq_block[j]);
+                    a_projected[i + j * r] = inner; // Column-major: A[i,j] at index i + j*r
+                }
+            }
+            a_projected
+        }
     }
 
     // ========================================================================
@@ -1016,47 +1041,69 @@ where
             self.eigenvalues.push(dense_result.eigenvalue(j));
         }
 
-        // Compute new Ritz vectors: x_j = Σ_i Q_k[i] * Y[i,j]
-        // For each of the m smallest eigenpairs
-        let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
-
-        for j in 0..m {
-            // Get the j-th eigenvector from dense result (column j of Y)
-            let y_j = dense_result.eigenvector(j); // Slice of length r
-
-            // Compute x_j = Σ_i q_i * y_j[i]
-            // Initialize with the first term scaled appropriately
+        #[cfg(feature = "cuda")]
+        let new_x_block = {
+            // GPU path: use batched linear_combinations (single ZGEMM call per block)
             let backend = self.operator.backend();
+            // Build coefficient matrix in column-major order: coeffs[i + j*r] = Y[i,j]
+            let coeffs_x: Vec<num_complex::Complex64> = (0..m)
+                .flat_map(|j| (0..r).map(move |i| dense_result.eigenvector(j)[i]))
+                .collect();
 
-            // Clone the first Q vector and scale it
-            let mut x_j = q_block[0].clone();
-            backend.scale(y_j[0], &mut x_j);
+            // Compute X_new = Q × C  and  BX_new = BQ × C  using batched GEMM
+            let mut new_x_vectors = backend.linear_combinations(q_block, &coeffs_x, m);
+            let mut new_bx_vectors = backend.linear_combinations(bq_block, &coeffs_x, m);
 
-            // Accumulate: x_j += q_i * y_j[i] for i >= 1
-            for i in 1..r {
-                let coeff = y_j[i];
-                backend.axpy(coeff, &q_block[i], &mut x_j);
+            // Build new block entries with A*x computed fresh
+            let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
+            for j in (0..m).rev() {
+                let mut ax_j = self.operator.alloc_field();
+                self.operator.apply(&new_x_vectors[j], &mut ax_j);
+                new_x_block.push(BlockEntry {
+                    vector: new_x_vectors.pop().unwrap(),
+                    mass: new_bx_vectors.pop().unwrap(),
+                    applied: ax_j,
+                });
             }
+            new_x_block.reverse();
+            new_x_block
+        };
 
-            // Compute B*x_j = Σ_i (B*q_i) * y_j[i] using precomputed BQ
-            let mut bx_j = bq_block[0].clone();
-            backend.scale(y_j[0], &mut bx_j);
+        #[cfg(not(feature = "cuda"))]
+        let new_x_block = {
+            // CPU path: use individual scale/axpy operations (better compiler optimization)
+            let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
 
-            for i in 1..r {
-                let coeff = y_j[i];
-                backend.axpy(coeff, &bq_block[i], &mut bx_j);
+            for j in 0..m {
+                // Get the j-th eigenvector from dense result (column j of Y)
+                let y_j = dense_result.eigenvector(j); // Slice of length r
+
+                // Compute x_j = Σ_i q_i * y_j[i]
+                let mut x_j = q_block[0].clone();
+                self.operator.backend().scale(y_j[0], &mut x_j);
+                for i in 1..r {
+                    self.operator.backend().axpy(y_j[i], &q_block[i], &mut x_j);
+                }
+
+                // Compute B*x_j = Σ_i (B*q_i) * y_j[i] using precomputed BQ
+                let mut bx_j = bq_block[0].clone();
+                self.operator.backend().scale(y_j[0], &mut bx_j);
+                for i in 1..r {
+                    self.operator.backend().axpy(y_j[i], &bq_block[i], &mut bx_j);
+                }
+
+                // Compute A*x_j
+                let mut ax_j = self.operator.alloc_field();
+                self.operator.apply(&x_j, &mut ax_j);
+
+                new_x_block.push(BlockEntry {
+                    vector: x_j,
+                    mass: bx_j,
+                    applied: ax_j,
+                });
             }
-
-            // Compute A*x_j (need fresh application since we don't have AQ precomputed)
-            let mut ax_j = self.operator.alloc_field();
-            self.operator.apply(&x_j, &mut ax_j);
-
-            new_x_block.push(BlockEntry {
-                vector: x_j,
-                mass: bx_j,
-                applied: ax_j,
-            });
-        }
+            new_x_block
+        };
 
         // Replace old X block with new Ritz vectors
         self.x_block = new_x_block;
@@ -1098,27 +1145,41 @@ where
             return;
         }
 
-        // Compute W directions: w_j = Σ_i q_i * y_{m+j}[i]
-        let mut new_w_block: Vec<B::Buffer> = Vec::with_capacity(n_w);
-        let backend = self.operator.backend();
+        #[cfg(feature = "cuda")]
+        {
+            // GPU path: use batched linear_combinations (single ZGEMM call)
+            let backend = self.operator.backend();
 
-        for j in w_start..w_end {
-            // Get the j-th eigenvector from dense result
-            let y_j = dense_result.eigenvector(j); // Slice of length r
+            // Build coefficient matrix in column-major order: coeffs[i + j*r] = Y[i, m+j]
+            let coeffs_w: Vec<num_complex::Complex64> = (w_start..w_end)
+                .flat_map(|j| (0..r).map(move |i| dense_result.eigenvector(j)[i]))
+                .collect();
 
-            // Compute w = Σ_i q_i * y_j[i]
-            let mut w = q_block[0].clone();
-            backend.scale(y_j[0], &mut w);
-
-            for i in 1..r {
-                let coeff = y_j[i];
-                backend.axpy(coeff, &q_block[i], &mut w);
-            }
-
-            new_w_block.push(w);
+            // Compute W_new = Q × C using batched GEMM
+            self.w_block = backend.linear_combinations(q_block, &coeffs_w, n_w);
         }
 
-        self.w_block = new_w_block;
+        #[cfg(not(feature = "cuda"))]
+        {
+            // CPU path: use individual scale/axpy operations (better compiler optimization)
+            let mut new_w_block: Vec<B::Buffer> = Vec::with_capacity(n_w);
+
+            for j in w_start..w_end {
+                // Get the j-th eigenvector from dense result
+                let y_j = dense_result.eigenvector(j); // Slice of length r
+
+                // Compute w = Σ_i q_i * y_j[i]
+                let mut w = q_block[0].clone();
+                self.operator.backend().scale(y_j[0], &mut w);
+                for i in 1..r {
+                    self.operator.backend().axpy(y_j[i], &q_block[i], &mut w);
+                }
+
+                new_w_block.push(w);
+            }
+
+            self.w_block = new_w_block;
+        }
     }
 
     // ========================================================================
