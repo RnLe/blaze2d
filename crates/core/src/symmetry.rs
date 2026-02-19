@@ -11,6 +11,10 @@
 //! directions in the Brillouin zone. These remain essential for band structure
 //! calculations.
 //!
+//! **Note**: The new `brillouin` module provides improved path generation with
+//! support for rectangular lattices. This module's path generation is maintained
+//! for backward compatibility.
+//!
 //! ## Archived: Symmetry Projectors (Not Used)
 //!
 //! The symmetry projector code (`SymmetryProjector`, `SymmetrySector`, `Parity`,
@@ -104,6 +108,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::SpectralBuffer,
+    brillouin::{generate_path, BrillouinPath},
     grid::Grid2D,
     lattice::{Lattice2D, LatticeClass},
 };
@@ -123,12 +128,26 @@ pub enum PathType {
     Custom(Vec<[f64; 2]>),
 }
 
+impl PathType {
+    /// Convert to the new BrillouinPath type.
+    pub fn to_brillouin_path(&self) -> BrillouinPath {
+        match self {
+            PathType::Square => BrillouinPath::Square,
+            PathType::Hexagonal => BrillouinPath::Hexagonal,
+            PathType::Custom(points) => BrillouinPath::Custom(points.clone()),
+        }
+    }
+}
+
 /// Generate a standard k-path for the given lattice type.
 ///
 /// The path starts at Γ (k=0), which is optimal for LOBPCG convergence:
 /// - Γ gets fresh random initialization (no warm-start poison)
 /// - Γ deflation removes the spurious constant mode
 /// - Converged Γ eigenvectors provide valid warm-starts for subsequent k-points
+///
+/// **Note**: For rectangular lattices, use `brillouin::generate_path` with
+/// `BrillouinPath::Rectangular` instead.
 pub fn standard_path(
     lattice: &Lattice2D,
     path: PathType,
@@ -137,41 +156,25 @@ pub fn standard_path(
     let _ = lattice;
     match path {
         PathType::Custom(seq) => seq,
-        PathType::Square => densify_path(&SQUARE_GXMG, segments_per_leg),
-        PathType::Hexagonal => densify_path(&HEX_GMK, segments_per_leg),
+        PathType::Square => generate_path(&BrillouinPath::Square, segments_per_leg),
+        PathType::Hexagonal => generate_path(&BrillouinPath::Hexagonal, segments_per_leg),
     }
 }
 
 /// Standard k-path for square lattice: Γ → X → M → Γ
-const SQUARE_GXMG: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.0]];
+pub const SQUARE_GXMG: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.0]];
 
 /// Standard k-path for hexagonal lattice: Γ → M → K → Γ
-const HEX_GMK: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [1.0 / 3.0, 1.0 / 3.0], [0.0, 0.0]];
+pub const HEX_GMK: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [1.0 / 3.0, 1.0 / 3.0], [0.0, 0.0]];
 
-/// Densify a path by interpolating between nodes.
-fn densify_path(nodes: &[[f64; 2]], segments_per_leg: usize) -> Vec<[f64; 2]> {
-    if nodes.len() <= 1 {
-        return nodes.to_vec();
-    }
-    let segments = segments_per_leg.max(1);
-    let mut path = Vec::with_capacity(nodes.len() * segments);
-    path.push(nodes[0]);
-    for window in nodes.windows(2) {
-        let start = window[0];
-        let end = window[1];
-        for step in 1..=segments {
-            let t = step as f64 / segments as f64;
-            let point = [
-                (1.0 - t) * start[0] + t * end[0],
-                (1.0 - t) * start[1] + t * end[1],
-            ];
-            if path.last().map(|last| last != &point).unwrap_or(true) {
-                path.push(point);
-            }
-        }
-    }
-    path
-}
+/// Standard k-path for rectangular lattice: Γ → X → S → Y → Γ
+pub const RECT_GXSYG: [[f64; 2]; 5] = [
+    [0.0, 0.0],   // Γ
+    [0.5, 0.0],   // X
+    [0.5, 0.5],   // S
+    [0.0, 0.5],   // Y
+    [0.0, 0.0],   // Γ
+];
 
 // ============================================================================
 // Symmetry Types

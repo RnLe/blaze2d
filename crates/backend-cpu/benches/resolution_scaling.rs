@@ -75,9 +75,10 @@ fn bench_resolution_scaling(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("resolution_scaling");
     
-    // Adjust sample size based on expected runtime
+    // Lean benchmark: minimal iterations for quick ballpark results
     group.sample_size(10);
-    group.measurement_time(std::time::Duration::from_secs(30));
+    group.warm_up_time(std::time::Duration::from_millis(100));
+    group.measurement_time(std::time::Duration::from_secs(1));
     
     // CPU benchmarks
     for &resolution in &resolutions {

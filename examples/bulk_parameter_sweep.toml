@@ -1,0 +1,278 @@
+# ==============================================================================
+# MPB2D Bulk Parameter Sweep Configuration
+# ==============================================================================
+#
+# This is an example configuration file for the MPB2D bulk driver.
+# The presence of the [bulk] section marks this as a bulk request.
+#
+# IMPORTANT: A parameter cannot be both in the base configuration AND in [ranges].
+# If you want to sweep a parameter, remove it from the base config and add a range.
+# The base configuration values serve as defaults when a parameter has no range.
+#
+# ==============================================================================
+# Usage:
+#   mpb2d-bulk --config bulk_parameter_sweep.toml
+#   mpb2d-bulk --config bulk_parameter_sweep.toml --dry-run   # Preview without running
+#   mpb2d-bulk --config bulk_parameter_sweep.toml -j 8        # Use 8 threads
+#   mpb2d-bulk --config bulk_parameter_sweep.toml --verbose   # Show progress bar
+# ==============================================================================
+
+# ============================================================================
+# BULK SECTION (REQUIRED)
+# ============================================================================
+# The presence of this section marks the file as a bulk request.
+
+[bulk]
+# Number of threads to use. Default: all available CPU cores.
+# For best performance, match this to your CPU core count minus 1-2 for system overhead.
+threads = 8
+
+# Enable verbose output with progress bar
+verbose = true
+
+# Dry run mode: count jobs without executing (can also use --dry-run CLI flag)
+dry_run = false
+
+# ============================================================================
+# BASE GEOMETRY CONFIGURATION
+# ============================================================================
+# These are the default values used when parameters are NOT being swept.
+# If a parameter is in [ranges], its base value here is ignored.
+
+[geometry]
+# Background dielectric constant (ε_bg)
+# Common values: 1.0 (air), 2.25 (SiO2), 11.9 (Si), 13.0 (GaAs)
+eps_bg = 12.0
+
+# ============================================================================
+# LATTICE CONFIGURATION
+# ============================================================================
+# The lattice can be specified in multiple ways:
+
+[geometry.lattice]
+# OPTION 1: Use a typed lattice (recommended)
+# Available types: "square", "rectangular", "triangular", "hexagonal"
+type = "square"
+a = 1.0  # Lattice constant (default: 1.0)
+
+# OPTION 2: For rectangular lattice, also specify b
+# type = "rectangular"
+# a = 1.0
+# b = 1.5  # Aspect ratio
+
+# OPTION 3: For oblique lattice, specify b and alpha (angle in radians)
+# type = "oblique"
+# b = 1.2
+# alpha = 1.0472  # 60° in radians
+
+# OPTION 4: Explicit lattice vectors (for custom lattices)
+# a1 = [1.0, 0.0]
+# a2 = [0.5, 0.8660254037844386]  # Hexagonal 60° convention
+
+# ============================================================================
+# ATOM CONFIGURATION
+# ============================================================================
+# Define atoms in the unit cell. Positions are in fractional coordinates.
+# Each atom can have independent parameter ranges.
+
+[[geometry.atoms]]
+# Position in fractional coordinates [0, 1)
+# Center of unit cell is typically [0.5, 0.5]
+pos = [0.5, 0.5]
+
+# Radius in units of the lattice constant
+# Typical range: 0.1 - 0.45 (must be less than 0.5 to not overlap)
+radius = 0.3
+
+# Dielectric constant inside the atom
+# 1.0 for air holes, higher for dielectric rods
+eps_inside = 1.0
+
+# Second atom for multi-atom basis (optional)
+# IMPORTANT for your research: atom positions can be swept!
+[[geometry.atoms]]
+pos = [0.25, 0.25]
+radius = 0.15
+eps_inside = 1.0
+
+# ============================================================================
+# COMPUTATIONAL GRID
+# ============================================================================
+
+[grid]
+# Grid resolution. Higher = more accurate but slower.
+# Typical values: 16 (fast), 32 (standard), 64 (high quality), 128 (very high)
+nx = 32
+ny = 32
+
+# Physical dimensions (usually 1.0 for normalized units)
+lx = 1.0
+ly = 1.0
+
+# ============================================================================
+# POLARIZATION
+# ============================================================================
+# Base polarization if not being swept.
+# "TM" = E-field out of plane (Hz, Ex, Ey)
+# "TE" = H-field out of plane (Ez, Hx, Hy)
+polarization = "TM"
+
+# ============================================================================
+# K-PATH CONFIGURATION
+# ============================================================================
+
+[path]
+# Preset paths: "square", "rectangular", "triangular", "hexagonal"
+# square: Γ → X → M → Γ
+# rectangular: Γ → X → S → Y → Γ
+# triangular/hexagonal: Γ → M → K → Γ
+preset = "square"
+
+# Number of k-points per high-symmetry segment
+# Higher = smoother band diagrams
+segments_per_leg = 12
+
+# ============================================================================
+# EIGENSOLVER CONFIGURATION
+# ============================================================================
+
+[eigensolver]
+# Number of bands to compute
+n_bands = 8
+
+# Maximum iterations for LOBPCG
+max_iter = 200
+
+# Convergence tolerance (relative residual)
+tol = 1e-6
+
+# ============================================================================
+# DIELECTRIC SMOOTHING
+# ============================================================================
+
+[dielectric]
+# Sub-pixel smoothing improves convergence for curved interfaces
+
+[dielectric.smoothing]
+# Smoothing mesh size (cells per grid point)
+# 1 = disabled, 4-8 = good quality
+mesh_size = 4
+
+# ============================================================================
+# PARAMETER RANGES
+# ============================================================================
+# Define ranges for parameters you want to sweep.
+# Format: { min = X, max = Y, step = Z }
+# This generates values: min, min+step, min+2*step, ..., max
+#
+# IMPORTANT: If a parameter is in [ranges], do NOT also set it in the base config!
+
+[ranges]
+# Sweep background epsilon from 10 to 14 in steps of 1
+eps_bg = { min = 10.0, max = 14.0, step = 1.0 }
+
+# Sweep resolution from 24 to 48 in steps of 8
+# Note: values are rounded to integers
+resolution = { min = 24.0, max = 48.0, step = 8.0 }
+
+# Sweep polarization (list of discrete values)
+polarization = ["TM", "TE"]
+
+# Sweep lattice types (list of discrete values)
+# Available: "square", "rectangular", "triangular", "hexagonal"
+lattice_type = ["square", "hexagonal"]
+
+# ============================================================================
+# PER-ATOM PARAMETER RANGES
+# ============================================================================
+# Each entry in [[ranges.atoms]] corresponds to the atom at that index.
+# Index 0 = first [[geometry.atoms]], Index 1 = second, etc.
+
+# Ranges for the first atom (index 0)
+[[ranges.atoms]]
+# Sweep radius from 0.2 to 0.4 in steps of 0.05
+radius = { min = 0.2, max = 0.4, step = 0.05 }
+
+# Sweep x-position (fractional coordinates)
+# Great for studying band gap changes with atom displacement!
+# pos_x = { min = 0.4, max = 0.6, step = 0.02 }
+
+# Sweep y-position (fractional coordinates)
+# pos_y = { min = 0.4, max = 0.6, step = 0.02 }
+
+# Sweep epsilon inside
+# eps_inside = { min = 1.0, max = 3.0, step = 0.5 }
+
+# Ranges for the second atom (index 1) - for multi-atom basis studies
+[[ranges.atoms]]
+# This is very useful for your research on basis shifts!
+# Sweep position to study how inter-atom distance affects bands
+pos_x = { min = 0.2, max = 0.3, step = 0.025 }
+pos_y = { min = 0.2, max = 0.3, step = 0.025 }
+
+# ============================================================================
+# OUTPUT CONFIGURATION
+# ============================================================================
+
+[output]
+# Output mode: "full" or "selective"
+#
+# FULL MODE (default):
+#   - Creates one CSV file per solver run
+#   - Each file contains complete band structure (all k-points, all bands)
+#   - Files named: {prefix}_{job_index:06}.csv
+#   - Good for comprehensive data collection
+#
+# SELECTIVE MODE:
+#   - Creates a single merged CSV file
+#   - Only includes specified k-points and bands
+#   - All swept parameters appear as columns
+#   - Good for targeted analysis (e.g., band gaps at specific points)
+
+mode = "full"
+
+# Output directory for full mode
+directory = "./bulk_output"
+
+# Filename prefix for full mode
+prefix = "sweep"
+
+# Output filename for selective mode
+filename = "./sweep_selective.csv"
+
+# Batch size for output writing (improves I/O performance)
+batch_size = 100
+
+# ============================================================================
+# SELECTIVE OUTPUT SPECIFICATION
+# ============================================================================
+# Only used when mode = "selective"
+
+[output.selective]
+# K-point indices to include (0-based)
+# For a 12-segment square path: 0=Γ, 12=X, 24=M, 36=Γ
+k_indices = [0, 12, 24]
+
+# Or use k-point labels (requires proper path labeling)
+# k_labels = ["Gamma", "X", "M"]
+
+# Band indices to include (1-based, matching band1, band2, ...)
+# Commonly: 1-4 for first gap, 5-8 for second gap region
+bands = [1, 2, 3, 4, 5]
+
+# ==============================================================================
+# TOTAL CONFIGURATIONS
+# ==============================================================================
+# With the above ranges, this config would generate:
+#   eps_bg: 5 values (10, 11, 12, 13, 14)
+#   resolution: 4 values (24, 32, 40, 48)  
+#   polarization: 2 values (TM, TE)
+#   lattice_type: 2 values (square, hexagonal)
+#   atom0_radius: 5 values (0.2, 0.25, 0.3, 0.35, 0.4)
+#   atom1_pos_x: 5 values (0.2, 0.225, 0.25, 0.275, 0.3)
+#   atom1_pos_y: 5 values (0.2, 0.225, 0.25, 0.275, 0.3)
+#
+#   Total: 5 × 4 × 2 × 2 × 5 × 5 × 5 = 10,000 jobs
+#
+# Use --dry-run to verify the job count before executing!
+# ==============================================================================

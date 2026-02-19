@@ -5,6 +5,7 @@ members = [
     "crates/backend-wasm",
     "crates/backend-cuda",
     "crates/cli",
+    "crates/bulk-driver",
     "crates/python",
     # "crates/validation",  # Deactivated - uses eigensolver_old
 ]
@@ -35,10 +36,10 @@ num_cpus = "1.16"
 # ============================================================================
 
 [profile.release]
-# Using Rust defaults for codegen - they're well-tuned for most workloads
-# Default: lto = false, codegen-units = 16
-panic = "abort"       # Safe: no unwinding overhead, doesn't affect codegen
-strip = true          # Safe: only affects binary size, not runtime
+# faer and rustfft are already heavily optimized with SIMD
+# Additional LTO doesn't help and may hurt cache locality
+panic = "abort"       # No unwinding overhead
+strip = true          # Strip symbols for smaller binary
 
 [profile.bench]
 inherits = "release"

@@ -1,5 +1,16 @@
 //! Core math, physics, and APIs for the MPB-style 2D solver.
 
+// ============================================================================
+// New strongly-typed lattice system
+// ============================================================================
+pub mod basis;
+pub mod bravais;
+pub mod brillouin;
+pub mod crystal;
+
+// ============================================================================
+// Core modules
+// ============================================================================
 pub mod analytic_geometry;
 pub mod backend;
 pub mod band_tracking;
