@@ -11,6 +11,9 @@ default = []
 # Use batched GPU-optimized operations (gram_matrix, linear_combinations).
 # This feature is automatically enabled by the CUDA backend.
 cuda = []
+# Enable profiling instrumentation. When disabled (default), profiling calls
+# are no-ops with zero runtime overhead.
+profiling = []
 
 [dependencies]
 num-complex.workspace = true
