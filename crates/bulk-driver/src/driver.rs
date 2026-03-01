@@ -15,6 +15,7 @@ use parking_lot::Mutex;
 use rayon::prelude::*;
 
 use mpb2d_core::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
+use mpb2d_core::profiler::print_profile;
 
 #[cfg(feature = "cuda")]
 use mpb2d_backend_cuda::CudaBackend;
@@ -657,6 +658,10 @@ impl BulkDriver {
                 error!("... and {} more errors", errs.len() - 5);
             }
         }
+
+        // Print profiling breakdown
+        println!();
+        print_profile();
 
         Ok(DriverStats {
             total_jobs: self.jobs.len(),
