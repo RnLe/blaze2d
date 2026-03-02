@@ -24,9 +24,12 @@ use mpb2d_backend_cuda::CudaBackend;
 use mpb2d_backend_cpu::CpuBackend;
 
 use crate::adaptive::{AdaptiveConfig, AdaptiveThreadManager, AdjustmentReason};
-use crate::config::{BulkConfig, OutputMode};
+use crate::batch::BatchChannel;
+use crate::channel::{BatchConfig, CompactBandResult, OutputChannel, StreamConfig};
+use crate::config::{BulkConfig, OutputMode, SelectiveSpec};
 use crate::expansion::{expand_jobs, ExpandedJob};
 use crate::output::OutputWriter;
+use crate::stream::{FilteredStreamChannel, SelectiveFilter, StreamChannel};
 
 // ============================================================================
 // Job Result
@@ -422,6 +425,373 @@ impl BulkDriver {
             errors: Arc::try_unwrap(errors).unwrap_or_default().into_inner(),
             adaptive_summary: Some(adaptive_summary),
         })
+    }
+
+    /// Execute all jobs with a custom output channel.
+    ///
+    /// This is the core execution method that supports batch, stream, and null output modes.
+    /// Results are sent to the provided channel instead of using the legacy OutputWriter.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Output channel (Batch, Stream, or Null)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Batch mode with 10MB buffer
+    /// let channel = OutputChannel::Batch(Arc::new(BatchChannel::new(
+    ///     BatchConfig::default(),
+    ///     PathBuf::from("./output"),
+    ///     OutputMode::Full,
+    /// )));
+    /// let stats = driver.run_with_channel(channel)?;
+    ///
+    /// // Stream mode
+    /// let stream = Arc::new(StreamChannel::new(StreamConfig::default()));
+    /// let receiver = stream.add_channel_subscriber();
+    /// let channel = OutputChannel::Stream(stream);
+    /// let stats = driver.run_with_channel(channel)?;
+    /// ```
+    pub fn run_with_channel(&self, channel: OutputChannel) -> Result<DriverStats, DriverError> {
+        if self.jobs.is_empty() {
+            warn!("no jobs to execute (parameter ranges resulted in zero configurations)");
+            return Ok(DriverStats::default());
+        }
+
+        // Create adaptive thread manager
+        let adaptive_mgr = match &self.thread_mode {
+            ThreadMode::Fixed(n) => Arc::new(AdaptiveThreadManager::fixed(*n)),
+            ThreadMode::Adaptive => Arc::new(AdaptiveThreadManager::new(AdaptiveConfig::default())),
+        };
+
+        // Print pre-run report
+        let io_mode = match &channel {
+            OutputChannel::Batch(_) => "batch",
+            OutputChannel::Stream(_) => "stream",
+            OutputChannel::Null(_) => "null (benchmark)",
+        };
+        let report = PreRunReport::build(
+            &self.config,
+            &self.jobs,
+            &self.thread_mode_str(Some(&adaptive_mgr)),
+        );
+        report.print();
+        println!("  I/O Mode: {}", io_mode);
+        println!();
+
+        // Setup thread pool
+        let pool_threads = match &self.thread_mode {
+            ThreadMode::Fixed(n) => *n,
+            ThreadMode::Adaptive => num_cpus::get(),
+        };
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(pool_threads)
+            .build()
+            .map_err(|e| DriverError::ThreadPoolError(e.to_string()))?;
+
+        // Progress tracking
+        let completed = Arc::new(AtomicUsize::new(0));
+        let failed = Arc::new(AtomicUsize::new(0));
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let channel_errors = Arc::new(AtomicUsize::new(0));
+
+        // Create progress bar
+        let pb = ProgressBar::new(self.jobs.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .unwrap()
+                .progress_chars("█▓░"),
+        );
+
+        let start_time = Instant::now();
+        let adaptive_mgr_clone = adaptive_mgr.clone();
+        let verbose = self.verbose;
+
+        // Wrap channel for thread-safe access
+        let channel_arc: Arc<OutputChannel> = Arc::new(channel);
+
+        // Execute jobs in parallel
+        pool.install(|| {
+            let channel = &channel_arc;
+            self.jobs.par_iter().for_each(|expanded_job| {
+                let job_start = Instant::now();
+                let result = self.execute_job(expanded_job);
+                let job_duration = job_start.elapsed();
+
+                // Record timing for adaptive management
+                if let Some(event) = adaptive_mgr_clone.record_job(job_duration) {
+                    if event.reason != AdjustmentReason::Initial && verbose {
+                        debug!(
+                            "[adaptive] {} → {} threads ({})",
+                            event.from_threads, event.to_threads, event.reason
+                        );
+                    }
+                }
+
+                match result {
+                    Ok(job_result) => {
+                        // Convert to compact result and send through channel
+                        let compact = CompactBandResult::from_job_result(expanded_job, &job_result);
+
+                        if let Err(e) = channel.send(compact) {
+                            error!("failed to send job {} result: {}", expanded_job.index, e);
+                            channel_errors.fetch_add(1, Ordering::Relaxed);
+                        }
+                        completed.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        errors.lock().push(e);
+                    }
+                }
+
+                pb.inc(1);
+            });
+        });
+
+        pb.finish_and_clear();
+
+        // Close channel and get stats
+        let channel_stats = match Arc::try_unwrap(channel_arc) {
+            Ok(ch) => ch.close().map_err(|e| DriverError::OutputError(e.to_string()))?,
+            Err(_) => {
+                return Err(DriverError::OutputError("channel still in use".to_string()));
+            }
+        };
+
+        let total_time = start_time.elapsed();
+        let completed_count = completed.load(Ordering::Relaxed);
+        let failed_count = failed.load(Ordering::Relaxed);
+        let channel_error_count = channel_errors.load(Ordering::Relaxed);
+
+        // Get adaptive summary
+        let adaptive_summary = adaptive_mgr.get_summary();
+
+        // Print summary
+        println!();
+        if failed_count == 0 && channel_error_count == 0 {
+            println!(
+                "✓ {} jobs completed in {:.2}s ({:.1} jobs/s)",
+                completed_count,
+                total_time.as_secs_f64(),
+                completed_count as f64 / total_time.as_secs_f64()
+            );
+            if channel_stats.bytes_written > 0 {
+                println!(
+                    "  Output: {:.2} MB in {} flushes ({:.2}s write time)",
+                    channel_stats.bytes_written as f64 / (1024.0 * 1024.0),
+                    channel_stats.flush_count,
+                    channel_stats.total_write_time.as_secs_f64()
+                );
+            }
+        } else {
+            println!(
+                "⚠ {}/{} jobs completed, {} failed, {} channel errors in {:.2}s",
+                completed_count,
+                self.jobs.len(),
+                failed_count,
+                channel_error_count,
+                total_time.as_secs_f64()
+            );
+        }
+
+        // Show adaptive thread summary if applicable
+        if adaptive_mgr.is_adaptive() && adaptive_summary.total_adjustments > 0 {
+            println!(
+                "  threads: {} → {} ({} adjustments)",
+                adaptive_summary.initial_threads,
+                adaptive_summary.final_threads,
+                adaptive_summary.total_adjustments
+            );
+            if self.verbose {
+                println!("{}", adaptive_summary.format_log());
+            }
+        }
+
+        if failed_count > 0 {
+            let errs = errors.lock();
+            for err in errs.iter().take(5) {
+                error!("job {} failed: {}", err.index, err.message);
+            }
+            if errs.len() > 5 {
+                error!("... and {} more errors", errs.len() - 5);
+            }
+        }
+
+        Ok(DriverStats {
+            total_jobs: self.jobs.len(),
+            completed: completed_count,
+            failed: failed_count,
+            total_time,
+            errors: Arc::try_unwrap(errors).unwrap_or_default().into_inner(),
+            adaptive_summary: Some(adaptive_summary),
+        })
+    }
+
+    /// Run with batch mode: buffer results and write in large chunks.
+    ///
+    /// This minimizes I/O interference with the solver by using a background
+    /// writer thread that handles file I/O asynchronously.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch_config` - Batch configuration (buffer size, flush interval)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let stats = driver.run_batched(BatchConfig {
+    ///     buffer_size_bytes: 10 * 1024 * 1024, // 10 MB
+    ///     ..Default::default()
+    /// })?;
+    /// ```
+    pub fn run_batched(&self, batch_config: BatchConfig) -> Result<DriverStats, DriverError> {
+        let output_path = match self.config.output.mode {
+            OutputMode::Full => self.config.output.directory.clone(),
+            OutputMode::Selective => self.config.output.filename.clone(),
+        };
+
+        let batch_channel = BatchChannel::new(
+            batch_config,
+            output_path,
+            self.config.output.mode.clone(),
+        );
+
+        let channel = OutputChannel::Batch(Arc::new(batch_channel));
+        self.run_with_channel(channel)
+    }
+
+    /// Run with streaming mode: emit results in real-time.
+    ///
+    /// Returns a receiver channel that yields results as they complete.
+    /// The computation runs in the calling thread, so use this from a
+    /// background thread if you need non-blocking behavior.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let receiver = driver.run_streaming()?;
+    /// 
+    /// // Process results as they arrive
+    /// for result in receiver {
+    ///     println!("Job {} complete", result.job_index);
+    /// }
+    /// ```
+    pub fn run_streaming(
+        &self,
+    ) -> Result<(crossbeam_channel::Receiver<CompactBandResult>, std::thread::JoinHandle<Result<DriverStats, DriverError>>), DriverError>
+    where
+        Self: Sync,
+    {
+        let stream = Arc::new(StreamChannel::new(StreamConfig::default()));
+        let receiver = stream.add_channel_subscriber();
+
+        // Clone self for the thread (requires that config and jobs are Send)
+        let config = self.config.clone();
+        let jobs = self.jobs.clone();
+        let thread_mode = self.thread_mode.clone();
+        let verbose = self.verbose;
+        let stream_clone = stream.clone();
+
+        let handle = std::thread::spawn(move || {
+            let driver = BulkDriver {
+                config,
+                jobs,
+                thread_mode,
+                verbose,
+            };
+            let channel = OutputChannel::Stream(stream_clone);
+            driver.run_with_channel(channel)
+        });
+
+        Ok((receiver, handle))
+    }
+
+    /// Run with streaming output and server-side selective filtering.
+    ///
+    /// This applies k-point and band filtering at the emission point,
+    /// before broadcasting to subscribers. This is more efficient than
+    /// filtering in the consumer when you only need a subset of data.
+    ///
+    /// Returns a receiver for filtered results and a join handle for the
+    /// driver thread.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - Filter specifying which k-points and bands to include
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Stream only specific k-points and first 4 bands
+    /// let filter = SelectiveFilter::new(
+    ///     vec![0, 10, 15],  // k-indices for Gamma, X, M
+    ///     vec![0, 1, 2, 3], // bands 1-4 (0-based)
+    /// );
+    /// let (rx, handle) = driver.run_streaming_filtered(filter)?;
+    ///
+    /// for result in rx {
+    ///     // result.bands contains only filtered data
+    ///     assert_eq!(result.num_bands(), 4);
+    /// }
+    /// ```
+    pub fn run_streaming_filtered(
+        &self,
+        filter: SelectiveFilter,
+    ) -> Result<(crossbeam_channel::Receiver<CompactBandResult>, std::thread::JoinHandle<Result<DriverStats, DriverError>>), DriverError>
+    where
+        Self: Sync,
+    {
+        let stream = Arc::new(FilteredStreamChannel::new(filter, StreamConfig::default()));
+        let receiver = stream.add_channel_subscriber();
+
+        let config = self.config.clone();
+        let jobs = self.jobs.clone();
+        let thread_mode = self.thread_mode.clone();
+        let verbose = self.verbose;
+        let stream_clone = stream.clone();
+
+        let handle = std::thread::spawn(move || {
+            let driver = BulkDriver {
+                config,
+                jobs,
+                thread_mode,
+                verbose,
+            };
+            // FilteredStreamChannel implements OutputChannelSink, so use Stream variant
+            let channel = OutputChannel::Stream(stream_clone);
+            driver.run_with_channel(channel)
+        });
+
+        Ok((receiver, handle))
+    }
+
+    /// Run with streaming from a SelectiveSpec (from config).
+    ///
+    /// Convenience method that creates a filter from the bulk config's
+    /// selective specification.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let spec = SelectiveSpec {
+    ///     k_indices: vec![0, 10, 15],
+    ///     k_labels: vec![],
+    ///     bands: vec![1, 2, 3, 4], // 1-based
+    /// };
+    /// let (rx, handle) = driver.run_streaming_selective(&spec)?;
+    /// ```
+    pub fn run_streaming_selective(
+        &self,
+        spec: &SelectiveSpec,
+    ) -> Result<(crossbeam_channel::Receiver<CompactBandResult>, std::thread::JoinHandle<Result<DriverStats, DriverError>>), DriverError>
+    where
+        Self: Sync,
+    {
+        self.run_streaming_filtered(SelectiveFilter::from_spec(spec))
     }
 
     /// Execute a single job.

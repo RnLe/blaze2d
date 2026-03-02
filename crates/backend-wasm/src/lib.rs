@@ -1,4 +1,22 @@
-//! WASM-oriented backend shims.
+//! WASM-oriented backend and streaming interface.
+//!
+//! This crate provides:
+//! - A WebAssembly-compatible spectral backend
+//! - Streaming interface for real-time band structure visualization
+//!
+//! # Streaming Usage (JavaScript)
+//!
+//! ```javascript
+//! import init, { WasmBulkDriver } from 'mpb2d-wasm';
+//!
+//! await init();
+//! const driver = new WasmBulkDriver(configJson);
+//!
+//! driver.runWithCallback((result) => {
+//!     // result.bands is 2D array [k_index][band_index]
+//!     updatePlot(result.distances, result.bands);
+//! });
+//! ```
 
 use mpb2d_core::backend::{SpectralBackend, SpectralBuffer};
 use mpb2d_core::grid::Grid2D;
@@ -6,6 +24,14 @@ use num_complex::Complex64;
 
 #[cfg(feature = "bindings")]
 use wasm_bindgen::prelude::*;
+
+// Streaming module for JavaScript consumers
+#[cfg(feature = "streaming")]
+pub mod streaming;
+
+// Re-export streaming types when feature is enabled
+#[cfg(feature = "streaming")]
+pub use streaming::*;
 
 #[derive(Clone)]
 #[cfg_attr(feature = "bindings", wasm_bindgen)]
