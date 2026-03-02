@@ -385,6 +385,8 @@ fn write_full_result(output_dir: &PathBuf, result: &CompactBandResult, format: O
 
 /// Write a CSV file for a single result.
 fn write_csv_full(path: &PathBuf, result: &CompactBandResult) -> usize {
+    use crate::channel::CompactResultType;
+
     let file = match File::create(path) {
         Ok(f) => f,
         Err(e) => {
@@ -403,53 +405,90 @@ fn write_csv_full(path: &PathBuf, result: &CompactBandResult) -> usize {
         header.push(',');
         header.push_str(name);
     }
-    header.push_str(",k_index,kx,ky,k_distance");
 
-    let max_bands = result.bands.iter().map(|b| b.len()).max().unwrap_or(0);
-    for i in 1..=max_bands {
-        header.push_str(&format!(",band{}", i));
-    }
-    header.push('\n');
+    match &result.result_type {
+        CompactResultType::Maxwell(m) => {
+            header.push_str(",k_index,kx,ky,k_distance");
+            let max_bands = m.bands.iter().map(|b| b.len()).max().unwrap_or(0);
+            for i in 1..=max_bands {
+                header.push_str(&format!(",band{}", i));
+            }
+            header.push('\n');
 
-    if let Err(e) = writer.write_all(header.as_bytes()) {
-        error!("failed to write header: {}", e);
-        return 0;
-    }
-    bytes_written += header.len();
+            if let Err(e) = writer.write_all(header.as_bytes()) {
+                error!("failed to write header: {}", e);
+                return 0;
+            }
+            bytes_written += header.len();
 
-    // Write data rows
-    for (k_idx, ((k_point, distance), bands)) in result
-        .k_path
-        .iter()
-        .zip(result.distances.iter())
-        .zip(result.bands.iter())
-        .enumerate()
-    {
-        let mut row = format!("{}", result.job_index);
-        for (_, value) in &param_cols {
-            row.push(',');
-            row.push_str(value);
+            // Write data rows
+            for (k_idx, ((k_point, distance), bands)) in m
+                .k_path
+                .iter()
+                .zip(m.distances.iter())
+                .zip(m.bands.iter())
+                .enumerate()
+            {
+                let mut row = format!("{}", result.job_index);
+                for (_, value) in &param_cols {
+                    row.push(',');
+                    row.push_str(value);
+                }
+                row.push_str(&format!(
+                    ",{},{},{},{}",
+                    k_idx, k_point[0], k_point[1], distance
+                ));
+
+                for omega in bands {
+                    row.push_str(&format!(",{}", omega));
+                }
+
+                // Pad with empty columns
+                let max_bands = m.bands.iter().map(|b| b.len()).max().unwrap_or(0);
+                for _ in bands.len()..max_bands {
+                    row.push(',');
+                }
+                row.push('\n');
+
+                if let Err(e) = writer.write_all(row.as_bytes()) {
+                    error!("failed to write row: {}", e);
+                    break;
+                }
+                bytes_written += row.len();
+            }
         }
-        row.push_str(&format!(
-            ",{},{},{},{}",
-            k_idx, k_point[0], k_point[1], distance
-        ));
+        CompactResultType::EA(ea) => {
+            header.push_str(",n_iterations,converged,band_index,eigenvalue\n");
 
-        for omega in bands {
-            row.push_str(&format!(",{}", omega));
-        }
+            if let Err(e) = writer.write_all(header.as_bytes()) {
+                error!("failed to write header: {}", e);
+                return 0;
+            }
+            bytes_written += header.len();
 
-        // Pad with empty columns
-        for _ in bands.len()..max_bands {
-            row.push(',');
-        }
-        row.push('\n');
+            // Write data rows (one per eigenvalue)
+            for (band_idx, eigenvalue) in ea.eigenvalues.iter().enumerate() {
+                let mut row = format!("{}", result.job_index);
+                for (_, value) in &param_cols {
+                    row.push(',');
+                    row.push_str(value);
+                }
+                row.push_str(&format!(
+                    ",{},{},{},{}",
+                    ea.n_iterations,
+                    ea.converged,
+                    band_idx + 1,
+                    eigenvalue
+                ));
+                row.push('\n');
 
-        if let Err(e) = writer.write_all(row.as_bytes()) {
-            error!("failed to write row: {}", e);
-            break;
+                if let Err(e) = writer.write_all(row.as_bytes()) {
+                    error!("failed to write row: {}", e);
+                    break;
+                }
+                bytes_written += row.len();
+            }
         }
-        bytes_written += row.len();
     }
 
     if let Err(e) = writer.flush() {
@@ -484,6 +523,8 @@ fn write_selective_results(
 
 /// Write selective mode CSV with all results merged.
 fn write_csv_selective(path: &PathBuf, results: &[CompactBandResult]) -> usize {
+    use crate::channel::CompactResultType;
+
     let file = match File::create(path) {
         Ok(f) => f,
         Err(e) => {
@@ -498,66 +539,134 @@ fn write_csv_selective(path: &PathBuf, results: &[CompactBandResult]) -> usize {
     // Determine columns from first result
     let first = &results[0];
     let param_cols = first.params.to_columns();
-    let max_bands = results
-        .iter()
-        .flat_map(|r| r.bands.iter())
-        .map(|b| b.len())
-        .max()
-        .unwrap_or(0);
 
-    // Write header
-    let mut header = String::from("job_index");
-    for (name, _) in &param_cols {
-        header.push(',');
-        header.push_str(name);
-    }
-    header.push_str(",k_index,kx,ky,k_distance");
-    for i in 1..=max_bands {
-        header.push_str(&format!(",band{}", i));
-    }
-    header.push('\n');
+    // Check if any results are Maxwell type
+    let has_maxwell = results.iter().any(|r| matches!(r.result_type, CompactResultType::Maxwell(_)));
 
-    if let Err(e) = writer.write_all(header.as_bytes()) {
-        error!("failed to write header: {}", e);
-        return 0;
-    }
-    bytes_written += header.len();
-
-    // Write all results
-    for result in results {
-        let param_values: Vec<_> = result.params.to_columns();
-
-        for (k_idx, ((k_point, distance), bands)) in result
-            .k_path
+    if has_maxwell {
+        // Maxwell-style output with k-points
+        let max_bands = results
             .iter()
-            .zip(result.distances.iter())
-            .zip(result.bands.iter())
-            .enumerate()
-        {
-            let mut row = format!("{}", result.job_index);
-            for (_, value) in &param_values {
-                row.push(',');
-                row.push_str(value);
-            }
-            row.push_str(&format!(
-                ",{},{},{},{}",
-                k_idx, k_point[0], k_point[1], distance
-            ));
+            .filter_map(|r| match &r.result_type {
+                CompactResultType::Maxwell(m) => Some(m.bands.iter().map(|b| b.len()).max().unwrap_or(0)),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
 
-            for omega in bands {
-                row.push_str(&format!(",{}", omega));
-            }
+        // Write header
+        let mut header = String::from("job_index");
+        for (name, _) in &param_cols {
+            header.push(',');
+            header.push_str(name);
+        }
+        header.push_str(",k_index,kx,ky,k_distance");
+        for i in 1..=max_bands {
+            header.push_str(&format!(",band{}", i));
+        }
+        header.push('\n');
 
-            for _ in bands.len()..max_bands {
-                row.push(',');
-            }
-            row.push('\n');
+        if let Err(e) = writer.write_all(header.as_bytes()) {
+            error!("failed to write header: {}", e);
+            return 0;
+        }
+        bytes_written += header.len();
 
-            if let Err(e) = writer.write_all(row.as_bytes()) {
-                error!("failed to write row: {}", e);
-                break;
+        // Write all results
+        for result in results {
+            if let CompactResultType::Maxwell(m) = &result.result_type {
+                let param_values: Vec<_> = result.params.to_columns();
+
+                for (k_idx, ((k_point, distance), bands)) in m
+                    .k_path
+                    .iter()
+                    .zip(m.distances.iter())
+                    .zip(m.bands.iter())
+                    .enumerate()
+                {
+                    let mut row = format!("{}", result.job_index);
+                    for (_, value) in &param_values {
+                        row.push(',');
+                        row.push_str(value);
+                    }
+                    row.push_str(&format!(
+                        ",{},{},{},{}",
+                        k_idx, k_point[0], k_point[1], distance
+                    ));
+
+                    for omega in bands {
+                        row.push_str(&format!(",{}", omega));
+                    }
+
+                    for _ in bands.len()..max_bands {
+                        row.push(',');
+                    }
+                    row.push('\n');
+
+                    if let Err(e) = writer.write_all(row.as_bytes()) {
+                        error!("failed to write row: {}", e);
+                        break;
+                    }
+                    bytes_written += row.len();
+                }
             }
-            bytes_written += row.len();
+        }
+    } else {
+        // EA-style output with eigenvalues
+        let max_bands = results
+            .iter()
+            .filter_map(|r| match &r.result_type {
+                CompactResultType::EA(ea) => Some(ea.eigenvalues.len()),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+
+        // Write header
+        let mut header = String::from("job_index");
+        for (name, _) in &param_cols {
+            header.push(',');
+            header.push_str(name);
+        }
+        header.push_str(",n_iterations,converged");
+        for i in 1..=max_bands {
+            header.push_str(&format!(",eigenvalue{}", i));
+        }
+        header.push('\n');
+
+        if let Err(e) = writer.write_all(header.as_bytes()) {
+            error!("failed to write header: {}", e);
+            return 0;
+        }
+        bytes_written += header.len();
+
+        // Write all results (one row per job for EA)
+        for result in results {
+            if let CompactResultType::EA(ea) = &result.result_type {
+                let param_values: Vec<_> = result.params.to_columns();
+
+                let mut row = format!("{}", result.job_index);
+                for (_, value) in &param_values {
+                    row.push(',');
+                    row.push_str(value);
+                }
+                row.push_str(&format!(",{},{}", ea.n_iterations, ea.converged));
+
+                for eigenvalue in &ea.eigenvalues {
+                    row.push_str(&format!(",{}", eigenvalue));
+                }
+
+                for _ in ea.eigenvalues.len()..max_bands {
+                    row.push(',');
+                }
+                row.push('\n');
+
+                if let Err(e) = writer.write_all(row.as_bytes()) {
+                    error!("failed to write row: {}", e);
+                    break;
+                }
+                bytes_written += row.len();
+            }
         }
     }
 
@@ -582,6 +691,7 @@ fn write_csv_selective(path: &PathBuf, results: &[CompactBandResult]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::{CompactResultType, MaxwellResult};
     use crate::expansion::{AtomParams, JobParams};
     use mpb2d_core::polarization::Polarization;
     use std::fs;
@@ -602,11 +712,13 @@ mod tests {
                     eps_inside: 1.0,
                 }],
             },
-            k_path: (0..10).map(|i| [i as f64 / 10.0, 0.0]).collect(),
-            distances: (0..10).map(|i| i as f64 / 10.0).collect(),
-            bands: (0..10)
-                .map(|_| (0..5).map(|b| 0.1 * b as f64).collect())
-                .collect(),
+            result_type: CompactResultType::Maxwell(MaxwellResult {
+                k_path: (0..10).map(|i| [i as f64 / 10.0, 0.0]).collect(),
+                distances: (0..10).map(|i| i as f64 / 10.0).collect(),
+                bands: (0..10)
+                    .map(|_| (0..5).map(|b| 0.1 * b as f64).collect())
+                    .collect(),
+            }),
         }
     }
 

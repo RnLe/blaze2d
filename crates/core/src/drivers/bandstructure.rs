@@ -57,7 +57,7 @@ use crate::{
     field::Field2D,
     geometry::Geometry2D,
     grid::Grid2D,
-    operator::ThetaOperator,
+    operators::ThetaOperator,
     polarization::Polarization,
 };
 
@@ -297,7 +297,7 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
             // Build preconditioner for diagnostics (always using adaptive shift)
-            let mut preconditioner_opt: Option<Box<dyn crate::preconditioner::OperatorPreconditioner<B>>> =
+            let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
                 match precond_type {
                     PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
                     PreconditionerType::None => None,
@@ -431,7 +431,7 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
         // Build preconditioner for this operator (always using adaptive shift)
-        let mut preconditioner_opt: Option<Box<dyn crate::preconditioner::OperatorPreconditioner<B>>> =
+        let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
             match precond_type {
                 PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
                 PreconditionerType::None => None,
@@ -449,7 +449,7 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             eigensolver_config,
             preconditioner_opt
                 .as_mut()
-                .map(|p| &mut **p as &mut dyn crate::preconditioner::OperatorPreconditioner<B>),
+                .map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
             warm_slice,
         );
 
@@ -667,7 +667,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
             // Build preconditioner for diagnostics (always using adaptive shift)
-            let mut preconditioner_opt: Option<Box<dyn crate::preconditioner::OperatorPreconditioner<B>>> =
+            let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
                 match precond_type {
                     PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
                     PreconditionerType::None => None,
@@ -808,7 +808,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         eigensolver_config.record_diagnostics = true;
 
         // Build preconditioner (always using adaptive shift)
-        let mut preconditioner_opt: Option<Box<dyn crate::preconditioner::OperatorPreconditioner<B>>> =
+        let mut preconditioner_opt: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B>>> =
             match precond_type {
                 PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
                 PreconditionerType::None => None,
@@ -832,7 +832,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
             eigensolver_config,
             preconditioner_opt
                 .as_mut()
-                .map(|p| &mut **p as &mut dyn crate::preconditioner::OperatorPreconditioner<B>),
+                .map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
             warm_slice,
         );
 

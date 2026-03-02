@@ -291,3 +291,137 @@ fn combined_operations_maintain_consistency() {
         "norm changed: {norm_sq_before} -> {norm_sq_after}"
     );
 }
+
+// ============================================================================
+// EAOperator + single_solve Integration Test
+// ============================================================================
+
+/// Test that EAOperator works with the single_solve driver.
+///
+/// This verifies the full integration path:
+/// - EAOperator implements LinearOperator correctly
+/// - single_solve driver orchestrates the eigensolver
+/// - CpuBackend provides working FFT and linear algebra
+#[test]
+fn ea_operator_single_solve_integration() {
+    use mpb2d_core::drivers::single_solve::{solve, SingleSolveJob};
+    use mpb2d_core::operators::EAOperator;
+
+    let backend = CpuBackend::new();
+    let nx = 16;
+    let ny = 16;
+    let n = nx * ny;
+    let dx = 1.0;
+    let dy = 1.0;
+    let eta = 0.1;
+
+    // Simple harmonic potential well centered in the domain
+    let lx = nx as f64 * dx;
+    let ly = ny as f64 * dy;
+    let cx = lx / 2.0;
+    let cy = ly / 2.0;
+    let l_scale = (lx * ly).sqrt();
+
+    let potential: Vec<f64> = (0..n)
+        .map(|idx| {
+            let i = idx / ny;
+            let j = idx % ny;
+            let x = i as f64 * dx;
+            let y = j as f64 * dy;
+            let r_sq = (x - cx).powi(2) + (y - cy).powi(2);
+            // Positive definite potential
+            1.0 + 0.1 * r_sq / l_scale.powi(2)
+        })
+        .collect();
+
+    // Constant identity inverse mass tensor
+    let mass_inv: Vec<f64> = (0..n).flat_map(|_| [1.0, 0.0, 0.0, 1.0]).collect();
+
+    let mut op = EAOperator::new(
+        backend,
+        nx,
+        ny,
+        dx,
+        dy,
+        eta,
+        potential,
+        mass_inv,
+        None, // no drift term
+        0.0,  // omega_ref
+    );
+
+    // Solve for the lowest 4 eigenvalues
+    let job = SingleSolveJob::new(4)
+        .with_tolerance(1e-6)
+        .with_max_iterations(200);
+
+    let result = solve(&mut op, None, &job);
+
+    // Assertions:
+    // 1. We got the requested number of eigenvalues
+    assert_eq!(
+        result.eigenvalues.len(),
+        4,
+        "Should return exactly 4 eigenvalues"
+    );
+
+    // 2. All eigenvalues should be positive (positive definite operator)
+    for (i, &ev) in result.eigenvalues.iter().enumerate() {
+        assert!(
+            ev > 0.0,
+            "Eigenvalue {} should be positive, got {}",
+            i,
+            ev
+        );
+    }
+
+    // 3. Eigenvalues should be in ascending order
+    for i in 0..result.eigenvalues.len() - 1 {
+        assert!(
+            result.eigenvalues[i] <= result.eigenvalues[i + 1] + 1e-10,
+            "Eigenvalues not sorted: {} > {}",
+            result.eigenvalues[i],
+            result.eigenvalues[i + 1]
+        );
+    }
+
+    // 4. Ground state should be close to the minimum potential (~1.0)
+    // The kinetic term adds a small positive contribution
+    assert!(
+        result.eigenvalues[0] > 0.9 && result.eigenvalues[0] < 2.0,
+        "Ground state eigenvalue should be near the potential minimum, got {}",
+        result.eigenvalues[0]
+    );
+
+    // 5. Should converge reasonably quickly for this simple problem
+    assert!(
+        result.iterations < 150,
+        "Should converge in < 150 iterations, took {}",
+        result.iterations
+    );
+
+    // 6. Verify eigenvectors are orthonormal under B (identity mass)
+    let backend = CpuBackend::new();
+    for i in 0..result.eigenvectors.len() {
+        // Check normalization
+        let norm_sq = backend.dot(&result.eigenvectors[i], &result.eigenvectors[i]).re;
+        assert!(
+            (norm_sq - 1.0).abs() < 1e-4,
+            "Eigenvector {} not normalized: ||v||² = {}",
+            i,
+            norm_sq
+        );
+
+        // Check orthogonality
+        for j in (i + 1)..result.eigenvectors.len() {
+            let overlap = backend.dot(&result.eigenvectors[i], &result.eigenvectors[j]).norm();
+            assert!(
+                overlap < 1e-4,
+                "Eigenvectors {} and {} not orthogonal: <v_i, v_j> = {}",
+                i,
+                j,
+                overlap
+            );
+        }
+    }
+}

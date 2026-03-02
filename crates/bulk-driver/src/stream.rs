@@ -358,26 +358,36 @@ impl SelectiveFilter {
     ///
     /// If the filter is not active, returns a clone of the original.
     /// This is optimized for the common case where filtering is applied.
+    /// 
+    /// Note: Filtering only applies to Maxwell results. EA results are returned unchanged.
     pub fn apply(&self, result: &CompactBandResult) -> CompactBandResult {
+        use crate::channel::{CompactResultType, MaxwellResult};
+
         if !self.is_active {
             return result.clone();
         }
 
+        // Filtering only applies to Maxwell results
+        let maxwell = match &result.result_type {
+            CompactResultType::Maxwell(m) => m,
+            CompactResultType::EA(_) => return result.clone(),
+        };
+
         // Determine which k-indices to include
         let k_filter: Vec<usize> = if self.k_indices.is_empty() {
             // No k-filter: include all
-            (0..result.k_path.len()).collect()
+            (0..maxwell.k_path.len()).collect()
         } else {
             // Filter to valid indices
             self.k_indices
                 .iter()
                 .copied()
-                .filter(|&i| i < result.k_path.len())
+                .filter(|&i| i < maxwell.k_path.len())
                 .collect()
         };
 
         // Determine which band indices to include
-        let num_bands = result.num_bands();
+        let num_bands = maxwell.bands.first().map(|b| b.len()).unwrap_or(0);
         let band_filter: Vec<usize> = if self.band_indices.is_empty() {
             // No band filter: include all
             (0..num_bands).collect()
@@ -391,14 +401,14 @@ impl SelectiveFilter {
         };
 
         // Build filtered result
-        let k_path: Vec<[f64; 2]> = k_filter.iter().map(|&i| result.k_path[i]).collect();
-        let distances: Vec<f64> = k_filter.iter().map(|&i| result.distances[i]).collect();
+        let k_path: Vec<[f64; 2]> = k_filter.iter().map(|&i| maxwell.k_path[i]).collect();
+        let distances: Vec<f64> = k_filter.iter().map(|&i| maxwell.distances[i]).collect();
         let bands: Vec<Vec<f64>> = k_filter
             .iter()
             .map(|&k_idx| {
                 band_filter
                     .iter()
-                    .map(|&b_idx| result.bands[k_idx][b_idx])
+                    .map(|&b_idx| maxwell.bands[k_idx][b_idx])
                     .collect()
             })
             .collect();
@@ -406,9 +416,11 @@ impl SelectiveFilter {
         CompactBandResult {
             job_index: result.job_index,
             params: result.params.clone(),
-            k_path,
-            distances,
-            bands,
+            result_type: CompactResultType::Maxwell(MaxwellResult {
+                k_path,
+                distances,
+                bands,
+            }),
         }
     }
 
@@ -699,6 +711,8 @@ mod tests {
     use std::time::Duration;
 
     fn make_test_result(index: usize) -> CompactBandResult {
+        use crate::channel::{CompactResultType, MaxwellResult};
+
         CompactBandResult {
             job_index: index,
             params: JobParams {
@@ -713,13 +727,15 @@ mod tests {
                     eps_inside: 1.0,
                 }],
             },
-            k_path: vec![[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]],
-            distances: vec![0.0, 0.5, 1.0],
-            bands: vec![
-                vec![0.1, 0.2, 0.3],
-                vec![0.15, 0.25, 0.35],
-                vec![0.2, 0.3, 0.4],
-            ],
+            result_type: CompactResultType::Maxwell(MaxwellResult {
+                k_path: vec![[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]],
+                distances: vec![0.0, 0.5, 1.0],
+                bands: vec![
+                    vec![0.1, 0.2, 0.3],
+                    vec![0.15, 0.25, 0.35],
+                    vec![0.2, 0.3, 0.4],
+                ],
+            }),
         }
     }
 
@@ -862,8 +878,8 @@ mod tests {
         let filtered = filter.apply(&result);
 
         // Should be identical
-        assert_eq!(filtered.k_path.len(), result.k_path.len());
-        assert_eq!(filtered.bands.len(), result.bands.len());
+        assert_eq!(filtered.k_path().unwrap().len(), result.k_path().unwrap().len());
+        assert_eq!(filtered.bands().unwrap().len(), result.bands().unwrap().len());
     }
 
     #[test]
@@ -875,12 +891,12 @@ mod tests {
         let result = make_test_result(0);
         let filtered = filter.apply(&result);
 
-        assert_eq!(filtered.k_path.len(), 2);
-        assert_eq!(filtered.k_path[0], result.k_path[0]);
-        assert_eq!(filtered.k_path[1], result.k_path[2]);
-        assert_eq!(filtered.bands.len(), 2);
+        assert_eq!(filtered.k_path().unwrap().len(), 2);
+        assert_eq!(filtered.k_path().unwrap()[0], result.k_path().unwrap()[0]);
+        assert_eq!(filtered.k_path().unwrap()[1], result.k_path().unwrap()[2]);
+        assert_eq!(filtered.bands().unwrap().len(), 2);
         // All bands preserved
-        assert_eq!(filtered.bands[0].len(), result.bands[0].len());
+        assert_eq!(filtered.bands().unwrap()[0].len(), result.bands().unwrap()[0].len());
     }
 
     #[test]
@@ -893,11 +909,11 @@ mod tests {
         let filtered = filter.apply(&result);
 
         // All k-points preserved
-        assert_eq!(filtered.k_path.len(), result.k_path.len());
+        assert_eq!(filtered.k_path().unwrap().len(), result.k_path().unwrap().len());
         // Only 2 bands
-        assert_eq!(filtered.bands[0].len(), 2);
-        assert_eq!(filtered.bands[0][0], result.bands[0][0]);
-        assert_eq!(filtered.bands[0][1], result.bands[0][2]);
+        assert_eq!(filtered.bands().unwrap()[0].len(), 2);
+        assert_eq!(filtered.bands().unwrap()[0][0], result.bands().unwrap()[0][0]);
+        assert_eq!(filtered.bands().unwrap()[0][1], result.bands().unwrap()[0][2]);
     }
 
     #[test]
@@ -909,12 +925,12 @@ mod tests {
         let result = make_test_result(0);
         let filtered = filter.apply(&result);
 
-        assert_eq!(filtered.k_path.len(), 1);
-        assert_eq!(filtered.k_path[0], result.k_path[1]);
-        assert_eq!(filtered.bands.len(), 1);
-        assert_eq!(filtered.bands[0].len(), 2);
-        assert_eq!(filtered.bands[0][0], result.bands[1][1]);
-        assert_eq!(filtered.bands[0][1], result.bands[1][2]);
+        assert_eq!(filtered.k_path().unwrap().len(), 1);
+        assert_eq!(filtered.k_path().unwrap()[0], result.k_path().unwrap()[1]);
+        assert_eq!(filtered.bands().unwrap().len(), 1);
+        assert_eq!(filtered.bands().unwrap()[0].len(), 2);
+        assert_eq!(filtered.bands().unwrap()[0][0], result.bands().unwrap()[1][1]);
+        assert_eq!(filtered.bands().unwrap()[0][1], result.bands().unwrap()[1][2]);
     }
 
     #[test]
@@ -933,11 +949,11 @@ mod tests {
         let result = make_test_result(0);
         let filtered = filter.apply(&result);
 
-        assert_eq!(filtered.k_path.len(), 2);
-        assert_eq!(filtered.bands[0].len(), 2);
+        assert_eq!(filtered.k_path().unwrap().len(), 2);
+        assert_eq!(filtered.bands().unwrap()[0].len(), 2);
         // Band 1 -> index 0, Band 3 -> index 2
-        assert_eq!(filtered.bands[0][0], result.bands[0][0]);
-        assert_eq!(filtered.bands[0][1], result.bands[0][2]);
+        assert_eq!(filtered.bands().unwrap()[0][0], result.bands().unwrap()[0][0]);
+        assert_eq!(filtered.bands().unwrap()[0][1], result.bands().unwrap()[0][2]);
     }
 
     #[test]
@@ -949,8 +965,8 @@ mod tests {
         let filtered = filter.apply(&result);
 
         // Should only include valid indices
-        assert_eq!(filtered.k_path.len(), 1); // Only index 0 is valid
-        assert_eq!(filtered.bands[0].len(), 1); // Only band 0 is valid
+        assert_eq!(filtered.k_path().unwrap().len(), 1); // Only index 0 is valid
+        assert_eq!(filtered.bands().unwrap()[0].len(), 1); // Only band 0 is valid
     }
 
     // ========================================================================
@@ -970,8 +986,8 @@ mod tests {
         // Should receive filtered version
         let results = collector.results();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].k_path.len(), 2);
-        assert_eq!(results[0].bands[0].len(), 2);
+        assert_eq!(results[0].k_path().unwrap().len(), 2);
+        assert_eq!(results[0].bands().unwrap()[0].len(), 2);
 
         // Check received count
         assert_eq!(channel.results_received(), 1);
@@ -991,7 +1007,7 @@ mod tests {
 
         let mut count = 0;
         while let Ok(result) = receiver.try_recv() {
-            assert_eq!(result.k_path.len(), 1);
+            assert_eq!(result.k_path().unwrap().len(), 1);
             count += 1;
         }
         assert_eq!(count, 5);

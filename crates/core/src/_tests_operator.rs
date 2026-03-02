@@ -10,11 +10,9 @@ use super::field::Field2D;
 use super::geometry::{BasisAtom, Geometry2D};
 use super::grid::Grid2D;
 use super::lattice::Lattice2D;
-use super::operator::{
-    LinearOperator, ThetaOperator, ToyLaplacian,
-};
+use super::operators::{LinearOperator, ThetaOperator, ToyLaplacian};
 use super::polarization::Polarization;
-use super::preconditioner::OperatorPreconditioner;
+use super::preconditioners::OperatorPreconditioner;
 
 #[derive(Clone)]
 struct TestBackend;

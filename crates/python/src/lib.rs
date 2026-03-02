@@ -1,6 +1,6 @@
-//! Python bindings for MPB2D.
+//! Python bindings for BLAZE - Band-structure LOBPCG Accelerated Zone Eigensolver.
 //!
-//! This crate provides Python bindings for the MPB2D photonic crystal band
+//! This crate provides Python bindings for the BLAZE 2D photonic crystal band
 //! structure solver, with special support for streaming results in real-time.
 //!
 //! # Features
@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```python
-//! from mpb2d import BulkDriver
+//! from blaze import BulkDriver
 //!
 //! driver = BulkDriver("sweep.toml")
 //! print(f"Will run {driver.job_count} jobs")
@@ -21,8 +21,8 @@
 //! for result in driver.run_streaming():
 //!     print(f"Job {result['job_index']}: {result['num_bands']} bands")
 //!
-//! # Or batch mode for large sweeps
-//! stats = driver.run_batched(buffer_size_mb=10)
+//! # Or collect all results at once
+//! results, stats = driver.run_collect()
 //! print(f"Completed {stats['completed']} jobs in {stats['total_time_secs']:.2f}s")
 //! ```
 
@@ -35,14 +35,14 @@ mod py {
 
     use crate::streaming;
 
-    /// MPB2D Python module.
+    /// BLAZE Python module.
     ///
-    /// Provides access to the high-performance photonic crystal band structure
+    /// Provides access to the high-performance 2D photonic crystal band structure
     /// solver with streaming support for real-time analysis.
     #[pymodule]
-    fn mpb2d(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    fn blaze(m: &Bound<'_, PyModule>) -> PyResult<()> {
         // Module documentation
-        m.add("__doc__", "MPB2D: Fast 2D photonic crystal band structure solver")?;
+        m.add("__doc__", "BLAZE: Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals")?;
         m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
         // Register streaming classes
@@ -54,5 +54,5 @@ mod py {
 
 #[cfg(not(feature = "bindings"))]
 pub fn bindings_disabled() {
-    log::warn!("mpb2d-python compiled without the \"bindings\" feature");
+    log::warn!("blaze2d compiled without the \"bindings\" feature");
 }

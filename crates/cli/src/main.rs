@@ -11,10 +11,10 @@ use clap::{Parser, ValueEnum};
 use env_logger::Builder;
 use log::{error, info, warn};
 use mpb2d_core::{
-    bandstructure::{self, BandStructureResult, RunOptions, Verbosity},
     brillouin::{generate_path, BrillouinPath},
     diagnostics::PreconditionerType,
     dielectric::Dielectric2D,
+    drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity},
     io::{JobConfig, PathPreset},
 };
 

@@ -1,0 +1,297 @@
+# ==============================================================================
+# MPB2D Envelope Approximation (EA) Configuration for Moiré Lattices
+# ==============================================================================
+#
+# This configuration file demonstrates the Envelope Approximation (EA) solver
+# mode for computing eigenvalues of moiré superlattice effective Hamiltonians.
+#
+# The EA solver solves the envelope equation:
+#
+#   H ψ = E ψ
+#
+# where the Hamiltonian is:
+#
+#   H = V(R) - (η²/2) ∇·M⁻¹(R)∇ - iη v_g·∇   (optional drift term)
+#
+# Components:
+#   - V(R): Effective potential on the moiré superlattice
+#   - M⁻¹(R): Inverse effective mass tensor (spatially varying, 2×2 matrix)
+#   - v_g: Group velocity for drift term (optional)
+#   - η: Small parameter controlling kinetic/drift term strength
+#
+# The solver requires pre-computed input data files for V(R), M⁻¹(R), and
+# optionally v_g(R), which are typically generated from ab initio calculations
+# or tight-binding models.
+#
+# ==============================================================================
+# Usage:
+#   mpb2d-bulk --config ea_moire_lattice.toml
+#   mpb2d-bulk --config ea_moire_lattice.toml --dry-run   # Preview jobs
+#   mpb2d-bulk --config ea_moire_lattice.toml -j 4        # Use 4 threads
+# ==============================================================================
+
+# ============================================================================
+# BULK SECTION (REQUIRED)
+# ============================================================================
+# The presence of this section marks the file as a bulk driver request.
+
+[bulk]
+# Number of threads for parallel execution. Default: all available cores.
+threads = 4
+
+# Show progress during computation
+verbose = true
+
+# ============================================================================
+# SOLVER TYPE SELECTION (REQUIRED FOR EA)
+# ============================================================================
+# Choose between "maxwell" (photonic crystals) or "ea" (envelope approximation)
+
+[solver]
+# Use the envelope approximation solver
+type = "ea"
+
+# ============================================================================
+# EA CONFIGURATION (REQUIRED WHEN solver.type = "ea")
+# ============================================================================
+# Specifies input data files and physical parameters for the EA Hamiltonian.
+
+[ea]
+# --------------------------------------------------------------------------
+# INPUT DATA FILES
+# --------------------------------------------------------------------------
+# All files must be binary (raw f64, little-endian) in row-major (C-order).
+# Grid dimensions are determined from [grid] section.
+
+# Path to potential data V(R)
+# Format: Nx × Ny f64 values in row-major order
+# Physical interpretation: Effective potential energy at each spatial point
+potential = "data/potential_64x64.bin"
+
+# Path to inverse mass tensor M⁻¹(R)
+# Format: Nx × Ny × 4 f64 values in row-major order
+# Component ordering at each grid point: [m_xx, m_xy, m_yx, m_yy]
+# For isotropic mass: m_xy = m_yx = 0, m_xx = m_yy = 1/m*
+# For anisotropic mass (e.g., twisted bilayer graphene): full 2×2 tensor
+mass_inv = "data/mass_inv_64x64.bin"
+
+# Path to group velocity data v_g(R) (OPTIONAL)
+# Format: Nx × Ny × 2 f64 values in row-major order
+# Component ordering at each grid point: [vg_x, vg_y]
+# When present, enables the drift term: -iη v_g·∇ψ
+# Omit this field to disable the drift term.
+# vg = "data/group_velocity_64x64.bin"
+
+# --------------------------------------------------------------------------
+# PHYSICAL PARAMETERS
+# --------------------------------------------------------------------------
+
+# Small parameter η (eta)
+# Appears in kinetic term: -η²/2 ∇·M⁻¹∇
+# Also in drift term (if vg provided): -iη v_g·∇
+# Typical range: 0.01 - 1.0 depending on system
+# For moiré systems: often related to twist angle or ratio of lattice constants
+eta = 0.1
+
+# Physical dimensions of the simulation domain [Lx, Ly]
+# Units should be consistent with your input data (e.g., nm, or dimensionless)
+# For periodic moiré superlattice: typically the moiré period
+domain_size = [10.0, 10.0]
+
+# Boundary conditions
+# Currently only periodic BCs are supported (always true)
+periodic = true
+
+# ============================================================================
+# COMPUTATIONAL GRID
+# ============================================================================
+# Grid resolution must match the input data file dimensions!
+
+[grid]
+# Number of grid points in x and y
+# IMPORTANT: Must match the dimensions of your input data files
+# File size validation: potential.bin should have nx*ny*8 bytes
+#                       mass_inv.bin should have nx*ny*4*8 bytes
+nx = 64
+ny = 64
+
+# Physical dimensions (should match [ea].domain_size for correct spacing)
+# The grid spacing will be: dx = lx/nx, dy = ly/ny
+lx = 10.0
+ly = 10.0
+
+# ============================================================================
+# EIGENSOLVER CONFIGURATION
+# ============================================================================
+# Controls the LOBPCG eigensolver behavior.
+
+[eigensolver]
+# Number of eigenvalues to compute (lowest energy states)
+# For moiré flat bands: typically 4-20 depending on the system
+n_bands = 12
+
+# Maximum LOBPCG iterations
+# Usually converges much faster, but set high enough for safety
+max_iter = 500
+
+# Convergence tolerance (relative residual norm)
+# Smaller = more accurate but slower
+# 1e-8: High precision
+# 1e-6: Standard precision (recommended)
+# 1e-4: Quick estimates
+tol = 1e-6
+
+# Block size for LOBPCG (0 = automatic)
+# Automatic selection: n_bands + 2 (adds some slack for better convergence)
+# block_size = 0
+
+# ============================================================================
+# OUTPUT CONFIGURATION
+# ============================================================================
+# EA mode produces eigenvalues (not full band structure over k-path).
+
+[output]
+# Output mode
+# For EA: "full" writes eigenvalues for each job to separate files
+mode = "full"
+
+# Output directory
+directory = "./ea_output"
+
+# Filename prefix (files: ea_job_000000.csv, ea_job_000001.csv, ...)
+prefix = "ea_job"
+
+# ============================================================================
+# PARAMETER RANGES (OPTIONAL)
+# ============================================================================
+# You can sweep parameters in EA mode just like in Maxwell mode.
+# Useful for studying how eigenvalues change with physical parameters.
+
+# [ranges]
+# Example: Sweep eta to study kinetic term strength
+# eta = { min = 0.05, max = 0.5, step = 0.05 }
+
+# ==============================================================================
+# INPUT DATA FILE FORMAT REFERENCE
+# ==============================================================================
+#
+# All input files are binary, containing raw f64 (64-bit float) values in
+# little-endian byte order. No headers, no padding.
+#
+# The data layout is ROW-MAJOR (C-order), meaning the y-index varies fastest.
+# For a grid point (i, j) where i is x-index and j is y-index:
+#   linear_index = i * ny + j
+#
+# POTENTIAL FILE (potential.bin):
+#   - Total size: nx * ny * 8 bytes
+#   - Contains: V(x_i, y_j) for i=0..nx-1, j=0..ny-1
+#   - Example for 64×64 grid: 32,768 bytes
+#
+# MASS INVERSE FILE (mass_inv.bin):
+#   - Total size: nx * ny * 4 * 8 bytes
+#   - For each grid point (i,j), stores 4 values: [m_xx, m_xy, m_yx, m_yy]
+#   - The tensor at point (i,j):
+#       M⁻¹(i,j) = | m_xx  m_xy |
+#                  | m_yx  m_yy |
+#   - For isotropic effective mass m*: m_xx = m_yy = 1/m*, m_xy = m_yx = 0
+#   - Example for 64×64 grid: 131,072 bytes
+#
+# GROUP VELOCITY FILE (vg.bin) - OPTIONAL:
+#   - Total size: nx * ny * 2 * 8 bytes
+#   - For each grid point (i,j), stores 2 values: [vg_x, vg_y]
+#   - Used for drift term: -iη (vg_x ∂/∂x + vg_y ∂/∂y)
+#   - Example for 64×64 grid: 65,536 bytes
+#
+# ==============================================================================
+# PYTHON EXAMPLE: GENERATING INPUT DATA
+# ==============================================================================
+#
+# import numpy as np
+#
+# nx, ny = 64, 64
+# Lx, Ly = 10.0, 10.0
+# dx, dy = Lx / nx, Ly / ny
+#
+# # Create coordinate arrays
+# x = np.arange(nx) * dx
+# y = np.arange(ny) * dy
+# X, Y = np.meshgrid(x, y, indexing='ij')  # 'ij' for row-major!
+#
+# # Example: Periodic potential (moiré pattern)
+# G = 2 * np.pi / Lx  # Reciprocal lattice vector magnitude
+# V = 0.1 * (np.cos(G * X) + np.cos(G * Y) + np.cos(G * (X + Y)))
+#
+# # Example: Isotropic mass (m* = 0.05 in some units)
+# m_star = 0.05
+# m_inv = np.zeros((nx, ny, 4))
+# m_inv[:, :, 0] = 1.0 / m_star  # m_xx
+# m_inv[:, :, 1] = 0.0           # m_xy
+# m_inv[:, :, 2] = 0.0           # m_yx
+# m_inv[:, :, 3] = 1.0 / m_star  # m_yy
+#
+# # Save in the correct format
+# V.astype(np.float64).tofile('data/potential_64x64.bin')
+# m_inv.astype(np.float64).tofile('data/mass_inv_64x64.bin')
+#
+# ==============================================================================
+# NOTES ON PHYSICAL INTERPRETATION
+# ==============================================================================
+#
+# The EA solver is designed for systems where:
+#
+# 1. There is a slowly-varying envelope function modulating fast oscillations
+# 2. The effective Hamiltonian can be written in the envelope approximation form
+# 3. Examples include:
+#    - Twisted bilayer graphene (TBG) flat bands
+#    - Moiré heterostructures (TMDs, etc.)
+#    - Photonic moiré lattices
+#    - Any system with spatially-varying effective mass
+#
+# The parameter η typically represents:
+#   - Ratio of lattice constants to moiré period
+#   - Small twist angle (in radians) for TBG-like systems
+#   - Dimensionless kinetic energy scale
+#
+# The eigenvalues E_n represent energy levels of the effective Hamiltonian,
+# NOT the original tight-binding or ab initio energies. They need to be
+# interpreted in the context of your specific model.
+#
+# ==============================================================================
+
+# ============================================================================
+# DIFFERENCES FROM MAXWELL MODE
+# ============================================================================
+#
+# EA MODE:
+# - Does NOT use [geometry] section (no atoms, lattice, eps_bg)
+# - Does NOT use [path] section (no k-path, no Brillouin zone)
+# - Does NOT use [dielectric] section (no ε(r) field)
+# - Does NOT compute band structure (just eigenvalues at one "k-point")
+# - Requires input data files for potential and mass tensor
+# - Output: eigenvalues only (no k-path distances)
+#
+# MAXWELL MODE (default):
+# - Uses [geometry] for photonic crystal structure
+# - Uses [path] for k-path through Brillouin zone
+# - Computes full band structure ω(k) over the k-path
+# - Builds ε(r) dielectric function internally
+#
+# Both modes:
+# - Use the same bulk driver infrastructure
+# - Support parameter sweeps via [ranges]
+# - Use the same LOBPCG eigensolver
+# - Support parallel execution and output modes
+
+# ============================================================================
+# ADVANCED: PARAMETER SWEEP EXAMPLE
+# ============================================================================
+# Uncomment the sections below to sweep physical parameters.
+# This is useful for studying phase diagrams or parameter dependence.
+
+# [ranges]
+# # Sweep eta to study transition from weak to strong kinetic regime
+# eta = { min = 0.01, max = 0.5, step = 0.01 }
+#
+# # Sweep resolution to check convergence
+# # Note: You'll need corresponding input files for each resolution!
+# # resolution = { min = 32.0, max = 128.0, step = 32.0 }
