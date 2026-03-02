@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 pub struct AdaptiveConfig {
     /// Minimum number of threads (floor).
     pub min_threads: usize,
-    /// Maximum number of threads (ceiling, usually num_cpus).
+    /// Maximum number of threads (ceiling, defaults to physical CPU cores).
+    /// Using physical cores (not hyperthreads) is optimal for CPU-bound workloads.
     pub max_threads: usize,
     /// EWMA decay factor (0.0-1.0, higher = more weight on recent).
     pub ewma_alpha: f64,
@@ -31,11 +32,11 @@ pub struct AdaptiveConfig {
 
 impl Default for AdaptiveConfig {
     fn default() -> Self {
-        let num_cpus = num_cpus::get();
+        // Use physical cores, not logical (hyperthreads don't help CPU-bound workloads)
+        let physical_cpus = num_cpus::get_physical();
         Self {
-            // Start conservative: half the cores
             min_threads: 1,
-            max_threads: num_cpus,
+            max_threads: physical_cpus,
             // EWMA with moderate smoothing
             ewma_alpha: 0.3,
             // Require 10% improvement to increase threads
@@ -128,8 +129,9 @@ pub struct AdaptiveThreadManager {
 impl AdaptiveThreadManager {
     /// Create a new adaptive thread manager.
     pub fn new(config: AdaptiveConfig) -> Self {
-        // Start at half the max threads (conservative)
-        let initial_threads = ((config.max_threads + 1) / 2).max(config.min_threads);
+        // Start at physical core count (optimal for CPU-bound workloads).
+        // The adaptive algorithm will explore nearby values if beneficial.
+        let initial_threads = config.max_threads.max(config.min_threads);
 
         let state = AdaptiveState {
             current_threads: initial_threads,
