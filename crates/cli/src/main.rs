@@ -121,6 +121,14 @@ struct Cli {
     /// dielectric data without computing band structures.
     #[arg(long)]
     skip_solve: bool,
+
+    /// Enable subspace prediction for accelerated warm-start (experimental)
+    ///
+    /// Uses rotation-based subspace tracking to provide better initial guesses
+    /// for the eigensolver at each k-point. This can reduce the number of
+    /// iterations needed for convergence, especially when bands reorder.
+    #[arg(long)]
+    subspace_prediction: bool,
 }
 
 /// CLI path argument supporting all four lattice types.
@@ -389,7 +397,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build run options
     let precond_type = PreconditionerType::from(cli.preconditioner.clone());
     let run_options = RunOptions::new()
-        .with_preconditioner(precond_type);
+        .with_preconditioner(precond_type)
+        .with_subspace_prediction(cli.subspace_prediction);
+
+    if cli.subspace_prediction && !cli.quiet {
+        info!("subspace prediction enabled (rotation-based warm-start)");
+    }
 
     // Select backend: use CUDA if available, otherwise CPU
     #[cfg(feature = "cuda")]

@@ -26,6 +26,7 @@ pub mod deflation;
 pub mod dense;
 pub mod initialization;
 pub mod normalization;
+pub mod subspace_prediction;
 
 #[cfg(test)]
 mod _tests_deflation;
@@ -44,6 +45,10 @@ pub use initialization::{
 pub use normalization::{
     SvqbConfig, SvqbResult, b_inner_product, b_norm, normalize_to_unit_b_norm,
     orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize,
+};
+pub use subspace_prediction::{
+    PredictionMethod, PredictionResult, SubspaceHistory,
+    compute_complex_overlap_matrix, polar_decomposition,
 };
 
 // Re-export diagnostics types for convenience

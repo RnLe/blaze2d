@@ -53,7 +53,7 @@ use crate::{
     band_tracking::{apply_permutation, track_bands},
     diagnostics::{ConvergenceStudy, PreconditionerType},
     dielectric::{Dielectric2D, DielectricOptions},
-    eigensolver::{Eigensolver, EigensolverConfig},
+    eigensolver::{Eigensolver, EigensolverConfig, SubspaceHistory},
     field::Field2D,
     geometry::Geometry2D,
     grid::Grid2D,
@@ -165,12 +165,20 @@ impl Verbosity {
 pub struct RunOptions {
     /// Preconditioner type (None, FourierDiagonalKernelCompensated, TransverseProjection).
     pub precond_type: PreconditionerType,
+    /// Enable subspace prediction for accelerated warm-start (Stage 1: rotation-only).
+    ///
+    /// When enabled, uses complex eigenvector overlaps and polar decomposition to
+    /// compute a rotation matrix that aligns the previous subspace to the current one.
+    /// This provides a better warm-start than simple copying, especially when bands
+    /// reorder between k-points.
+    pub use_subspace_prediction: bool,
 }
 
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
             precond_type: PreconditionerType::default(),
+            use_subspace_prediction: true, // Enabled by default for better warm-start
         }
     }
 }
@@ -184,6 +192,15 @@ impl RunOptions {
     /// Set the preconditioner type.
     pub fn with_preconditioner(mut self, precond_type: PreconditionerType) -> Self {
         self.precond_type = precond_type;
+        self
+    }
+
+    /// Enable subspace prediction for accelerated warm-start.
+    ///
+    /// This uses rotation-based subspace tracking to provide better initial
+    /// guesses for the eigensolver at each k-point.
+    pub fn with_subspace_prediction(mut self, enabled: bool) -> Self {
+        self.use_subspace_prediction = enabled;
         self
     }
 }
@@ -346,9 +363,17 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     // K-Point Loop
     // ========================================================================
 
-    // Storage for warm-start vectors from previous k-point
+    // Storage for warm-start vectors from previous k-point (simple mode)
     let warm_start_limit = job.eigensolver.n_bands;
     let mut warm_start_store: Vec<Field2D> = Vec::new();
+
+    // Subspace prediction history (rotation-based warm-start)
+    let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction {
+        info!("[bandstructure] Subspace prediction enabled (rotation-based warm-start)");
+        Some(SubspaceHistory::new(warm_start_limit))
+    } else {
+        None
+    };
 
     // Storage for band tracking: eigenvectors from previous k-point
     // Note: When starting at Γ with proper deflation, Γ eigenvectors are reliable
@@ -412,11 +437,28 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         let bloch = reciprocal.fractional_to_cartesian(k_frac);
 
         // Prepare warm-start slice (if available from previous k-point)
-        // Note: Warm-start from Γ is now enabled - eigenvectors from Γ (with deflation)
-        // provide useful starting guesses even though the subspaces differ at k≠0.
-        let warm_slice: Option<&[Field2D]> = if !warm_start_store.is_empty() {
+        // Use subspace prediction if enabled, otherwise fall back to simple copy
+        let predicted_vectors: Option<Vec<Field2D>>;
+        let warm_slice: Option<&[Field2D]> = if let Some(ref mut history) = subspace_history {
+            // Use subspace prediction for warm-start
+            let prediction = history.predict(k_frac, eps_for_tracking.as_deref());
+            if prediction.has_prediction() {
+                debug!(
+                    "[bandstructure] k#{:03} using {:?} prediction (σ_min={:.4})",
+                    k_idx, prediction.method_used, prediction.singular_value_min
+                );
+                predicted_vectors = Some(prediction.predicted_vectors);
+                predicted_vectors.as_deref()
+            } else {
+                predicted_vectors = None;
+                None
+            }
+        } else if !warm_start_store.is_empty() {
+            // Simple copy warm-start (original behavior)
+            predicted_vectors = None;
             Some(warm_start_store.as_slice())
         } else {
+            predicted_vectors = None;
             None
         };
 
@@ -500,10 +542,16 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         // Store eigenvectors for band tracking at next k-point
         prev_eigenvectors = Some(eigenvectors.clone());
 
-        // Store eigenvectors for warm-starting the next k-point
-        warm_start_store.clear();
-        for vec in eigenvectors.iter().take(warm_start_limit) {
-            warm_start_store.push(vec.clone());
+        // Update subspace history or warm-start store for next k-point
+        if let Some(ref mut history) = subspace_history {
+            // Update subspace history with converged eigenvectors
+            history.update(k_frac, &eigenvectors);
+        } else {
+            // Simple copy for traditional warm-start
+            warm_start_store.clear();
+            for vec in eigenvectors.iter().take(warm_start_limit) {
+                warm_start_store.push(vec.clone());
+            }
         }
 
         // Store first Γ-point result for potential reuse at end of path
@@ -719,9 +767,17 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     // K-Point Loop
     // ========================================================================
 
-    // Storage for warm-start vectors from previous k-point
+    // Storage for warm-start vectors from previous k-point (simple mode)
     let warm_start_limit = job.eigensolver.n_bands;
     let mut warm_start_store: Vec<Field2D> = Vec::new();
+
+    // Subspace prediction history (rotation-based warm-start)
+    let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction {
+        info!("[bandstructure] Subspace prediction enabled (rotation-based warm-start)");
+        Some(SubspaceHistory::new(warm_start_limit))
+    } else {
+        None
+    };
 
     // Track if previous k-point was Γ (to skip warm-start after Γ)
     // Γ eigenvectors span a different subspace that doesn't overlap well with k≠0
@@ -791,14 +847,43 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         // Construct the Maxwell operator Θ for this k-point
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
-        // Track if warm start was used (before we borrow)
-        // Skip warm-start when coming from Γ: those eigenvectors don't overlap well with k≠0
-        let warm_start_used = if prev_was_gamma {
+        // Prepare warm-start using subspace prediction or simple copy
+        let predicted_vectors: Option<Vec<Field2D>>;
+        let warm_start_used: bool;
+        let warm_slice: Option<&[Field2D]> = if prev_was_gamma {
+            // Skip warm-start when coming from Γ: those eigenvectors don't overlap well with k≠0
             debug!("[bandstructure] k#{:03}: skipping warm-start (previous was Γ-point)", k_idx);
-            false
+            predicted_vectors = None;
+            warm_start_used = false;
+            None
+        } else if let Some(ref mut history) = subspace_history {
+            // Use subspace prediction for warm-start
+            let prediction = history.predict(k_frac, eps_for_tracking.as_deref());
+            if prediction.has_prediction() {
+                debug!(
+                    "[bandstructure] k#{:03} using {:?} prediction (σ_min={:.4})",
+                    k_idx, prediction.method_used, prediction.singular_value_min
+                );
+                predicted_vectors = Some(prediction.predicted_vectors);
+                warm_start_used = true;
+                predicted_vectors.as_deref()
+            } else {
+                predicted_vectors = None;
+                warm_start_used = false;
+                None
+            }
+        } else if !warm_start_store.is_empty() {
+            // Simple copy warm-start (original behavior)
+            predicted_vectors = None;
+            warm_start_used = true;
+            Some(warm_start_store.as_slice())
         } else {
-            !warm_start_store.is_empty()
+            predicted_vectors = None;
+            warm_start_used = false;
+            None
         };
+        // Silence unused variable warning
+        let _ = warm_start_used;
 
         // Create label for this k-point run
         let run_label = format!("{}_k{:03}", study_name, k_idx);
@@ -821,12 +906,6 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
             };
 
         // Create and run the eigensolver
-        let warm_slice: Option<&[Field2D]> = if warm_start_used {
-            Some(warm_start_store.as_slice())
-        } else {
-            None
-        };
-
         let mut solver = Eigensolver::new(
             &mut theta,
             eigensolver_config,
@@ -878,10 +957,16 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
         // Store eigenvectors for band tracking at next k-point
         prev_eigenvectors = Some(eigenvectors.clone());
 
-        // Store eigenvectors for warm-starting the next k-point
-        warm_start_store.clear();
-        for vec in eigenvectors.iter().take(warm_start_limit) {
-            warm_start_store.push(vec.clone());
+        // Update subspace history or warm-start store for next k-point
+        if let Some(ref mut history) = subspace_history {
+            // Update subspace history with converged eigenvectors
+            history.update(k_frac, &eigenvectors);
+        } else {
+            // Simple copy for traditional warm-start
+            warm_start_store.clear();
+            for vec in eigenvectors.iter().take(warm_start_limit) {
+                warm_start_store.push(vec.clone());
+            }
         }
 
         // Track if this k-point was Γ for next iteration
