@@ -797,4 +797,199 @@ mod tests {
         assert!(result.has_prediction());
         assert_eq!(result.predicted_vectors.len(), 2);
     }
+
+    #[test]
+    fn test_extrapolation_enabled() {
+        let mut history = SubspaceHistory::new(2);
+        assert!(!history.is_extrapolation_enabled());
+
+        history.enable_extrapolation();
+        assert!(history.is_extrapolation_enabled());
+
+        history.disable_extrapolation();
+        assert!(!history.is_extrapolation_enabled());
+    }
+
+    #[test]
+    fn test_predict_rotation_only_with_two_history() {
+        // With extrapolation disabled, should use Rotation method
+        let mut history = SubspaceHistory::new(2);
+        let grid = Grid2D::new(2, 2, 1.0, 1.0);
+
+        // Create simple orthonormal vectors
+        let v1 = make_test_field(
+            grid,
+            vec![
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+            ],
+        );
+        let v2 = make_test_field(
+            grid,
+            vec![
+                Complex64::new(0.5, 0.0),
+                Complex64::new(-0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(-0.5, 0.0),
+            ],
+        );
+
+        history.update([0.0, 0.0], &[v1.clone(), v2.clone()]);
+        history.update([0.1, 0.0], &[v1, v2]);
+
+        // Extrapolation disabled by default
+        let result = history.predict([0.2, 0.0], None);
+
+        assert_eq!(result.method_used, PredictionMethod::Rotation);
+        assert!(result.has_prediction());
+        assert_eq!(result.predicted_vectors.len(), 2);
+        assert!(result.singular_value_min > 0.9); // Should be ~1.0 for identity overlap
+    }
+
+    #[test]
+    fn test_predict_extrapolation_with_two_history() {
+        // With extrapolation enabled, should use Extrapolation method
+        let mut history = SubspaceHistory::new(2);
+        history.enable_extrapolation();
+
+        let grid = Grid2D::new(2, 2, 1.0, 1.0);
+
+        // Create simple orthonormal vectors
+        let v1 = make_test_field(
+            grid,
+            vec![
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+            ],
+        );
+        let v2 = make_test_field(
+            grid,
+            vec![
+                Complex64::new(0.5, 0.0),
+                Complex64::new(-0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(-0.5, 0.0),
+            ],
+        );
+
+        history.update([0.0, 0.0], &[v1.clone(), v2.clone()]);
+        history.update([0.1, 0.0], &[v1, v2]);
+
+        // Extrapolation enabled
+        let result = history.predict([0.2, 0.0], None);
+
+        assert_eq!(result.method_used, PredictionMethod::Extrapolation);
+        assert!(result.has_prediction());
+        assert_eq!(result.predicted_vectors.len(), 2);
+    }
+
+    #[test]
+    fn test_extrapolation_disabled_at_corner() {
+        // At a corner (direction change), should fall back to Rotation
+        let mut history = SubspaceHistory::new(2);
+        history.enable_extrapolation();
+
+        let grid = Grid2D::new(2, 2, 1.0, 1.0);
+        let v1 = make_test_field(
+            grid,
+            vec![
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+            ],
+        );
+        let v2 = make_test_field(
+            grid,
+            vec![
+                Complex64::new(0.5, 0.0),
+                Complex64::new(-0.5, 0.0),
+                Complex64::new(0.5, 0.0),
+                Complex64::new(-0.5, 0.0),
+            ],
+        );
+
+        // Path: (0,0) -> (0.5,0) -> (0.4,0)
+        // Direction changes from +x to -x (dot product < 0)
+        history.update([0.0, 0.0], &[v1.clone(), v2.clone()]);
+        history.update([0.5, 0.0], &[v1, v2]);
+
+        // Next point goes backward (corner with negative dot product)
+        let result = history.predict([0.4, 0.0], None);
+
+        // Should fall back to rotation-only at corner
+        assert_eq!(result.method_used, PredictionMethod::Rotation);
+    }
+
+    #[test]
+    fn test_extrapolate_with_rotation_formula() {
+        // Test the extrapolation formula: X_pred = (1+α)X̃_n - α X_{n-1}
+        let grid = Grid2D::new(2, 2, 1.0, 1.0);
+
+        // Create vectors where prev and curr differ
+        let prev = vec![
+            make_test_field(grid, vec![
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ]),
+        ];
+        let curr = vec![
+            make_test_field(grid, vec![
+                Complex64::new(2.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ]),
+        ];
+
+        // Identity rotation (aligned already)
+        let rotation = Mat::<faer::c64>::from_fn(1, 1, |_, _| faer::c64::new(1.0, 0.0));
+
+        // alpha = 1.0 (uniform steps)
+        // X_pred = (1+1)*curr - 1*prev = 2*curr - prev = 2*[2,0,0,0] - [1,0,0,0] = [3,0,0,0]
+        let result = extrapolate_with_rotation(&prev, &curr, &rotation, 1.0);
+
+        assert_eq!(result.len(), 1);
+        let predicted = result[0].as_slice();
+        assert!((predicted[0].re - 3.0).abs() < 1e-10);
+        assert!(predicted[0].im.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_extrapolate_with_alpha_half() {
+        // Test with α = 0.5 (half step)
+        let grid = Grid2D::new(2, 2, 1.0, 1.0);
+
+        let prev = vec![
+            make_test_field(grid, vec![
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ]),
+        ];
+        let curr = vec![
+            make_test_field(grid, vec![
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ]),
+        ];
+
+        let rotation = Mat::<faer::c64>::from_fn(1, 1, |_, _| faer::c64::new(1.0, 0.0));
+
+        // alpha = 0.5
+        // X_pred = (1+0.5)*curr - 0.5*prev = 1.5*[1,0,0,0] - 0.5*[0,0,0,0] = [1.5,0,0,0]
+        let result = extrapolate_with_rotation(&prev, &curr, &rotation, 0.5);
+
+        let predicted = result[0].as_slice();
+        assert!((predicted[0].re - 1.5).abs() < 1e-10);
+    }
 }

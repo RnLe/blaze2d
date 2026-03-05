@@ -122,13 +122,26 @@ struct Cli {
     #[arg(long)]
     skip_solve: bool,
 
-    /// Enable subspace prediction for accelerated warm-start (experimental)
+    /// Enable subspace prediction for accelerated warm-start
     ///
     /// Uses rotation-based subspace tracking to provide better initial guesses
     /// for the eigensolver at each k-point. This can reduce the number of
     /// iterations needed for convergence, especially when bands reorder.
+    /// Enabled by default.
     #[arg(long)]
     subspace_prediction: bool,
+
+    /// Disable subspace prediction (use simple warm-start copy)
+    #[arg(long)]
+    no_subspace_prediction: bool,
+
+    /// Disable linear extrapolation in subspace prediction
+    ///
+    /// When set, uses rotation-only prediction (Stage 1) instead of
+    /// extrapolation (Stage 2). Useful for debugging or when extrapolation
+    /// causes instability.
+    #[arg(long)]
+    no_extrapolation: bool,
 }
 
 /// CLI path argument supporting all four lattice types.
@@ -395,13 +408,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Build run options
+    // Subspace prediction is ON by default unless --no-subspace-prediction is set
+    // --subspace-prediction flag is kept for explicit enabling (overrides --no-subspace-prediction)
+    let use_subspace_pred = if cli.no_subspace_prediction && !cli.subspace_prediction {
+        false
+    } else {
+        true // default on
+    };
+    let use_extrapolation = !cli.no_extrapolation;
+
     let precond_type = PreconditionerType::from(cli.preconditioner.clone());
     let run_options = RunOptions::new()
         .with_preconditioner(precond_type)
-        .with_subspace_prediction(cli.subspace_prediction);
+        .with_subspace_prediction(use_subspace_pred)
+        .with_extrapolation(use_extrapolation);
 
-    if cli.subspace_prediction && !cli.quiet {
-        info!("subspace prediction enabled (rotation-based warm-start)");
+    if !cli.quiet && use_subspace_pred {
+        if use_extrapolation {
+            info!("subspace prediction enabled (rotation + extrapolation)");
+        } else {
+            info!("subspace prediction enabled (rotation-only)");
+        }
     }
 
     // Select backend: use CUDA if available, otherwise CPU
