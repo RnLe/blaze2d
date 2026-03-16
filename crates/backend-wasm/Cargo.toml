@@ -5,18 +5,19 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "WebAssembly backend with streaming support for MPB2D bulk driver"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-bindings = ["dep:wasm-bindgen", "dep:js-sys", "dep:wasm-bindgen-futures"]
+bindings = ["dep:wasm-bindgen", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:web-sys"]
 streaming = ["bindings"]
 
 [dependencies]
 mpb2d-core = { path = "../core" }
-mpb2d-bulk-driver = { path = "../bulk-driver" }
+mpb2d-bulk-driver-core = { path = "../bulk-driver-core" }
 mpb2d-backend-cpu = { path = "../backend-cpu" }
 num-complex.workspace = true
 log.workspace = true
@@ -25,3 +26,4 @@ serde_json.workspace = true
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["console"] }

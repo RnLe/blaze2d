@@ -11,24 +11,159 @@
 //!   Each expanded job includes a full `BandStructureJob`.
 //!
 //! - **EA**: Currently produces a single job (parameter sweeps TBD).
-//!   Each expanded job includes a `SingleSolveJob` configuration.
+//!   Each expanded job includes an `EAJobSpec` configuration.
 
 use mpb2d_core::{
     bandstructure::BandStructureJob,
+    drivers::single_solve::SingleSolveJob,
     geometry::{BasisAtom, Geometry2D},
     grid::Grid2D,
     lattice::Lattice2D,
     polarization::Polarization,
     symmetry::{self, PathType},
-    drivers::single_solve::SingleSolveJob,
 };
 
 use crate::config::{AtomRanges, BaseAtom, BulkConfig, LatticeTypeSpec, SolverType};
 
-// Re-export core types
-pub use mpb2d_bulk_driver_core::expansion::{
-    AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams,
-};
+// ============================================================================
+// Expanded Job
+// ============================================================================
+
+/// A single expanded job with all parameters resolved to concrete values.
+///
+/// This includes metadata about which parameter values were used, enabling
+/// proper labeling in output files.
+#[derive(Debug, Clone)]
+pub struct ExpandedJob {
+    /// Unique job index (0-based)
+    pub index: usize,
+
+    /// The job to execute (either Maxwell or EA)
+    pub job_type: ExpandedJobType,
+
+    /// Parameter values used for this job (for output columns)
+    pub params: JobParams,
+}
+
+impl ExpandedJob {
+    /// Get the Maxwell job, if this is a Maxwell job type.
+    pub fn maxwell_job(&self) -> Option<&BandStructureJob> {
+        match &self.job_type {
+            ExpandedJobType::Maxwell(job) => Some(job),
+            _ => None,
+        }
+    }
+
+    /// Get the EA job spec, if this is an EA job type.
+    pub fn ea_job(&self) -> Option<&EAJobSpec> {
+        match &self.job_type {
+            ExpandedJobType::EA(spec) => Some(spec),
+            _ => None,
+        }
+    }
+}
+
+/// Type of job to execute.
+#[derive(Debug, Clone)]
+pub enum ExpandedJobType {
+    /// Maxwell band structure job (photonic crystals)
+    Maxwell(BandStructureJob),
+    /// EA single-solve job (moiré lattices)
+    EA(EAJobSpec),
+}
+
+/// EA job specification (input data configuration).
+///
+/// Unlike Maxwell jobs which have all parameters resolved, EA jobs
+/// refer to input files that are read at execution time.
+#[derive(Debug, Clone)]
+pub struct EAJobSpec {
+    /// Grid dimensions
+    pub grid: Grid2D,
+    /// SingleSolveJob configuration (n_bands, tolerance, etc.)
+    pub solve_config: SingleSolveJob,
+    /// EA-specific parameters from config
+    pub eta: f64,
+    pub domain_size: [f64; 2],
+    pub potential_path: std::path::PathBuf,
+    pub mass_inv_path: std::path::PathBuf,
+    pub vg_path: Option<std::path::PathBuf>,
+}
+
+/// Concrete parameter values for a job.
+///
+/// These are stored for inclusion in output files, allowing easy identification
+/// of which configuration produced which results.
+#[derive(Debug, Clone)]
+pub struct JobParams {
+    /// Background epsilon
+    pub eps_bg: f64,
+
+    /// Resolution (nx = ny)
+    pub resolution: usize,
+
+    /// Polarization
+    pub polarization: Polarization,
+
+    /// Lattice type (if from range)
+    pub lattice_type: Option<String>,
+
+    /// Per-atom parameters
+    pub atoms: Vec<AtomParams>,
+}
+
+/// Parameters for a single atom.
+#[derive(Debug, Clone)]
+pub struct AtomParams {
+    /// Atom index (0-based)
+    pub index: usize,
+
+    /// Position (fractional coordinates)
+    pub pos: [f64; 2],
+
+    /// Radius
+    pub radius: f64,
+
+    /// Epsilon inside
+    pub eps_inside: f64,
+}
+
+impl JobParams {
+    /// Get a flat list of (name, value) pairs for CSV headers.
+    pub fn to_columns(&self) -> Vec<(&'static str, String)> {
+        let mut cols = vec![
+            ("eps_bg", format!("{:.6}", self.eps_bg)),
+            ("resolution", self.resolution.to_string()),
+            ("polarization", format!("{:?}", self.polarization)),
+        ];
+
+        if let Some(ref lt) = self.lattice_type {
+            cols.push(("lattice_type", lt.clone()));
+        }
+
+        for atom in &self.atoms {
+            let prefix = format!("atom{}", atom.index);
+            cols.push((
+                Box::leak(format!("{}_pos_x", prefix).into_boxed_str()),
+                format!("{:.6}", atom.pos[0]),
+            ));
+            cols.push((
+                Box::leak(format!("{}_pos_y", prefix).into_boxed_str()),
+                format!("{:.6}", atom.pos[1]),
+            ));
+            cols.push((
+                Box::leak(format!("{}_radius", prefix).into_boxed_str()),
+                format!("{:.6}", atom.radius),
+            ));
+            cols.push((
+                Box::leak(format!("{}_eps_inside", prefix).into_boxed_str()),
+                format!("{:.6}", atom.eps_inside),
+            ));
+        }
+
+        cols
+    }
+}
 
 // ============================================================================
 // Expansion Logic
@@ -51,7 +186,9 @@ fn expand_maxwell_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
     let ranges = &config.ranges;
 
     // Geometry is required for Maxwell
-    let geometry = config.geometry.as_ref()
+    let geometry = config
+        .geometry
+        .as_ref()
         .expect("Maxwell solver requires geometry");
 
     // Collect all parameter axes
@@ -145,7 +282,6 @@ fn expand_maxwell_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
 /// Expand EA solver jobs.
 ///
 /// Currently produces a single job since EA doesn't have parameter sweeps yet.
-/// Future: support sweeps over eta, domain_size, etc.
 fn expand_ea_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
     let ea = &config.ea;
 
@@ -166,9 +302,9 @@ fn expand_ea_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
 
     // EA parameters for output labeling
     let params = JobParams {
-        eps_bg: 0.0,  // Not used for EA
+        eps_bg: 0.0, // Not used for EA
         resolution: config.grid.nx,
-        polarization: Polarization::TM,  // Not used for EA
+        polarization: Polarization::TM, // Not used for EA
         lattice_type: None,
         atoms: vec![],
     };
@@ -186,7 +322,7 @@ fn collect_atom_configs(config: &BulkConfig) -> Vec<Vec<BaseAtom>> {
         Some(g) => g,
         None => return vec![vec![]],
     };
-    
+
     let base_atoms = &geometry.atoms;
     let atom_ranges = &config.ranges.atoms;
 
@@ -286,11 +422,13 @@ fn create_maxwell_job(
     lattice_type: Option<&LatticeTypeSpec>,
     atoms: &[BaseAtom],
 ) -> BandStructureJob {
-    let geometry = config.geometry.as_ref()
+    let geometry_config = config
+        .geometry
+        .as_ref()
         .expect("geometry required for Maxwell solver");
-    
+
     // Build lattice
-    let lattice = build_lattice(&geometry.lattice, lattice_type);
+    let lattice = build_lattice(&geometry_config.lattice, lattice_type);
 
     // Build atoms
     let basis_atoms: Vec<BasisAtom> = atoms
@@ -373,13 +511,16 @@ fn build_lattice(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BaseGeometry, BulkSection, OutputConfig, ParameterRange, RangeSpec, SolverSection, EAConfig};
+    use crate::config::{
+        BaseGeometry, BulkSection, EAConfig, OutputConfig, ParameterRange, RangeSpec,
+        SolverSection,
+    };
     use mpb2d_core::{dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec};
 
     fn make_test_config() -> BulkConfig {
         BulkConfig {
             bulk: BulkSection::default(),
-            solver: SolverSection::default(),  // Maxwell by default
+            solver: SolverSection::default(), // Maxwell by default
             ea: EAConfig::default(),
             geometry: Some(BaseGeometry {
                 eps_bg: 12.0,
@@ -447,7 +588,7 @@ mod tests {
     #[test]
     fn expand_ea_single_job() {
         use std::path::PathBuf;
-        
+
         let config = BulkConfig {
             bulk: BulkSection::default(),
             solver: SolverSection {
@@ -479,7 +620,7 @@ mod tests {
 
         let jobs = expand_jobs(&config);
         assert_eq!(jobs.len(), 1);
-        
+
         match &jobs[0].job_type {
             ExpandedJobType::EA(spec) => {
                 assert_eq!(spec.eta, 0.5);

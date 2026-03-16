@@ -1,0 +1,21 @@
+[package]
+name = "mpb2d-bulk-driver-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Platform-agnostic core types and logic for MPB2D bulk driver"
+
+[features]
+default = []
+
+[dependencies]
+# Workspace dependencies (platform-agnostic only)
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+thiserror.workspace = true
+log.workspace = true
+
+# Internal crates (core types only)
+mpb2d-core = { path = "../core" }

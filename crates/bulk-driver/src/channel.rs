@@ -15,81 +15,33 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use crate::expansion::JobParams;
+// Re-export result types from core
+pub use mpb2d_bulk_driver_core::result::{
+    CompactBandResult, CompactResultType, EAResult, MaxwellResult,
+};
+
+// Import expansion types for from_job_result
+use crate::expansion::ExpandedJob;
 
 // ============================================================================
-// Compact Band Result
+// Native Extension: Convert from driver JobResult
 // ============================================================================
 
-/// Serializable band structure result optimized for efficient transfer.
-///
-/// This is a self-contained representation of a single band structure calculation,
-/// including all metadata needed for output and analysis.
-///
-/// ## Memory Layout
-///
-/// For a typical calculation with 10 bands and 100 k-points:
-/// - `k_path`: 100 × 2 × 8 = 1,600 bytes
-/// - `distances`: 100 × 8 = 800 bytes
-/// - `bands`: 100 × 10 × 8 = 8,000 bytes
-/// - Metadata: ~200 bytes
-/// - **Total**: ~10.6 KB per result
-///
-/// A 10 MB buffer can hold approximately 900-1000 results.
-#[derive(Debug, Clone)]
-pub struct CompactBandResult {
-    /// Job index (matches ExpandedJob.index)
-    pub job_index: usize,
-
-    /// Parameter values used for this job
-    pub params: JobParams,
-
-    /// The result type (Maxwell with k-path data, or EA with eigenvalues only)
-    pub result_type: CompactResultType,
-}
-
-/// Type of compact result.
-#[derive(Debug, Clone)]
-pub enum CompactResultType {
-    /// Maxwell result with full band structure
-    Maxwell(MaxwellResult),
-    /// EA result with eigenvalues only (no k-path)
-    EA(EAResult),
-}
-
-/// Maxwell band structure result.
-#[derive(Debug, Clone)]
-pub struct MaxwellResult {
-    /// K-path in fractional coordinates
-    pub k_path: Vec<[f64; 2]>,
-
-    /// Cumulative distance along k-path
-    pub distances: Vec<f64>,
-
-    /// Computed eigenfrequencies organized as bands[k_index][band_index]
-    /// Values are normalized frequencies (ω/2π)
-    pub bands: Vec<Vec<f64>>,
-}
-
-/// EA eigenvalue result.
-#[derive(Debug, Clone)]
-pub struct EAResult {
-    /// Computed eigenvalues
-    pub eigenvalues: Vec<f64>,
-
-    /// Number of iterations taken
-    pub n_iterations: usize,
-
-    /// Whether convergence was achieved
-    pub converged: bool,
-}
-
-impl CompactBandResult {
+/// Extension trait for creating CompactBandResult from native driver results.
+pub trait CompactBandResultExt {
     /// Create from a job result and expanded job.
-    pub fn from_job_result(
-        job: &crate::expansion::ExpandedJob,
+    fn from_job_result(
+        job: &ExpandedJob,
         result: &crate::driver::JobResult,
-    ) -> Self {
+    ) -> CompactBandResult;
+}
+
+impl CompactBandResultExt for CompactBandResult {
+    /// Create from a job result and expanded job.
+    fn from_job_result(
+        job: &ExpandedJob,
+        result: &crate::driver::JobResult,
+    ) -> CompactBandResult {
         let result_type = match &result.result {
             crate::driver::JobResultType::Maxwell(band_result) => {
                 // Normalize frequencies (divide by 2π)
@@ -119,77 +71,10 @@ impl CompactBandResult {
             }
         };
 
-        Self {
+        CompactBandResult {
             job_index: job.index,
             params: job.params.clone(),
             result_type,
-        }
-    }
-
-    /// Approximate size in bytes for buffer management.
-    pub fn approx_size(&self) -> usize {
-        // Base struct overhead
-        let base = std::mem::size_of::<Self>();
-
-        // params (rough estimate)
-        let params_size = 200;
-
-        let result_size = match &self.result_type {
-            CompactResultType::Maxwell(m) => {
-                // k_path: Vec<[f64; 2]>
-                let k_path_size = m.k_path.len() * 16;
-                // distances: Vec<f64>
-                let distances_size = m.distances.len() * 8;
-                // bands: Vec<Vec<f64>>
-                let bands_size: usize = m.bands.iter().map(|b| b.len() * 8 + 24).sum();
-                k_path_size + distances_size + bands_size
-            }
-            CompactResultType::EA(ea) => {
-                // eigenvalues: Vec<f64>
-                ea.eigenvalues.len() * 8 + 24
-            }
-        };
-
-        base + params_size + result_size
-    }
-
-    /// Number of k-points in this result (Maxwell only).
-    pub fn num_k_points(&self) -> usize {
-        match &self.result_type {
-            CompactResultType::Maxwell(m) => m.k_path.len(),
-            CompactResultType::EA(_) => 1, // EA has no k-path concept
-        }
-    }
-
-    /// Number of bands computed.
-    pub fn num_bands(&self) -> usize {
-        match &self.result_type {
-            CompactResultType::Maxwell(m) => m.bands.first().map(|b| b.len()).unwrap_or(0),
-            CompactResultType::EA(ea) => ea.eigenvalues.len(),
-        }
-    }
-
-    /// Get k_path if this is a Maxwell result (for legacy compatibility).
-    pub fn k_path(&self) -> Option<&Vec<[f64; 2]>> {
-        match &self.result_type {
-            CompactResultType::Maxwell(m) => Some(&m.k_path),
-            CompactResultType::EA(_) => None,
-        }
-    }
-
-    /// Get distances if this is a Maxwell result (for legacy compatibility).
-    pub fn distances(&self) -> Option<&Vec<f64>> {
-        match &self.result_type {
-            CompactResultType::Maxwell(m) => Some(&m.distances),
-            CompactResultType::EA(_) => None,
-        }
-    }
-
-    /// Get bands if this is a Maxwell result (for legacy compatibility).
-    pub fn bands(&self) -> Option<&Vec<Vec<f64>>> {
-        match &self.result_type {
-            CompactResultType::Maxwell(m) => Some(&m.bands),
-            CompactResultType::EA(_) => None,
         }
     }
 }

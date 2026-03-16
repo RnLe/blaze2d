@@ -1069,13 +1069,14 @@ dependencies = [
  "js-sys",
  "log",
  "mpb2d-backend-cpu",
- "mpb2d-bulk-driver",
+ "mpb2d-bulk-driver-core",
  "mpb2d-core",
  "num-complex",
  "serde",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -1091,6 +1092,7 @@ dependencies = [
  "log",
  "mpb2d-backend-cpu",
  "mpb2d-backend-cuda",
+ "mpb2d-bulk-driver-core",
  "mpb2d-core",
  "num_cpus",
  "parking_lot",
@@ -1100,6 +1102,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "toml",
+]
+
+[[package]]
+name = "mpb2d-bulk-driver-core"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mpb2d-core",
+ "serde",
+ "thiserror 2.0.17",
  "toml",
 ]
 

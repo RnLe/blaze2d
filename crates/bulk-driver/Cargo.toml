@@ -23,6 +23,7 @@ thiserror.workspace = true
 num_cpus.workspace = true
 
 # Internal crates
+mpb2d-bulk-driver-core = { path = "../bulk-driver-core" }
 mpb2d-core = { path = "../core" }
 mpb2d-backend-cpu = { path = "../backend-cpu" }
 mpb2d-backend-cuda = { path = "../backend-cuda", optional = true }

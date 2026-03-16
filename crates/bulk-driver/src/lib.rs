@@ -73,13 +73,14 @@ pub use batch::BatchChannel;
 // Re-export channel types
 pub use channel::{
     BackpressurePolicy, BatchConfig, ChannelError, ChannelStats, CompactBandResult,
-    CompactResultType, EAResult, MaxwellResult, OutputChannel, OutputChannelSink, StreamConfig,
+    CompactBandResultExt, CompactResultType, EAResult, MaxwellResult, OutputChannel,
+    OutputChannelSink, StreamConfig,
 };
 
 // Re-export configuration
 pub use config::{
-    BatchSettings, BulkConfig, EAConfig, IoMode, OutputConfig, OutputMode, ParameterRange,
-    RangeSpec, SelectiveSpec, SolverSection, SolverType,
+    BatchSettings, BulkConfig, BulkConfigNativeExt, EAConfig, IoMode, OutputConfig, OutputMode,
+    ParameterRange, RangeSpec, SelectiveSpec, SolverSection, SolverType,
 };
 
 // Re-export driver
