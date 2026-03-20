@@ -326,35 +326,35 @@ impl<B: SpectralBackend> EAOperator<B> {
                 // ∂_x(m_xx ∂_x ψ) ≈ m_xx * ∂²ψ/∂x² (constant m_xx approximation)
                 // For variable m_xx, we use the symmetric form:
                 // (1/dx²)[m_{i+1/2} (ψ_{i+1} - ψ_i) - m_{i-1/2} (ψ_i - ψ_{i-1})]
-                
+
                 // Use 4th-order Laplacian stencil coefficients
                 // d²f/dx² ≈ (-f_{i-2} + 16f_{i-1} - 30f_i + 16f_{i+1} - f_{i+2}) / (12 dx²)
                 let laplacian_x = self.laplacian_x(input, i, j);
                 let laplacian_y = self.laplacian_y(input, i, j);
-                
+
                 // Central differences for gradients (4th order)
                 let grad_x = self.grad_x_central(input, i, j);
                 let grad_y = self.grad_y_central(input, i, j);
-                
+
                 // Gradient of m_xx and m_yy (needed for variable coefficient)
                 // For simplicity, use 2nd-order central differences for the mass gradients
                 let dm_xx_dx = self.grad_m_x(i, j, 0); // d(m_xx)/dx
                 let dm_yy_dy = self.grad_m_y(i, j, 3); // d(m_yy)/dy
-                
+
                 // Diagonal contribution: ∂_α(m_αα ∂_α ψ) = m_αα ∂²ψ/∂α² + (∂m_αα/∂α)(∂ψ/∂α)
-                let diag_term = m_xx * laplacian_x + dm_xx_dx * grad_x
-                              + m_yy * laplacian_y + dm_yy_dy * grad_y;
-                
+                let diag_term =
+                    m_xx * laplacian_x + dm_xx_dx * grad_x + m_yy * laplacian_y + dm_yy_dy * grad_y;
+
                 // Off-diagonal terms: ∂_x(m_xy ∂_y ψ) + ∂_y(m_yx ∂_x ψ)
                 // Use symmetric form: m_xy * ∂²ψ/∂x∂y + m_yx * ∂²ψ/∂y∂x + gradient corrections
                 // For symmetric M^{-1} (m_xy = m_yx), these combine nicely
                 let mixed_deriv = self.mixed_derivative(input, i, j);
                 let dm_xy_dx = self.grad_m_x(i, j, 1);
                 let dm_yx_dy = self.grad_m_y(i, j, 2);
-                
-                let off_diag_term = (m_xy + m_yx) * mixed_deriv 
-                                  + dm_xy_dx * grad_y + dm_yx_dy * grad_x;
-                
+
+                let off_diag_term =
+                    (m_xy + m_yx) * mixed_deriv + dm_xy_dx * grad_y + dm_yx_dy * grad_x;
+
                 output[p] += prefactor * (diag_term + off_diag_term);
             }
         }
@@ -368,13 +368,13 @@ impl<B: SpectralBackend> EAOperator<B> {
         let im1 = self.wrap_x(i as i32 - 1);
         let ip1 = self.wrap_x(i as i32 + 1);
         let ip2 = self.wrap_x(i as i32 + 2);
-        
+
         let f_im2 = input[im2 * self.ny + j];
         let f_im1 = input[im1 * self.ny + j];
         let f_i = input[i * self.ny + j];
         let f_ip1 = input[ip1 * self.ny + j];
         let f_ip2 = input[ip2 * self.ny + j];
-        
+
         (-f_im2 + 16.0 * f_im1 - 30.0 * f_i + 16.0 * f_ip1 - f_ip2) / (12.0 * self.dx * self.dx)
     }
 
@@ -385,13 +385,13 @@ impl<B: SpectralBackend> EAOperator<B> {
         let jm1 = self.wrap_y(j as i32 - 1);
         let jp1 = self.wrap_y(j as i32 + 1);
         let jp2 = self.wrap_y(j as i32 + 2);
-        
+
         let f_jm2 = input[i * self.ny + jm2];
         let f_jm1 = input[i * self.ny + jm1];
         let f_j = input[i * self.ny + j];
         let f_jp1 = input[i * self.ny + jp1];
         let f_jp2 = input[i * self.ny + jp2];
-        
+
         (-f_jm2 + 16.0 * f_jm1 - 30.0 * f_j + 16.0 * f_jp1 - f_jp2) / (12.0 * self.dy * self.dy)
     }
 
@@ -401,19 +401,19 @@ impl<B: SpectralBackend> EAOperator<B> {
         // Use composition of 4th-order gradients: d/dx(d/dy)
         // First compute d/dy at neighboring x points, then d/dx of that
         // This is expensive but accurate
-        
+
         // For efficiency, use 2nd-order for the mixed derivative:
         // d²f/dxdy ≈ (f_{i+1,j+1} - f_{i+1,j-1} - f_{i-1,j+1} + f_{i-1,j-1}) / (4 dx dy)
         let im1 = self.wrap_x(i as i32 - 1);
         let ip1 = self.wrap_x(i as i32 + 1);
         let jm1 = self.wrap_y(j as i32 - 1);
         let jp1 = self.wrap_y(j as i32 + 1);
-        
+
         let f_pp = input[ip1 * self.ny + jp1];
         let f_pm = input[ip1 * self.ny + jm1];
         let f_mp = input[im1 * self.ny + jp1];
         let f_mm = input[im1 * self.ny + jm1];
-        
+
         (f_pp - f_pm - f_mp + f_mm) / (4.0 * self.dx * self.dy)
     }
 
@@ -422,10 +422,10 @@ impl<B: SpectralBackend> EAOperator<B> {
     fn grad_m_x(&self, i: usize, j: usize, component: usize) -> f64 {
         let im1 = self.wrap_x(i as i32 - 1);
         let ip1 = self.wrap_x(i as i32 + 1);
-        
+
         let m_im1 = self.mass_inv[(im1 * self.ny + j) * 4 + component];
         let m_ip1 = self.mass_inv[(ip1 * self.ny + j) * 4 + component];
-        
+
         (m_ip1 - m_im1) / (2.0 * self.dx)
     }
 
@@ -434,10 +434,10 @@ impl<B: SpectralBackend> EAOperator<B> {
     fn grad_m_y(&self, i: usize, j: usize, component: usize) -> f64 {
         let jm1 = self.wrap_y(j as i32 - 1);
         let jp1 = self.wrap_y(j as i32 + 1);
-        
+
         let m_jm1 = self.mass_inv[(i * self.ny + jm1) * 4 + component];
         let m_jp1 = self.mass_inv[(i * self.ny + jp1) * 4 + component];
-        
+
         (m_jp1 - m_jm1) / (2.0 * self.dy)
     }
 
@@ -646,11 +646,7 @@ mod tests {
 
         // All output values should be close to V = 1.0
         for &o in output.as_slice() {
-            assert!(
-                (o.re - 1.0).abs() < 1e-10,
-                "Expected ~1.0, got {}",
-                o.re
-            );
+            assert!((o.re - 1.0).abs() < 1e-10, "Expected ~1.0, got {}", o.re);
             assert!(o.im.abs() < 1e-10, "Expected real output");
         }
     }
@@ -760,8 +756,7 @@ mod tests {
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
             x.as_mut_slice()[i] = Complex64::new((i as f64 * 0.1).sin(), (i as f64 * 0.2).cos());
-            y.as_mut_slice()[i] =
-                Complex64::new((i as f64 * 0.3).cos(), (i as f64 * 0.15).sin());
+            y.as_mut_slice()[i] = Complex64::new((i as f64 * 0.3).cos(), (i as f64 * 0.15).sin());
         }
 
         let mut hx = Field2D::zeros(grid);
@@ -827,8 +822,7 @@ mod tests {
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
             x.as_mut_slice()[i] = Complex64::new((i as f64 * 0.1).sin(), (i as f64 * 0.2).cos());
-            y.as_mut_slice()[i] =
-                Complex64::new((i as f64 * 0.3).cos(), (i as f64 * 0.15).sin());
+            y.as_mut_slice()[i] = Complex64::new((i as f64 * 0.3).cos(), (i as f64 * 0.15).sin());
         }
 
         let mut hx = Field2D::zeros(grid);
@@ -923,7 +917,11 @@ mod tests {
 
         // The outputs should differ because of the drift term
         let mut diff_norm_sq = 0.0;
-        for (&a, &b) in output_no_drift.as_slice().iter().zip(output_with_drift.as_slice()) {
+        for (&a, &b) in output_no_drift
+            .as_slice()
+            .iter()
+            .zip(output_with_drift.as_slice())
+        {
             diff_norm_sq += (a - b).norm_sqr();
         }
         let diff_norm = diff_norm_sq.sqrt();
@@ -947,7 +945,7 @@ mod tests {
         // Note: The full operator H = V + K + D where K is Hermitian and D is skew-Hermitian.
         // So H is NOT Hermitian when drift is present. This is correct physics:
         // the drift term represents a gauge field.
-        
+
         let nx = 8;
         let ny = 8;
         let n = nx * ny;
@@ -1006,7 +1004,7 @@ mod tests {
         // With drift term, H = K + D where K is Hermitian and D is skew-Hermitian.
         // For purely D (V=0, K~small), we expect <x, Dy> ≈ -<Dx, y>*
         // The kinetic term contributes to the Hermitian part.
-        // 
+        //
         // For the full operator, we just verify that the drift term contributes
         // by checking that the operator is NOT purely Hermitian.
         let hermitian_diff = (x_hy - hx_y).norm();
@@ -1031,7 +1029,7 @@ mod tests {
     #[test]
     #[ignore] // Requires mpb2d-backend-cpu; run with `cargo test -p mpb2d-core -- --ignored`
     fn test_single_solve_integration() {
-        use crate::drivers::single_solve::{solve, SingleSolveJob};
+        use crate::drivers::single_solve::{SingleSolveJob, solve};
 
         let nx = 8;
         let ny = 8;
@@ -1101,7 +1099,11 @@ mod tests {
         }
 
         // Should converge in reasonable iterations for such a small problem
-        assert!(result.iterations < 50, "Too many iterations: {}", result.iterations);
+        assert!(
+            result.iterations < 50,
+            "Too many iterations: {}",
+            result.iterations
+        );
     }
 }
 

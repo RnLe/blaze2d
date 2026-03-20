@@ -108,7 +108,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::SpectralBuffer,
-    brillouin::{generate_path, BrillouinPath},
+    brillouin::{BrillouinPath, generate_path},
     grid::Grid2D,
     lattice::{Lattice2D, LatticeClass},
 };
@@ -169,11 +169,11 @@ pub const HEX_GMK: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [1.0 / 3.0, 1.0 / 3.
 
 /// Standard k-path for rectangular lattice: Γ → X → S → Y → Γ
 pub const RECT_GXSYG: [[f64; 2]; 5] = [
-    [0.0, 0.0],   // Γ
-    [0.5, 0.0],   // X
-    [0.5, 0.5],   // S
-    [0.0, 0.5],   // Y
-    [0.0, 0.0],   // Γ
+    [0.0, 0.0], // Γ
+    [0.5, 0.0], // X
+    [0.5, 0.5], // S
+    [0.0, 0.5], // Y
+    [0.0, 0.0], // Γ
 ];
 
 // ============================================================================
@@ -502,10 +502,7 @@ fn detect_active_mirrors(
 ///
 /// This creates a projector that enforces all the parity constraints
 /// of the given sector.
-pub fn projector_for_sector(
-    grid: Grid2D,
-    sector: &SymmetrySector,
-) -> Option<SymmetryProjector> {
+pub fn projector_for_sector(grid: Grid2D, sector: &SymmetrySector) -> Option<SymmetryProjector> {
     if sector.is_trivial() {
         return None;
     }

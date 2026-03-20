@@ -80,20 +80,20 @@ impl LatticeType {
     /// Returns the point group order (number of symmetry operations).
     pub fn point_group_order(&self) -> usize {
         match self {
-            LatticeType::Square => 8,       // C₄ᵥ
-            LatticeType::Rectangular => 4,  // C₂ᵥ
-            LatticeType::Triangular => 12,  // C₆ᵥ
-            LatticeType::Oblique => 2,      // C₂
+            LatticeType::Square => 8,      // C₄ᵥ
+            LatticeType::Rectangular => 4, // C₂ᵥ
+            LatticeType::Triangular => 12, // C₆ᵥ
+            LatticeType::Oblique => 2,     // C₂
         }
     }
 
     /// Returns the conventional angle (in radians) between basis vectors.
     pub fn conventional_angle(&self) -> Option<f64> {
         match self {
-            LatticeType::Square => Some(PI / 2.0),      // 90°
-            LatticeType::Rectangular => Some(PI / 2.0), // 90°
+            LatticeType::Square => Some(PI / 2.0),           // 90°
+            LatticeType::Rectangular => Some(PI / 2.0),      // 90°
             LatticeType::Triangular => Some(2.0 * PI / 3.0), // 120°
-            LatticeType::Oblique => None, // Arbitrary
+            LatticeType::Oblique => None,                    // Arbitrary
         }
     }
 }
@@ -571,17 +571,17 @@ impl ReciprocalLattice {
 fn infer_lattice_type(a1: [f64; 2], a2: [f64; 2], tol: f64) -> LatticeType {
     let len1 = (a1[0] * a1[0] + a1[1] * a1[1]).sqrt();
     let len2 = (a2[0] * a2[0] + a2[1] * a2[1]).sqrt();
-    
+
     if len1 <= f64::EPSILON || len2 <= f64::EPSILON {
         return LatticeType::Oblique;
     }
-    
+
     let dot = a1[0] * a2[0] + a1[1] * a2[1];
     let cos_angle = (dot / (len1 * len2)).clamp(-1.0, 1.0);
     let len_diff = (len1 - len2).abs() / len1.max(len2);
     let is_orthogonal = cos_angle.abs() <= tol;
     let is_equilateral = len_diff <= tol;
-    
+
     if is_equilateral && is_orthogonal {
         return LatticeType::Square;
     }

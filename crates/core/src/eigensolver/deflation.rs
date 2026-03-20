@@ -377,10 +377,7 @@ impl LockingResult {
 ///
 /// # Returns
 /// A `LockingResult` indicating which bands to lock and which to keep.
-pub fn check_for_locking(
-    relative_eigenvalue_changes: &[f64],
-    tol: f64,
-) -> LockingResult {
+pub fn check_for_locking(relative_eigenvalue_changes: &[f64], tol: f64) -> LockingResult {
     let mut bands_to_lock = Vec::new();
     let mut bands_to_keep = Vec::new();
 

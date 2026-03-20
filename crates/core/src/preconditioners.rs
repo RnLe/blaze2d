@@ -56,17 +56,23 @@
 
 use crate::backend::SpectralBackend;
 
+pub mod fft_preconditioner;
 pub mod fourier_diagonal;
 pub mod transverse_projection;
-pub mod fft_preconditioner;
 
 // Re-export commonly used types
 pub use fourier_diagonal::{
-    FourierDiagonalPreconditioner, SpectralStats, BandWindow,
-    SHIFT_SMIN_FRACTION, DEFAULT_BAND_WINDOW_BLEND, DEFAULT_BAND_WINDOW_SCALE,
-    build_inverse_diagonal_standalone,
+    BandWindow,
+    DEFAULT_BAND_WINDOW_BLEND,
+    DEFAULT_BAND_WINDOW_SCALE,
+    FourierDiagonalPreconditioner,
     // Shift calibration types
-    PreconditionedRQStats, ShiftCalibrationResult, ShiftCalibrationConfig,
+    PreconditionedRQStats,
+    SHIFT_SMIN_FRACTION,
+    ShiftCalibrationConfig,
+    ShiftCalibrationResult,
+    SpectralStats,
+    build_inverse_diagonal_standalone,
     compute_shift_quality_score,
 };
 pub use transverse_projection::TransverseProjectionPreconditioner;
@@ -194,11 +200,11 @@ impl AdaptiveShiftConfig {
     /// automatic calibration for the low-frequency cluster.
     pub fn for_gamma() -> Self {
         Self {
-            blend: 0.3,           // Favor band window
+            blend: 0.3, // Favor band window
             band_scale: 0.5,
             auto_calibrate: true, // Enable calibration for difficult point
             calibration_config: ShiftCalibrationConfig::default(),
-            min_iterations: 1,    // Start using band info early
+            min_iterations: 1, // Start using band info early
             is_difficult_k: true,
         }
     }

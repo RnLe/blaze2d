@@ -27,7 +27,7 @@ use num_complex::Complex64;
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::dielectric::Dielectric2D;
 use crate::grid::Grid2D;
-use crate::operators::{LinearOperator, K_PLUS_G_NEAR_ZERO_FLOOR, TM_PRECONDITIONER_MASS_FRACTION};
+use crate::operators::{K_PLUS_G_NEAR_ZERO_FLOOR, LinearOperator, TM_PRECONDITIONER_MASS_FRACTION};
 use crate::polarization::Polarization;
 use crate::preconditioners::{
     FourierDiagonalPreconditioner, SpectralStats, TransverseProjectionPreconditioner,
@@ -368,7 +368,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
 
         // Normalize
-        let norm: f64 = v.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
+        let norm: f64 = v
+            .as_slice()
+            .iter()
+            .map(|c| c.norm_sqr())
+            .sum::<f64>()
+            .sqrt();
         if norm > 1e-15 {
             for val in v.as_mut_slice().iter_mut() {
                 *val /= norm;
@@ -386,7 +391,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 .sum();
             lambda_max = numerator;
 
-            let norm: f64 = av.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
+            let norm: f64 = av
+                .as_slice()
+                .iter()
+                .map(|c| c.norm_sqr())
+                .sum::<f64>()
+                .sqrt();
             if norm > 1e-15 {
                 for val in av.as_mut_slice().iter_mut() {
                     *val /= norm;
@@ -421,7 +431,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             );
         }
 
-        let norm: f64 = v.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
+        let norm: f64 = v
+            .as_slice()
+            .iter()
+            .map(|c| c.norm_sqr())
+            .sum::<f64>()
+            .sqrt();
         if norm > 1e-15 {
             for val in v.as_mut_slice().iter_mut() {
                 *val /= norm;
@@ -441,7 +456,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 .sum();
             lambda_max = numerator;
 
-            let norm: f64 = av.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
+            let norm: f64 = av
+                .as_slice()
+                .iter()
+                .map(|c| c.norm_sqr())
+                .sum::<f64>()
+                .sqrt();
             if norm > 1e-15 {
                 for val in av.as_mut_slice().iter_mut() {
                     *val /= norm;
@@ -496,8 +516,18 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             .map(|(a, b)| a.conj() * b)
             .sum();
 
-        let norm_ax: f64 = ax.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
-        let norm_y: f64 = y.as_slice().iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt();
+        let norm_ax: f64 = ax
+            .as_slice()
+            .iter()
+            .map(|c| c.norm_sqr())
+            .sum::<f64>()
+            .sqrt();
+        let norm_y: f64 = y
+            .as_slice()
+            .iter()
+            .map(|c| c.norm_sqr())
+            .sum::<f64>()
+            .sqrt();
 
         let diff = (ax_y - x_ay).norm();
         let scale = norm_ax * norm_y;
@@ -513,7 +543,11 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
         let eps_min = eps.iter().cloned().fold(f64::INFINITY, f64::min);
         let eps_max = eps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        if eps_min > 1e-15 { eps_max / eps_min } else { f64::INFINITY }
+        if eps_min > 1e-15 {
+            eps_max / eps_min
+        } else {
+            f64::INFINITY
+        }
     }
 
     /// Get effective epsilon values for logging.

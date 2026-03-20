@@ -63,8 +63,19 @@ impl CompactBandResultExt for CompactBandResult {
                 })
             }
             crate::driver::JobResultType::EA(ea_result) => {
+                // Convert eigenvectors from Field2D to serializable format
+                let eigenvectors: Vec<Vec<[f64; 2]>> = ea_result.eigenvectors.iter()
+                    .map(|field| {
+                        field.as_slice().iter()
+                            .map(|c| [c.re, c.im])
+                            .collect()
+                    })
+                    .collect();
+
                 CompactResultType::EA(EAResult {
                     eigenvalues: ea_result.eigenvalues.clone(),
+                    eigenvectors,
+                    grid_dims: ea_result.grid_dims,
                     n_iterations: ea_result.n_iterations,
                     converged: ea_result.converged,
                 })

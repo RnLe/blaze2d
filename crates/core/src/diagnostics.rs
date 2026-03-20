@@ -129,7 +129,9 @@ impl std::fmt::Display for PreconditionerType {
         match self {
             Self::Auto => write!(f, "auto"),
             Self::None => write!(f, "none"),
-            Self::FourierDiagonalKernelCompensated => write!(f, "fourier_diagonal_kernel_compensated"),
+            Self::FourierDiagonalKernelCompensated => {
+                write!(f, "fourier_diagonal_kernel_compensated")
+            }
             Self::TransverseProjection => write!(f, "transverse_projection"),
         }
     }

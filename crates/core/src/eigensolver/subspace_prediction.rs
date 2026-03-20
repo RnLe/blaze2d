@@ -250,11 +250,7 @@ impl SubspaceHistory {
     }
 
     /// Internal: predict using rotation (and optionally extrapolation).
-    fn predict_with_rotation(
-        &mut self,
-        k_next: [f64; 2],
-        eps: Option<&[f64]>,
-    ) -> PredictionResult {
+    fn predict_with_rotation(&mut self, k_next: [f64; 2], eps: Option<&[f64]>) -> PredictionResult {
         let prev = self.prev_eigenvectors.as_ref().unwrap();
         let curr = self.curr_eigenvectors.as_ref().unwrap();
         let k_prev = self.prev_k.unwrap();
@@ -290,16 +286,13 @@ impl SubspaceHistory {
         }
 
         // Decide prediction strategy
-        let use_extrapolation =
-            self.extrapolation_enabled && !is_degenerate && !is_corner;
+        let use_extrapolation = self.extrapolation_enabled && !is_degenerate && !is_corner;
 
         let (predicted, method) = if use_extrapolation {
             // Stage 2: Linear extrapolation
             // α = |dk_next| / |dk_prev|
-            let dk_prev_norm =
-                (dk_prev[0] * dk_prev[0] + dk_prev[1] * dk_prev[1]).sqrt();
-            let dk_next_norm =
-                (dk_next[0] * dk_next[0] + dk_next[1] * dk_next[1]).sqrt();
+            let dk_prev_norm = (dk_prev[0] * dk_prev[0] + dk_prev[1] * dk_prev[1]).sqrt();
+            let dk_next_norm = (dk_next[0] * dk_next[0] + dk_next[1] * dk_next[1]).sqrt();
             let alpha = if dk_prev_norm > 1e-12 {
                 dk_next_norm / dk_prev_norm
             } else {
@@ -369,24 +362,24 @@ pub fn compute_complex_overlap_matrix(
     // Build matrices in faer format
     // For B-weighted inner product ⟨x, y⟩_B = x^† B y = (B^{1/2} x)^† (B^{1/2} y)
     // With diagonal B = diag(ε), we have B^{1/2} = diag(√ε)
-    
+
     if let Some(epsilon) = eps {
         // TM mode: apply √ε weighting
         // Build (√ε ⊙ X_prev) and (√ε ⊙ X_curr) matrices
         let sqrt_eps: Vec<f64> = epsilon.iter().map(|&e| e.sqrt()).collect();
-        
+
         let prev_weighted = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = prev[col].as_slice()[row];
             let w = sqrt_eps[row];
             faer::c64::new(c.re * w, c.im * w)
         });
-        
+
         let curr_weighted = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = curr[col].as_slice()[row];
             let w = sqrt_eps[row];
             faer::c64::new(c.re * w, c.im * w)
         });
-        
+
         // O = prev_weighted^† curr_weighted (m×n × n×m = m×m)
         prev_weighted.adjoint() * &curr_weighted
     } else {
@@ -395,12 +388,12 @@ pub fn compute_complex_overlap_matrix(
             let c = prev[col].as_slice()[row];
             faer::c64::new(c.re, c.im)
         });
-        
+
         let curr_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = curr[col].as_slice()[row];
             faer::c64::new(c.re, c.im)
         });
-        
+
         // O = prev_mat^† curr_mat
         prev_mat.adjoint() * &curr_mat
     }
@@ -442,7 +435,9 @@ pub fn polar_decomposition(overlap: &Mat<faer::c64>) -> (Mat<faer::c64>, f64) {
     }
 
     // Compute SVD: O = W Σ V^†
-    let svd = overlap.svd().expect("SVD should succeed for overlap matrix");
+    let svd = overlap
+        .svd()
+        .expect("SVD should succeed for overlap matrix");
     let u_mat = svd.U();
     let v_mat = svd.V();
     let s_diag = svd.S().column_vector();
@@ -457,6 +452,47 @@ pub fn polar_decomposition(overlap: &Mat<faer::c64>) -> (Mat<faer::c64>, f64) {
     let rotation = u_mat * v_mat.adjoint();
 
     (rotation, sigma_min)
+}
+
+/// Extended polar decomposition returning all singular values.
+///
+/// This variant is used for degenerate block detection, where we need to
+/// identify clusters of bands with similar (small) singular values.
+///
+/// # Arguments
+/// * `overlap` - The m×m complex overlap matrix
+///
+/// # Returns
+/// A tuple (U, σ_all, σ_min) where:
+/// * U is the m×m unitary rotation matrix
+/// * σ_all is a vector of all singular values (sorted descending)
+/// * σ_min is the smallest singular value (convenience)
+pub fn polar_decomposition_with_singular_values(
+    overlap: &Mat<faer::c64>,
+) -> (Mat<faer::c64>, Vec<f64>, f64) {
+    let m = overlap.nrows();
+    if m == 0 {
+        return (Mat::zeros(0, 0), Vec::new(), 0.0);
+    }
+
+    // Compute SVD: O = W Σ V^†
+    let svd = overlap
+        .svd()
+        .expect("SVD should succeed for overlap matrix");
+    let u_mat = svd.U();
+    let v_mat = svd.V();
+    let s_diag = svd.S().column_vector();
+
+    // Extract all singular values
+    let mut sigma_all: Vec<f64> = (0..m).map(|i| s_diag.get(i).re).collect();
+    sigma_all.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)); // descending
+
+    let sigma_min = sigma_all.last().copied().unwrap_or(0.0);
+
+    // Compute U = W V^†
+    let rotation = u_mat * v_mat.adjoint();
+
+    (rotation, sigma_all, sigma_min)
 }
 
 // ============================================================================
@@ -601,10 +637,7 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
     let n = vectors[0].len();
 
     // Clone input vectors (we'll modify them)
-    let mut result: Vec<Vec<Complex64>> = vectors
-        .iter()
-        .map(|v| v.as_slice().to_vec())
-        .collect();
+    let mut result: Vec<Vec<Complex64>> = vectors.iter().map(|v| v.as_slice().to_vec()).collect();
 
     // Modified Gram-Schmidt
     for i in 0..m {
@@ -670,14 +703,8 @@ mod tests {
 
     #[test]
     fn test_inner_product() {
-        let x = vec![
-            Complex64::new(1.0, 0.0),
-            Complex64::new(0.0, 1.0),
-        ];
-        let y = vec![
-            Complex64::new(1.0, 0.0),
-            Complex64::new(0.0, 1.0),
-        ];
+        let x = vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)];
+        let y = vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)];
 
         let result = inner_product(&x, &y);
         // <x, y> = 1*1 + (-i)*i = 1 + 1 = 2
@@ -758,14 +785,12 @@ mod tests {
     #[test]
     fn test_rotation_is_unitary() {
         // Create a non-trivial overlap matrix
-        let overlap = Mat::<faer::c64>::from_fn(2, 2, |i, j| {
-            match (i, j) {
-                (0, 0) => faer::c64::new(0.9, 0.1),
-                (0, 1) => faer::c64::new(0.1, 0.05),
-                (1, 0) => faer::c64::new(0.1, -0.05),
-                (1, 1) => faer::c64::new(0.95, 0.0),
-                _ => faer::c64::new(0.0, 0.0),
-            }
+        let overlap = Mat::<faer::c64>::from_fn(2, 2, |i, j| match (i, j) {
+            (0, 0) => faer::c64::new(0.9, 0.1),
+            (0, 1) => faer::c64::new(0.1, 0.05),
+            (1, 0) => faer::c64::new(0.1, -0.05),
+            (1, 1) => faer::c64::new(0.95, 0.0),
+            _ => faer::c64::new(0.0, 0.0),
         });
 
         let (rotation, _) = polar_decomposition(&overlap);
@@ -971,22 +996,24 @@ mod tests {
         let grid = Grid2D::new(2, 2, 1.0, 1.0);
 
         // Create vectors where prev and curr differ
-        let prev = vec![
-            make_test_field(grid, vec![
+        let prev = vec![make_test_field(
+            grid,
+            vec![
                 Complex64::new(1.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
-            ]),
-        ];
-        let curr = vec![
-            make_test_field(grid, vec![
+            ],
+        )];
+        let curr = vec![make_test_field(
+            grid,
+            vec![
                 Complex64::new(2.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
-            ]),
-        ];
+            ],
+        )];
 
         // Identity rotation (aligned already)
         let rotation = Mat::<faer::c64>::from_fn(1, 1, |_, _| faer::c64::new(1.0, 0.0));
@@ -1006,22 +1033,24 @@ mod tests {
         // Test with α = 0.5 (half step)
         let grid = Grid2D::new(2, 2, 1.0, 1.0);
 
-        let prev = vec![
-            make_test_field(grid, vec![
+        let prev = vec![make_test_field(
+            grid,
+            vec![
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
-            ]),
-        ];
-        let curr = vec![
-            make_test_field(grid, vec![
+            ],
+        )];
+        let curr = vec![make_test_field(
+            grid,
+            vec![
                 Complex64::new(1.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
                 Complex64::new(0.0, 0.0),
-            ]),
-        ];
+            ],
+        )];
 
         let rotation = Mat::<faer::c64>::from_fn(1, 1, |_, _| faer::c64::new(1.0, 0.0));
 

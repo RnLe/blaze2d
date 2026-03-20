@@ -63,15 +63,7 @@ impl<B: SpectralBackend> FFTPreconditioner<B> {
     /// * `eta` - Twist parameter
     /// * `v_mean` - Mean potential
     /// * `m_mean` - Mean inverse mass (average of trace/2)
-    pub fn new(
-        nx: usize,
-        ny: usize,
-        dx: f64,
-        dy: f64,
-        eta: f64,
-        v_mean: f64,
-        m_mean: f64,
-    ) -> Self {
+    pub fn new(nx: usize, ny: usize, dx: f64, dy: f64, eta: f64, v_mean: f64, m_mean: f64) -> Self {
         let prefactor = 0.5 * eta * eta * m_mean;
 
         let mut inv_spectrum = vec![0.0; nx * ny];
@@ -116,6 +108,10 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for FFTPreconditioner<B> {
 
 /// Compute FFT frequency for index i in a grid of size n with spacing d.
 fn fft_freq(i: usize, n: usize, d: f64) -> f64 {
-    let freq = if i <= n / 2 { i as f64 } else { i as f64 - n as f64 };
+    let freq = if i <= n / 2 {
+        i as f64
+    } else {
+        i as f64 - n as f64
+    };
     2.0 * std::f64::consts::PI * freq / (n as f64 * d)
 }

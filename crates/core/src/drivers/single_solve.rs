@@ -93,17 +93,17 @@ pub struct SingleSolveJob {
     /// Maximum number of LOBPCG iterations.
     pub max_iterations: usize,
     /// Block size for LOBPCG (0 = automatic).
-    /// 
+    ///
     /// Automatic sizing adds a small slack to n_bands for better convergence.
     /// Set explicitly for fine control over memory usage vs. convergence.
     pub block_size: usize,
     /// Whether to record convergence diagnostics.
-    /// 
+    ///
     /// When enabled, per-iteration data (residuals, eigenvalues, etc.) is
     /// recorded for later analysis.
     pub record_diagnostics: bool,
     /// Whether to estimate operator condition number before solving.
-    /// 
+    ///
     /// This adds overhead but provides useful diagnostics.
     #[serde(default)]
     pub estimate_condition_number: bool,
@@ -209,7 +209,7 @@ impl SingleSolveJob {
 #[derive(Debug, Clone)]
 pub struct SingleSolveResult {
     /// Computed eigenvalues (sorted ascending).
-    /// 
+    ///
     /// These are the raw eigenvalues from the operator. For Maxwell operators,
     /// these are ω². For envelope approximation, these are the band energies.
     pub eigenvalues: Vec<f64>,
@@ -300,10 +300,15 @@ where
     B: SpectralBackend,
 {
     let label = job.label.as_deref().unwrap_or("single_solve");
-    
+
     // Optional condition number estimation
     if job.estimate_condition_number {
-        estimate_and_log_diagnostics(operator, preconditioner.is_some(), job.power_iterations, label);
+        estimate_and_log_diagnostics(
+            operator,
+            preconditioner.is_some(),
+            job.power_iterations,
+            label,
+        );
     }
 
     let start_time = Instant::now();
@@ -362,7 +367,12 @@ where
 
     // Optional condition number estimation
     if job.estimate_condition_number {
-        estimate_and_log_diagnostics(operator, preconditioner.is_some(), job.power_iterations, label);
+        estimate_and_log_diagnostics(
+            operator,
+            preconditioner.is_some(),
+            job.power_iterations,
+            label,
+        );
     }
 
     let start_time = Instant::now();
@@ -380,11 +390,7 @@ where
 
     info!(
         "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s (diagnostics recorded)",
-        label,
-        job.n_bands,
-        diag_result.result.converged,
-        diag_result.result.iterations,
-        elapsed
+        label, job.n_bands, diag_result.result.converged, diag_result.result.iterations, elapsed
     );
 
     let result = SingleSolveResult {
@@ -488,11 +494,7 @@ where
 
     info!(
         "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s (warm-start, diagnostics)",
-        label,
-        job.n_bands,
-        diag_result.result.converged,
-        diag_result.result.iterations,
-        elapsed
+        label, job.n_bands, diag_result.result.converged, diag_result.result.iterations, elapsed
     );
 
     let result = SingleSolveResult {
@@ -605,7 +607,7 @@ fn estimate_and_log_diagnostics<O, B>(
         "[{}] Condition number estimation requested ({} power iterations, precond={})",
         label, power_iterations, has_preconditioner
     );
-    
+
     // TODO: Implement generic condition number estimation
     // This requires the operator to implement methods like:
     // - check_self_adjointness()

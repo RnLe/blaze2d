@@ -137,7 +137,8 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
         self.shift = new_shift;
 
         // Recompute 1/(|k+G|² + σ²)
-        for ((inv_k_sq, &k_sq), &is_near_zero) in self.inverse_k_sq
+        for ((inv_k_sq, &k_sq), &is_near_zero) in self
+            .inverse_k_sq
             .iter_mut()
             .zip(self.k_plus_g_sq.iter())
             .zip(self.near_zero_mask.iter())

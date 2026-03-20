@@ -96,19 +96,37 @@ fn reciprocal_fractional_to_cartesian_hexagonal_lattice() {
 
     // Verify reciprocal vectors
     assert!((recip.b1[0] - TAU).abs() < 1e-10, "b1[0] should be 2π");
-    assert!((recip.b1[1] + TAU / sqrt3).abs() < 1e-10, "b1[1] should be -2π/√3");
+    assert!(
+        (recip.b1[1] + TAU / sqrt3).abs() < 1e-10,
+        "b1[1] should be -2π/√3"
+    );
     assert!(recip.b2[0].abs() < 1e-10, "b2[0] should be 0");
-    assert!((recip.b2[1] - 2.0 * TAU / sqrt3).abs() < 1e-10, "b2[1] should be 4π/√3");
+    assert!(
+        (recip.b2[1] - 2.0 * TAU / sqrt3).abs() < 1e-10,
+        "b2[1] should be 4π/√3"
+    );
 
     // M-point: (0.5, 0) → [π, -π/√3] (NOT [π, 0]!)
     let m_point = recip.fractional_to_cartesian([0.5, 0.0]);
-    assert!((m_point[0] - std::f64::consts::PI).abs() < 1e-10, "M-point x should be π");
-    assert!((m_point[1] + std::f64::consts::PI / sqrt3).abs() < 1e-10, "M-point y should be -π/√3");
+    assert!(
+        (m_point[0] - std::f64::consts::PI).abs() < 1e-10,
+        "M-point x should be π"
+    );
+    assert!(
+        (m_point[1] + std::f64::consts::PI / sqrt3).abs() < 1e-10,
+        "M-point y should be -π/√3"
+    );
 
     // K-point: (1/3, 1/3) → [(2/3)π, (2/3)π/√3]
     // k = (1/3)*b1 + (1/3)*b2 = (1/3)*[2π, -2π/√3] + (1/3)*[0, 4π/√3]
     //   = [(2/3)π, -(2/3)π/√3 + (4/3)π/√3] = [(2/3)π, (2/3)π/√3]
     let k_point = recip.fractional_to_cartesian([1.0 / 3.0, 1.0 / 3.0]);
-    assert!((k_point[0] - 2.0 * std::f64::consts::PI / 3.0).abs() < 1e-10, "K-point x should be 2π/3");
-    assert!((k_point[1] - 2.0 * std::f64::consts::PI / (3.0 * sqrt3)).abs() < 1e-10, "K-point y should be 2π/(3√3)");
+    assert!(
+        (k_point[0] - 2.0 * std::f64::consts::PI / 3.0).abs() < 1e-10,
+        "K-point x should be 2π/3"
+    );
+    assert!(
+        (k_point[1] - 2.0 * std::f64::consts::PI / (3.0 * sqrt3)).abs() < 1e-10,
+        "K-point y should be 2π/(3√3)"
+    );
 }

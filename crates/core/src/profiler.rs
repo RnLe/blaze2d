@@ -9,11 +9,11 @@
 //! Usage:
 //! ```
 //! use mpb2d_core::profiler::{start_timer, stop_timer, print_profile};
-//! 
+//!
 //! start_timer("my_function");
 //! // ... do work ...
 //! stop_timer("my_function");
-//! 
+//!
 //! print_profile(); // Print summary table
 //! ```
 
@@ -35,7 +35,7 @@ mod enabled {
     }
 
     /// Global profiler state.
-    static PROFILER: LazyLock<Mutex<HashMap<String, ProfileEntry>>> = 
+    static PROFILER: LazyLock<Mutex<HashMap<String, ProfileEntry>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
 
     /// Start timing a named section.
@@ -79,7 +79,7 @@ mod enabled {
                 (name.clone(), total_ms, entry.call_count, avg_us)
             })
             .collect();
-        
+
         // Sort by total time descending
         entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         entries
@@ -88,23 +88,37 @@ mod enabled {
     /// Print profiling results as a formatted table.
     pub fn print_profile() {
         let entries = get_profile_data();
-        
+
         if entries.is_empty() {
             println!("No profiling data collected.");
             return;
         }
-        
+
         let total_ms: f64 = entries.iter().map(|(_, t, _, _)| t).sum();
-        
+
         println!();
-        println!("╭────────────────────────────────────────────────────────────────────────────────╮");
-        println!("│                              PROFILING RESULTS                                 │");
-        println!("├────────────────────────────────────┬──────────┬─────────┬──────────┬───────────┤");
-        println!("│ Function                           │ Total ms │  Calls  │  Avg µs  │  % Time   │");
-        println!("├────────────────────────────────────┼──────────┼─────────┼──────────┼───────────┤");
-        
+        println!(
+            "╭────────────────────────────────────────────────────────────────────────────────╮"
+        );
+        println!(
+            "│                              PROFILING RESULTS                                 │"
+        );
+        println!(
+            "├────────────────────────────────────┬──────────┬─────────┬──────────┬───────────┤"
+        );
+        println!(
+            "│ Function                           │ Total ms │  Calls  │  Avg µs  │  % Time   │"
+        );
+        println!(
+            "├────────────────────────────────────┼──────────┼─────────┼──────────┼───────────┤"
+        );
+
         for (name, total, calls, avg_us) in &entries {
-            let pct = if total_ms > 0.0 { total / total_ms * 100.0 } else { 0.0 };
+            let pct = if total_ms > 0.0 {
+                total / total_ms * 100.0
+            } else {
+                0.0
+            };
             println!(
                 "│ {:<34} │ {:>8.2} │ {:>7} │ {:>8.1} │ {:>8.1}% │",
                 truncate_name(name, 34),
@@ -114,14 +128,17 @@ mod enabled {
                 pct
             );
         }
-        
-        println!("├────────────────────────────────────┼──────────┼─────────┼──────────┼───────────┤");
+
+        println!(
+            "├────────────────────────────────────┼──────────┼─────────┼──────────┼───────────┤"
+        );
         println!(
             "│ {:<34} │ {:>8.2} │         │          │   100.0%  │",
-            "TOTAL (measured)",
-            total_ms
+            "TOTAL (measured)", total_ms
         );
-        println!("╰────────────────────────────────────┴──────────┴─────────┴──────────┴───────────╯");
+        println!(
+            "╰────────────────────────────────────┴──────────┴─────────┴──────────┴───────────╯"
+        );
         println!();
     }
 

@@ -52,14 +52,14 @@
 use crate::backend::SpectralBackend;
 use crate::grid::Grid2D;
 
+pub mod envelope_approximation;
 pub mod maxwell;
 pub mod test_operators;
-pub mod envelope_approximation;
 
 // Re-export commonly used types
-pub use maxwell::ThetaOperator;
-pub use test_operators::{ToyLaplacian, ToyDiagonalSPD};
 pub use envelope_approximation::{EAOperator, EAOperatorBuilder};
+pub use maxwell::ThetaOperator;
+pub use test_operators::{ToyDiagonalSPD, ToyLaplacian};
 
 // ============================================================================
 // Core Operator Trait

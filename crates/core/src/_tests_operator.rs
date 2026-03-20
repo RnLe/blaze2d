@@ -365,12 +365,15 @@ fn jacobi_preconditioner_scales_tm_plane_wave() {
     let backend_ref = theta.backend();
     preconditioner.apply(backend_ref, &mut field);
     let scaled_norm = field_norm(&field);
-    
+
     // The preconditioner should scale the field by a finite positive factor
     // that reduces high-frequency content (scaling < 1 for high frequencies)
     let scale_factor = scaled_norm / original_norm;
     assert!(scale_factor > 0.0, "scale factor must be positive");
-    assert!(scale_factor < 10.0, "scale factor should be moderate, got {scale_factor}");
+    assert!(
+        scale_factor < 10.0,
+        "scale factor should be moderate, got {scale_factor}"
+    );
 }
 
 #[test]
@@ -388,11 +391,14 @@ fn jacobi_preconditioner_uses_te_effective_epsilon() {
     let backend_ref = theta.backend();
     preconditioner.apply(backend_ref, &mut field);
     let scaled_norm = field_norm(&field);
-    
+
     // The preconditioner should scale by a finite positive factor
     let scale_factor = scaled_norm / original_norm;
     assert!(scale_factor > 0.0, "scale factor must be positive");
-    assert!(scale_factor < 10.0, "scale factor should be moderate, got {scale_factor}");
+    assert!(
+        scale_factor < 10.0,
+        "scale factor should be moderate, got {scale_factor}"
+    );
 }
 
 #[test]
@@ -621,7 +627,8 @@ fn tm_uniform_medium_at_arbitrary_k_point() {
         assert!(
             rel_error < 1e-10,
             "TM at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
-            bloch[0], bloch[1]
+            bloch[0],
+            bloch[1]
         );
     }
 }
@@ -650,7 +657,8 @@ fn te_uniform_medium_at_arbitrary_k_point() {
         assert!(
             rel_error < 1e-10,
             "TE at k=({:.3},{:.3}): mode ({mx},{my}) λ={lambda:.10e} expected={expected:.10e} rel_error={rel_error:.2e}",
-            bloch[0], bloch[1]
+            bloch[0],
+            bloch[1]
         );
     }
 }
@@ -692,9 +700,8 @@ fn te_and_tm_match_in_uniform_medium() {
 // ============================================================================
 
 use super::preconditioners::{
-    BandWindow, SpectralStats, AdaptiveShiftConfig,
-    SHIFT_SMIN_FRACTION, DEFAULT_BAND_WINDOW_SCALE,
-    PreconditionedRQStats, compute_shift_quality_score,
+    AdaptiveShiftConfig, BandWindow, DEFAULT_BAND_WINDOW_SCALE, PreconditionedRQStats,
+    SHIFT_SMIN_FRACTION, SpectralStats, compute_shift_quality_score,
 };
 
 #[test]
@@ -733,8 +740,7 @@ fn spectral_stats_with_band_window() {
     let k_plus_g_sq = vec![0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 4.0];
     let eigenvalues = vec![0.05, 0.1, 0.15, 0.2];
 
-    let stats = SpectralStats::compute(&k_plus_g_sq)
-        .with_band_window(&eigenvalues);
+    let stats = SpectralStats::compute(&k_plus_g_sq).with_band_window(&eigenvalues);
 
     assert!(stats.band_window.is_some());
     let window = stats.band_window.as_ref().unwrap();
@@ -747,27 +753,32 @@ fn adaptive_shift_blended_with_band_window() {
     let k_plus_g_sq = vec![0.0, 0.1, 0.2, 0.5, 1.0];
     let eigenvalues = vec![0.05, 0.1, 0.15, 0.2];
 
-    let stats = SpectralStats::compute(&k_plus_g_sq)
-        .with_band_window(&eigenvalues);
+    let stats = SpectralStats::compute(&k_plus_g_sq).with_band_window(&eigenvalues);
 
     // Pure s_min shift (β = 1.0)
     let shift_smin = stats.adaptive_shift();
     let shift_blend_1 = stats.adaptive_shift_blended(1.0, DEFAULT_BAND_WINDOW_SCALE);
-    assert!((shift_smin - shift_blend_1).abs() < 1e-10,
-        "β=1.0 should give pure s_min shift");
+    assert!(
+        (shift_smin - shift_blend_1).abs() < 1e-10,
+        "β=1.0 should give pure s_min shift"
+    );
 
     // Pure band-window shift (β = 0.0)
     let window = stats.band_window.as_ref().unwrap();
     let shift_band = window.compute_shift(DEFAULT_BAND_WINDOW_SCALE);
     let shift_blend_0 = stats.adaptive_shift_blended(0.0, DEFAULT_BAND_WINDOW_SCALE);
-    assert!((shift_band - shift_blend_0).abs() < 1e-10,
-        "β=0.0 should give pure band-window shift");
+    assert!(
+        (shift_band - shift_blend_0).abs() < 1e-10,
+        "β=0.0 should give pure band-window shift"
+    );
 
     // Blended shift should be between the two extremes
     let shift_blend_half = stats.adaptive_shift_blended(0.5, DEFAULT_BAND_WINDOW_SCALE);
     let expected_blend = 0.5 * shift_smin + 0.5 * shift_band;
-    assert!((shift_blend_half - expected_blend).abs() < 1e-10,
-        "β=0.5 should give average of s_min and band-window shifts");
+    assert!(
+        (shift_blend_half - expected_blend).abs() < 1e-10,
+        "β=0.5 should give average of s_min and band-window shifts"
+    );
 }
 
 #[test]
@@ -782,8 +793,7 @@ fn adaptive_shift_auto_uses_band_window_when_available() {
     assert!((shift_no_window - expected_smin).abs() < 1e-10);
 
     // With band window: should use blended shift
-    let stats_with_window = SpectralStats::compute(&k_plus_g_sq)
-        .with_band_window(&eigenvalues);
+    let stats_with_window = SpectralStats::compute(&k_plus_g_sq).with_band_window(&eigenvalues);
     let shift_with_window = stats_with_window.adaptive_shift_auto();
 
     // The blended shift should be different from pure s_min when λ_median differs from s_min
@@ -803,7 +813,7 @@ fn preconditioned_rq_stats_computation() {
     assert!((stats.rq_min - 0.8).abs() < 1e-10);
     assert!((stats.rq_max - 1.3).abs() < 1e-10);
     assert!((stats.rq_mean - 1.05).abs() < 1e-10);
-    assert!(stats.rq_spread > 0.0);  // spread = (1.3 - 0.8) / 1.05 ≈ 0.476
+    assert!(stats.rq_spread > 0.0); // spread = (1.3 - 0.8) / 1.05 ≈ 0.476
 
     // Check variance is reasonable
     assert!(stats.rq_variance > 0.0);
@@ -813,24 +823,22 @@ fn preconditioned_rq_stats_computation() {
 #[test]
 fn shift_quality_score() {
     // Perfect preconditioner: mean ≈ 1, small spread
-    let perfect = PreconditionedRQStats::compute(
-        vec![1.0, 1.0, 1.0],
-        vec![0.99, 1.0, 1.01],
-    );
+    let perfect = PreconditionedRQStats::compute(vec![1.0, 1.0, 1.0], vec![0.99, 1.0, 1.01]);
 
     // Poor preconditioner: mean far from 1, large spread
-    let poor = PreconditionedRQStats::compute(
-        vec![1.0, 1.0, 1.0],
-        vec![0.1, 1.0, 5.0],
-    );
+    let poor = PreconditionedRQStats::compute(vec![1.0, 1.0, 1.0], vec![0.1, 1.0, 5.0]);
 
     let score_perfect = compute_shift_quality_score(&perfect, true);
     let score_poor = compute_shift_quality_score(&poor, true);
 
-    assert!(score_perfect < score_poor,
-        "Perfect preconditioner should have lower (better) score than poor one");
-    assert!(score_perfect < 0.1,
-        "Perfect preconditioner should have very low score");
+    assert!(
+        score_perfect < score_poor,
+        "Perfect preconditioner should have lower (better) score than poor one"
+    );
+    assert!(
+        score_perfect < 0.1,
+        "Perfect preconditioner should have very low score"
+    );
 }
 
 #[test]
@@ -881,15 +889,17 @@ fn theta_operator_band_window_preconditioner() {
     // Build preconditioner with band window
     let precond = theta.build_homogeneous_preconditioner_band_window(
         &eigenvalues,
-        Some(0.3),  // Favor band window
-        Some(0.5),  // Default scale
+        Some(0.3), // Favor band window
+        Some(0.5), // Default scale
     );
 
     // Just verify it builds without error and has correct size
     assert_eq!(precond.inverse_diagonal().len(), grid.len());
 
     // All values should be positive (except possibly DC which is zeroed)
-    let positive_count = precond.inverse_diagonal().iter()
+    let positive_count = precond
+        .inverse_diagonal()
+        .iter()
         .filter(|&&v| v > 0.0)
         .count();
     assert!(positive_count > grid.len() / 2);

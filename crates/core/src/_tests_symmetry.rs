@@ -736,12 +736,7 @@ mod k_point_detection {
         let grid = Grid2D::new(8, 8, 1.0, 1.0);
         let config = SymmetryConfig::even();
 
-        let proj = SymmetryProjector::for_k_point(
-            grid,
-            [0.0, 0.0],
-            &config,
-            LatticeClass::Square,
-        );
+        let proj = SymmetryProjector::for_k_point(grid, [0.0, 0.0], &config, LatticeClass::Square);
 
         assert!(proj.is_some(), "Γ-point should have projector");
         let proj = proj.unwrap();
@@ -753,12 +748,7 @@ mod k_point_detection {
         let grid = Grid2D::new(8, 8, 1.0, 1.0);
         let config = SymmetryConfig::even();
 
-        let proj = SymmetryProjector::for_k_point(
-            grid,
-            [0.5, 0.0],
-            &config,
-            LatticeClass::Square,
-        );
+        let proj = SymmetryProjector::for_k_point(grid, [0.5, 0.0], &config, LatticeClass::Square);
 
         assert!(proj.is_some(), "X-point should have projector");
         let proj = proj.unwrap();
@@ -775,12 +765,7 @@ mod k_point_detection {
         let grid = Grid2D::new(8, 8, 1.0, 1.0);
         let config = SymmetryConfig::even();
 
-        let proj = SymmetryProjector::for_k_point(
-            grid,
-            [0.5, 0.5],
-            &config,
-            LatticeClass::Square,
-        );
+        let proj = SymmetryProjector::for_k_point(grid, [0.5, 0.5], &config, LatticeClass::Square);
 
         // M point has neither k_x=0 nor k_y=0, so no simple mirrors apply
         assert!(
@@ -794,12 +779,7 @@ mod k_point_detection {
         let grid = Grid2D::new(8, 8, 1.0, 1.0);
         let config = SymmetryConfig::even();
 
-        let proj = SymmetryProjector::for_k_point(
-            grid,
-            [0.3, 0.2],
-            &config,
-            LatticeClass::Square,
-        );
+        let proj = SymmetryProjector::for_k_point(grid, [0.3, 0.2], &config, LatticeClass::Square);
 
         assert!(proj.is_none(), "generic k-point should have no projector");
     }
@@ -809,12 +789,7 @@ mod k_point_detection {
         let grid = Grid2D::new(8, 8, 1.0, 1.0);
         let config = SymmetryConfig::disabled();
 
-        let proj = SymmetryProjector::for_k_point(
-            grid,
-            [0.0, 0.0],
-            &config,
-            LatticeClass::Square,
-        );
+        let proj = SymmetryProjector::for_k_point(grid, [0.0, 0.0], &config, LatticeClass::Square);
 
         assert!(proj.is_none(), "disabled config should return no projector");
     }
@@ -824,12 +799,7 @@ mod k_point_detection {
         let grid = Grid2D::new(8, 8, 1.0, 1.0);
         let config = SymmetryConfig::even();
 
-        let proj = SymmetryProjector::for_k_point(
-            grid,
-            [0.0, 0.0],
-            &config,
-            LatticeClass::Oblique,
-        );
+        let proj = SymmetryProjector::for_k_point(grid, [0.0, 0.0], &config, LatticeClass::Oblique);
 
         assert!(
             proj.is_none(),

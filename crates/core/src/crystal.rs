@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::basis::{AtomicBasis, BasisAtom};
 use crate::bravais::{BravaisLattice, LatticeType};
-use crate::brillouin::{generate_path, BrillouinPath, PathPreset};
+use crate::brillouin::{BrillouinPath, PathPreset, generate_path};
 use crate::geometry::Geometry2D;
 use crate::lattice::Lattice2D;
 
@@ -274,11 +274,7 @@ impl From<PhotonicCrystal> for Geometry2D {
 impl From<Geometry2D> for PhotonicCrystal {
     fn from(geom: Geometry2D) -> Self {
         let lattice = BravaisLattice::from(geom.lattice);
-        let basis: AtomicBasis = geom
-            .atoms
-            .into_iter()
-            .map(BasisAtom::from)
-            .collect();
+        let basis: AtomicBasis = geom.atoms.into_iter().map(BasisAtom::from).collect();
         PhotonicCrystal::new(lattice, basis, geom.eps_bg)
     }
 }
@@ -356,7 +352,8 @@ impl PhotonicCrystalBuilder {
 
     /// Add a dielectric rod at the given position.
     pub fn add_rod(mut self, position: [f64; 2], radius: f64, epsilon: f64) -> Self {
-        self.atoms.push(BasisAtom::dielectric_rod(position, radius, epsilon));
+        self.atoms
+            .push(BasisAtom::dielectric_rod(position, radius, epsilon));
         self
     }
 
@@ -418,10 +415,16 @@ mod tests {
     fn recommended_paths() {
         let square = PhotonicCrystal::square_lattice_air_holes(12.0, 0.3);
         assert!(square.recommended_path().is_some());
-        assert!(matches!(square.recommended_path(), Some(BrillouinPath::Square)));
+        assert!(matches!(
+            square.recommended_path(),
+            Some(BrillouinPath::Square)
+        ));
 
         let hex = PhotonicCrystal::triangular_lattice_air_holes(12.0, 0.3);
-        assert!(matches!(hex.recommended_path(), Some(BrillouinPath::Triangular)));
+        assert!(matches!(
+            hex.recommended_path(),
+            Some(BrillouinPath::Triangular)
+        ));
     }
 
     #[test]
@@ -441,7 +444,7 @@ mod tests {
         // Inside the air hole (at origin)
         assert!((crystal.permittivity_at([0.0, 0.0]) - 1.0).abs() < 1e-10);
 
-        // Point far from the hole at origin - need to pick a point that is 
+        // Point far from the hole at origin - need to pick a point that is
         // more than 0.3 away from the origin even with periodic wrapping
         // [0.5, 0.5] is at distance 0.5*sqrt(2) ≈ 0.707 from origin
         assert!((crystal.permittivity_at([0.5, 0.5]) - 12.0).abs() < 1e-10);

@@ -54,5 +54,5 @@ pub use expansion::{
 pub use filter::SelectiveFilter;
 
 pub use result::{
-    CompactBandResult, CompactResultType, EAResult, MaxwellResult,
+    CompactBandResult, CompactResultType, ComplexPair, EAResult, MaxwellResult,
 };

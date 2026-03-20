@@ -432,13 +432,13 @@ mod tests {
     fn contains_point() {
         let lattice = BravaisLattice::square(1.0);
         let atom = BasisAtom::air_hole([0.5, 0.5], 0.2);
-        
+
         // Center should be inside
         assert!(atom.contains_point([0.5, 0.5], &lattice));
-        
+
         // Point just inside radius
         assert!(atom.contains_point([0.5 + 0.1, 0.5], &lattice));
-        
+
         // Point outside
         assert!(!atom.contains_point([0.5 + 0.3, 0.5], &lattice));
     }
@@ -447,10 +447,10 @@ mod tests {
     fn atomic_basis_operations() {
         let mut basis = AtomicBasis::empty();
         assert!(basis.is_empty());
-        
+
         basis.push(BasisAtom::air_hole([0.0, 0.0], 0.2));
         basis.push(BasisAtom::air_hole([0.5, 0.5], 0.2));
-        
+
         assert_eq!(basis.len(), 2);
         assert!(!basis.is_empty());
     }
@@ -462,10 +462,10 @@ mod tests {
             radius: 0.25,
             eps_inside: 2.5,
         };
-        
+
         let new: BasisAtom = old.clone().into();
         let back: crate::geometry::BasisAtom = new.into();
-        
+
         assert!((back.pos[0] - old.pos[0]).abs() < 1e-10);
         assert!((back.pos[1] - old.pos[1]).abs() < 1e-10);
         assert!((back.radius - old.radius).abs() < 1e-10);

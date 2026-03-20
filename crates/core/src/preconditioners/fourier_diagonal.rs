@@ -422,14 +422,22 @@ impl PreconditionedRQStats {
             };
         }
 
-        let rq_min = rq_preconditioned.iter().cloned().fold(f64::INFINITY, f64::min);
-        let rq_max = rq_preconditioned.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let rq_min = rq_preconditioned
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min);
+        let rq_max = rq_preconditioned
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
         let rq_mean = rq_preconditioned.iter().sum::<f64>() / n as f64;
 
         let rq_variance = if n > 1 {
-            rq_preconditioned.iter()
+            rq_preconditioned
+                .iter()
                 .map(|&rq| (rq - rq_mean).powi(2))
-                .sum::<f64>() / (n - 1) as f64
+                .sum::<f64>()
+                / (n - 1) as f64
         } else {
             0.0
         };

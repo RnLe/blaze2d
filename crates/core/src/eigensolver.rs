@@ -47,8 +47,8 @@ pub use normalization::{
     orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize,
 };
 pub use subspace_prediction::{
-    PredictionMethod, PredictionResult, SubspaceHistory,
-    compute_complex_overlap_matrix, polar_decomposition,
+    PredictionMethod, PredictionResult, SubspaceHistory, compute_complex_overlap_matrix,
+    polar_decomposition, polar_decomposition_with_singular_values,
 };
 
 // Re-export diagnostics types for convenience
@@ -1003,22 +1003,22 @@ where
             // A_s = Q^H * AQ where Q is n×r and AQ is n×r
             // Result is r×r in column-major order
             let n = q_block[0].as_slice().len();
-            
+
             // Build Q matrix (n × r) from q_block
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
                 faer::c64::new(c.re, c.im)
             });
-            
+
             // Build AQ matrix (n × r) from aq_block
             let aq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
                 faer::c64::new(c.re, c.im)
             });
-            
+
             // Compute A_s = Q^H * AQ using GEMM
-            let a_s = q_mat.adjoint() * &aq_mat;  // r × r
-            
+            let a_s = q_mat.adjoint() * &aq_mat; // r × r
+
             // Convert to column-major Vec<Complex64>
             let mut a_projected = vec![num_complex::Complex64::ZERO; r * r];
             for j in 0..r {
@@ -1102,32 +1102,32 @@ where
             // CPU path: use faer GEMM for matrix multiplication
             // X_new = Q * Y where Q is n×r and Y is r×m
             let n = q_block[0].as_slice().len();
-            
+
             // Build Q matrix (n × r) from q_block
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
                 faer::c64::new(c.re, c.im)
             });
-            
+
             // Build BQ matrix (n × r) from bq_block
             let bq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = bq_block[col].as_slice()[row];
                 faer::c64::new(c.re, c.im)
             });
-            
+
             // Build Y matrix (r × m) from dense_result eigenvectors
             let y_mat = Mat::<faer::c64>::from_fn(r, m, |row, col| {
                 let c = dense_result.eigenvector(col)[row];
                 faer::c64::new(c.re, c.im)
             });
-            
+
             // Compute X_new = Q * Y and BX_new = BQ * Y using GEMM
-            let x_new = &q_mat * &y_mat;   // n × m
+            let x_new = &q_mat * &y_mat; // n × m
             let bx_new = &bq_mat * &y_mat; // n × m
-            
+
             // Build new block entries with A*x computed fresh
             let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
-            
+
             for j in 0..m {
                 // Extract x_j from GEMM result
                 let mut x_j = self.operator.alloc_field();
@@ -1138,7 +1138,7 @@ where
                         dst[row] = Complex64::new(c.re, c.im);
                     }
                 }
-                
+
                 // Extract bx_j from GEMM result
                 let mut bx_j = self.operator.alloc_field();
                 {
@@ -1148,7 +1148,7 @@ where
                         dst[row] = Complex64::new(c.re, c.im);
                     }
                 }
-                
+
                 // Compute A*x_j
                 let mut ax_j = self.operator.alloc_field();
                 self.operator.apply(&x_j, &mut ax_j);
@@ -1221,22 +1221,22 @@ where
             // CPU path: use faer GEMM for matrix multiplication
             // W_new = Q * Y_w where Q is n×r and Y_w is r×n_w
             let n = q_block[0].as_slice().len();
-            
+
             // Build Q matrix (n × r) from q_block
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
                 faer::c64::new(c.re, c.im)
             });
-            
+
             // Build Y_w matrix (r × n_w) from dense_result eigenvectors (columns w_start..w_end)
             let y_w_mat = Mat::<faer::c64>::from_fn(r, n_w, |row, col| {
                 let c = dense_result.eigenvector(w_start + col)[row];
                 faer::c64::new(c.re, c.im)
             });
-            
+
             // Compute W_new = Q * Y_w using GEMM
-            let w_new = &q_mat * &y_w_mat;  // n × n_w
-            
+            let w_new = &q_mat * &y_w_mat; // n × n_w
+
             // Extract results into w_block
             let mut new_w_block: Vec<B::Buffer> = Vec::with_capacity(n_w);
             for j in 0..n_w {
@@ -1301,7 +1301,7 @@ where
     pub fn solve(&mut self) -> EigensolverResult {
         // Initialize faer with sequential execution (see lib.rs for rationale)
         crate::init_faer_sequential();
-        
+
         // Ensure we're initialized
         if !self.initialized {
             self.initialize();
@@ -1349,7 +1349,7 @@ where
             // meaningful eigenvalue changes (iter 0 initializes, iter 1 first real update)
             // ================================================================
             let n_check = n_active.min(relative_residuals.len());
-            
+
             // Only check convergence starting from iteration 2
             // iter 0: initial eigenvalues from Rayleigh quotients
             // iter 1: first Ritz update - store these as baseline
@@ -1708,9 +1708,13 @@ where
         let k_frac = [bloch[0] / (2.0 * PI), bloch[1] / (2.0 * PI)];
         let k_idx = self.config.k_index.unwrap_or(0);
 
-        let iters = if converged { self.iteration + 1 } else { self.config.max_iter };
+        let iters = if converged {
+            self.iteration + 1
+        } else {
+            self.config.max_iter
+        };
         let time_per_iter = elapsed / iters as f64;
-        
+
         if converged {
             info!(
                 "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, locked={})",
@@ -1791,31 +1795,34 @@ where
     /// sorted by eigenvalue from smallest to largest.
     pub fn all_eigenvectors(&self) -> Vec<Field2D> {
         let grid = self.operator.grid();
-        
+
         // Collect (eigenvalue, eigenvector) pairs
-        let mut all_pairs: Vec<(f64, Field2D)> = Vec::with_capacity(
-            self.deflation.len() + self.x_block.len()
-        );
-        
+        let mut all_pairs: Vec<(f64, Field2D)> =
+            Vec::with_capacity(self.deflation.len() + self.x_block.len());
+
         // Add locked (deflated) vectors
-        for (eigenvalue, vector) in self.deflation.eigenvalues().iter()
+        for (eigenvalue, vector) in self
+            .deflation
+            .eigenvalues()
+            .iter()
             .zip(self.deflation.vectors().iter())
         {
             let field = Field2D::from_vec(grid, vector.as_slice().to_vec());
             all_pairs.push((*eigenvalue, field));
         }
-        
+
         // Add active vectors
         for (eigenvalue, entry) in self.eigenvalues.iter().zip(self.x_block.iter()) {
             let field = Field2D::from_vec(grid, entry.vector.as_slice().to_vec());
             all_pairs.push((*eigenvalue, field));
         }
-        
+
         // Sort by eigenvalue
         all_pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         // Take n_bands and extract eigenvectors
-        all_pairs.into_iter()
+        all_pairs
+            .into_iter()
             .take(self.config.n_bands)
             .map(|(_, vec)| vec)
             .collect()
@@ -1848,10 +1855,7 @@ where
                 self.config.tol,
                 self.config.effective_block_size(),
             )
-            .with_toggles(
-                precond_type,
-                self.warm_start.is_some(),
-            )
+            .with_toggles(precond_type, self.warm_start.is_some())
             .with_k_point(
                 0, // Will be overwritten by caller if part of k-path
                 [
@@ -1880,10 +1884,7 @@ where
                 self.config.tol,
                 self.config.effective_block_size(),
             )
-            .with_toggles(
-                precond_type,
-                self.warm_start.is_some(),
-            )
+            .with_toggles(precond_type, self.warm_start.is_some())
             .with_k_point(
                 0,
                 [
@@ -1937,7 +1938,7 @@ where
     pub fn solve_with_diagnostics(&mut self, label: impl Into<String>) -> DiagnosticResult {
         // Initialize faer with sequential execution (see lib.rs for rationale)
         crate::init_faer_sequential();
-        
+
         // Ensure we're initialized
         if !self.initialized {
             self.initialize();
@@ -1994,7 +1995,7 @@ where
             // meaningful eigenvalue changes (iter 0 initializes, iter 1 first real update)
             // ================================================================
             let n_check = n_active.min(relative_residuals.len());
-            
+
             // Only check convergence starting from iteration 2
             // iter 0: initial eigenvalues from Rayleigh quotients
             // iter 1: first Ritz update - store these as baseline

@@ -201,6 +201,26 @@ fn set_ea_fields(obj: &Object, ea: &EAResult) -> Result<(), JsValue> {
     }
     Reflect::set(obj, &"eigenvalues".into(), &eigenvalues)?;
 
+    // Eigenvectors as 3D array: [band_index][grid_index][re, im]
+    let eigenvectors = Array::new();
+    for evec in &ea.eigenvectors {
+        let vec_arr = Array::new();
+        for &[re, im] in evec {
+            let complex = Array::new();
+            complex.push(&JsValue::from(re));
+            complex.push(&JsValue::from(im));
+            vec_arr.push(&complex);
+        }
+        eigenvectors.push(&vec_arr);
+    }
+    Reflect::set(obj, &"eigenvectors".into(), &eigenvectors)?;
+
+    // Grid dimensions for reconstructing 2D structure
+    let grid_dims = Array::new();
+    grid_dims.push(&JsValue::from(ea.grid_dims[0] as u32));
+    grid_dims.push(&JsValue::from(ea.grid_dims[1] as u32));
+    Reflect::set(obj, &"grid_dims".into(), &grid_dims)?;
+
     // Solver info
     Reflect::set(
         obj,
