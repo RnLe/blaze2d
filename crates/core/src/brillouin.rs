@@ -5,24 +5,36 @@
 //! sample the Brillouin zone along directions that reveal band gaps and
 //! important physical features.
 //!
-//! # High-Symmetry Points
+//! # Lattice Convention
+//!
+//! All lattice types use the following conventions for primitive vectors:
+//!
+//! - **Square**: a₁ = [a, 0], a₂ = [0, a]
+//! - **Rectangular**: a₁ = [a, 0], a₂ = [0, b]
+//! - **Triangular/Hexagonal (60° convention)**: a₁ = [a, 0], a₂ = [a/2, a√3/2]
+//! - **Oblique**: a₁ = [a, 0], a₂ = [b·cos(α), b·sin(α)]
+//!
+//! The triangular/hexagonal lattice uses the standard 60° crystallographic
+//! convention matching Setyawan-Curtarolo, SeeK-path, and MPB's Python interface.
+//!
+//! # High-Symmetry Points (in fractional/reduced coordinates)
 //!
 //! Each lattice type has specific high-symmetry points in the Brillouin zone:
 //!
 //! ## Square Lattice
 //! - Γ = (0, 0) - Zone center
-//! - X = (0.5, 0) - Zone face center
-//! - M = (0.5, 0.5) - Zone corner
+//! - X = (1/2, 0) - Zone face center
+//! - M = (1/2, 1/2) - Zone corner
 //!
 //! ## Rectangular Lattice  
 //! - Γ = (0, 0) - Zone center
-//! - X = (0.5, 0) - Face center along kₓ
-//! - S = (0.5, 0.5) - Zone corner
-//! - Y = (0, 0.5) - Face center along kᵧ
+//! - X = (1/2, 0) - Face center along kₓ
+//! - S = (1/2, 1/2) - Zone corner
+//! - Y = (0, 1/2) - Face center along kᵧ
 //!
-//! ## Triangular/Hexagonal Lattice
+//! ## Triangular/Hexagonal Lattice (60° convention)
 //! - Γ = (0, 0) - Zone center
-//! - M = (0.5, 0) - Zone edge midpoint
+//! - M = (1/2, 0) - Zone edge midpoint
 //! - K = (1/3, 1/3) - Zone corner (Dirac point in graphene)
 //!
 //! ## Oblique Lattice

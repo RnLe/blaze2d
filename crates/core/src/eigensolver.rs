@@ -72,6 +72,55 @@ use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
 
 // ============================================================================
+// Progress Reporting
+// ============================================================================
+
+/// Progress information emitted during LOBPCG iterations.
+///
+/// This struct captures the current state of the eigensolver for
+/// progress reporting to external consumers (e.g., progress bars).
+#[derive(Debug, Clone)]
+pub struct ProgressInfo {
+    /// Current iteration number (0-indexed).
+    pub iteration: usize,
+    /// Maximum number of iterations.
+    pub max_iterations: usize,
+    /// Number of eigenvalues requested.
+    pub n_bands: usize,
+    /// Number of bands that have converged (locked).
+    pub n_converged: usize,
+    /// Current trace (sum of eigenvalues).
+    pub trace: f64,
+    /// Previous trace (for computing relative change).
+    pub prev_trace: Option<f64>,
+    /// Relative change in trace: |trace - prev_trace| / |prev_trace|.
+    pub trace_rel_change: Option<f64>,
+    /// Maximum relative residual across all bands.
+    pub max_residual: f64,
+    /// Maximum relative eigenvalue change across all bands.
+    pub max_eigenvalue_change: f64,
+}
+
+impl ProgressInfo {
+    /// Format a compact progress string suitable for display.
+    pub fn format_compact(&self) -> String {
+        let trace_change_str = match self.trace_rel_change {
+            Some(change) => format!("Δ={:.2e}", change),
+            None => "Δ=--".to_string(),
+        };
+        format!(
+            "iter {:>3}/{} | trace={:.6} ({}) | conv={}/{}",
+            self.iteration + 1,
+            self.max_iterations,
+            self.trace,
+            trace_change_str,
+            self.n_converged,
+            self.n_bands,
+        )
+    }
+}
+
+// ============================================================================
 // Configuration
 // ============================================================================
 
@@ -1744,6 +1793,168 @@ where
                 n_locked
             );
         }
+
+        EigensolverResult {
+            eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
+            iterations: self.iteration + 1,
+            convergence,
+            converged,
+        }
+    }
+
+    /// Solve the eigenvalue problem with progress callbacks.
+    ///
+    /// This is identical to [`solve`] but calls `on_progress` after each iteration.
+    /// The callback receives a [`ProgressInfo`] struct with the current state.
+    ///
+    /// # Arguments
+    /// * `on_progress` - Callback invoked after each iteration
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// solver.solve_with_progress(|progress| {
+    ///     println!("{}", progress.format_compact());
+    /// });
+    /// ```
+    pub fn solve_with_progress<F>(&mut self, mut on_progress: F) -> EigensolverResult
+    where
+        F: FnMut(&ProgressInfo),
+    {
+        // Initialize faer with sequential execution (see lib.rs for rationale)
+        crate::init_faer_sequential();
+
+        // Ensure we're initialized
+        if !self.initialized {
+            self.initialize();
+        }
+
+        let n_bands_requested = self.config.n_bands;
+        let n_bands = n_bands_requested.min(self.x_block.len());
+        let mut convergence = ConvergenceInfo::new(n_bands);
+        let _start_time = Instant::now();
+        let _bloch = self.operator.bloch();
+
+        let mut prev_trace: Option<f64> = None;
+
+        // Main LOBPCG iteration loop
+        for iter in 0..self.config.max_iter {
+            self.iteration = iter;
+
+            let n_active = self.x_block.len();
+            if n_active == 0 {
+                break;
+            }
+
+            // Compute residuals R_k = A*X_k - B*X_k * Λ_k
+            let mut residuals = self.compute_residuals();
+            self.apply_deflation(&mut residuals);
+
+            // Compute B-norms of deflated residuals
+            let residual_b_norms = self.compute_residual_b_norms(&residuals);
+            let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
+
+            let n_check = n_active.min(relative_residuals.len());
+
+            // Check convergence based on eigenvalue changes (starting from iter 2)
+            if iter >= 2 {
+                let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
+                convergence.update_with_eigenvalue_changes(
+                    &relative_residuals[..n_check],
+                    &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
+                    self.config.tol,
+                );
+            }
+
+            // Compute trace for progress reporting
+            let all_eigenvalues = self.collect_all_eigenvalues();
+            let current_trace: f64 = all_eigenvalues.iter().sum();
+            let trace_rel_change = prev_trace.map(|pt| {
+                if pt.abs() > 1e-15 {
+                    (current_trace - pt).abs() / pt.abs()
+                } else {
+                    f64::INFINITY
+                }
+            });
+
+            // Emit progress callback
+            let n_locked = self.deflation.len();
+            let progress = ProgressInfo {
+                iteration: iter,
+                max_iterations: self.config.max_iter,
+                n_bands: n_bands_requested,
+                n_converged: n_locked + convergence.n_converged,
+                trace: current_trace,
+                prev_trace,
+                trace_rel_change,
+                max_residual: convergence.max_residual,
+                max_eigenvalue_change: convergence.max_eigenvalue_change,
+            };
+            on_progress(&progress);
+
+            prev_trace = Some(current_trace);
+
+            // Check for overall convergence (all requested bands)
+            let total_converged = n_locked + convergence.n_converged;
+            if total_converged >= n_bands_requested {
+                return EigensolverResult {
+                    eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
+                        .to_vec(),
+                    iterations: iter + 1,
+                    convergence,
+                    converged: true,
+                };
+            }
+
+            // Lock converged bands (from iter 2 onward)
+            if iter >= 2 {
+                let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
+                let locking_result = check_for_locking(
+                    &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
+                    self.config.tol,
+                );
+
+                if locking_result.has_locks() {
+                    let n_locked_now = self.lock_converged_bands(&locking_result.bands_to_lock);
+                    if n_locked_now > 0 && self.x_block.is_empty() {
+                        break;
+                    }
+                }
+            }
+
+            // Precondition residuals
+            let mut p_block = self.precondition_residuals(&residuals);
+            self.apply_deflation(&mut p_block);
+
+            // Build search subspace Z_k = [X_k, P_k, W_k]
+            let (subspace, block_sizes) = self.collect_subspace(&p_block);
+
+            // B-orthonormalize using SVQB
+            let (q_block, bq_block, svqb_result) =
+                self.orthonormalize_subspace_owned(subspace, block_sizes);
+            let subspace_rank = svqb_result.output_rank;
+
+            if subspace_rank == 0 {
+                break;
+            }
+
+            // Form projected operator A_s = Q_k^* A Q_k
+            let a_projected = self.project_operator(&q_block, &bq_block);
+
+            // Solve dense eigenproblem A_s Y = Y Θ
+            let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
+
+            // Store previous eigenvalues and update Ritz vectors
+            self.store_previous_eigenvalues();
+            self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
+            self.update_history_directions(&q_block, &dense_result);
+        }
+
+        // End of loop: either max iterations reached or all bands locked
+        let all_eigenvalues = self.collect_all_eigenvalues();
+        let n_locked = self.deflation.len();
+        let total_converged = n_locked + convergence.n_converged;
+        let converged = total_converged >= n_bands_requested;
 
         EigensolverResult {
             eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),

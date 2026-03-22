@@ -15,6 +15,7 @@ use parking_lot::Mutex;
 use rayon::prelude::*;
 
 use mpb2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
+use mpb2d_core::drivers::ProgressInfo;
 use mpb2d_core::profiler::print_profile;
 
 #[cfg(feature = "cuda")]
@@ -317,6 +318,11 @@ impl BulkDriver {
             return Ok(DriverStats::default());
         }
 
+        // Special case: single EA job gets detailed progress bar (no threading)
+        if self.is_single_ea_job() {
+            return self.run_single_ea_with_progress();
+        }
+
         // Create adaptive thread manager
         let adaptive_mgr = match &self.thread_mode {
             ThreadMode::Fixed(n) => Arc::new(AdaptiveThreadManager::fixed(*n)),
@@ -512,6 +518,11 @@ impl BulkDriver {
         if self.jobs.is_empty() {
             warn!("no jobs to execute (parameter ranges resulted in zero configurations)");
             return Ok(DriverStats::default());
+        }
+
+        // Special case: single EA job gets detailed progress bar (no threading)
+        if self.is_single_ea_job() {
+            return self.run_single_ea_with_channel(channel);
         }
 
         // Create adaptive thread manager
@@ -980,6 +991,390 @@ impl BulkDriver {
                 })
             }
         }
+    }
+
+    /// Check if this is a single EA job (should run without threading with progress).
+    fn is_single_ea_job(&self) -> bool {
+        self.jobs.len() == 1
+            && matches!(&self.jobs[0].job_type, ExpandedJobType::EA(_))
+    }
+
+    /// Execute a single EA job with a detailed progress bar.
+    ///
+    /// This is used when there's exactly one EA job. Threading is disabled
+    /// and a detailed progress bar shows iteration count, trace, and relative
+    /// trace change.
+    fn run_single_ea_with_progress(&self) -> Result<DriverStats, DriverError> {
+        use mpb2d_core::drivers::single_solve;
+        use mpb2d_core::operators::EAOperatorBuilder;
+
+        let expanded = &self.jobs[0];
+        let spec = match &expanded.job_type {
+            ExpandedJobType::EA(s) => s,
+            _ => unreachable!("run_single_ea_with_progress called for non-EA job"),
+        };
+
+        // Select backend (no threading)
+        #[cfg(feature = "cuda")]
+        let backend = CudaBackend::new();
+        #[cfg(not(feature = "cuda"))]
+        let backend = CpuBackend::new();
+
+        // Read input data
+        let potential = read_f64_binary(&spec.potential_path)
+            .map_err(|e| DriverError::ConfigError(format!("failed to read potential: {}", e)))?;
+        let mass_inv = read_f64_binary(&spec.mass_inv_path)
+            .map_err(|e| DriverError::ConfigError(format!("failed to read mass_inv: {}", e)))?;
+        let vg = spec.vg_path.as_ref().map(|p| {
+            read_f64_binary(p)
+                .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
+        }).transpose()?;
+
+        let nx = spec.grid.nx;
+        let ny = spec.grid.ny;
+        let [lx, ly] = spec.domain_size;
+        let dx = lx / nx as f64;
+        let dy = ly / ny as f64;
+
+        // Build EAOperator
+        let mut builder = EAOperatorBuilder::new(backend.clone(), nx, ny)
+            .with_spacing(dx, dy)
+            .with_eta(spec.eta)
+            .with_potential(potential)
+            .with_mass_inv(mass_inv);
+
+        if let Some(vg_data) = vg {
+            builder = builder.with_vg(vg_data);
+        }
+
+        let mut operator = builder.build();
+
+        // Estimate spectral properties (15 power iterations)
+        let (lambda_max, v_min, spectral_spread) = operator.estimate_condition_number(15);
+
+        // Build adaptive FFT preconditioner (for display only)
+        let preconditioner = operator.build_preconditioner();
+        let precond_summary = preconditioner.format_summary();
+
+        // Decide whether to use preconditioner based on eigenvalue sign
+        // For negative eigenvalue problems (v_min < 0), the FFT preconditioner
+        // doesn't help and may hurt convergence. Skip it.
+        let use_preconditioner = v_min >= 0.0;
+        let precond_note = if use_preconditioner {
+            "(enabled)"
+        } else {
+            "(disabled for negative eigenvalue problem)"
+        };
+
+        // Print header with spectral info
+        println!("╭─────────────────────────────────────────────────╮");
+        println!("│      MPB2D Single EA Solve (with progress)     │");
+        println!("╰─────────────────────────────────────────────────╯");
+        println!();
+        println!("  Grid: {}×{}", spec.grid.nx, spec.grid.ny);
+        println!("  η: {:.4}", spec.eta);
+        println!("  n_bands: {}", spec.solve_config.n_bands);
+        println!("  max_iter: {}", spec.solve_config.max_iterations);
+        println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
+        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min, spectral_spread);
+        println!("  {} {}", precond_summary, precond_note);
+        println!();
+
+        let start_time = Instant::now();
+
+        // Create progress bar for iterations
+        let max_iter = spec.solve_config.max_iterations;
+        let pb = ProgressBar::new(max_iter as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} iter {pos:>4}/{len} │ trace={msg}")
+                .unwrap()
+                .progress_chars("█▓░"),
+        );
+
+        // Run the solve
+        // Use preconditioner only for positive eigenvalue problems
+        let solve_result = if use_preconditioner {
+            let mut precond = operator.build_preconditioner();
+            single_solve::solve_with_progress(
+                &mut operator,
+                Some(&mut precond),
+                &spec.solve_config,
+                |progress: &ProgressInfo| {
+                    pb.set_position((progress.iteration + 1) as u64);
+                    let trace_str = match progress.trace_rel_change {
+                        Some(change) if change < f64::INFINITY => {
+                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
+                        }
+                        _ => format!("{:.6}", progress.trace),
+                    };
+                    pb.set_message(trace_str);
+                },
+            )
+        } else {
+            // For negative eigenvalue problems, use solve without preconditioner
+            // (still get progress via the progress bar based on iterations)
+            single_solve::solve_with_progress(
+                &mut operator,
+                None,
+                &spec.solve_config,
+                |progress: &ProgressInfo| {
+                    pb.set_position((progress.iteration + 1) as u64);
+                    let trace_str = match progress.trace_rel_change {
+                        Some(change) if change < f64::INFINITY => {
+                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
+                        }
+                        _ => format!("{:.6}", progress.trace),
+                    };
+                    pb.set_message(trace_str);
+                },
+            )
+        };
+
+        pb.finish_and_clear();
+
+        let elapsed = start_time.elapsed();
+
+        // Print result summary
+        println!();
+        if solve_result.converged {
+            println!(
+                "✓ Converged in {} iterations ({:.2}s)",
+                solve_result.iterations,
+                elapsed.as_secs_f64()
+            );
+        } else {
+            println!(
+                "⚠ Did not converge after {} iterations ({:.2}s)",
+                solve_result.iterations,
+                elapsed.as_secs_f64()
+            );
+        }
+
+        println!();
+        println!("Eigenvalues:");
+        for (i, &ev) in solve_result.eigenvalues.iter().enumerate() {
+            println!("  band {:>2}: {:.10}", i + 1, ev);
+        }
+
+        // Setup output writer and write result
+        let output_writer = OutputWriter::new(&self.config.output, &self.jobs)
+            .map_err(|e| DriverError::OutputError(e.to_string()))?;
+        let mut output_writer = output_writer;
+
+        let job_result = JobResult {
+            index: expanded.index,
+            result: JobResultType::EA(EAJobResult {
+                eigenvalues: solve_result.eigenvalues,
+                eigenvectors: solve_result.eigenvectors,
+                grid_dims: [nx, ny],
+                n_iterations: solve_result.iterations,
+                converged: solve_result.converged,
+            }),
+            duration: elapsed,
+            notes: vec![],
+        };
+
+        output_writer
+            .write_result(expanded, &job_result)
+            .map_err(|e| DriverError::OutputError(e.to_string()))?;
+        output_writer
+            .finalize()
+            .map_err(|e| DriverError::OutputError(e.to_string()))?;
+
+        println!();
+        println!("Output written to: {}", self.config.output.directory.display());
+
+        Ok(DriverStats {
+            total_jobs: 1,
+            completed: 1,
+            failed: 0,
+            total_time: elapsed,
+            errors: vec![],
+            adaptive_summary: None,
+        })
+    }
+
+    /// Execute a single EA job with progress bar and channel output.
+    ///
+    /// This combines the detailed progress display with streaming/batch output.
+    fn run_single_ea_with_channel(&self, channel: OutputChannel) -> Result<DriverStats, DriverError> {
+        use mpb2d_core::drivers::single_solve;
+        use mpb2d_core::operators::EAOperatorBuilder;
+
+        let expanded = &self.jobs[0];
+        let spec = match &expanded.job_type {
+            ExpandedJobType::EA(s) => s,
+            _ => unreachable!("run_single_ea_with_channel called for non-EA job"),
+        };
+
+        // Select backend (no threading)
+        #[cfg(feature = "cuda")]
+        let backend = CudaBackend::new();
+        #[cfg(not(feature = "cuda"))]
+        let backend = CpuBackend::new();
+
+        // Read input data
+        let potential = read_f64_binary(&spec.potential_path)
+            .map_err(|e| DriverError::ConfigError(format!("failed to read potential: {}", e)))?;
+        let mass_inv = read_f64_binary(&spec.mass_inv_path)
+            .map_err(|e| DriverError::ConfigError(format!("failed to read mass_inv: {}", e)))?;
+        let vg = spec.vg_path.as_ref().map(|p| {
+            read_f64_binary(p)
+                .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
+        }).transpose()?;
+
+        let nx = spec.grid.nx;
+        let ny = spec.grid.ny;
+        let [lx, ly] = spec.domain_size;
+        let dx = lx / nx as f64;
+        let dy = ly / ny as f64;
+
+        // Build EAOperator
+        let mut builder = EAOperatorBuilder::new(backend.clone(), nx, ny)
+            .with_spacing(dx, dy)
+            .with_eta(spec.eta)
+            .with_potential(potential)
+            .with_mass_inv(mass_inv);
+
+        if let Some(vg_data) = vg {
+            builder = builder.with_vg(vg_data);
+        }
+
+        let mut operator = builder.build();
+
+        // Estimate spectral properties (15 power iterations)
+        let (lambda_max, v_min, spectral_spread) = operator.estimate_condition_number(15);
+
+        // Build adaptive FFT preconditioner (for display only)
+        let preconditioner = operator.build_preconditioner();
+        let precond_summary = preconditioner.format_summary();
+
+        // Decide whether to use preconditioner based on eigenvalue sign
+        // For negative eigenvalue problems (v_min < 0), the FFT preconditioner
+        // doesn't help and may hurt convergence. Skip it.
+        let use_preconditioner = v_min >= 0.0;
+        let precond_note = if use_preconditioner {
+            "(enabled)"
+        } else {
+            "(disabled for negative eigenvalue problem)"
+        };
+
+        // Print header with spectral info
+        println!("╭─────────────────────────────────────────────────╮");
+        println!("│      MPB2D Single EA Solve (with progress)     │");
+        println!("╰─────────────────────────────────────────────────╯");
+        println!();
+        println!("  Grid: {}×{}", spec.grid.nx, spec.grid.ny);
+        println!("  η: {:.4}", spec.eta);
+        println!("  n_bands: {}", spec.solve_config.n_bands);
+        println!("  max_iter: {}", spec.solve_config.max_iterations);
+        println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
+        println!("  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}", lambda_max, v_min, spectral_spread);
+        println!("  {} {}", precond_summary, precond_note);
+        println!();
+
+        let start_time = Instant::now();
+
+        // Create progress bar for iterations
+        let max_iter = spec.solve_config.max_iterations;
+        let pb = ProgressBar::new(max_iter as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} iter {pos:>4}/{len} │ trace={msg}")
+                .unwrap()
+                .progress_chars("█▓░"),
+        );
+
+        // Run the solve
+        // Use preconditioner only for positive eigenvalue problems
+        let solve_result = if use_preconditioner {
+            let mut precond = operator.build_preconditioner();
+            single_solve::solve_with_progress(
+                &mut operator,
+                Some(&mut precond),
+                &spec.solve_config,
+                |progress: &ProgressInfo| {
+                    pb.set_position((progress.iteration + 1) as u64);
+                    let trace_str = match progress.trace_rel_change {
+                        Some(change) if change < f64::INFINITY => {
+                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
+                        }
+                        _ => format!("{:.6}", progress.trace),
+                    };
+                    pb.set_message(trace_str);
+                },
+            )
+        } else {
+            // For negative eigenvalue problems, use solve without preconditioner
+            single_solve::solve_with_progress(
+                &mut operator,
+                None,
+                &spec.solve_config,
+                |progress: &ProgressInfo| {
+                    pb.set_position((progress.iteration + 1) as u64);
+                    let trace_str = match progress.trace_rel_change {
+                        Some(change) if change < f64::INFINITY => {
+                            format!("{:.6} (Δ={:.2e})", progress.trace, change)
+                        }
+                        _ => format!("{:.6}", progress.trace),
+                    };
+                    pb.set_message(trace_str);
+                },
+            )
+        };
+
+        pb.finish_and_clear();
+
+        let elapsed = start_time.elapsed();
+
+        // Print result summary
+        println!();
+        if solve_result.converged {
+            println!(
+                "✓ Converged in {} iterations ({:.2}s)",
+                solve_result.iterations,
+                elapsed.as_secs_f64()
+            );
+        } else {
+            println!(
+                "⚠ Did not converge after {} iterations ({:.2}s)",
+                solve_result.iterations,
+                elapsed.as_secs_f64()
+            );
+        }
+
+        // Create job result and send through channel
+        let job_result = JobResult {
+            index: expanded.index,
+            result: JobResultType::EA(EAJobResult {
+                eigenvalues: solve_result.eigenvalues,
+                eigenvectors: solve_result.eigenvectors,
+                grid_dims: [nx, ny],
+                n_iterations: solve_result.iterations,
+                converged: solve_result.converged,
+            }),
+            duration: elapsed,
+            notes: vec![],
+        };
+
+        // Send result through channel
+        let compact = CompactBandResult::from_job_result(expanded, &job_result);
+        if let Err(e) = channel.send(compact) {
+            error!("failed to send EA result: {}", e);
+        }
+
+        // Close channel and get stats
+        let _channel_stats = channel.close().map_err(|e| DriverError::OutputError(e.to_string()))?;
+
+        Ok(DriverStats {
+            total_jobs: 1,
+            completed: 1,
+            failed: 0,
+            total_time: elapsed,
+            errors: vec![],
+            adaptive_summary: None,
+        })
     }
 
     /// Perform a dry run: expand jobs and report statistics without executing.

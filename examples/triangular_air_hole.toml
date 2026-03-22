@@ -7,10 +7,10 @@ polarization = "TE"
 [geometry]
 eps_bg = 13.0
 
-# Triangular lattice with a = 1 (120° convention)
+# Triangular lattice with a = 1 (60° convention)
 [geometry.lattice]
 a1 = [1.0, 0.0]
-a2 = [-0.5, 0.8660254037844386]  # [-0.5, √3/2]
+a2 = [0.5, 0.8660254037844386]  # [0.5, √3/2] at 60° from a1
 
 # Single centered air hole
 [[geometry.atoms]]

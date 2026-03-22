@@ -62,7 +62,9 @@ use std::time::Instant;
 
 use crate::backend::SpectralBackend;
 use crate::diagnostics::{ConvergenceRun, ConvergenceStudy};
-use crate::eigensolver::{DiagnosticResult, Eigensolver, EigensolverConfig, EigensolverResult};
+use crate::eigensolver::{
+    DiagnosticResult, Eigensolver, EigensolverConfig, EigensolverResult, ProgressInfo,
+};
 use crate::field::Field2D;
 use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
@@ -317,6 +319,81 @@ where
     // Create and run the eigensolver
     let mut solver = Eigensolver::new(operator, config, preconditioner, None);
     let result: EigensolverResult = solver.solve();
+    let eigenvectors = solver.all_eigenvectors();
+
+    let elapsed = start_time.elapsed().as_secs_f64();
+
+    info!(
+        "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s",
+        label, job.n_bands, result.converged, result.iterations, elapsed
+    );
+
+    SingleSolveResult {
+        eigenvalues: result.eigenvalues,
+        eigenvectors,
+        iterations: result.iterations,
+        converged: result.converged,
+        elapsed_seconds: elapsed,
+        final_residuals: result.convergence.relative_residuals,
+    }
+}
+
+/// Solve a single eigenvalue problem with progress callbacks.
+///
+/// This variant calls `on_progress` after each LOBPCG iteration, enabling
+/// real-time progress displays (e.g., progress bars showing iteration count
+/// and trace convergence).
+///
+/// # Arguments
+///
+/// - `operator`: The linear operator (must implement [`LinearOperator`])
+/// - `preconditioner`: Optional preconditioner for faster convergence
+/// - `job`: Configuration for the solve
+/// - `on_progress`: Callback invoked after each iteration with [`ProgressInfo`]
+///
+/// # Returns
+///
+/// A [`SingleSolveResult`] containing eigenvalues, eigenvectors, and solve statistics.
+///
+/// # Example
+///
+/// ```ignore
+/// use mpb2d_core::drivers::single_solve::{solve_with_progress, SingleSolveJob};
+///
+/// let job = SingleSolveJob::new(8).with_tolerance(1e-10);
+/// let result = solve_with_progress(&mut operator, None, &job, |progress| {
+///     println!("{}", progress.format_compact());
+/// });
+/// ```
+pub fn solve_with_progress<'a, O, B, F>(
+    operator: &'a mut O,
+    preconditioner: Option<&'a mut dyn OperatorPreconditioner<B>>,
+    job: &SingleSolveJob,
+    on_progress: F,
+) -> SingleSolveResult
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+    F: FnMut(&ProgressInfo),
+{
+    let label = job.label.as_deref().unwrap_or("single_solve");
+
+    // Optional condition number estimation
+    if job.estimate_condition_number {
+        estimate_and_log_diagnostics(
+            operator,
+            preconditioner.is_some(),
+            job.power_iterations,
+            label,
+        );
+    }
+
+    let start_time = Instant::now();
+    let config = job.to_eigensolver_config();
+
+    // Create and run the eigensolver with progress callback
+    let mut solver = Eigensolver::new(operator, config, preconditioner, None);
+    let result: EigensolverResult = solver.solve_with_progress(on_progress);
     let eigenvectors = solver.all_eigenvectors();
 
     let elapsed = start_time.elapsed().as_secs_f64();

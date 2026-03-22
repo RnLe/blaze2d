@@ -60,5 +60,8 @@ pub use bandstructure::{
 pub use single_solve::{
     BatchSolveResult, OperatorDiagnostics, SingleSolveJob, SingleSolveResult,
     SingleSolveResultWithDiagnostics, create_convergence_study, solve, solve_with_diagnostics,
-    solve_with_warmstart, solve_with_warmstart_and_diagnostics,
+    solve_with_progress, solve_with_warmstart, solve_with_warmstart_and_diagnostics,
 };
+
+// Re-export ProgressInfo from eigensolver for use with solve_with_progress
+pub use crate::eigensolver::ProgressInfo;

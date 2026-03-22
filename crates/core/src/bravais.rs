@@ -16,12 +16,31 @@
 //! | Triangular  | a (lattice constant)            | C₆ᵥ      | Hexagonal honeycomb  |
 //! | Oblique     | a, b, α (angle between a₁, a₂) | C₂       | General lattice      |
 //!
-//! # Conventions
+//! # Conventions (Standard Crystallographic)
 //!
-//! - All lattice constants are normalized to a = 1 by default
+//! All lattice types follow standard crystallographic conventions:
+//!
 //! - First basis vector a₁ always points along the x-axis: a₁ = [a, 0]
 //! - Angles are measured counterclockwise from a₁ to a₂
-//! - For triangular lattices, we use the 120° convention (a₂ at -60°)
+//!
+//! ## Primitive Vectors
+//!
+//! | Type        | a₁           | a₂                        | Angle |
+//! |-------------|--------------|---------------------------|-------|
+//! | Square      | [a, 0]       | [0, a]                    | 90°   |
+//! | Rectangular | [a, 0]       | [0, b]                    | 90°   |
+//! | Triangular  | [a, 0]       | [a/2, a√3/2]              | 60°   |
+//! | Oblique     | [a, 0]       | [b·cos(α), b·sin(α)]      | α     |
+//!
+//! The triangular/hexagonal lattice uses the **60° convention** matching
+//! Setyawan-Curtarolo, SeeK-path, and MPB's Python interface.
+//!
+//! ## High-Symmetry Points (Triangular/Hexagonal)
+//!
+//! With the 60° convention, the Brillouin zone high-symmetry points are:
+//! - Γ = (0, 0)
+//! - M = (1/2, 0)
+//! - K = (1/3, 1/3)
 
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
@@ -54,8 +73,9 @@ pub enum LatticeType {
     /// Triangular (hexagonal) lattice with C₆ᵥ point group symmetry.
     ///
     /// - Both basis vectors have equal length: |a₁| = |a₂| = a
-    /// - Vectors at 120° angle (or equivalently 60° convention)
+    /// - Vectors at 60° angle: a₁ = [a, 0], a₂ = [a/2, a√3/2]
     /// - High-symmetry path: Γ → M → K → Γ
+    /// - High-symmetry points: M = (1/2, 0), K = (1/3, 1/3)
     Triangular,
 
     /// Oblique lattice with C₂ point group symmetry.
@@ -88,12 +108,15 @@ impl LatticeType {
     }
 
     /// Returns the conventional angle (in radians) between basis vectors.
+    ///
+    /// For triangular/hexagonal lattices, returns 60° (π/3) matching the
+    /// standard crystallographic convention: a₁ = [a, 0], a₂ = [a/2, a√3/2].
     pub fn conventional_angle(&self) -> Option<f64> {
         match self {
-            LatticeType::Square => Some(PI / 2.0),           // 90°
-            LatticeType::Rectangular => Some(PI / 2.0),      // 90°
-            LatticeType::Triangular => Some(2.0 * PI / 3.0), // 120°
-            LatticeType::Oblique => None,                    // Arbitrary
+            LatticeType::Square => Some(PI / 2.0),      // 90°
+            LatticeType::Rectangular => Some(PI / 2.0), // 90°
+            LatticeType::Triangular => Some(PI / 3.0),  // 60°
+            LatticeType::Oblique => None,               // Arbitrary
         }
     }
 }
@@ -216,9 +239,9 @@ impl LatticeParams {
 /// assert_eq!(rect.a1(), [1.0, 0.0]);
 /// assert_eq!(rect.a2(), [0.0, 2.0]);
 ///
-/// // Triangular lattice with a = 1
+/// // Triangular lattice with a = 1 (60° convention)
 /// let tri = BravaisLattice::triangular(1.0);
-/// // a2 is at 120° from a1
+/// // a₁ = [1, 0], a₂ = [0.5, √3/2] at 60° from a₁
 /// ```
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BravaisLattice {
@@ -307,12 +330,16 @@ impl BravaisLattice {
 
     /// Create a triangular (hexagonal) lattice with the given lattice constant.
     ///
-    /// The basis vectors are (using 120° convention):
+    /// The basis vectors use the standard 60° convention:
     /// - a₁ = [a, 0]
-    /// - a₂ = [-a/2, a√3/2]  (at 120° from a₁)
+    /// - a₂ = [a/2, a√3/2]  (at 60° from a₁)
     ///
-    /// This corresponds to the standard convention used by MPB and other
-    /// photonic crystal software.
+    /// This corresponds to the standard crystallographic convention used by
+    /// DFT databases (Setyawan-Curtarolo, SeeK-path) and matches MPB's Python
+    /// interface. The high-symmetry points in this convention are:
+    /// - Γ = (0, 0)
+    /// - M = (1/2, 0)
+    /// - K = (1/3, 1/3)
     ///
     /// # Arguments
     /// - `a`: Lattice constant (default: 1.0)
@@ -325,7 +352,7 @@ impl BravaisLattice {
         let height = (3.0_f64).sqrt() * 0.5 * a;
         Self {
             a1: [a, 0.0],
-            a2: [-half, height],
+            a2: [half, height],  // 60° convention: a₂ = [a/2, a√3/2]
             lattice_type: Some(LatticeType::Triangular),
         }
     }
@@ -588,7 +615,8 @@ fn infer_lattice_type(a1: [f64; 2], a2: [f64; 2], tol: f64) -> LatticeType {
     if is_orthogonal {
         return LatticeType::Rectangular;
     }
-    // Triangular: equal lengths and 60° or 120° angle (cos = ±0.5)
+    // Triangular: equal lengths and 60° angle (cos = 0.5)
+    // Note: cos = -0.5 (120°) also accepted for backward compatibility
     if is_equilateral && ((cos_angle - 0.5).abs() <= tol || (cos_angle + 0.5).abs() <= tol) {
         return LatticeType::Triangular;
     }
@@ -645,7 +673,8 @@ mod tests {
     fn triangular_lattice_construction() {
         let lat = BravaisLattice::triangular(1.0);
         assert_eq!(lat.a1(), [1.0, 0.0]);
-        assert!((lat.a2()[0] - (-0.5)).abs() < 1e-10);
+        // 60° convention: a₂ = [0.5, √3/2]
+        assert!((lat.a2()[0] - 0.5).abs() < 1e-10);
         assert!((lat.a2()[1] - (3.0_f64.sqrt() / 2.0)).abs() < 1e-10);
         assert_eq!(lat.lattice_type(), LatticeType::Triangular);
     }
@@ -696,9 +725,9 @@ mod tests {
         let rect = BravaisLattice::from_vectors([1.0, 0.0], [0.0, 2.0]);
         assert_eq!(rect.lattice_type(), LatticeType::Rectangular);
 
-        // Triangular-like vectors
+        // Triangular-like vectors (60° convention)
         let sqrt3_2 = 3.0_f64.sqrt() / 2.0;
-        let tri = BravaisLattice::from_vectors([1.0, 0.0], [-0.5, sqrt3_2]);
+        let tri = BravaisLattice::from_vectors([1.0, 0.0], [0.5, sqrt3_2]);
         assert_eq!(tri.lattice_type(), LatticeType::Triangular);
     }
 }

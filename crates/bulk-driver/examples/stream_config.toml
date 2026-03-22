@@ -77,9 +77,25 @@ eps_bg = 12.0
 # ============================================================================
 # [geometry.lattice] - Lattice Definition
 # ============================================================================
+#
+# LATTICE CONVENTIONS:
+#
+# Square:      a₁ = [a, 0], a₂ = [0, a]
+#              BZ path: Γ(0,0) → X(1/2,0) → M(1/2,1/2) → Γ(0,0)
+#
+# Rectangular: a₁ = [a, 0], a₂ = [0, b]
+#              BZ path: Γ(0,0) → X(1/2,0) → S(1/2,1/2) → Y(0,1/2) → Γ(0,0)
+#
+# Triangular/Hexagonal (60° convention):
+#              a₁ = [a, 0], a₂ = [a/2, a√3/2]
+#              This is the 60° convention where angle(a₁,a₂) = 60°
+#              BZ path: Γ(0,0) → M(1/2,0) → K(1/3,1/3) → Γ(0,0)
+#
+# See LATTICE_CONVENTIONS.md for full details.
 
 [geometry.lattice]
 # Lattice type preset: "square", "rectangular", "triangular", "hexagonal"
+# "triangular" and "hexagonal" are equivalent and use the 60° convention
 # Alternatively, specify explicit lattice vectors a1 and a2
 type = "square"
 
@@ -90,6 +106,9 @@ a = 1.0
 # b = 1.5
 
 # Explicit lattice vectors (override type preset)
+# For square:       a1 = [1.0, 0.0], a2 = [0.0, 1.0]
+# For triangular:   a1 = [1.0, 0.0], a2 = [0.5, 0.8660254037844386]  # 60° convention
+# For rectangular:  a1 = [1.0, 0.0], a2 = [0.0, 1.5]
 # a1 = [1.0, 0.0]
 # a2 = [0.0, 1.0]
 
@@ -143,13 +162,19 @@ ly = 1.0
 # ============================================================================
 # Defines the Brillouin zone path for band structure calculation.
 # This is ignored if k_path is specified at the top level.
+#
+# HIGH-SYMMETRY POINTS (fractional coordinates):
+#
+# Square:      Γ=(0,0), X=(1/2,0), M=(1/2,1/2)
+# Rectangular: Γ=(0,0), X=(1/2,0), S=(1/2,1/2), Y=(0,1/2)
+# Hex/Tri:     Γ=(0,0), M=(1/2,0), K=(1/3,1/3) [60° convention]
 
 [path]
 # Path preset: "square", "rectangular", "hexagonal", "triangular"
 # Standard high-symmetry paths:
 #   Square:      Γ → X → M → Γ
 #   Rectangular: Γ → X → S → Y → Γ
-#   Hexagonal:   Γ → M → K → Γ
+#   Hexagonal:   Γ → M → K → Γ  (uses 60° lattice convention)
 preset = "square"
 
 # Number of k-points per path segment

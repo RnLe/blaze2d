@@ -38,7 +38,7 @@ impl Lattice2D {
         let h = (3.0f64).sqrt() * 0.5 * a;
         Self {
             a1: [a, 0.0],
-            a2: [-half, h],
+            a2: [half, h],  // 60° convention: a₂ = [a/2, a√3/2]
         }
     }
 

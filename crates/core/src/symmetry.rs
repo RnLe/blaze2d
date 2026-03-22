@@ -162,12 +162,30 @@ pub fn standard_path(
 }
 
 /// Standard k-path for square lattice: Γ → X → M → Γ
+///
+/// High-symmetry points (fractional coordinates):
+/// - Γ = (0, 0) - zone center
+/// - X = (1/2, 0) - zone face center  
+/// - M = (1/2, 1/2) - zone corner
 pub const SQUARE_GXMG: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.0]];
 
-/// Standard k-path for hexagonal lattice: Γ → M → K → Γ
+/// Standard k-path for hexagonal/triangular lattice: Γ → M → K → Γ
+///
+/// Uses the 60° lattice convention: a₁ = [a, 0], a₂ = [a/2, a√3/2]
+///
+/// High-symmetry points (fractional coordinates):
+/// - Γ = (0, 0) - zone center
+/// - M = (1/2, 0) - zone edge midpoint
+/// - K = (1/3, 1/3) - zone corner (Dirac point)
 pub const HEX_GMK: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [1.0 / 3.0, 1.0 / 3.0], [0.0, 0.0]];
 
 /// Standard k-path for rectangular lattice: Γ → X → S → Y → Γ
+///
+/// High-symmetry points (fractional coordinates):
+/// - Γ = (0, 0) - zone center
+/// - X = (1/2, 0) - face center along kₓ
+/// - S = (1/2, 1/2) - zone corner
+/// - Y = (0, 1/2) - face center along kᵧ
 pub const RECT_GXSYG: [[f64; 2]; 5] = [
     [0.0, 0.0], // Γ
     [0.5, 0.0], // X

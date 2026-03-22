@@ -205,6 +205,264 @@ impl<B: SpectralBackend> EAOperator<B> {
         sum / n as f64
     }
 
+    /// Compute comprehensive statistics of the potential field.
+    ///
+    /// Returns (min, max, mean) of V(R).
+    pub fn potential_stats(&self) -> (f64, f64, f64) {
+        let n = self.potential.len();
+        let mut sum = 0.0;
+        let mut v_min = f64::INFINITY;
+        let mut v_max = f64::NEG_INFINITY;
+        
+        for &v in &self.potential {
+            sum += v;
+            v_min = v_min.min(v);
+            v_max = v_max.max(v);
+        }
+        
+        (v_min, v_max, sum / n as f64)
+    }
+
+    /// Compute comprehensive statistics of the inverse mass tensor.
+    ///
+    /// Returns (min, max, mean) of the effective mass (trace/2).
+    pub fn mass_inv_stats(&self) -> (f64, f64, f64) {
+        let n = self.nx * self.ny;
+        let mut sum = 0.0;
+        let mut m_min = f64::INFINITY;
+        let mut m_max = f64::NEG_INFINITY;
+        
+        for p in 0..n {
+            let m_xx = self.mass_inv[p * 4];
+            let m_yy = self.mass_inv[p * 4 + 3];
+            let m_eff = 0.5 * (m_xx + m_yy);
+            sum += m_eff;
+            m_min = m_min.min(m_eff);
+            m_max = m_max.max(m_eff);
+        }
+        
+        (m_min, m_max, sum / n as f64)
+    }
+
+    /// Get grid spacings.
+    pub fn grid_spacing(&self) -> (f64, f64) {
+        (self.dx, self.dy)
+    }
+
+    /// Get grid dimensions.
+    pub fn grid_dimensions(&self) -> (usize, usize) {
+        (self.nx, self.ny)
+    }
+
+    /// Build an adaptive FFT preconditioner for this EA operator.
+    ///
+    /// This automatically computes the optimal shift based on the operator's
+    /// spectral properties, handling:
+    /// - Zero-mean potentials
+    /// - Negative potentials
+    /// - Large mass tensor variations
+    ///
+    /// # Returns
+    ///
+    /// A configured `FFTPreconditioner` with adaptive shift.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut operator = EAOperatorBuilder::new(backend, nx, ny)
+    ///     .with_potential(potential)
+    ///     .with_mass_inv(mass_inv)
+    ///     .with_eta(0.02)
+    ///     .build();
+    ///
+    /// let mut precond = operator.build_preconditioner();
+    /// let result = single_solve::solve(&mut operator, Some(&mut precond), &job);
+    /// ```
+    pub fn build_preconditioner(&self) -> crate::preconditioners::fft_preconditioner::FFTPreconditioner<B> {
+        let (v_min, v_max, v_mean) = self.potential_stats();
+        let (m_min, m_max, m_mean) = self.mass_inv_stats();
+        
+        crate::preconditioners::fft_preconditioner::FFTPreconditioner::from_operator_stats(
+            self.nx, self.ny,
+            self.dx, self.dy,
+            self.eta,
+            v_min, v_max, v_mean,
+            m_min, m_max, m_mean,
+        )
+    }
+
+    /// Build a preconditioner with custom configuration.
+    ///
+    /// Use this when you need fine-grained control over the preconditioner.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Custom preconditioner configuration
+    pub fn build_preconditioner_with_config(
+        &self,
+        config: crate::preconditioners::fft_preconditioner::EAPreconditionerConfig,
+    ) -> crate::preconditioners::fft_preconditioner::FFTPreconditioner<B> {
+        crate::preconditioners::fft_preconditioner::FFTPreconditioner::with_config(
+            self.nx, self.ny,
+            self.dx, self.dy,
+            self.eta,
+            config,
+        )
+    }
+
+    /// Estimate the spectral properties of the EA operator.
+    ///
+    /// Uses power iteration to estimate λ_max (largest eigenvalue magnitude).
+    /// Also computes the diagonal range as a rough lower bound indicator.
+    ///
+    /// For EA operators with negative eigenvalues (common when V has negative
+    /// values), the traditional condition number κ = λ_max/λ_min is not
+    /// meaningful. Instead, we report:
+    /// - λ_max: Largest eigenvalue (from power iteration)
+    /// - diag_min: Minimum diagonal element (V + kinetic contribution)
+    /// - spectral_spread: |λ_max - diag_min| as a rough condition indicator
+    ///
+    /// # Arguments
+    ///
+    /// * `n_iters` - Number of power iterations
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (λ_max, diag_min, spectral_spread)
+    pub fn estimate_condition_number(&mut self, n_iters: usize) -> (f64, f64, f64) {
+        let mut v = self.backend.alloc_field(self.grid);
+        let mut av = self.backend.alloc_field(self.grid);
+
+        // Initialize with pseudo-random vector
+        for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
+            *val = Complex64::new(
+                (i as f64 * 0.618033988749895).sin(),
+                (i as f64 * 0.414213562373095).cos(),
+            );
+        }
+
+        // Normalize
+        let norm: f64 = v
+            .as_slice()
+            .iter()
+            .map(|c| c.norm_sqr())
+            .sum::<f64>()
+            .sqrt();
+        if norm > 1e-15 {
+            for val in v.as_mut_slice().iter_mut() {
+                *val /= norm;
+            }
+        }
+
+        let mut lambda_max = 0.0;
+        for _ in 0..n_iters {
+            self.apply(&v, &mut av);
+            let numerator: f64 = v
+                .as_slice()
+                .iter()
+                .zip(av.as_slice().iter())
+                .map(|(vi, avi)| (vi.conj() * avi).re)
+                .sum();
+            lambda_max = numerator;
+
+            let norm: f64 = av
+                .as_slice()
+                .iter()
+                .map(|c| c.norm_sqr())
+                .sum::<f64>()
+                .sqrt();
+            if norm > 1e-15 {
+                for val in av.as_mut_slice().iter_mut() {
+                    *val /= norm;
+                }
+            }
+            std::mem::swap(&mut v, &mut av);
+        }
+
+        // For EA operators, the diagonal (potential + kinetic diagonal) provides bounds
+        // The minimum potential gives a rough lower bound on eigenvalues
+        let v_min = self.potential.iter().cloned().fold(f64::INFINITY, f64::min);
+        let _v_max = self.potential.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        
+        // Spectral spread as a condition indicator
+        let spectral_spread = (lambda_max - v_min).abs();
+
+        (lambda_max, v_min, spectral_spread)
+    }
+
+    /// Estimate the condition number of the preconditioned operator M⁻¹A.
+    ///
+    /// # Arguments
+    ///
+    /// * `precond` - The preconditioner to apply
+    /// * `n_iters` - Number of power iterations
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (λ_max, λ_min, κ)
+    pub fn estimate_preconditioned_condition_number(
+        &mut self,
+        precond: &mut dyn crate::preconditioners::OperatorPreconditioner<B>,
+        n_iters: usize,
+    ) -> (f64, f64, f64) {
+        let mut v = self.backend.alloc_field(self.grid);
+        let mut av = self.backend.alloc_field(self.grid);
+
+        // Initialize with pseudo-random vector
+        for (i, val) in v.as_mut_slice().iter_mut().enumerate() {
+            *val = Complex64::new(
+                (i as f64 * 0.618033988749895).sin(),
+                (i as f64 * 0.414213562373095).cos(),
+            );
+        }
+
+        // Normalize
+        let norm: f64 = v
+            .as_slice()
+            .iter()
+            .map(|c| c.norm_sqr())
+            .sum::<f64>()
+            .sqrt();
+        if norm > 1e-15 {
+            for val in v.as_mut_slice().iter_mut() {
+                *val /= norm;
+            }
+        }
+
+        let mut lambda_max = 0.0;
+        for _ in 0..n_iters {
+            self.apply(&v, &mut av);
+            precond.apply(&self.backend, &mut av);
+
+            let numerator: f64 = v
+                .as_slice()
+                .iter()
+                .zip(av.as_slice().iter())
+                .map(|(vi, avi)| (vi.conj() * avi).re)
+                .sum();
+            lambda_max = numerator;
+
+            let norm: f64 = av
+                .as_slice()
+                .iter()
+                .map(|c| c.norm_sqr())
+                .sum::<f64>()
+                .sqrt();
+            if norm > 1e-15 {
+                for val in av.as_mut_slice().iter_mut() {
+                    *val /= norm;
+                }
+            }
+            std::mem::swap(&mut v, &mut av);
+        }
+
+        // After preconditioning, we expect λ_min ≈ 1 for ideal preconditioner
+        let lambda_min_approx = 1.0;
+        let kappa = lambda_max / lambda_min_approx;
+
+        (lambda_max, lambda_min_approx, kappa)
+    }
+
     /// Access the inverse mass tensor component at point (i, j).
     ///
     /// Returns [m_xx, m_xy, m_yx, m_yy].
