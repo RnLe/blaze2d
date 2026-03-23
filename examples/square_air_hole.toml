@@ -1,11 +1,13 @@
-# Example configuration for a square lattice of air holes
+# Square lattice with air hole
+
+polarization = "TM"
 
 [geometry]
 eps_bg = 12.0
 
 [geometry.lattice]
-a1 = [1.0, 0.0]
-a2 = [0.0, 1.0]
+type = "square"
+a = 1.0
 
 [[geometry.atoms]]
 pos = [0.5, 0.5]
@@ -17,8 +19,6 @@ nx = 32
 ny = 32
 lx = 1.0
 ly = 1.0
-
-polarization = "TM"
 
 [path]
 preset = "square"

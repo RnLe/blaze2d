@@ -1,370 +1,29 @@
 //! Job expansion from parameter ranges.
 //!
-//! This module takes a `BulkConfig` and expands all parameter ranges into
-//! a list of individual `ExpandedJob` configurations ready for execution.
+//! This module re-exports the core expansion logic from `mpb2d_bulk_driver_core`
+//! and provides any native-specific extensions.
+//!
+//! # Expansion Modes
+//!
+//! ## Ordered Sweeps (New Format)
+//!
+//! When using `[[sweeps]]` arrays, jobs are expanded in **TOML order**.
+//! The first sweep is the outermost loop, the last is the innermost.
+//!
+//! ## Legacy Ranges
+//!
+//! The old `[ranges]` format uses a hardcoded loop order:
+//! eps_bg → resolution → polarization → lattice_type → atoms
 //!
 //! # Solver Types
 //!
-//! The expansion logic differs based on solver type:
-//!
 //! - **Maxwell**: Expands over eps_bg, resolution, polarization, lattice_type, atoms.
-//!   Each expanded job includes a full `BandStructureJob`.
-//!
 //! - **EA**: Currently produces a single job (parameter sweeps TBD).
-//!   Each expanded job includes a `SingleSolveJob` configuration.
 
-use mpb2d_core::{
-    bandstructure::BandStructureJob,
-    geometry::{BasisAtom, Geometry2D},
-    grid::Grid2D,
-    lattice::Lattice2D,
-    polarization::Polarization,
-    symmetry::{self, PathType},
-    drivers::single_solve::SingleSolveJob,
-};
-
-use crate::config::{AtomRanges, BaseAtom, BulkConfig, LatticeTypeSpec, SolverType};
-
-// Re-export core types
+// Re-export everything from core
 pub use mpb2d_bulk_driver_core::expansion::{
-    AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams,
+    expand_jobs, AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams,
 };
-
-// ============================================================================
-// Expansion Logic
-// ============================================================================
-
-/// Expand a bulk configuration into individual jobs.
-///
-/// This function dispatches based on solver type:
-/// - Maxwell: iterates over all parameter range combinations
-/// - EA: currently produces a single job (parameter sweeps TBD)
-pub fn expand_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
-    match config.solver_type() {
-        SolverType::Maxwell => expand_maxwell_jobs(config),
-        SolverType::EA => expand_ea_jobs(config),
-    }
-}
-
-/// Expand Maxwell solver jobs over all parameter combinations.
-fn expand_maxwell_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
-    let ranges = &config.ranges;
-
-    // Geometry is required for Maxwell
-    let geometry = config.geometry.as_ref()
-        .expect("Maxwell solver requires geometry");
-
-    // Collect all parameter axes
-    let eps_bg_values = ranges
-        .eps_bg
-        .as_ref()
-        .map(|r| r.values())
-        .unwrap_or_else(|| vec![geometry.eps_bg]);
-
-    let resolution_values: Vec<usize> = ranges
-        .resolution
-        .as_ref()
-        .map(|r| r.values().into_iter().map(|v| v.round() as usize).collect())
-        .unwrap_or_else(|| vec![config.grid.nx]);
-
-    let polarization_values = ranges
-        .polarization
-        .clone()
-        .unwrap_or_else(|| vec![config.polarization]);
-
-    let lattice_type_values = ranges.lattice_type.clone();
-
-    // Collect atom parameter axes
-    let atom_configs = collect_atom_configs(config);
-
-    // Calculate total combinations
-    let total = eps_bg_values.len()
-        * resolution_values.len()
-        * polarization_values.len()
-        * lattice_type_values.as_ref().map(|v| v.len()).unwrap_or(1)
-        * atom_configs.iter().map(|a| a.len()).product::<usize>().max(1);
-
-    let mut jobs = Vec::with_capacity(total);
-    let mut index = 0;
-
-    // Iterate over all combinations
-    for &eps_bg in &eps_bg_values {
-        for &resolution in &resolution_values {
-            for &pol in &polarization_values {
-                let lattice_iter: Box<dyn Iterator<Item = Option<&LatticeTypeSpec>>> =
-                    if let Some(ref types) = lattice_type_values {
-                        Box::new(types.iter().map(Some))
-                    } else {
-                        Box::new(std::iter::once(None))
-                    };
-
-                for lattice_type in lattice_iter {
-                    // Iterate over atom parameter combinations
-                    for atom_combo in atom_combinations(&atom_configs) {
-                        let job = create_maxwell_job(
-                            config,
-                            eps_bg,
-                            resolution,
-                            pol,
-                            lattice_type,
-                            &atom_combo,
-                        );
-
-                        let params = JobParams {
-                            eps_bg,
-                            resolution,
-                            polarization: pol,
-                            lattice_type: lattice_type.map(|lt| lt.to_string()),
-                            atoms: atom_combo
-                                .iter()
-                                .enumerate()
-                                .map(|(i, a)| AtomParams {
-                                    index: i,
-                                    pos: a.pos,
-                                    radius: a.radius,
-                                    eps_inside: a.eps_inside,
-                                })
-                                .collect(),
-                        };
-
-                        jobs.push(ExpandedJob {
-                            index,
-                            job_type: ExpandedJobType::Maxwell(job),
-                            params,
-                        });
-                        index += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    jobs
-}
-
-/// Expand EA solver jobs.
-///
-/// Currently produces a single job since EA doesn't have parameter sweeps yet.
-/// Future: support sweeps over eta, domain_size, etc.
-fn expand_ea_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
-    let ea = &config.ea;
-
-    // Build SingleSolveJob from eigensolver config
-    let solve_config = SingleSolveJob::new(config.eigensolver.n_bands)
-        .with_tolerance(config.eigensolver.tol)
-        .with_max_iterations(config.eigensolver.max_iter);
-
-    let job_spec = EAJobSpec {
-        grid: config.grid.clone(),
-        solve_config,
-        eta: ea.eta,
-        domain_size: ea.domain_size,
-        potential_path: ea.potential.clone().expect("potential path required"),
-        mass_inv_path: ea.mass_inv.clone().expect("mass_inv path required"),
-        vg_path: ea.vg.clone(),
-    };
-
-    // EA parameters for output labeling
-    let params = JobParams {
-        eps_bg: 0.0,  // Not used for EA
-        resolution: config.grid.nx,
-        polarization: Polarization::TM,  // Not used for EA
-        lattice_type: None,
-        atoms: vec![],
-    };
-
-    vec![ExpandedJob {
-        index: 0,
-        job_type: ExpandedJobType::EA(job_spec),
-        params,
-    }]
-}
-
-/// Collect possible configurations for each atom.
-fn collect_atom_configs(config: &BulkConfig) -> Vec<Vec<BaseAtom>> {
-    let geometry = match &config.geometry {
-        Some(g) => g,
-        None => return vec![vec![]],
-    };
-    
-    let base_atoms = &geometry.atoms;
-    let atom_ranges = &config.ranges.atoms;
-
-    if base_atoms.is_empty() {
-        return vec![vec![]];
-    }
-
-    base_atoms
-        .iter()
-        .enumerate()
-        .map(|(i, base)| {
-            let ranges = atom_ranges.get(i);
-            expand_atom_params(base, ranges)
-        })
-        .collect()
-}
-
-/// Expand a single atom's parameters based on ranges.
-fn expand_atom_params(base: &BaseAtom, ranges: Option<&AtomRanges>) -> Vec<BaseAtom> {
-    let ranges = match ranges {
-        Some(r) => r,
-        None => return vec![base.clone()],
-    };
-
-    let radius_values = ranges
-        .radius
-        .as_ref()
-        .map(|r| r.values())
-        .unwrap_or_else(|| vec![base.radius]);
-
-    let pos_x_values = ranges
-        .pos_x
-        .as_ref()
-        .map(|r| r.values())
-        .unwrap_or_else(|| vec![base.pos[0]]);
-
-    let pos_y_values = ranges
-        .pos_y
-        .as_ref()
-        .map(|r| r.values())
-        .unwrap_or_else(|| vec![base.pos[1]]);
-
-    let eps_values = ranges
-        .eps_inside
-        .as_ref()
-        .map(|r| r.values())
-        .unwrap_or_else(|| vec![base.eps_inside]);
-
-    let mut atoms = Vec::new();
-
-    for &radius in &radius_values {
-        for &pos_x in &pos_x_values {
-            for &pos_y in &pos_y_values {
-                for &eps in &eps_values {
-                    atoms.push(BaseAtom {
-                        pos: [pos_x, pos_y],
-                        radius,
-                        eps_inside: eps,
-                    });
-                }
-            }
-        }
-    }
-
-    atoms
-}
-
-/// Generate all combinations of atom configurations.
-fn atom_combinations(atom_configs: &[Vec<BaseAtom>]) -> Vec<Vec<BaseAtom>> {
-    if atom_configs.is_empty() {
-        return vec![vec![]];
-    }
-
-    let mut result = vec![vec![]];
-
-    for configs in atom_configs {
-        let mut new_result = Vec::new();
-        for existing in &result {
-            for config in configs {
-                let mut combo = existing.clone();
-                combo.push(config.clone());
-                new_result.push(combo);
-            }
-        }
-        result = new_result;
-    }
-
-    result
-}
-
-/// Create a BandStructureJob from resolved parameters.
-fn create_maxwell_job(
-    config: &BulkConfig,
-    eps_bg: f64,
-    resolution: usize,
-    polarization: Polarization,
-    lattice_type: Option<&LatticeTypeSpec>,
-    atoms: &[BaseAtom],
-) -> BandStructureJob {
-    let geometry = config.geometry.as_ref()
-        .expect("geometry required for Maxwell solver");
-    
-    // Build lattice
-    let lattice = build_lattice(&geometry.lattice, lattice_type);
-
-    // Build atoms
-    let basis_atoms: Vec<BasisAtom> = atoms
-        .iter()
-        .map(|a| BasisAtom {
-            pos: a.pos,
-            radius: a.radius,
-            eps_inside: a.eps_inside,
-        })
-        .collect();
-
-    // Build geometry
-    let geometry = Geometry2D {
-        lattice,
-        eps_bg,
-        atoms: basis_atoms,
-    };
-
-    // Build grid
-    let grid = Grid2D::new(resolution, resolution, config.grid.lx, config.grid.ly);
-
-    // Build k-path
-    let k_path = if !config.k_path.is_empty() {
-        config.k_path.clone()
-    } else if let Some(ref spec) = config.path {
-        // Use path preset with appropriate mapping for lattice type
-        let path_type = match spec.preset {
-            mpb2d_core::io::PathPreset::Square => PathType::Square,
-            mpb2d_core::io::PathPreset::Hexagonal | mpb2d_core::io::PathPreset::Triangular => {
-                PathType::Hexagonal
-            }
-            mpb2d_core::io::PathPreset::Rectangular => {
-                PathType::Custom(mpb2d_core::brillouin::BrillouinPath::Rectangular.raw_k_points())
-            }
-        };
-        symmetry::standard_path(&geometry.lattice, path_type, spec.segments_per_leg)
-    } else {
-        // Default: use square path
-        symmetry::standard_path(&geometry.lattice, PathType::Square, 12)
-    };
-
-    BandStructureJob {
-        geom: geometry,
-        grid,
-        pol: polarization,
-        k_path,
-        eigensolver: config.eigensolver.clone(),
-        dielectric: config.dielectric.clone(),
-    }
-}
-
-/// Build a Lattice2D from base configuration and optional type override.
-fn build_lattice(
-    base: &crate::config::BaseLattice,
-    type_override: Option<&LatticeTypeSpec>,
-) -> Lattice2D {
-    // If explicit vectors are given, use them
-    if let (Some(a1), Some(a2)) = (base.a1, base.a2) {
-        return Lattice2D::oblique(a1, a2);
-    }
-
-    // Determine lattice type
-    let lattice_type = type_override
-        .or(base.lattice_type.as_ref())
-        .unwrap_or(&LatticeTypeSpec::Square);
-
-    match lattice_type {
-        LatticeTypeSpec::Square => Lattice2D::square(base.a),
-        LatticeTypeSpec::Rectangular => {
-            Lattice2D::rectangular(base.a, base.b.unwrap_or(base.a * 1.5))
-        }
-        LatticeTypeSpec::Triangular | LatticeTypeSpec::Hexagonal => Lattice2D::hexagonal(base.a),
-    }
-}
 
 // ============================================================================
 // Tests
@@ -373,14 +32,21 @@ fn build_lattice(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BaseGeometry, BulkSection, OutputConfig, ParameterRange, RangeSpec, SolverSection, EAConfig};
+    use crate::config::{
+        BaseAtom, BaseGeometry, BulkSection, DefaultsConfig, EAConfig, LatticeTypeSpec,
+        OutputConfig, ParameterRange, RangeSpec, SolverSection, SolverType, SweepSpec,
+    };
+    use mpb2d_core::grid::Grid2D;
+    use mpb2d_core::polarization::Polarization;
     use mpb2d_core::{dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec};
 
-    fn make_test_config() -> BulkConfig {
-        BulkConfig {
+    fn make_test_config() -> crate::config::BulkConfig {
+        crate::config::BulkConfig {
             bulk: BulkSection::default(),
-            solver: SolverSection::default(),  // Maxwell by default
+            solver: SolverSection::default(),
             ea: EAConfig::default(),
+            sweeps: vec![],
+            defaults: DefaultsConfig::default(),
             geometry: Some(BaseGeometry {
                 eps_bg: 12.0,
                 lattice: crate::config::BaseLattice {
@@ -420,7 +86,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_eps_range() {
+    fn expand_eps_range_legacy() {
         let mut config = make_test_config();
         config.ranges.eps_bg = Some(RangeSpec {
             min: 10.0,
@@ -432,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_multiple_ranges() {
+    fn expand_multiple_ranges_legacy() {
         let mut config = make_test_config();
         config.ranges.eps_bg = Some(RangeSpec {
             min: 10.0,
@@ -445,10 +111,47 @@ mod tests {
     }
 
     #[test]
+    fn expand_ordered_sweeps() {
+        let mut config = make_test_config();
+
+        // Define sweeps: radius (outer) -> eps_bg (inner)
+        config.sweeps = vec![
+            SweepSpec {
+                parameter: "atom0.radius".to_string(),
+                min: Some(0.2),
+                max: Some(0.3),
+                step: Some(0.1),
+                values: None,
+            },
+            SweepSpec {
+                parameter: "eps_bg".to_string(),
+                min: Some(10.0),
+                max: Some(12.0),
+                step: Some(1.0),
+                values: None,
+            },
+        ];
+
+        let jobs = expand_jobs(&config);
+
+        // Should have 2 radius * 3 eps = 6 jobs
+        assert_eq!(jobs.len(), 6);
+
+        // Verify order: radius is outer loop, eps is inner
+        let eps = 1e-9;
+
+        assert!((jobs[0].params.atoms[0].radius - 0.2).abs() < eps);
+        assert!((jobs[0].params.eps_bg - 10.0).abs() < eps);
+
+        assert!((jobs[3].params.atoms[0].radius - 0.3).abs() < eps);
+        assert!((jobs[3].params.eps_bg - 10.0).abs() < eps);
+    }
+
+    #[test]
     fn expand_ea_single_job() {
         use std::path::PathBuf;
-        
-        let config = BulkConfig {
+
+        let config = crate::config::BulkConfig {
             bulk: BulkSection::default(),
             solver: SolverSection {
                 solver_type: SolverType::EA,
@@ -461,6 +164,8 @@ mod tests {
                 domain_size: [10.0, 10.0],
                 periodic: true,
             },
+            sweeps: vec![],
+            defaults: DefaultsConfig::default(),
             geometry: None,
             grid: Grid2D::new(64, 64, 10.0, 10.0),
             polarization: Polarization::TM,
@@ -479,7 +184,7 @@ mod tests {
 
         let jobs = expand_jobs(&config);
         assert_eq!(jobs.len(), 1);
-        
+
         match &jobs[0].job_type {
             ExpandedJobType::EA(spec) => {
                 assert_eq!(spec.eta, 0.5);

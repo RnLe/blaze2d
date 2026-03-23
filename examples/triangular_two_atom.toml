@@ -1,37 +1,27 @@
 # Triangular lattice with two-atom basis
-# Demonstrates multi-atom basis: two rods with different epsilon values
-# 
-# Lattice: Triangular (a1 = [1,0], a2 = [0.5, sqrt(3)/2])
-# Atom 1: r/a = 0.3 at center (0.5, 0.5), eps = 12
-# Atom 2: r/a = 0.3 shifted down by (0, -0.25) → (0.5, 0.25), eps = 6
-#
-# Atoms are painted in order: later atoms overwrite earlier ones at overlaps
 
-polarization = "TM"
+polarization = "TE"
 
 [geometry]
-eps_bg = 1.0  # Air background
+eps_bg = 12.0
 
 [geometry.lattice]
-a1 = [1.0, 0.0]
-a2 = [0.5, 0.8660254037844386]  # 60° angle (sqrt(3)/2 ≈ 0.866)
+type = "triangular"
+a = 1.0
 
 [[geometry.atoms]]
-# First atom: high-epsilon rod at unit cell center
-pos = [0.5, 0.5]
-radius = 0.3
-eps_inside = 12.0
+pos = [0.0, 0.0]
+radius = 0.15
+eps_inside = 1.0
 
 [[geometry.atoms]]
-# Second atom: medium-epsilon rod shifted down
-# Offset vector in fractional coordinates: (0, -0.25)
-pos = [0.5, 0.25]
-radius = 0.3
-eps_inside = 6.0
+pos = [0.33, 0.33]
+radius = 0.15
+eps_inside = 1.0
 
 [grid]
-nx = 64
-ny = 64
+nx = 48
+ny = 48
 lx = 1.0
 ly = 1.0
 
@@ -40,6 +30,6 @@ preset = "triangular"
 segments_per_leg = 12
 
 [eigensolver]
-n_bands = 8
+n_bands = 10
 max_iter = 200
 tol = 1e-6

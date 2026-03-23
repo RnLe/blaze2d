@@ -1,11 +1,37 @@
-# ==============================================================================
-# Large Stress Test Configuration
-# ==============================================================================
-# This file is for stress testing the adaptive thread manager.
-# Total configurations: 5×5×5×2 = 250 jobs
+# Stress test: 250 jobs for adaptive thread manager testing
+# 2 pol × 5 atom0.radius × 5 atom1.radius × 5 atom1.pos_x = 250 jobs
 
 [bulk]
-threads = 4  # Will be overridden by CLI --threads -1
+threads = 4
+
+[solver]
+type = "maxwell"
+
+[defaults]
+resolution = 32
+polarization = "TM"
+
+[[sweeps]]
+parameter = "polarization"
+values = ["TM", "TE"]
+
+[[sweeps]]
+parameter = "atom0.radius"
+min = 0.15
+max = 0.35
+step = 0.05
+
+[[sweeps]]
+parameter = "atom1.radius"
+min = 0.10
+max = 0.30
+step = 0.05
+
+[[sweeps]]
+parameter = "atom1.pos_x"
+min = 0.60
+max = 0.80
+step = 0.05
 
 [geometry]
 eps_bg = 12.0
@@ -27,8 +53,8 @@ eps_inside = 1.0
 [grid]
 nx = 32
 ny = 32
-
-polarization = "TM"
+lx = 1.0
+ly = 1.0
 
 [path]
 preset = "square"
@@ -38,27 +64,6 @@ segments_per_leg = 5
 n_bands = 4
 max_iter = 100
 tol = 1e-5
-
-[dielectric.smoothing]
-mesh_size = 4
-
-# ============================================================================
-# Parameter Ranges (Cartesian product)
-# ============================================================================
-
-[ranges]
-polarization = ["TM", "TE"]
-
-[[ranges.atoms]]
-radius = { min = 0.15, max = 0.35, step = 0.05 }  # 5 values
-
-[[ranges.atoms]]
-radius = { min = 0.10, max = 0.30, step = 0.05 }  # 5 values
-pos_x = { min = 0.60, max = 0.80, step = 0.05 }   # 5 values
-
-# ============================================================================
-# Output
-# ============================================================================
 
 [output]
 mode = "full"

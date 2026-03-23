@@ -1,348 +1,109 @@
 # ============================================================================
-# MPB2D Bulk Driver Configuration - Streaming/Selective Mode Example
+# MPB2D Bulk Driver - Streaming Mode Example
 # ============================================================================
 #
-# This configuration file demonstrates the STREAM and SELECTIVE modes for
-# real-time band structure calculations, optimized for WASM and Python consumers.
+# Demonstrates real-time streaming output for Python/WASM consumers.
+# Results are emitted as computed, enabling live plotting and progressive UI.
 #
-# IMPORTANT: Fields that are NOT under any [section] must appear at the top
-# of the file, before any section headers. Otherwise, TOML will assign them
-# to the preceding section.
-#
+# TOML RULE: Fields without [section] must appear at the very top.
 # ============================================================================
 
-# ============================================================================
-# TOP-LEVEL FIELDS (Section-less) - Must be at the very top!
-# ============================================================================
-
-# Base polarization mode: "TM" (E_z) or "TE" (H_z)
-# Can be swept via ranges.polarization for multi-polarization studies
 polarization = "TM"
 
-# Custom k-path as explicit list of fractional coordinates [[kx, ky], ...]
-# If provided, this overrides the path preset below.
-# Each point is in fractional coordinates of the reciprocal lattice.
-# k_path = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.0]]
-
-# ============================================================================
-# [bulk] - Driver Configuration (Required)
-# ============================================================================
-# The presence of this section marks the file as a bulk sweep configuration.
-# Without [bulk], the file is treated as a single-job configuration.
-
+# ----------------------------------------------------------------------------
+# DRIVER
+# ----------------------------------------------------------------------------
 [bulk]
-# Number of worker threads for parallel execution
-# Options:
-#   - Positive integer: Use exactly this many threads
-#   - null/omit: Use all physical CPU cores (default)
-# For WASM, this is always 1 (single-threaded)
-threads = 4
-
-# Enable verbose logging (debug output, thread adjustments)
+threads = 4          # Workers (null = all cores, 1 for WASM)
 verbose = false
-
-# Dry run mode: count jobs without executing
-# Useful for validating configuration before expensive runs
 dry_run = false
 
-# ============================================================================
-# [solver] - Solver Type Selection
-# ============================================================================
-# Choose between Maxwell (photonic crystals) and EA (envelope approximation).
-
 [solver]
-# Solver type: "maxwell" (default) or "ea"
-#
-# Maxwell: Photonic crystal band structure
-#   - Solves: ∇ × (1/ε)∇ × H = (ω/c)² H
-#   - Requires: geometry, k-path, polarization
-#   - Output: k_path, distances, bands (frequencies)
-#
-# EA: Envelope Approximation for moiré lattices
-#   - Solves: H ψ = E ψ where H = V(R) - (η²/2)∇·M⁻¹(R)∇
-#   - Requires: ea section with input data files
-#   - Output: eigenvalues, convergence info
-type = "maxwell"
+type = "maxwell"     # "maxwell" (photonic) or "ea" (envelope approx)
 
-# ============================================================================
-# [geometry] - Photonic Crystal Structure (Maxwell only)
-# ============================================================================
-# Defines the unit cell, background material, and scatterers (atoms).
-
+# ----------------------------------------------------------------------------
+# GEOMETRY
+# ----------------------------------------------------------------------------
 [geometry]
-# Background dielectric constant (ε_bg)
-# Typical values: 1.0 (air), 2.25 (silica), 12.0 (silicon/GaAs)
-eps_bg = 12.0
-
-# ============================================================================
-# [geometry.lattice] - Lattice Definition
-# ============================================================================
-#
-# LATTICE CONVENTIONS:
-#
-# Square:      a₁ = [a, 0], a₂ = [0, a]
-#              BZ path: Γ(0,0) → X(1/2,0) → M(1/2,1/2) → Γ(0,0)
-#
-# Rectangular: a₁ = [a, 0], a₂ = [0, b]
-#              BZ path: Γ(0,0) → X(1/2,0) → S(1/2,1/2) → Y(0,1/2) → Γ(0,0)
-#
-# Triangular/Hexagonal (60° convention):
-#              a₁ = [a, 0], a₂ = [a/2, a√3/2]
-#              This is the 60° convention where angle(a₁,a₂) = 60°
-#              BZ path: Γ(0,0) → M(1/2,0) → K(1/3,1/3) → Γ(0,0)
-#
-# See LATTICE_CONVENTIONS.md for full details.
+eps_bg = 12.0        # Background ε (1.0=air, 12.0=Si/GaAs)
 
 [geometry.lattice]
-# Lattice type preset: "square", "rectangular", "triangular", "hexagonal"
-# "triangular" and "hexagonal" are equivalent and use the 60° convention
-# Alternatively, specify explicit lattice vectors a1 and a2
-type = "square"
-
-# Lattice constant (primary)
+type = "square"      # "square", "rectangular", "triangular", "hexagonal"
 a = 1.0
 
-# Secondary lattice constant (for rectangular lattice only)
-# b = 1.5
-
-# Explicit lattice vectors (override type preset)
-# For square:       a1 = [1.0, 0.0], a2 = [0.0, 1.0]
-# For triangular:   a1 = [1.0, 0.0], a2 = [0.5, 0.8660254037844386]  # 60° convention
-# For rectangular:  a1 = [1.0, 0.0], a2 = [0.0, 1.5]
-# a1 = [1.0, 0.0]
-# a2 = [0.0, 1.0]
-
-# ============================================================================
-# [[geometry.atoms]] - Basis Atoms (Scatterers)
-# ============================================================================
-# Each [[geometry.atoms]] defines one atom in the unit cell.
-# Multiple atoms can be defined for multi-atom basis structures.
-
 [[geometry.atoms]]
-# Position in fractional coordinates [x, y] where x,y ∈ [0,1)
-pos = [0.5, 0.5]
+pos = [0.5, 0.5]     # Fractional coords [0,1)
+radius = 0.2         # In units of lattice constant a
+eps_inside = 1.0     # Air hole in dielectric
 
-# Radius in units of lattice constant a
-radius = 0.2
-
-# Dielectric constant inside the atom
-# For air holes in dielectric: eps_inside = 1.0
-# For dielectric rods in air: eps_inside = 12.0, eps_bg = 1.0
-eps_inside = 1.0
-
-# Example: Two-atom basis (honeycomb-like)
-# [[geometry.atoms]]
-# pos = [0.333, 0.333]
-# radius = 0.15
-# eps_inside = 1.0
-#
-# [[geometry.atoms]]
-# pos = [0.667, 0.667]
-# radius = 0.15
-# eps_inside = 1.0
-
-# ============================================================================
-# [grid] - Computational Grid
-# ============================================================================
-# Defines the real-space discretization for the dielectric function.
-
+# ----------------------------------------------------------------------------
+# COMPUTATIONAL SETTINGS
+# ----------------------------------------------------------------------------
 [grid]
-# Grid points in x and y directions
-# Higher resolution = more accurate but slower
-# Recommended: 32 for quick tests, 64-128 for production
 nx = 32
 ny = 32
-
-# Physical size of the unit cell (usually 1.0 for normalized units)
 lx = 1.0
 ly = 1.0
 
-# ============================================================================
-# [path] - K-Path Specification (Maxwell only)
-# ============================================================================
-# Defines the Brillouin zone path for band structure calculation.
-# This is ignored if k_path is specified at the top level.
-#
-# HIGH-SYMMETRY POINTS (fractional coordinates):
-#
-# Square:      Γ=(0,0), X=(1/2,0), M=(1/2,1/2)
-# Rectangular: Γ=(0,0), X=(1/2,0), S=(1/2,1/2), Y=(0,1/2)
-# Hex/Tri:     Γ=(0,0), M=(1/2,0), K=(1/3,1/3) [60° convention]
-
 [path]
-# Path preset: "square", "rectangular", "hexagonal", "triangular"
-# Standard high-symmetry paths:
-#   Square:      Γ → X → M → Γ
-#   Rectangular: Γ → X → S → Y → Γ
-#   Hexagonal:   Γ → M → K → Γ  (uses 60° lattice convention)
-preset = "square"
-
-# Number of k-points per path segment
-# Total k-points ≈ segments_per_leg × (number of segments)
-segments_per_leg = 12
-
-# ============================================================================
-# [eigensolver] - LOBPCG Eigensolver Configuration
-# ============================================================================
-# Controls the iterative eigensolver for finding band frequencies.
+preset = "square"       # Γ→X→M→Γ (matches lattice)
+segments_per_leg = 12   # k-points per segment
 
 [eigensolver]
-# Number of bands (eigenvalues) to compute
 n_bands = 8
-
-# Convergence tolerance for eigenvalues
-# Smaller = more accurate but more iterations
 tol = 1e-8
-
-# Maximum LOBPCG iterations before giving up
 max_iter = 200
 
-# Block size for LOBPCG (number of vectors processed together)
-# Larger blocks can be more efficient on GPU but use more memory
-# block_size = 16
-
-# ============================================================================
-# [dielectric] - Dielectric Function Options
-# ============================================================================
-
 [dielectric]
-# Smoothing radius for sub-pixel averaging (in grid units)
-# 0.0 = sharp edges (staircasing)
-# 0.5-1.0 = smoothed edges (better convergence)
-smoothing_radius = 0.5
+smoothing_radius = 0.5  # Subpixel averaging (0=sharp, 0.5-1.0=smooth)
 
-# ============================================================================
-# [ranges] - Parameter Sweep Specification
-# ============================================================================
-# Define ranges to sweep. Each range creates multiple configurations.
-# Total jobs = product of all range counts.
-#
-# IMPORTANT: At least one range must be defined for meaningful sweeps.
-# If no ranges are defined, only one job is created with base parameters.
+# ----------------------------------------------------------------------------
+# SWEEPS - Ordered parameter variations
+# ----------------------------------------------------------------------------
+# Each [[sweeps]] = one nested loop dimension. First = outermost.
+# Total jobs = product of all sweep counts.
 
-[ranges]
-# Sweep background epsilon
-# eps_bg = { min = 10.0, max = 14.0, step = 1.0 }  # 5 values: 10, 11, 12, 13, 14
+[[sweeps]]
+parameter = "atom0.radius"
+min = 0.15
+max = 0.35
+step = 0.05            # 5 values: 0.15, 0.20, 0.25, 0.30, 0.35
 
-# Sweep grid resolution (integer values)
-# resolution = { min = 24, max = 64, step = 8 }  # 6 values: 24, 32, 40, 48, 56, 64
-
-# Sweep polarization modes
-# polarization = ["TM", "TE"]  # 2 values
-
-# Sweep lattice types
-# lattice_type = ["square", "hexagonal"]  # 2 values
-
-# ============================================================================
-# [[ranges.atoms]] - Per-Atom Parameter Sweeps
-# ============================================================================
-# Sweep parameters for each atom independently.
-# Index matches [[geometry.atoms]] order (0-based).
-
-[[ranges.atoms]]
-# Sweep atom 0's radius
-radius = { min = 0.15, max = 0.35, step = 0.05 }  # 5 values: 0.15, 0.20, 0.25, 0.30, 0.35
-
-# Sweep atom 0's position (fractional coordinates)
-# pos_x = { min = 0.4, max = 0.6, step = 0.1 }
-# pos_y = { min = 0.4, max = 0.6, step = 0.1 }
-
-# Sweep atom 0's epsilon
-# eps_inside = { min = 1.0, max = 3.0, step = 0.5 }
-
-# Example: Second atom sweep (for two-atom basis)
-# [[ranges.atoms]]
-# radius = { min = 0.10, max = 0.20, step = 0.05 }
-
-# ============================================================================
-# [output] - Output Configuration
-# ============================================================================
-# Controls how results are written to disk.
-# For WASM streaming, these settings are mostly ignored.
-
+# ----------------------------------------------------------------------------
+# OUTPUT
+# ----------------------------------------------------------------------------
 [output]
-# Output mode: "full" or "selective"
-#
-# Full mode: One CSV file per job
-#   - Filename: {prefix}_{job_index:06}.csv
-#   - Contains all k-points and bands for that job
-#   - Good for detailed analysis
-#
-# Selective mode: Single merged CSV
-#   - All jobs combined into one file
-#   - Only specified k-points and bands included
-#   - Good for summary statistics and quick analysis
-mode = "selective"
-
-# I/O mode: "sync", "batch", or "stream"
-#
-# sync: Traditional synchronous writes (default)
-# batch: Buffer results and write in large chunks (better for many small jobs)
-# stream: Real-time emission for live consumers (Python plotting, WASM)
-io_mode = "stream"
-
-# Output directory for full mode
+mode = "selective"     # "full" (1 CSV/job) or "selective" (merged CSV)
+io_mode = "stream"     # "sync", "batch", or "stream"
 directory = "./sweep_output"
-
-# Output filename for selective mode
 filename = "./sweep_results.csv"
 
-# Filename prefix for full mode
-prefix = "job"
-
-# ============================================================================
-# [output.selective] - Selective Output Specification
-# ============================================================================
-# Define which k-points and bands to include in selective mode.
-# Both k_indices and bands are required for selective mode.
-
 [output.selective]
-# K-point indices to include (0-based)
-# These correspond to positions along the k-path
-# For standard square path with 12 segments: Γ=0, X=12, M=24, Γ=36
-k_indices = [0, 12, 24, 36]
-
-# K-point labels for CSV output (optional, informational only)
+k_indices = [0, 12, 24, 36]   # Γ, X, M, Γ (0-based)
 k_labels = ["Γ", "X", "M", "Γ"]
-
-# Band indices to include (1-based!)
-# bands = [1] selects the lowest band
-# bands = [1, 2, 3, 4] selects the first 4 bands
-bands = [1, 2, 3, 4]
+bands = [1, 2, 3, 4]          # 1-based band indices
 
 # ============================================================================
-# [output.batch] - Batch Mode Settings
+# RESULT STRUCTURE (Python/WASM)
 # ============================================================================
-# Settings for batch mode I/O (io_mode = "batch")
-
-[output.batch]
-# Buffer size before flushing to disk (bytes)
-# Default: 10 MB (10 * 1024 * 1024)
-buffer_size = 10485760
-
-# Maximum time between flushes (optional, seconds)
-# If set, forces periodic writes even if buffer not full
-# flush_interval_secs = 30.0
-
-# ============================================================================
-# [ea] - Envelope Approximation Configuration (EA solver only)
-# ============================================================================
-# Configuration for EA solver. Ignored when solver.type = "maxwell".
 #
-# The EA solver reads pre-computed spatial data from binary files:
-#   - potential: V(R) - effective potential on moiré superlattice
-#   - mass_inv: M⁻¹(R) - inverse mass tensor (spatially varying)
-#   - vg: Optional group velocity for drift terms
+# Each streamed result dict contains:
 #
-# File format: Binary f64 values in row-major (C-order) layout
-#   - potential: [Nx * Ny] values
-#   - mass_inv: [Nx * Ny * 4] values ([m_xx, m_xy, m_yx, m_yy] per point)
-#   - vg: [Nx * Ny * 2] values ([vg_x, vg_y] per point)
-
-# [ea]
-# potential = "data/potential.bin"
-# mass_inv = "data/mass_inv.bin"
-# vg = "data/group_velocity.bin"  # Optional - enables drift term
-# eta = 0.1                        # Small parameter in envelope equation
-# domain_size = [10.0, 10.0]       # Physical size [Lx, Ly]
-# periodic = true                   # Periodic boundary conditions
+#   job_index     : int           - Job number (completion order, not sweep order)
+#   result_type   : str           - "maxwell" or "ea"
+#   num_k_points  : int           - Length of k_path
+#   num_bands     : int           - Number of bands computed
+#   k_path        : [[kx,ky],...]  - K-points in fractional coords
+#   distances     : [float,...]   - Cumulative path distance for plotting
+#   bands         : [[ω₁,ω₂,...],...]  - Frequencies at each k-point (ω/2π normalized)
+#
+#   params        : dict          - Full configuration for this job
+#     eps_bg, resolution, polarization, lattice_type, atoms: [...]
+#
+#   sweep_values  : dict          - Current sweep parameter values
+#     e.g., {"atom0.radius": 0.25}
+#
+#   sweep_order   : str           - Parseable string "param1=val1|param2=val2"
+#
+# Note: Results arrive in completion order (parallel). Use sweep_order for sorting.
+# ============================================================================

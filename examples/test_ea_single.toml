@@ -1,28 +1,27 @@
-# Test configuration for single EA solve with progress bar
+# Test EA solver single run
 
 [bulk]
 threads = 1
-verbose = true
 
 [solver]
 type = "ea"
 
 [ea]
-potential = "data/potential_24x24.bin"
-mass_inv = "data/mass_inv_24x24.bin"
+potential = "test_ea_output/phase2_operator.npz"
+mass_inv = "test_ea_output/phase2_operator.npz"
 eta = 0.1
 domain_size = [10.0, 10.0]
 periodic = true
 
 [grid]
-nx = 24
-ny = 24
+nx = 64
+ny = 64
 lx = 10.0
 ly = 10.0
 
 [eigensolver]
 n_bands = 8
-max_iter = 100
+max_iter = 200
 tol = 1e-6
 
 [output]

@@ -1,4 +1,4 @@
-# Square lattice eps_bg=13, r/a=0.3, low-res grid for TE
+# Square lattice, eps=13, r=0.3, TE, 24×24 grid
 
 polarization = "TE"
 
@@ -6,8 +6,8 @@ polarization = "TE"
 eps_bg = 13.0
 
 [geometry.lattice]
-a1 = [1.0, 0.0]
-a2 = [0.0, 1.0]
+type = "square"
+a = 1.0
 
 [[geometry.atoms]]
 pos = [0.5, 0.5]

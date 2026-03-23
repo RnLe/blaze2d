@@ -191,6 +191,7 @@ mod tests {
                     radius: 0.3,
                     eps_inside: 1.0,
                 }],
+                sweep_values: vec![],
             },
             result_type: CompactResultType::Maxwell(MaxwellResult {
                 k_path: (0..100).map(|i| [i as f64 / 100.0, 0.0]).collect(),
@@ -211,6 +212,7 @@ mod tests {
                 polarization: Polarization::TM,
                 lattice_type: None,
                 atoms: vec![],
+                sweep_values: vec![],
             },
             result_type: CompactResultType::EA(EAResult {
                 eigenvalues: vec![0.1, 0.2, 0.3, 0.4, 0.5],

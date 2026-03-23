@@ -1,4 +1,4 @@
-# Hexagonal lattice with eps_bg=13, r/a=0.3 for TM polarization
+# Hexagonal lattice, eps=13, r=0.3, TM
 
 polarization = "TM"
 
@@ -6,8 +6,8 @@ polarization = "TM"
 eps_bg = 13.0
 
 [geometry.lattice]
-a1 = [1.0, 0.0]
-a2 = [0.5, 0.8660254037844386]
+type = "hexagonal"
+a = 1.0
 
 [[geometry.atoms]]
 pos = [0.5, 0.5]

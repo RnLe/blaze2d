@@ -1,4 +1,4 @@
-# Hexagonal lattice eps_bg=13, r/a=0.3, low-res grid for TM
+# Hexagonal lattice, eps=13, r=0.3, TM, 24×24 grid
 
 polarization = "TM"
 
@@ -6,8 +6,8 @@ polarization = "TM"
 eps_bg = 13.0
 
 [geometry.lattice]
-a1 = [1.0, 0.0]
-a2 = [0.5, 0.8660254037844386]
+type = "hexagonal"
+a = 1.0
 
 [[geometry.atoms]]
 pos = [0.5, 0.5]
@@ -26,5 +26,5 @@ segments_per_leg = 8
 
 [eigensolver]
 n_bands = 8
-max_iter = 100
+max_iter = 200
 tol = 1e-6

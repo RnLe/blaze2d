@@ -4,18 +4,49 @@
 //! and output configuration. These types are platform-agnostic and shared between
 //! native and WASM drivers.
 //!
+//! # Configuration Format
+//!
+//! The bulk driver supports two configuration formats:
+//!
+//! ## New Format (Recommended): Ordered Sweeps with `[[sweeps]]`
+//!
+//! Sweeps are processed as **nested loops in the order listed**. The first sweep
+//! is the outermost loop, the last is the innermost.
+//!
+//! ```toml
+//! [bulk]
+//! verbose = true
+//!
+//! # Sweeps are processed in order: radius is outer loop, eps_bg is inner
+//! [[sweeps]]
+//! parameter = "atom0.radius"
+//! min = 0.2
+//! max = 0.4
+//! step = 0.1
+//!
+//! [[sweeps]]
+//! parameter = "eps_bg"
+//! min = 10.0
+//! max = 12.0
+//! step = 1.0
+//!
+//! [defaults.geometry]
+//! eps_bg = 12.0
+//! # ... rest of config
+//! ```
+//!
+//! ## Legacy Format: `[ranges]` Section
+//!
+//! The old format with `[ranges]` section is still supported but deprecated.
+//! Sweep order is not guaranteed with the legacy format.
+//!
 //! # Solver Types
 //!
-//! The bulk driver supports two solver types:
-//!
-//! - **Maxwell** (default): Photonic crystal band structure calculations using the
-//!   Maxwell eigenproblem. Requires geometry, k-path, and polarization.
-//!
-//! - **EA (Envelope Approximation)**: Moiré lattice eigenproblems using the effective
-//!   Hamiltonian H = V(R) - (η²/2)∇·M⁻¹(R)∇. Requires input data files for potential,
-//!   mass tensor, and optionally group velocity for drift terms.
+//! - **Maxwell** (default): Photonic crystal band structure calculations
+//! - **EA (Envelope Approximation)**: Moiré lattice eigenproblems
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use mpb2d_core::{
@@ -242,6 +273,385 @@ impl<T: Clone> ValueList<T> {
     pub fn count(&self) -> usize {
         self.values.len()
     }
+}
+
+// ============================================================================
+// Ordered Sweep Specification (New Format)
+// ============================================================================
+
+/// A single parameter sweep specification.
+///
+/// Sweeps are processed in the order they appear in the TOML file, forming
+/// nested loops. The first sweep is the outermost loop.
+///
+/// # Parameter Paths
+///
+/// Parameters are specified using dot notation:
+/// - `eps_bg` - Background epsilon
+/// - `resolution` - Grid resolution
+/// - `polarization` - Polarization (TM/TE)
+/// - `lattice_type` - Lattice type
+/// - `atom0.radius` - First atom's radius
+/// - `atom0.pos_x` - First atom's x position
+/// - `atom0.pos_y` - First atom's y position  
+/// - `atom0.eps_inside` - First atom's internal epsilon
+/// - `atom1.radius` - Second atom's radius (etc.)
+///
+/// # Example
+///
+/// ```toml
+/// [[sweeps]]
+/// parameter = "atom0.radius"
+/// min = 0.2
+/// max = 0.4
+/// step = 0.1
+///
+/// [[sweeps]]
+/// parameter = "polarization"
+/// values = ["TM", "TE"]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepSpec {
+    /// Parameter path using dot notation (e.g., "eps_bg", "atom0.radius")
+    pub parameter: String,
+
+    /// Minimum value for range-based sweep
+    #[serde(default)]
+    pub min: Option<f64>,
+
+    /// Maximum value for range-based sweep
+    #[serde(default)]
+    pub max: Option<f64>,
+
+    /// Step size for range-based sweep
+    #[serde(default)]
+    pub step: Option<f64>,
+
+    /// Discrete values for non-numeric or specific value sweeps.
+    /// Use for polarization, lattice_type, or when you want specific values.
+    #[serde(default)]
+    pub values: Option<Vec<toml::Value>>,
+}
+
+impl SweepSpec {
+    /// Check if this is a range-based sweep (min/max/step).
+    pub fn is_range(&self) -> bool {
+        self.min.is_some() && self.max.is_some() && self.step.is_some()
+    }
+
+    /// Check if this is a discrete values sweep.
+    pub fn is_discrete(&self) -> bool {
+        self.values.is_some()
+    }
+
+    /// Get the number of values in this sweep.
+    pub fn count(&self) -> usize {
+        if let Some(ref values) = self.values {
+            values.len()
+        } else if let (Some(min), Some(max), Some(step)) = (self.min, self.max, self.step) {
+            if step <= 0.0 || max < min {
+                0
+            } else {
+                ((max - min) / step).floor() as usize + 1
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Convert to a RangeSpec if this is a range-based sweep.
+    pub fn to_range_spec(&self) -> Option<RangeSpec> {
+        match (self.min, self.max, self.step) {
+            (Some(min), Some(max), Some(step)) => Some(RangeSpec { min, max, step }),
+            _ => None,
+        }
+    }
+
+    /// Validate the sweep specification.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // Must have either range or values
+        if !self.is_range() && !self.is_discrete() {
+            return Err(ConfigError::InvalidSweep(format!(
+                "sweep '{}' must specify either (min, max, step) or values",
+                self.parameter
+            )));
+        }
+
+        // Cannot have both
+        if self.is_range() && self.is_discrete() {
+            return Err(ConfigError::InvalidSweep(format!(
+                "sweep '{}' cannot have both range and values",
+                self.parameter
+            )));
+        }
+
+        // Validate range
+        if self.is_range() {
+            let min = self.min.unwrap();
+            let max = self.max.unwrap();
+            let step = self.step.unwrap();
+
+            if step <= 0.0 {
+                return Err(ConfigError::InvalidSweep(format!(
+                    "sweep '{}' step must be positive",
+                    self.parameter
+                )));
+            }
+            if min > max {
+                return Err(ConfigError::InvalidSweep(format!(
+                    "sweep '{}' min ({}) > max ({})",
+                    self.parameter, min, max
+                )));
+            }
+        }
+
+        // Validate parameter path
+        validate_parameter_path(&self.parameter)?;
+
+        Ok(())
+    }
+}
+
+/// A concrete value in a sweep dimension.
+///
+/// This preserves type information for proper output formatting.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SweepValue {
+    /// Floating-point value (eps_bg, radius, pos_x, etc.)
+    Float(f64),
+    /// Integer value (resolution)
+    Int(i64),
+    /// String value (polarization, lattice_type)
+    String(String),
+}
+
+impl SweepValue {
+    /// Format as a string for CSV output.
+    pub fn to_csv_string(&self) -> String {
+        match self {
+            SweepValue::Float(v) => format!("{:.6}", v),
+            SweepValue::Int(v) => v.to_string(),
+            SweepValue::String(s) => s.clone(),
+        }
+    }
+
+    /// Try to get as f64.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            SweepValue::Float(v) => Some(*v),
+            SweepValue::Int(v) => Some(*v as f64),
+            SweepValue::String(_) => None,
+        }
+    }
+
+    /// Try to get as i64.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            SweepValue::Float(v) => Some(*v as i64),
+            SweepValue::Int(v) => Some(*v),
+            SweepValue::String(_) => None,
+        }
+    }
+
+    /// Try to get as string.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            SweepValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for SweepValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SweepValue::Float(v) => write!(f, "{}", v),
+            SweepValue::Int(v) => write!(f, "{}", v),
+            SweepValue::String(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+/// A sweep dimension with all its values computed.
+///
+/// This is used during job expansion to iterate over sweep values
+/// in the correct order.
+#[derive(Debug, Clone)]
+pub struct SweepDimension {
+    /// Parameter name (e.g., "eps_bg", "atom0.radius")
+    pub name: String,
+    
+    /// Order index (0 = outermost loop, higher = more inner)
+    pub order: usize,
+    
+    /// All values for this dimension
+    pub values: Vec<SweepValue>,
+}
+
+impl SweepDimension {
+    /// Create from a SweepSpec.
+    pub fn from_spec(spec: &SweepSpec, order: usize) -> Result<Self, ConfigError> {
+        let values = if let Some(ref discrete_values) = spec.values {
+            // Convert TOML values to SweepValue
+            discrete_values
+                .iter()
+                .map(|v| toml_to_sweep_value(v, &spec.parameter))
+                .collect::<Result<Vec<_>, _>>()?
+        } else if let Some(range) = spec.to_range_spec() {
+            // Generate range values
+            let is_resolution = spec.parameter == "resolution";
+            range
+                .values()
+                .into_iter()
+                .map(|v| {
+                    if is_resolution {
+                        SweepValue::Int(v.round() as i64)
+                    } else {
+                        SweepValue::Float(v)
+                    }
+                })
+                .collect()
+        } else {
+            return Err(ConfigError::InvalidSweep(format!(
+                "sweep '{}' has no valid range or values",
+                spec.parameter
+            )));
+        };
+
+        Ok(Self {
+            name: spec.parameter.clone(),
+            order,
+            values,
+        })
+    }
+
+    /// Number of values in this dimension.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Check if this dimension is empty.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
+/// Convert a TOML value to a SweepValue.
+fn toml_to_sweep_value(value: &toml::Value, param: &str) -> Result<SweepValue, ConfigError> {
+    match value {
+        toml::Value::Float(f) => Ok(SweepValue::Float(*f)),
+        toml::Value::Integer(i) => {
+            // For resolution, keep as int; for others, convert to float
+            if param == "resolution" {
+                Ok(SweepValue::Int(*i))
+            } else {
+                Ok(SweepValue::Float(*i as f64))
+            }
+        }
+        toml::Value::String(s) => Ok(SweepValue::String(s.clone())),
+        _ => Err(ConfigError::InvalidSweep(format!(
+            "unsupported value type for parameter '{}': {:?}",
+            param, value
+        ))),
+    }
+}
+
+/// Valid parameter paths for sweeps.
+const VALID_GLOBAL_PARAMS: &[&str] = &[
+    "eps_bg",
+    "resolution",
+    "polarization",
+    "lattice_type",
+];
+
+/// Validate a parameter path.
+///
+/// Valid paths:
+/// - Global: "eps_bg", "resolution", "polarization", "lattice_type"
+/// - Atom: "atom0.radius", "atom1.pos_x", etc.
+pub fn validate_parameter_path(path: &str) -> Result<(), ConfigError> {
+    // Check global parameters
+    if VALID_GLOBAL_PARAMS.contains(&path) {
+        return Ok(());
+    }
+
+    // Check atom parameters (atomN.property)
+    if path.starts_with("atom") {
+        let parts: Vec<&str> = path.splitn(2, '.').collect();
+        if parts.len() != 2 {
+            return Err(ConfigError::InvalidSweep(format!(
+                "invalid atom parameter path '{}': expected 'atomN.property'",
+                path
+            )));
+        }
+
+        let atom_part = parts[0];
+        let property = parts[1];
+
+        // Validate atom index
+        let index_str = atom_part.strip_prefix("atom").unwrap();
+        if index_str.parse::<usize>().is_err() {
+            return Err(ConfigError::InvalidSweep(format!(
+                "invalid atom index in '{}': expected 'atomN' where N is a number",
+                path
+            )));
+        }
+
+        // Validate property
+        const VALID_ATOM_PROPS: &[&str] = &["radius", "pos_x", "pos_y", "eps_inside"];
+        if !VALID_ATOM_PROPS.contains(&property) {
+            return Err(ConfigError::InvalidSweep(format!(
+                "invalid atom property '{}' in '{}': expected one of {:?}",
+                property, path, VALID_ATOM_PROPS
+            )));
+        }
+
+        return Ok(());
+    }
+
+    Err(ConfigError::InvalidSweep(format!(
+        "unknown parameter '{}': expected one of {:?} or atom path like 'atom0.radius'",
+        path, VALID_GLOBAL_PARAMS
+    )))
+}
+
+/// Parse an atom parameter path into (atom_index, property).
+pub fn parse_atom_path(path: &str) -> Option<(usize, &str)> {
+    if !path.starts_with("atom") {
+        return None;
+    }
+
+    let parts: Vec<&str> = path.splitn(2, '.').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let index_str = parts[0].strip_prefix("atom")?;
+    let index = index_str.parse().ok()?;
+    Some((index, parts[1]))
+}
+
+// ============================================================================
+// Defaults Configuration (New Format)
+// ============================================================================
+
+/// Default values for parameters when not being swept.
+///
+/// This replaces the scattered base values in the old format with a
+/// centralized `[defaults]` section.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DefaultsConfig {
+    /// Default polarization
+    #[serde(default)]
+    pub polarization: Option<Polarization>,
+
+    /// Default resolution (overrides grid.nx/ny for sweeps)
+    #[serde(default)]
+    pub resolution: Option<usize>,
+
+    /// Default geometry settings
+    #[serde(default)]
+    pub geometry: Option<BaseGeometry>,
 }
 
 // ============================================================================
@@ -600,12 +1010,46 @@ impl Default for BulkSection {
 ///
 /// A TOML file is recognized as a bulk request if it contains the `[bulk]` section.
 ///
+/// # Configuration Formats
+///
+/// ## New Format (Recommended): Ordered `[[sweeps]]`
+///
+/// ```toml
+/// [bulk]
+/// verbose = true
+///
+/// [[sweeps]]
+/// parameter = "atom0.radius"
+/// min = 0.2
+/// max = 0.4
+/// step = 0.1
+///
+/// [[sweeps]]
+/// parameter = "eps_bg"
+/// min = 10.0
+/// max = 12.0  
+/// step = 1.0
+///
+/// [defaults.geometry]
+/// eps_bg = 12.0
+/// ```
+///
+/// Sweeps are processed as nested loops **in the order listed**.
+/// First sweep = outermost loop, last sweep = innermost loop.
+///
+/// ## Legacy Format: `[ranges]` Section
+///
+/// ```toml
+/// [ranges]
+/// eps_bg = { min = 10.0, max = 12.0, step = 1.0 }
+/// ```
+///
+/// Still supported but deprecated. Sweep order is not guaranteed.
+///
 /// # Solver Types
 ///
-/// The configuration supports two solver types:
-///
 /// - **Maxwell** (default): Requires `geometry`, `k_path`/`path`, and `polarization`.
-/// - **EA**: Requires `ea` section with input file paths. No k-path or geometry needed.
+/// - **EA**: Requires `ea` section with input file paths.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulkConfig {
     /// Bulk execution settings (presence marks this as a bulk request)
@@ -619,17 +1063,50 @@ pub struct BulkConfig {
     #[serde(default)]
     pub ea: EAConfig,
 
+    // ========================================================================
+    // NEW FORMAT: Ordered sweeps with [[sweeps]] array
+    // ========================================================================
+
+    /// Ordered parameter sweeps (new format).
+    ///
+    /// Sweeps are processed as nested loops in array order:
+    /// - First entry = outermost loop
+    /// - Last entry = innermost loop
+    ///
+    /// Takes precedence over `ranges` if both are present.
+    #[serde(default)]
+    pub sweeps: Vec<SweepSpec>,
+
+    /// Default values for non-swept parameters (new format).
+    #[serde(default)]
+    pub defaults: DefaultsConfig,
+
+    // ========================================================================
+    // LEGACY FORMAT: [ranges] and [geometry] sections
+    // ========================================================================
+
     /// Base geometry (non-swept parameters).
     /// Required for Maxwell solver, ignored for EA solver.
+    /// DEPRECATED: Use `defaults.geometry` instead.
     #[serde(default)]
     pub geometry: Option<BaseGeometry>,
 
-    /// Computational grid
-    pub grid: Grid2D,
+    /// Parameter ranges to sweep.
+    /// DEPRECATED: Use `[[sweeps]]` array instead.
+    #[serde(default)]
+    pub ranges: ParameterRange,
 
     /// Base polarization (used if not in ranges).
+    /// DEPRECATED: Use `defaults.polarization` instead.
     #[serde(default = "default_polarization")]
     pub polarization: Polarization,
+
+    // ========================================================================
+    // Common configuration (used by both formats)
+    // ========================================================================
+
+    /// Computational grid
+    pub grid: Grid2D,
 
     /// K-path specification.
     #[serde(default)]
@@ -646,10 +1123,6 @@ pub struct BulkConfig {
     /// Dielectric options.
     #[serde(default)]
     pub dielectric: DielectricOptions,
-
-    /// Parameter ranges to sweep.
-    #[serde(default)]
-    pub ranges: ParameterRange,
 
     /// Output configuration
     #[serde(default)]
@@ -678,6 +1151,48 @@ impl BulkConfig {
         Ok(config)
     }
 
+    /// Check if this config uses the new ordered sweeps format.
+    pub fn uses_ordered_sweeps(&self) -> bool {
+        !self.sweeps.is_empty()
+    }
+
+    /// Check if this config uses the legacy ranges format.
+    pub fn uses_legacy_ranges(&self) -> bool {
+        self.sweeps.is_empty() && self.has_any_legacy_ranges()
+    }
+
+    /// Check if any legacy ranges are defined.
+    fn has_any_legacy_ranges(&self) -> bool {
+        self.ranges.eps_bg.is_some()
+            || self.ranges.resolution.is_some()
+            || self.ranges.polarization.is_some()
+            || self.ranges.lattice_type.is_some()
+            || self.ranges.atoms.iter().any(|a| {
+                a.radius.is_some() || a.pos_x.is_some() || a.pos_y.is_some() || a.eps_inside.is_some()
+            })
+    }
+
+    /// Get the effective geometry configuration.
+    ///
+    /// Prefers `defaults.geometry` over legacy `geometry`.
+    pub fn effective_geometry(&self) -> Option<&BaseGeometry> {
+        self.defaults.geometry.as_ref().or(self.geometry.as_ref())
+    }
+
+    /// Get the effective base polarization.
+    ///
+    /// Prefers `defaults.polarization` over legacy `polarization`.
+    pub fn effective_polarization(&self) -> Polarization {
+        self.defaults.polarization.unwrap_or(self.polarization)
+    }
+
+    /// Get the effective base resolution.
+    ///
+    /// Prefers `defaults.resolution` over `grid.nx`.
+    pub fn effective_resolution(&self) -> usize {
+        self.defaults.resolution.unwrap_or(self.grid.nx)
+    }
+
     /// Get the solver type.
     pub fn solver_type(&self) -> SolverType {
         self.solver.solver_type
@@ -695,47 +1210,106 @@ impl BulkConfig {
 
     /// Get geometry for Maxwell solver.
     pub fn geometry(&self) -> &BaseGeometry {
-        self.geometry
-            .as_ref()
+        self.effective_geometry()
             .expect("geometry required for Maxwell solver")
+    }
+
+    /// Convert ordered sweeps to SweepDimensions for expansion.
+    pub fn build_sweep_dimensions(&self) -> Result<Vec<SweepDimension>, ConfigError> {
+        self.sweeps
+            .iter()
+            .enumerate()
+            .map(|(order, spec)| SweepDimension::from_spec(spec, order))
+            .collect()
     }
 
     /// Validate the configuration.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        // Validate sweep specifications if using new format
+        if self.uses_ordered_sweeps() {
+            self.validate_sweeps()?;
+        }
+
         match self.solver.solver_type {
             SolverType::Maxwell => self.validate_maxwell(),
             SolverType::EA => self.validate_ea(),
         }
     }
 
+    /// Validate ordered sweeps.
+    fn validate_sweeps(&self) -> Result<(), ConfigError> {
+        // Check for empty sweeps
+        if self.sweeps.is_empty() {
+            // This is fine - means no sweeps, single job
+            return Ok(());
+        }
+
+        // Check for duplicate parameters
+        let mut seen = HashSet::new();
+        for sweep in &self.sweeps {
+            if !seen.insert(&sweep.parameter) {
+                return Err(ConfigError::InvalidSweep(format!(
+                    "duplicate sweep parameter '{}'",
+                    sweep.parameter
+                )));
+            }
+            sweep.validate()?;
+        }
+
+        // Validate atom indices are within bounds
+        let max_atom_index = self.sweeps
+            .iter()
+            .filter_map(|s| parse_atom_path(&s.parameter))
+            .map(|(idx, _)| idx)
+            .max();
+
+        if let Some(max_idx) = max_atom_index {
+            let geom = self.effective_geometry();
+            let atom_count = geom.map(|g| g.atoms.len()).unwrap_or(0);
+            if atom_count == 0 && max_idx > 0 {
+                return Err(ConfigError::InvalidSweep(format!(
+                    "sweep references atom{} but no atoms defined in geometry",
+                    max_idx
+                )));
+            }
+            // Allow referencing atoms up to max_idx even if not all defined
+            // (they'll use defaults)
+        }
+
+        Ok(())
+    }
+
     fn validate_maxwell(&self) -> Result<(), ConfigError> {
-        if self.geometry.is_none() {
+        if self.effective_geometry().is_none() {
             return Err(ConfigError::InvalidMaxwellConfig(
-                "Maxwell solver requires [geometry] section".into(),
+                "Maxwell solver requires geometry (use [geometry] or [defaults.geometry])".into(),
             ));
         }
 
-        if let Some(range) = &self.ranges.eps_bg {
-            if range.step <= 0.0 {
-                return Err(ConfigError::InvalidRange(
-                    "eps_bg step must be positive".into(),
-                ));
+        // Validate legacy ranges if using them
+        if self.uses_legacy_ranges() {
+            if let Some(range) = &self.ranges.eps_bg {
+                if range.step <= 0.0 {
+                    return Err(ConfigError::InvalidRange(
+                        "eps_bg step must be positive".into(),
+                    ));
+                }
+                if range.min > range.max {
+                    return Err(ConfigError::InvalidRange("eps_bg min > max".into()));
+                }
             }
-            if range.min > range.max {
-                return Err(ConfigError::InvalidRange("eps_bg min > max".into()));
-            }
-        }
 
-        if let Some(range) = &self.ranges.resolution {
-            if range.step < 1.0 {
-                return Err(ConfigError::InvalidRange(
-                    "resolution step must be >= 1".into(),
-                ));
-            }
-            if range.min < 4.0 {
-                return Err(ConfigError::InvalidRange(
-                    "resolution min must be >= 4".into(),
-                ));
+            if let Some(range) = &self.ranges.resolution {
+                if range.step < 1.0 {
+                    return Err(ConfigError::InvalidRange(
+                        "resolution step must be >= 1".into(),
+                    ));
+                }
+                if range.min < 4.0 {
+                    return Err(ConfigError::InvalidRange(
+                        "resolution min must be >= 4".into(),
+                    ));
+                }
             }
         }
 
@@ -762,7 +1336,56 @@ impl BulkConfig {
 
     /// Get total number of jobs.
     pub fn total_jobs(&self) -> usize {
-        self.ranges.total_configurations()
+        if self.uses_ordered_sweeps() {
+            self.sweeps.iter().map(|s| s.count().max(1)).product()
+        } else {
+            self.ranges.total_configurations()
+        }
+    }
+
+    /// Get a description of the sweep order for display.
+    pub fn sweep_order_description(&self) -> Vec<String> {
+        if self.uses_ordered_sweeps() {
+            self.sweeps
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let count = s.count();
+                    let loop_type = if i == 0 { "outer" } else if i == self.sweeps.len() - 1 { "inner" } else { "middle" };
+                    format!("{}: {} ({} values, {} loop)", i + 1, s.parameter, count, loop_type)
+                })
+                .collect()
+        } else {
+            // Legacy format - describe in hardcoded order
+            let mut desc = Vec::new();
+            if self.ranges.eps_bg.is_some() {
+                desc.push("eps_bg".to_string());
+            }
+            if self.ranges.resolution.is_some() {
+                desc.push("resolution".to_string());
+            }
+            if self.ranges.polarization.is_some() {
+                desc.push("polarization".to_string());
+            }
+            if self.ranges.lattice_type.is_some() {
+                desc.push("lattice_type".to_string());
+            }
+            for (i, atom) in self.ranges.atoms.iter().enumerate() {
+                if atom.radius.is_some() {
+                    desc.push(format!("atom{}.radius", i));
+                }
+                if atom.pos_x.is_some() {
+                    desc.push(format!("atom{}.pos_x", i));
+                }
+                if atom.pos_y.is_some() {
+                    desc.push(format!("atom{}.pos_y", i));
+                }
+                if atom.eps_inside.is_some() {
+                    desc.push(format!("atom{}.eps_inside", i));
+                }
+            }
+            desc
+        }
     }
 }
 
@@ -784,6 +1407,9 @@ pub enum ConfigError {
 
     #[error("Invalid parameter range: {0}")]
     InvalidRange(String),
+
+    #[error("Invalid sweep specification: {0}")]
+    InvalidSweep(String),
 
     #[error("Invalid output configuration: {0}")]
     InvalidOutput(String),
