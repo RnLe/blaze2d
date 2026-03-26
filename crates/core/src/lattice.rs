@@ -1,6 +1,6 @@
 //! Lattice primitives for 2D photonic crystals.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 const CLASSIFICATION_TOL: f64 = 1e-6;
 
@@ -12,10 +12,132 @@ pub enum LatticeClass {
     Oblique,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// 2D lattice defined by primitive vectors a1 and a2.
+///
+/// # TOML Format
+///
+/// Supports two formats for deserialization:
+///
+/// ## Legacy format (explicit vectors):
+/// ```toml
+/// [geometry.lattice]
+/// a1 = [1.0, 0.0]
+/// a2 = [0.0, 1.0]
+/// ```
+///
+/// ## Typed format (recommended):
+/// ```toml
+/// [geometry.lattice]
+/// type = "square"
+/// a = 1.0  # optional, default = 1.0
+///
+/// [geometry.lattice]
+/// type = "rectangular"
+/// a = 1.0  # optional
+/// b = 1.5  # required for rectangular
+///
+/// [geometry.lattice]
+/// type = "triangular"
+/// a = 1.0  # optional
+///
+/// [geometry.lattice]
+/// type = "hexagonal"  # alias for triangular
+/// a = 1.0  # optional
+///
+/// [geometry.lattice]
+/// type = "oblique"
+/// a = 1.0      # optional
+/// b = 1.2      # length of second vector
+/// alpha = 60.0 # angle in degrees
+/// ```
+#[derive(Debug, Clone, Copy)]
 pub struct Lattice2D {
     pub a1: [f64; 2],
     pub a2: [f64; 2],
+}
+
+// Custom serialization to always use the legacy format (explicit vectors)
+impl Serialize for Lattice2D {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Lattice2D", 2)?;
+        state.serialize_field("a1", &self.a1)?;
+        state.serialize_field("a2", &self.a2)?;
+        state.end()
+    }
+}
+
+// Custom deserialization to support both legacy and typed formats
+impl<'de> Deserialize<'de> for Lattice2D {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum LatticeFormat {
+            /// Legacy format with explicit vectors
+            Legacy {
+                a1: [f64; 2],
+                a2: [f64; 2],
+            },
+            /// Typed format with lattice type and parameters
+            Typed {
+                #[serde(rename = "type")]
+                lattice_type: String,
+                #[serde(default = "default_lattice_constant")]
+                a: f64,
+                #[serde(default)]
+                b: Option<f64>,
+                #[serde(default)]
+                alpha: Option<f64>,
+            },
+        }
+
+        fn default_lattice_constant() -> f64 {
+            1.0
+        }
+
+        match LatticeFormat::deserialize(deserializer)? {
+            LatticeFormat::Legacy { a1, a2 } => Ok(Lattice2D { a1, a2 }),
+            LatticeFormat::Typed {
+                lattice_type,
+                a,
+                b,
+                alpha,
+            } => {
+                let lat_type_lower = lattice_type.to_lowercase();
+                match lat_type_lower.as_str() {
+                    "square" => Ok(Lattice2D::square(a)),
+                    "rectangular" => {
+                        let b_val = b.unwrap_or(a * 1.5);
+                        Ok(Lattice2D::rectangular(a, b_val))
+                    }
+                    "triangular" | "hexagonal" => Ok(Lattice2D::hexagonal(a)),
+                    "oblique" => {
+                        let b_val = b.ok_or_else(|| {
+                            D::Error::custom("oblique lattice requires 'b' parameter")
+                        })?;
+                        let alpha_deg = alpha.ok_or_else(|| {
+                            D::Error::custom("oblique lattice requires 'alpha' parameter (in degrees)")
+                        })?;
+                        let alpha_rad = alpha_deg.to_radians();
+                        let a2 = [b_val * alpha_rad.cos(), b_val * alpha_rad.sin()];
+                        Ok(Lattice2D::oblique([a, 0.0], a2))
+                    }
+                    _ => Err(D::Error::custom(format!(
+                        "unknown lattice type: '{}'. Valid types are: square, rectangular, triangular, hexagonal, oblique",
+                        lattice_type
+                    ))),
+                }
+            }
+        }
+    }
 }
 
 impl Lattice2D {

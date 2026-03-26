@@ -61,8 +61,9 @@ fn job_config_uses_path_preset_when_k_path_missing() {
         polarization: Polarization::TE,
         k_path: Vec::new(),
         path: Some(PathSpec {
-            preset: PathPreset::Square,
+            preset: Some(PathPreset::Square),
             segments_per_leg: 2,
+            k_path: vec![],
         }),
         eigensolver: Default::default(),
         dielectric: Default::default(),

@@ -66,8 +66,9 @@ mod tests {
             grid: Grid2D::new(32, 32, 1.0, 1.0),
             polarization: Polarization::TM,
             path: Some(PathSpec {
-                preset: mpb2d_core::io::PathPreset::Square,
+                preset: Some(mpb2d_core::io::PathPreset::Square),
                 segments_per_leg: 12,
+                k_path: vec![],
             }),
             k_path: vec![],
             eigensolver: EigensolverConfig::default(),

@@ -52,8 +52,8 @@ pub mod single_solve;
 
 // Re-export commonly used types from bandstructure
 pub use bandstructure::{
-    BandStructureJob, BandStructureResult, BandStructureResultWithDiagnostics, RunOptions,
-    Verbosity, run, run_with_diagnostics, run_with_options,
+    BandStructureJob, BandStructureResult, BandStructureResultWithDiagnostics,
+    RunOptions, Verbosity, run, run_with_diagnostics, run_with_options,
 };
 
 // Re-export from single_solve

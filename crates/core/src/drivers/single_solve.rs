@@ -58,7 +58,7 @@
 
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
+use crate::timing::Timer;
 
 use crate::backend::SpectralBackend;
 use crate::diagnostics::{ConvergenceRun, ConvergenceStudy};
@@ -313,7 +313,7 @@ where
         );
     }
 
-    let start_time = Instant::now();
+    let start_time = Timer::start();
     let config = job.to_eigensolver_config();
 
     // Create and run the eigensolver
@@ -321,7 +321,7 @@ where
     let result: EigensolverResult = solver.solve();
     let eigenvectors = solver.all_eigenvectors();
 
-    let elapsed = start_time.elapsed().as_secs_f64();
+    let elapsed = start_time.elapsed_secs();
 
     info!(
         "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s",
@@ -388,7 +388,7 @@ where
         );
     }
 
-    let start_time = Instant::now();
+    let start_time = Timer::start();
     let config = job.to_eigensolver_config();
 
     // Create and run the eigensolver with progress callback
@@ -396,7 +396,7 @@ where
     let result: EigensolverResult = solver.solve_with_progress(on_progress);
     let eigenvectors = solver.all_eigenvectors();
 
-    let elapsed = start_time.elapsed().as_secs_f64();
+    let elapsed = start_time.elapsed_secs();
 
     info!(
         "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s",
@@ -452,7 +452,7 @@ where
         );
     }
 
-    let start_time = Instant::now();
+    let start_time = Timer::start();
 
     // Force diagnostics recording
     let mut config = job.to_eigensolver_config();
@@ -463,7 +463,7 @@ where
     let diag_result: DiagnosticResult = solver.solve_with_diagnostics(&run_label);
     let eigenvectors = solver.all_eigenvectors();
 
-    let elapsed = start_time.elapsed().as_secs_f64();
+    let elapsed = start_time.elapsed_secs();
 
     info!(
         "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s (diagnostics recorded)",
@@ -512,7 +512,7 @@ where
     B: SpectralBackend,
 {
     let label = job.label.as_deref().unwrap_or("single_solve");
-    let start_time = Instant::now();
+    let start_time = Timer::start();
 
     let config = job.to_eigensolver_config();
 
@@ -521,7 +521,7 @@ where
     let result = solver.solve();
     let eigenvectors = solver.all_eigenvectors();
 
-    let elapsed = start_time.elapsed().as_secs_f64();
+    let elapsed = start_time.elapsed_secs();
 
     info!(
         "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s (warm-start: {} vectors)",
@@ -557,7 +557,7 @@ where
 {
     let run_label = run_label.into();
     let label = job.label.as_deref().unwrap_or(&run_label);
-    let start_time = Instant::now();
+    let start_time = Timer::start();
 
     let mut config = job.to_eigensolver_config();
     config.record_diagnostics = true;
@@ -567,7 +567,7 @@ where
     let diag_result: DiagnosticResult = solver.solve_with_diagnostics(&run_label);
     let eigenvectors = solver.all_eigenvectors();
 
-    let elapsed = start_time.elapsed().as_secs_f64();
+    let elapsed = start_time.elapsed_secs();
 
     info!(
         "[{}] n_bands={} converged={} iterations={} elapsed={:.3}s (warm-start, diagnostics)",

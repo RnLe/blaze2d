@@ -17,6 +17,11 @@
 //! 4. (Optional) Extrapolate: X_{n+1}^pred = (1+α)X̃_n - α X_{n-1}
 //! 5. B-orthonormalize the predicted vectors
 //!
+//! # Backend Selection
+//!
+//! - `native-linalg` feature: Uses faer for GEMM and SVD operations
+//! - `wasm-linalg` feature: Uses nalgebra (WASM-compatible)
+//!
 //! # Usage
 //!
 //! ```ignore
@@ -35,7 +40,12 @@
 //! }
 //! ```
 
+#[cfg(feature = "native-linalg")]
 use faer::Mat;
+
+#[cfg(feature = "wasm-linalg")]
+use nalgebra::{DMatrix, Complex as NaComplex};
+
 use log::debug;
 use num_complex::Complex64;
 
@@ -113,6 +123,48 @@ impl PredictionResult {
 }
 
 // ============================================================================
+// Rotation Matrix Type (backend-agnostic)
+// ============================================================================
+
+/// Backend-agnostic rotation matrix storage.
+/// This is stored as a flat column-major Vec<Complex64> to avoid generic types.
+#[derive(Debug, Clone)]
+pub struct RotationMatrix {
+    data: Vec<Complex64>,
+    dim: usize,
+}
+
+impl RotationMatrix {
+    /// Create a new zero-filled rotation matrix of given dimension.
+    pub fn new(dim: usize) -> Self {
+        Self {
+            data: vec![Complex64::ZERO; dim * dim],
+            dim,
+        }
+    }
+
+    /// Get element at (i, j).
+    pub fn get(&self, i: usize, j: usize) -> Complex64 {
+        self.data[i + j * self.dim]
+    }
+
+    /// Set element at (i, j).
+    pub fn set(&mut self, i: usize, j: usize, val: Complex64) {
+        self.data[i + j * self.dim] = val;
+    }
+
+    /// Get the dimension of the matrix.
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+
+    /// Get the number of columns (same as dim for square matrix).
+    pub fn ncols(&self) -> usize {
+        self.dim
+    }
+}
+
+// ============================================================================
 // Subspace History
 // ============================================================================
 
@@ -133,7 +185,7 @@ pub struct SubspaceHistory {
     /// k-point at n.
     curr_k: Option<[f64; 2]>,
     /// Cached rotation matrix U from the last (n-1) -> n transition.
-    cached_rotation: Option<Mat<faer::c64>>,
+    cached_rotation: Option<RotationMatrix>,
     /// Cached smallest singular value from the last overlap computation.
     cached_sigma_min: f64,
     /// Whether extrapolation is enabled (Stage 2).
@@ -332,7 +384,39 @@ impl SubspaceHistory {
 // Complex Overlap Matrix Computation
 // ============================================================================
 
-/// Compute the complex B-weighted overlap matrix using faer GEMM.
+/// Overlap matrix storage (backend-agnostic).
+#[derive(Debug, Clone)]
+pub struct OverlapMatrix {
+    data: Vec<Complex64>,
+    dim: usize,
+}
+
+impl OverlapMatrix {
+    /// Create a new zero-filled overlap matrix of given dimension.
+    pub fn new(dim: usize) -> Self {
+        Self {
+            data: vec![Complex64::ZERO; dim * dim],
+            dim,
+        }
+    }
+
+    /// Get element at (i, j).
+    pub fn get(&self, i: usize, j: usize) -> Complex64 {
+        self.data[i + j * self.dim]
+    }
+
+    /// Set element at (i, j).
+    pub fn set(&mut self, i: usize, j: usize, val: Complex64) {
+        self.data[i + j * self.dim] = val;
+    }
+
+    /// Get the dimension of the matrix.
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+}
+
+/// Compute the complex B-weighted overlap matrix using GEMM.
 ///
 /// O = X_prev^† B X_curr where O[i,j] = ⟨prev[i] | curr[j]⟩_B
 ///
@@ -346,26 +430,40 @@ impl SubspaceHistory {
 /// * `eps` - Optional dielectric for B-weighting (TM mode). None = identity (TE mode).
 ///
 /// # Returns
-/// An m×m faer matrix where m = min(prev.len(), curr.len())
+/// An m×m overlap matrix where m = min(prev.len(), curr.len())
 pub fn compute_complex_overlap_matrix(
     prev: &[Field2D],
     curr: &[Field2D],
     eps: Option<&[f64]>,
-) -> Mat<faer::c64> {
+) -> OverlapMatrix {
     let m = prev.len().min(curr.len());
     if m == 0 {
-        return Mat::zeros(0, 0);
+        return OverlapMatrix::new(0);
     }
 
     let n = prev[0].len(); // Grid points
 
-    // Build matrices in faer format
-    // For B-weighted inner product ⟨x, y⟩_B = x^† B y = (B^{1/2} x)^† (B^{1/2} y)
-    // With diagonal B = diag(ε), we have B^{1/2} = diag(√ε)
+    #[cfg(feature = "native-linalg")]
+    {
+        compute_overlap_faer(prev, curr, eps, m, n)
+    }
 
-    if let Some(epsilon) = eps {
+    #[cfg(feature = "wasm-linalg")]
+    {
+        compute_overlap_nalgebra(prev, curr, eps, m, n)
+    }
+}
+
+#[cfg(feature = "native-linalg")]
+fn compute_overlap_faer(
+    prev: &[Field2D],
+    curr: &[Field2D],
+    eps: Option<&[f64]>,
+    m: usize,
+    n: usize,
+) -> OverlapMatrix {
+    let overlap_mat = if let Some(epsilon) = eps {
         // TM mode: apply √ε weighting
-        // Build (√ε ⊙ X_prev) and (√ε ⊙ X_curr) matrices
         let sqrt_eps: Vec<f64> = epsilon.iter().map(|&e| e.sqrt()).collect();
 
         let prev_weighted = Mat::<faer::c64>::from_fn(n, m, |row, col| {
@@ -380,10 +478,9 @@ pub fn compute_complex_overlap_matrix(
             faer::c64::new(c.re * w, c.im * w)
         });
 
-        // O = prev_weighted^† curr_weighted (m×n × n×m = m×m)
         prev_weighted.adjoint() * &curr_weighted
     } else {
-        // TE mode: identity B, just compute X_prev^† X_curr
+        // TE mode: identity B
         let prev_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
             let c = prev[col].as_slice()[row];
             faer::c64::new(c.re, c.im)
@@ -394,9 +491,69 @@ pub fn compute_complex_overlap_matrix(
             faer::c64::new(c.re, c.im)
         });
 
-        // O = prev_mat^† curr_mat
         prev_mat.adjoint() * &curr_mat
+    };
+
+    // Convert to OverlapMatrix
+    let mut result = OverlapMatrix::new(m);
+    for i in 0..m {
+        for j in 0..m {
+            let c = overlap_mat.get(i, j);
+            result.set(i, j, Complex64::new(c.re, c.im));
+        }
     }
+    result
+}
+
+#[cfg(feature = "wasm-linalg")]
+fn compute_overlap_nalgebra(
+    prev: &[Field2D],
+    curr: &[Field2D],
+    eps: Option<&[f64]>,
+    m: usize,
+    n: usize,
+) -> OverlapMatrix {
+    let overlap_mat = if let Some(epsilon) = eps {
+        // TM mode: apply √ε weighting
+        let sqrt_eps: Vec<f64> = epsilon.iter().map(|&e| e.sqrt()).collect();
+
+        let prev_weighted = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
+            let c = prev[col].as_slice()[row];
+            let w = sqrt_eps[row];
+            NaComplex::new(c.re * w, c.im * w)
+        });
+
+        let curr_weighted = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
+            let c = curr[col].as_slice()[row];
+            let w = sqrt_eps[row];
+            NaComplex::new(c.re * w, c.im * w)
+        });
+
+        prev_weighted.adjoint() * &curr_weighted
+    } else {
+        // TE mode: identity B
+        let prev_mat = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
+            let c = prev[col].as_slice()[row];
+            NaComplex::new(c.re, c.im)
+        });
+
+        let curr_mat = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
+            let c = curr[col].as_slice()[row];
+            NaComplex::new(c.re, c.im)
+        });
+
+        prev_mat.adjoint() * &curr_mat
+    };
+
+    // Convert to OverlapMatrix
+    let mut result = OverlapMatrix::new(m);
+    for i in 0..m {
+        for j in 0..m {
+            let c = overlap_mat[(i, j)];
+            result.set(i, j, Complex64::new(c.re, c.im));
+        }
+    }
+    result
 }
 
 /// Standard inner product: ⟨x, y⟩ = Σ x^* · y
@@ -428,14 +585,33 @@ fn b_inner_product(x: &[Complex64], y: &[Complex64], eps: &[f64]) -> Complex64 {
 /// A tuple (U, σ_min) where:
 /// * U is the m×m unitary rotation matrix
 /// * σ_min is the smallest singular value (quality indicator)
-pub fn polar_decomposition(overlap: &Mat<faer::c64>) -> (Mat<faer::c64>, f64) {
-    let m = overlap.nrows();
+pub fn polar_decomposition(overlap: &OverlapMatrix) -> (RotationMatrix, f64) {
+    let m = overlap.dim();
     if m == 0 {
-        return (Mat::zeros(0, 0), 0.0);
+        return (RotationMatrix::new(0), 0.0);
     }
 
+    #[cfg(feature = "native-linalg")]
+    {
+        polar_decomposition_faer(overlap, m)
+    }
+
+    #[cfg(feature = "wasm-linalg")]
+    {
+        polar_decomposition_nalgebra(overlap, m)
+    }
+}
+
+#[cfg(feature = "native-linalg")]
+fn polar_decomposition_faer(overlap: &OverlapMatrix, m: usize) -> (RotationMatrix, f64) {
+    // Convert to faer matrix
+    let overlap_faer = Mat::<faer::c64>::from_fn(m, m, |i, j| {
+        let c = overlap.get(i, j);
+        faer::c64::new(c.re, c.im)
+    });
+
     // Compute SVD: O = W Σ V^†
-    let svd = overlap
+    let svd = overlap_faer
         .svd()
         .expect("SVD should succeed for overlap matrix");
     let u_mat = svd.U();
@@ -448,8 +624,47 @@ pub fn polar_decomposition(overlap: &Mat<faer::c64>) -> (Mat<faer::c64>, f64) {
         .fold(f64::INFINITY, f64::min);
 
     // Compute U = W V^†
-    // Since V is stored such that O = U S V^H, we want W V^H
-    let rotation = u_mat * v_mat.adjoint();
+    let rotation_faer = u_mat * v_mat.adjoint();
+
+    // Convert to RotationMatrix
+    let mut rotation = RotationMatrix::new(m);
+    for i in 0..m {
+        for j in 0..m {
+            let c = rotation_faer.get(i, j);
+            rotation.set(i, j, Complex64::new(c.re, c.im));
+        }
+    }
+
+    (rotation, sigma_min)
+}
+
+#[cfg(feature = "wasm-linalg")]
+fn polar_decomposition_nalgebra(overlap: &OverlapMatrix, m: usize) -> (RotationMatrix, f64) {
+    // Convert to nalgebra matrix
+    let overlap_na = DMatrix::<NaComplex<f64>>::from_fn(m, m, |i, j| {
+        let c = overlap.get(i, j);
+        NaComplex::new(c.re, c.im)
+    });
+
+    // Compute SVD: O = U Σ V^†
+    let svd = overlap_na.svd(true, true);
+    let u_mat = svd.u.as_ref().expect("SVD should return U");
+    let v_mat = svd.v_t.as_ref().expect("SVD should return V^T");
+
+    // Find smallest singular value
+    let sigma_min = svd.singular_values.iter().cloned().fold(f64::INFINITY, f64::min);
+
+    // Compute rotation = U V^T (note: nalgebra stores V^T not V)
+    let rotation_na = u_mat * v_mat;
+
+    // Convert to RotationMatrix
+    let mut rotation = RotationMatrix::new(m);
+    for i in 0..m {
+        for j in 0..m {
+            let c = rotation_na[(i, j)];
+            rotation.set(i, j, Complex64::new(c.re, c.im));
+        }
+    }
 
     (rotation, sigma_min)
 }
@@ -468,29 +683,83 @@ pub fn polar_decomposition(overlap: &Mat<faer::c64>) -> (Mat<faer::c64>, f64) {
 /// * σ_all is a vector of all singular values (sorted descending)
 /// * σ_min is the smallest singular value (convenience)
 pub fn polar_decomposition_with_singular_values(
-    overlap: &Mat<faer::c64>,
-) -> (Mat<faer::c64>, Vec<f64>, f64) {
-    let m = overlap.nrows();
+    overlap: &OverlapMatrix,
+) -> (RotationMatrix, Vec<f64>, f64) {
+    let m = overlap.dim();
     if m == 0 {
-        return (Mat::zeros(0, 0), Vec::new(), 0.0);
+        return (RotationMatrix::new(0), Vec::new(), 0.0);
     }
 
-    // Compute SVD: O = W Σ V^†
-    let svd = overlap
+    #[cfg(feature = "native-linalg")]
+    {
+        polar_decomposition_with_sv_faer(overlap, m)
+    }
+
+    #[cfg(feature = "wasm-linalg")]
+    {
+        polar_decomposition_with_sv_nalgebra(overlap, m)
+    }
+}
+
+#[cfg(feature = "native-linalg")]
+fn polar_decomposition_with_sv_faer(overlap: &OverlapMatrix, m: usize) -> (RotationMatrix, Vec<f64>, f64) {
+    let overlap_faer = Mat::<faer::c64>::from_fn(m, m, |i, j| {
+        let c = overlap.get(i, j);
+        faer::c64::new(c.re, c.im)
+    });
+
+    let svd = overlap_faer
         .svd()
         .expect("SVD should succeed for overlap matrix");
     let u_mat = svd.U();
     let v_mat = svd.V();
     let s_diag = svd.S().column_vector();
 
-    // Extract all singular values
+    // Extract all singular values (sorted descending)
     let mut sigma_all: Vec<f64> = (0..m).map(|i| s_diag.get(i).re).collect();
-    sigma_all.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)); // descending
+    sigma_all.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
 
     let sigma_min = sigma_all.last().copied().unwrap_or(0.0);
 
-    // Compute U = W V^†
-    let rotation = u_mat * v_mat.adjoint();
+    let rotation_faer = u_mat * v_mat.adjoint();
+
+    let mut rotation = RotationMatrix::new(m);
+    for i in 0..m {
+        for j in 0..m {
+            let c = rotation_faer.get(i, j);
+            rotation.set(i, j, Complex64::new(c.re, c.im));
+        }
+    }
+
+    (rotation, sigma_all, sigma_min)
+}
+
+#[cfg(feature = "wasm-linalg")]
+fn polar_decomposition_with_sv_nalgebra(overlap: &OverlapMatrix, m: usize) -> (RotationMatrix, Vec<f64>, f64) {
+    let overlap_na = DMatrix::<NaComplex<f64>>::from_fn(m, m, |i, j| {
+        let c = overlap.get(i, j);
+        NaComplex::new(c.re, c.im)
+    });
+
+    let svd = overlap_na.svd(true, true);
+    let u_mat = svd.u.as_ref().expect("SVD should return U");
+    let v_mat = svd.v_t.as_ref().expect("SVD should return V^T");
+
+    // Extract singular values (sorted descending)
+    let mut sigma_all: Vec<f64> = svd.singular_values.iter().cloned().collect();
+    sigma_all.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    let sigma_min = sigma_all.last().copied().unwrap_or(0.0);
+
+    let rotation_na = u_mat * v_mat;
+
+    let mut rotation = RotationMatrix::new(m);
+    for i in 0..m {
+        for j in 0..m {
+            let c = rotation_na[(i, j)];
+            rotation.set(i, j, Complex64::new(c.re, c.im));
+        }
+    }
 
     (rotation, sigma_all, sigma_min)
 }
@@ -501,7 +770,7 @@ pub fn polar_decomposition_with_singular_values(
 
 /// Apply the rotation to align eigenvectors: X̃ = X U^†
 ///
-/// Uses faer GEMM for efficient matrix multiplication.
+/// Uses GEMM for efficient matrix multiplication.
 ///
 /// # Arguments
 /// * `vectors` - The eigenvectors to rotate (X_n)
@@ -509,7 +778,7 @@ pub fn polar_decomposition_with_singular_values(
 ///
 /// # Returns
 /// The rotated eigenvectors X̃ = X U^†
-pub fn apply_rotation(vectors: &[Field2D], rotation: &Mat<faer::c64>) -> Vec<Field2D> {
+pub fn apply_rotation(vectors: &[Field2D], rotation: &RotationMatrix) -> Vec<Field2D> {
     let m = vectors.len();
     if m == 0 {
         return Vec::new();
@@ -518,15 +787,40 @@ pub fn apply_rotation(vectors: &[Field2D], rotation: &Mat<faer::c64>) -> Vec<Fie
     let grid = vectors[0].grid();
     let n = vectors[0].len(); // Grid points
 
+    #[cfg(feature = "native-linalg")]
+    {
+        apply_rotation_faer(vectors, rotation, grid, m, n)
+    }
+
+    #[cfg(feature = "wasm-linalg")]
+    {
+        apply_rotation_nalgebra(vectors, rotation, grid, m, n)
+    }
+}
+
+#[cfg(feature = "native-linalg")]
+fn apply_rotation_faer(
+    vectors: &[Field2D],
+    rotation: &RotationMatrix,
+    grid: crate::grid::Grid2D,
+    m: usize,
+    n: usize,
+) -> Vec<Field2D> {
     // Build X matrix (n × m) from vectors in faer format
     let x_mat = Mat::<faer::c64>::from_fn(n, m, |row, col| {
         let c = vectors[col].as_slice()[row];
         faer::c64::new(c.re, c.im)
     });
 
+    // Build rotation^† in faer format
+    let rotation_adj = Mat::<faer::c64>::from_fn(m, m, |i, j| {
+        // adjoint: swap indices and conjugate
+        let c = rotation.get(j, i);
+        faer::c64::new(c.re, -c.im)
+    });
+
     // Compute X̃ = X * U^† using faer GEMM
-    // rotation.adjoint() gives U^†
-    let x_tilde = &x_mat * rotation.adjoint();
+    let x_tilde = &x_mat * &rotation_adj;
 
     // Convert back to Vec<Field2D>
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
@@ -534,6 +828,44 @@ pub fn apply_rotation(vectors: &[Field2D], rotation: &Mat<faer::c64>) -> Vec<Fie
         let output_data: Vec<Complex64> = (0..n)
             .map(|k| {
                 let c = x_tilde.get(k, j);
+                Complex64::new(c.re, c.im)
+            })
+            .collect();
+        result.push(Field2D::from_vec(grid, output_data));
+    }
+
+    result
+}
+
+#[cfg(feature = "wasm-linalg")]
+fn apply_rotation_nalgebra(
+    vectors: &[Field2D],
+    rotation: &RotationMatrix,
+    grid: crate::grid::Grid2D,
+    m: usize,
+    n: usize,
+) -> Vec<Field2D> {
+    // Build X matrix (n × m) from vectors
+    let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
+        let c = vectors[col].as_slice()[row];
+        NaComplex::new(c.re, c.im)
+    });
+
+    // Build rotation^† (adjoint = transpose + conjugate)
+    let rotation_adj = DMatrix::<NaComplex<f64>>::from_fn(m, m, |i, j| {
+        let c = rotation.get(j, i);
+        NaComplex::new(c.re, -c.im)
+    });
+
+    // Compute X̃ = X * U^†
+    let x_tilde = &x_mat * &rotation_adj;
+
+    // Convert back to Vec<Field2D>
+    let mut result: Vec<Field2D> = Vec::with_capacity(m);
+    for j in 0..m {
+        let output_data: Vec<Complex64> = (0..n)
+            .map(|k| {
+                let c = x_tilde[(k, j)];
                 Complex64::new(c.re, c.im)
             })
             .collect();
@@ -566,7 +898,7 @@ pub fn apply_rotation(vectors: &[Field2D], rotation: &Mat<faer::c64>) -> Vec<Fie
 pub fn extrapolate_with_rotation(
     prev: &[Field2D],
     curr: &[Field2D],
-    rotation: &Mat<faer::c64>,
+    rotation: &RotationMatrix,
     alpha: f64,
 ) -> Vec<Field2D> {
     let m = prev.len().min(curr.len());
@@ -581,6 +913,28 @@ pub fn extrapolate_with_rotation(
     let coeff_aligned = 1.0 + alpha;
     let coeff_prev = -alpha;
 
+    #[cfg(feature = "native-linalg")]
+    {
+        extrapolate_faer(prev, curr, rotation, coeff_aligned, coeff_prev, grid, m, n)
+    }
+
+    #[cfg(feature = "wasm-linalg")]
+    {
+        extrapolate_nalgebra(prev, curr, rotation, coeff_aligned, coeff_prev, grid, m, n)
+    }
+}
+
+#[cfg(feature = "native-linalg")]
+fn extrapolate_faer(
+    prev: &[Field2D],
+    curr: &[Field2D],
+    rotation: &RotationMatrix,
+    coeff_aligned: f64,
+    coeff_prev: f64,
+    grid: crate::grid::Grid2D,
+    m: usize,
+    n: usize,
+) -> Vec<Field2D> {
     // Build X_curr matrix (n × m)
     let x_curr = Mat::<faer::c64>::from_fn(n, m, |row, col| {
         let c = curr[col].as_slice()[row];
@@ -588,11 +942,13 @@ pub fn extrapolate_with_rotation(
     });
 
     // Compute scaled transformation: T = (1+α) U^†
-    let scale = faer::c64::new(coeff_aligned, 0.0);
-    let t_scaled = rotation.adjoint() * faer::Scale(scale);
+    let rotation_adj = Mat::<faer::c64>::from_fn(m, m, |i, j| {
+        let c = rotation.get(j, i);
+        faer::c64::new(c.re * coeff_aligned, -c.im * coeff_aligned)
+    });
 
     // X_aligned = X_curr * T = (1+α) X_curr U^† using GEMM
-    let x_aligned = &x_curr * t_scaled;
+    let x_aligned = &x_curr * &rotation_adj;
 
     // Build result: X_pred = X_aligned + coeff_prev * X_prev
     let mut result: Vec<Field2D> = Vec::with_capacity(m);
@@ -603,6 +959,50 @@ pub fn extrapolate_with_rotation(
         let output_data: Vec<Complex64> = (0..n)
             .map(|k| {
                 let aligned = x_aligned.get(k, j);
+                Complex64::new(aligned.re, aligned.im) + coeff_p * prev_slice[k]
+            })
+            .collect();
+        result.push(Field2D::from_vec(grid, output_data));
+    }
+
+    result
+}
+
+#[cfg(feature = "wasm-linalg")]
+fn extrapolate_nalgebra(
+    prev: &[Field2D],
+    curr: &[Field2D],
+    rotation: &RotationMatrix,
+    coeff_aligned: f64,
+    coeff_prev: f64,
+    grid: crate::grid::Grid2D,
+    m: usize,
+    n: usize,
+) -> Vec<Field2D> {
+    // Build X_curr matrix (n × m)
+    let x_curr = DMatrix::<NaComplex<f64>>::from_fn(n, m, |row, col| {
+        let c = curr[col].as_slice()[row];
+        NaComplex::new(c.re, c.im)
+    });
+
+    // Compute scaled transformation: T = (1+α) U^†
+    let rotation_adj = DMatrix::<NaComplex<f64>>::from_fn(m, m, |i, j| {
+        let c = rotation.get(j, i);
+        NaComplex::new(c.re * coeff_aligned, -c.im * coeff_aligned)
+    });
+
+    // X_aligned = X_curr * T
+    let x_aligned = &x_curr * &rotation_adj;
+
+    // Build result: X_pred = X_aligned + coeff_prev * X_prev
+    let mut result: Vec<Field2D> = Vec::with_capacity(m);
+    let coeff_p = Complex64::new(coeff_prev, 0.0);
+
+    for j in 0..m {
+        let prev_slice = prev[j].as_slice();
+        let output_data: Vec<Complex64> = (0..n)
+            .map(|k| {
+                let aligned = x_aligned[(k, j)];
                 Complex64::new(aligned.re, aligned.im) + coeff_p * prev_slice[k]
             })
             .collect();
@@ -762,13 +1162,9 @@ mod tests {
     #[test]
     fn test_polar_decomposition_identity() {
         // For identity overlap, rotation should be identity
-        let identity = Mat::<faer::c64>::from_fn(2, 2, |i, j| {
-            if i == j {
-                faer::c64::new(1.0, 0.0)
-            } else {
-                faer::c64::new(0.0, 0.0)
-            }
-        });
+        let mut identity = OverlapMatrix::new(2);
+        identity.set(0, 0, Complex64::new(1.0, 0.0));
+        identity.set(1, 1, Complex64::new(1.0, 0.0));
 
         let (rotation, sigma_min) = polar_decomposition(&identity);
 
@@ -785,37 +1181,37 @@ mod tests {
     #[test]
     fn test_rotation_is_unitary() {
         // Create a non-trivial overlap matrix
-        let overlap = Mat::<faer::c64>::from_fn(2, 2, |i, j| match (i, j) {
-            (0, 0) => faer::c64::new(0.9, 0.1),
-            (0, 1) => faer::c64::new(0.1, 0.05),
-            (1, 0) => faer::c64::new(0.1, -0.05),
-            (1, 1) => faer::c64::new(0.95, 0.0),
-            _ => faer::c64::new(0.0, 0.0),
-        });
+        let mut overlap = OverlapMatrix::new(2);
+        overlap.set(0, 0, Complex64::new(0.9, 0.1));
+        overlap.set(0, 1, Complex64::new(0.1, 0.05));
+        overlap.set(1, 0, Complex64::new(0.1, -0.05));
+        overlap.set(1, 1, Complex64::new(0.95, 0.0));
 
         let (rotation, _) = polar_decomposition(&overlap);
 
-        // Check U U^† = I
-        let product = &rotation * rotation.adjoint();
-
+        // Check U U^† = I by computing manually
         for i in 0..2 {
             for j in 0..2 {
+                // (U U^†)[i,j] = sum_k U[i,k] * conj(U[j,k])
+                let mut sum = Complex64::ZERO;
+                for k in 0..2 {
+                    sum += rotation.get(i, k) * rotation.get(j, k).conj();
+                }
                 let expected = if i == j { 1.0 } else { 0.0 };
-                let actual = product.get(i, j);
                 assert!(
-                    (actual.re - expected).abs() < 1e-10,
+                    (sum.re - expected).abs() < 1e-10,
                     "U U^† [{},{}] = {:?}, expected {}",
                     i,
                     j,
-                    actual,
+                    sum,
                     expected
                 );
                 assert!(
-                    actual.im.abs() < 1e-10,
+                    sum.im.abs() < 1e-10,
                     "U U^† [{},{}] has imaginary part {:?}",
                     i,
                     j,
-                    actual.im
+                    sum.im
                 );
             }
         }
@@ -1016,7 +1412,8 @@ mod tests {
         )];
 
         // Identity rotation (aligned already)
-        let rotation = Mat::<faer::c64>::from_fn(1, 1, |_, _| faer::c64::new(1.0, 0.0));
+        let mut rotation = RotationMatrix::new(1);
+        rotation.set(0, 0, Complex64::new(1.0, 0.0));
 
         // alpha = 1.0 (uniform steps)
         // X_pred = (1+1)*curr - 1*prev = 2*curr - prev = 2*[2,0,0,0] - [1,0,0,0] = [3,0,0,0]
@@ -1052,7 +1449,8 @@ mod tests {
             ],
         )];
 
-        let rotation = Mat::<faer::c64>::from_fn(1, 1, |_, _| faer::c64::new(1.0, 0.0));
+        let mut rotation = RotationMatrix::new(1);
+        rotation.set(0, 0, Complex64::new(1.0, 0.0));
 
         // alpha = 0.5
         // X_pred = (1+0.5)*curr - 0.5*prev = 1.5*[1,0,0,0] - 0.5*[0,0,0,0] = [1.5,0,0,0]

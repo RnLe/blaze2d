@@ -1,4 +1,4 @@
-//! Dense Hermitian eigensolver using faer.
+//! Dense Hermitian eigensolver with backend abstraction.
 //!
 //! This module provides efficient eigendecomposition for the small dense
 //! projected matrices that arise in the Rayleigh-Ritz step of LOBPCG.
@@ -15,8 +15,18 @@
 //!
 //! Since B_s = I (ensured by SVQB B-orthonormalization), this is a standard
 //! eigenvalue problem, not generalized.
+//!
+//! # Backend Selection
+//!
+//! - `native-linalg` feature: Uses faer's optimized self-adjoint eigensolver
+//! - `wasm-linalg` feature: Uses nalgebra's symmetric eigensolver (WASM-compatible)
 
+#[cfg(feature = "native-linalg")]
 use faer::{Mat, Side};
+
+#[cfg(feature = "wasm-linalg")]
+use nalgebra::{DMatrix, Complex as NaComplex};
+
 use num_complex::Complex64;
 
 /// Result of dense Hermitian eigendecomposition.
@@ -69,6 +79,23 @@ pub fn solve_hermitian_eigen(a_matrix: &[Complex64], dim: usize) -> DenseEigenRe
         };
     }
 
+    #[cfg(feature = "native-linalg")]
+    {
+        solve_hermitian_eigen_faer(a_matrix, dim)
+    }
+
+    #[cfg(feature = "wasm-linalg")]
+    {
+        solve_hermitian_eigen_nalgebra(a_matrix, dim)
+    }
+}
+
+// ============================================================================
+// faer backend (native-linalg)
+// ============================================================================
+
+#[cfg(feature = "native-linalg")]
+fn solve_hermitian_eigen_faer(a_matrix: &[Complex64], dim: usize) -> DenseEigenResult {
     // Convert to faer Mat<c64>
     // faer uses c64 which is compatible with num_complex::Complex64
     let a_faer = Mat::<faer::c64>::from_fn(dim, dim, |i, j| {
@@ -101,6 +128,54 @@ pub fn solve_hermitian_eigen(a_matrix: &[Complex64], dim: usize) -> DenseEigenRe
 
     DenseEigenResult {
         eigenvalues,
+        eigenvectors,
+        dim,
+    }
+}
+
+// ============================================================================
+// nalgebra backend (wasm-linalg)
+// ============================================================================
+
+#[cfg(feature = "wasm-linalg")]
+fn solve_hermitian_eigen_nalgebra(a_matrix: &[Complex64], dim: usize) -> DenseEigenResult {
+    // Convert to nalgebra DMatrix<Complex<f64>>
+    // Input is column-major, nalgebra also uses column-major
+    let a_na = DMatrix::<NaComplex<f64>>::from_fn(dim, dim, |i, j| {
+        let c = a_matrix[i + j * dim];
+        NaComplex::new(c.re, c.im)
+    });
+
+    // Compute eigendecomposition using nalgebra's symmetric_eigen
+    // This works for Hermitian matrices (complex symmetric)
+    let eigen = a_na.clone().symmetric_eigen();
+    
+    // eigenvalues are in eigen.eigenvalues (ascending order in nalgebra)
+    // eigenvectors are columns of eigen.eigenvectors
+    
+    // nalgebra returns eigenvalues as RealField (f64) for complex matrices
+    let eigenvalues: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
+    
+    // Sort eigenvalues and get the sorting permutation
+    let mut indices: Vec<usize> = (0..dim).collect();
+    indices.sort_by(|&i, &j| {
+        eigenvalues[i].partial_cmp(&eigenvalues[j]).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    // Apply sorting to eigenvalues
+    let sorted_eigenvalues: Vec<f64> = indices.iter().map(|&i| eigenvalues[i]).collect();
+    
+    // Extract eigenvectors in sorted order (column-major)
+    let mut eigenvectors = vec![Complex64::new(0.0, 0.0); dim * dim];
+    for (new_j, &old_j) in indices.iter().enumerate() {
+        for i in 0..dim {
+            let c = eigen.eigenvectors[(i, old_j)];
+            eigenvectors[i + new_j * dim] = Complex64::new(c.re, c.im);
+        }
+    }
+
+    DenseEigenResult {
+        eigenvalues: sorted_eigenvalues,
         eigenvectors,
         dim,
     }

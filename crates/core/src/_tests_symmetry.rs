@@ -849,12 +849,19 @@ mod path_generation {
     }
 
     #[test]
-    fn custom_path_passthrough() {
+    fn custom_path_densified() {
         let lattice = Lattice2D::square(1.0);
         let custom = vec![[0.1, 0.2], [0.3, 0.4], [0.9, 0.1]];
         let path = standard_path(&lattice, PathType::Custom(custom.clone()), 10);
 
-        assert_eq!(path, custom, "custom path should pass through unchanged");
+        // Custom paths should now be densified like other path types
+        // With 10 segments per leg and 2 legs, we expect 10*2 + 1 = 21 points
+        assert_eq!(path.len(), 21, "custom path should be densified");
+        
+        // Should start and end at the specified corners
+        assert_point_close(path[0], [0.1, 0.2]);
+        assert_point_close(path[10], [0.3, 0.4]);
+        assert_point_close(path[20], [0.9, 0.1]);
     }
 
     #[test]

@@ -6,15 +6,21 @@ use mpb2d_core::backend::SpectralBackend;
 use mpb2d_core::field::Field2D;
 use mpb2d_core::grid::Grid2D;
 use num_complex::Complex64;
-use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 use rustfft::{Fft, FftPlanner};
 
+#[cfg(feature = "parallel")]
+use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
+
+#[cfg(feature = "parallel")]
 const DEFAULT_PARALLEL_THRESHOLD: usize = 4096;
 
 #[derive(Clone)]
 pub struct CpuBackend {
+    #[cfg(feature = "parallel")]
     parallel_fft: bool,
+    #[cfg(feature = "parallel")]
     parallel_min_points: usize,
+    #[cfg(feature = "parallel")]
     parallel_pool: Option<Arc<ThreadPool>>,
     plan_cache: Arc<Mutex<FftPlanner<f64>>>,
 }
@@ -22,13 +28,17 @@ pub struct CpuBackend {
 impl CpuBackend {
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "parallel")]
             parallel_fft: false,
+            #[cfg(feature = "parallel")]
             parallel_min_points: DEFAULT_PARALLEL_THRESHOLD,
+            #[cfg(feature = "parallel")]
             parallel_pool: None,
             plan_cache: Arc::new(Mutex::new(FftPlanner::new())),
         }
     }
 
+    #[cfg(feature = "parallel")]
     pub fn new_parallel() -> Self {
         Self::new()
             .with_parallel_fft(true)
@@ -36,16 +46,19 @@ impl CpuBackend {
             .with_parallel_threshold(DEFAULT_PARALLEL_THRESHOLD)
     }
 
+    #[cfg(feature = "parallel")]
     pub fn with_parallel_fft(mut self, enabled: bool) -> Self {
         self.parallel_fft = enabled;
         self
     }
 
+    #[cfg(feature = "parallel")]
     pub fn with_parallel_threshold(mut self, min_points: usize) -> Self {
         self.parallel_min_points = min_points.max(1);
         self
     }
 
+    #[cfg(feature = "parallel")]
     pub fn with_parallel_threads(mut self, threads: usize) -> Self {
         if threads == 0 {
             self.parallel_pool = None;
@@ -82,18 +95,27 @@ impl CpuBackend {
         };
 
         let data = buffer.as_mut_slice();
+        
+        #[cfg(feature = "parallel")]
         let use_parallel = self.parallel_fft && grid.len() >= self.parallel_min_points;
+        
+        #[cfg(not(feature = "parallel"))]
+        let use_parallel = false;
+        
         if use_parallel {
-            let mut transposed = vec![Complex64::default(); data.len()];
-            execute_parallel_fft(
-                self.parallel_pool.as_deref(),
-                data,
-                &mut transposed,
-                nx,
-                ny,
-                row_fft.clone(),
-                col_fft.clone(),
-            );
+            #[cfg(feature = "parallel")]
+            {
+                let mut transposed = vec![Complex64::default(); data.len()];
+                execute_parallel_fft(
+                    self.parallel_pool.as_deref(),
+                    data,
+                    &mut transposed,
+                    nx,
+                    ny,
+                    row_fft.clone(),
+                    col_fft.clone(),
+                );
+            }
         } else {
             process_rows_serial(data, nx, &row_fft);
             process_columns_serial(data, nx, ny, &col_fft);
@@ -101,12 +123,17 @@ impl CpuBackend {
 
         if matches!(direction, FftDirection::Inverse) {
             let scale = 1.0 / (nx * ny) as f64;
+            #[cfg(feature = "parallel")]
             if use_parallel {
                 data.par_iter_mut().for_each(|value| *value *= scale);
             } else {
                 for value in data.iter_mut() {
                     *value *= scale;
                 }
+            }
+            #[cfg(not(feature = "parallel"))]
+            for value in data.iter_mut() {
+                *value *= scale;
             }
         }
     }
@@ -123,6 +150,7 @@ fn process_rows_serial(data: &mut [Complex64], nx: usize, fft: &Arc<dyn Fft<f64>
     }
 }
 
+#[cfg(feature = "parallel")]
 fn process_rows_parallel(data: &mut [Complex64], nx: usize, fft: Arc<dyn Fft<f64>>) {
     data.par_chunks_mut(nx).for_each(|row| {
         fft.process(row);
@@ -142,6 +170,7 @@ fn process_columns_serial(data: &mut [Complex64], nx: usize, ny: usize, fft: &Ar
     }
 }
 
+#[cfg(feature = "parallel")]
 fn transpose_into(src: &[Complex64], dst: &mut [Complex64], nx: usize, ny: usize) {
     assert_eq!(src.len(), dst.len());
     for iy in 0..ny {
@@ -153,6 +182,7 @@ fn transpose_into(src: &[Complex64], dst: &mut [Complex64], nx: usize, ny: usize
     }
 }
 
+#[cfg(feature = "parallel")]
 fn execute_parallel_fft(
     pool: Option<&ThreadPool>,
     data: &mut [Complex64],

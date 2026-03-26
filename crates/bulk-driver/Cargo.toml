@@ -8,7 +8,9 @@ authors.workspace = true
 description = "Smart multi-threaded driver for bulk MPB2D parameter sweep calculations"
 
 [features]
-default = []
+default = ["native-linalg"]
+native-linalg = ["mpb2d-core/native-linalg", "mpb2d-bulk-driver-core/native-linalg", "mpb2d-backend-cpu/native-linalg"]
+wasm-linalg = ["mpb2d-core/wasm-linalg", "mpb2d-bulk-driver-core/wasm-linalg", "mpb2d-backend-cpu/wasm-linalg"]
 cuda = ["mpb2d-backend-cpu/cuda", "dep:mpb2d-backend-cuda"]
 
 [dependencies]
@@ -23,9 +25,9 @@ thiserror.workspace = true
 num_cpus.workspace = true
 
 # Internal crates
-mpb2d-bulk-driver-core = { path = "../bulk-driver-core" }
-mpb2d-core = { path = "../core" }
-mpb2d-backend-cpu = { path = "../backend-cpu" }
+mpb2d-bulk-driver-core = { path = "../bulk-driver-core", default-features = false }
+mpb2d-core = { path = "../core", default-features = false }
+mpb2d-backend-cpu = { path = "../backend-cpu", default-features = false }
 mpb2d-backend-cuda = { path = "../backend-cuda", optional = true }
 
 # Additional dependencies

@@ -27,9 +27,9 @@ wasm:
 	@# Clean up unnecessary files
 	@rm -f $(WASM_OUT)/.gitignore $(WASM_OUT)/package.json $(WASM_OUT)/README.md
 	@echo ""
-	@echo "✅ WASM build complete!"
+	@echo "WASM build complete!"
 	@echo ""
-	@echo "📁 Output: ./$(WASM_OUT)/"
+	@echo "Output: ./$(WASM_OUT)/"
 	@echo ""
 	@echo "Usage in Next.js:"
 	@echo "  1. Copy $(WASM_OUT)/ contents to public/wasm/"
@@ -46,21 +46,21 @@ wasm:
 
 ## Build WASM bindings (debug, faster compilation)
 wasm-dev:
-	@echo "🔨 Building WASM bindings (debug)..."
+	@echo "Building WASM bindings (debug)..."
 	wasm-pack build crates/backend-wasm \
 		--target web \
 		--out-dir ../../$(WASM_OUT) \
 		--dev \
 		-- --features $(WASM_FEATURES)
 	@rm -f $(WASM_OUT)/.gitignore $(WASM_OUT)/package.json $(WASM_OUT)/README.md
-	@echo "✅ WASM debug build complete: ./$(WASM_OUT)/"
+	@echo "WASM debug build complete: ./$(WASM_OUT)/"
 
 ## Clean WASM build artifacts
 wasm-clean:
-	@echo "🧹 Cleaning WASM artifacts..."
+	@echo "Cleaning WASM artifacts..."
 	rm -rf $(WASM_OUT)
 	rm -rf crates/backend-wasm/pkg
-	@echo "✅ Clean complete"
+	@echo "Clean complete"
 
 # =============================================================================
 # General Targets

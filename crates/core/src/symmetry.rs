@@ -155,7 +155,7 @@ pub fn standard_path(
 ) -> Vec<[f64; 2]> {
     let _ = lattice;
     match path {
-        PathType::Custom(seq) => seq,
+        PathType::Custom(seq) => generate_path(&BrillouinPath::Custom(seq), segments_per_leg),
         PathType::Square => generate_path(&BrillouinPath::Square, segments_per_leg),
         PathType::Hexagonal => generate_path(&BrillouinPath::Hexagonal, segments_per_leg),
     }

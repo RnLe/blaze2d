@@ -3,5 +3,11 @@
 # This enables CPU-specific optimizations (AVX2, FMA, etc.) for this machine.
 # Note: Binaries built with these flags are NOT portable to other CPUs.
 
-[build]
+# Native x86_64 builds: use all available CPU features
+[target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=native"]
+
+# WASM builds: enable bulk-memory and other modern WASM features
+# These are widely supported in modern browsers (Chrome 75+, Firefox 79+, Safari 15+)
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint"]

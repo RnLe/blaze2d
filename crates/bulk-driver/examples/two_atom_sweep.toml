@@ -75,8 +75,9 @@ n_bands = 8
 tol = 1e-8
 max_iter = 200
 
-[dielectric]
-smoothing_radius = 0.5
+[dielectric.smoothing]
+mesh_size = 3
+method = "analytic"
 
 # ============================================================================
 # PARAMETER SWEEPS

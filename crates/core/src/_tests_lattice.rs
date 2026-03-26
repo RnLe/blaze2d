@@ -130,3 +130,113 @@ fn reciprocal_fractional_to_cartesian_hexagonal_lattice() {
         "K-point y should be 2π/(3√3)"
     );
 }
+
+// =============================================================================
+// TOML Deserialization Tests
+// =============================================================================
+
+#[test]
+fn deserialize_legacy_format() {
+    let toml_str = r#"
+        a1 = [1.0, 0.0]
+        a2 = [0.0, 1.0]
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse legacy format");
+    assert_eq!(lattice.a1, [1.0, 0.0]);
+    assert_eq!(lattice.a2, [0.0, 1.0]);
+}
+
+#[test]
+fn deserialize_typed_square() {
+    let toml_str = r#"
+        type = "square"
+        a = 2.0
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse typed square");
+    assert_eq!(lattice.a1, [2.0, 0.0]);
+    assert_eq!(lattice.a2, [0.0, 2.0]);
+}
+
+#[test]
+fn deserialize_typed_square_default_a() {
+    let toml_str = r#"
+        type = "square"
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse with default a=1.0");
+    assert_eq!(lattice.a1, [1.0, 0.0]);
+    assert_eq!(lattice.a2, [0.0, 1.0]);
+}
+
+#[test]
+fn deserialize_typed_rectangular() {
+    let toml_str = r#"
+        type = "rectangular"
+        a = 1.0
+        b = 2.0
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse rectangular");
+    assert_eq!(lattice.a1, [1.0, 0.0]);
+    assert_eq!(lattice.a2, [0.0, 2.0]);
+}
+
+#[test]
+fn deserialize_typed_triangular() {
+    let toml_str = r#"
+        type = "triangular"
+        a = 1.0
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse triangular");
+    // hexagonal/triangular: a2 = [a/2, a*sqrt(3)/2]
+    assert!((lattice.a1[0] - 1.0).abs() < 1e-12);
+    assert!(lattice.a1[1].abs() < 1e-12);
+    assert!((lattice.a2[0] - 0.5).abs() < 1e-12);
+    assert!((lattice.a2[1] - (3.0_f64).sqrt() / 2.0).abs() < 1e-12);
+}
+
+#[test]
+fn deserialize_typed_hexagonal() {
+    let toml_str = r#"
+        type = "hexagonal"
+        a = 1.0
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse hexagonal");
+    // Same as triangular
+    assert!((lattice.a2[1] - (3.0_f64).sqrt() / 2.0).abs() < 1e-12);
+}
+
+#[test]
+fn deserialize_typed_oblique() {
+    let toml_str = r#"
+        type = "oblique"
+        a = 1.0
+        b = 1.0
+        alpha = 60.0
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse oblique");
+    // a1 = [1, 0], a2 = [cos(60°), sin(60°)] = [0.5, sqrt(3)/2]
+    assert_eq!(lattice.a1, [1.0, 0.0]);
+    assert!((lattice.a2[0] - 0.5).abs() < 1e-10);
+    assert!((lattice.a2[1] - (3.0_f64).sqrt() / 2.0).abs() < 1e-10);
+}
+
+#[test]
+fn deserialize_case_insensitive() {
+    let toml_str = r#"
+        type = "SQUARE"
+        a = 1.0
+    "#;
+    let lattice: Lattice2D = toml::from_str(toml_str).expect("should parse case-insensitive");
+    assert_eq!(lattice.a1, [1.0, 0.0]);
+}
+
+#[test]
+fn serialize_produces_legacy_format() {
+    let lattice = Lattice2D::square(2.0);
+    let toml_str = toml::to_string(&lattice).expect("should serialize");
+    assert!(toml_str.contains("a1"));
+    assert!(toml_str.contains("a2"));
+    // Ensure it can be round-tripped
+    let parsed: Lattice2D = toml::from_str(&toml_str).expect("should parse serialized");
+    assert_eq!(parsed.a1, lattice.a1);
+    assert_eq!(parsed.a2, lattice.a2);
+}

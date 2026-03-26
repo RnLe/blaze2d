@@ -56,7 +56,7 @@
 //! plt.legend()
 //! ```
 
-use std::time::Instant;
+use crate::timing::Timer;
 
 use serde::{Deserialize, Serialize};
 
@@ -84,11 +84,21 @@ use serde::{Deserialize, Serialize};
 pub enum PreconditionerType {
     /// Automatic selection based on polarization (default)
     ///
-    /// - **TM**: Uses FourierDiagonalKernelCompensated (symmetry-compatible)
-    /// - **TE**: Uses TransverseProjection (best condition reduction)
+    /// Uses geometric multigrid preconditioner for both TM and TE modes.
+    /// This provides the best convergence for most problems.
     Auto,
     /// No preconditioner (identity)
     None,
+    /// Geometric multigrid preconditioner (V-cycle)
+    ///
+    /// Real-space multigrid with damped Jacobi smoother. Works well for
+    /// both TM and TE modes with heterogeneous dielectric. Default choice.
+    ///
+    /// - Coarsening: 2× in each dimension
+    /// - Transfer: bilinear prolongation, full-weighting restriction
+    /// - Smoother: damped Jacobi (ω ≈ 0.67)
+    /// - Coarse solve: many smoothing iterations
+    Multigrid,
     /// Fourier-diagonal kernel-compensated preconditioner
     ///
     /// Uses M⁻¹(q) = ε_eff / (|q|² + σ²) with adaptive k-dependent shift σ².
@@ -129,6 +139,7 @@ impl std::fmt::Display for PreconditionerType {
         match self {
             Self::Auto => write!(f, "auto"),
             Self::None => write!(f, "none"),
+            Self::Multigrid => write!(f, "multigrid"),
             Self::FourierDiagonalKernelCompensated => {
                 write!(f, "fourier_diagonal_kernel_compensated")
             }
@@ -140,7 +151,7 @@ impl std::fmt::Display for PreconditionerType {
 impl PreconditionerType {
     /// Resolve `Auto` to the appropriate preconditioner for the given polarization.
     ///
-    /// - **TM**: Returns `FourierDiagonalKernelCompensated` (symmetry-compatible, works with transformed operator)
+    /// - **TM**: Returns `FourierDiagonalKernelCompensated` (symmetry-compatible)
     /// - **TE**: Returns `TransverseProjection` (best condition reduction for ε-dependent operator)
     ///
     /// For non-Auto types, returns self unchanged.
@@ -498,7 +509,7 @@ pub struct ConvergenceRecorder {
     /// Accumulated iteration snapshots
     snapshots: Vec<IterationSnapshot>,
     /// Start time for elapsed time tracking
-    start_time: Option<Instant>,
+    start_time: Option<Timer>,
     /// Whether recording is enabled
     enabled: bool,
 }
@@ -532,14 +543,14 @@ impl ConvergenceRecorder {
     /// Start the timer (call at beginning of solve).
     pub fn start(&mut self) {
         if self.enabled {
-            self.start_time = Some(Instant::now());
+            self.start_time = Some(Timer::start());
         }
     }
 
     /// Get elapsed time since start (or 0 if not started).
     pub fn elapsed_secs(&self) -> f64 {
         self.start_time
-            .map(|t| t.elapsed().as_secs_f64())
+            .map(|t| t.elapsed_secs())
             .unwrap_or(0.0)
     }
 

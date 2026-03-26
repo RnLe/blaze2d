@@ -1,7 +1,26 @@
 //! Core math, physics, and APIs for the MPB-style 2D solver.
 
 // ============================================================================
-// faer parallelism configuration
+// Compile-time feature checks
+// ============================================================================
+//
+// Ensure exactly one linear algebra backend is selected.
+// This prevents confusing runtime behavior from having neither or both.
+
+#[cfg(all(feature = "native-linalg", feature = "wasm-linalg"))]
+compile_error!(
+    "Cannot enable both 'native-linalg' and 'wasm-linalg' features simultaneously. \
+     Use 'native-linalg' for native builds or 'wasm-linalg' for WASM builds."
+);
+
+#[cfg(not(any(feature = "native-linalg", feature = "wasm-linalg")))]
+compile_error!(
+    "Must enable either 'native-linalg' or 'wasm-linalg' feature. \
+     Use 'native-linalg' (default) for native builds or 'wasm-linalg' for WASM builds."
+);
+
+// ============================================================================
+// faer parallelism configuration (native-linalg only)
 // ============================================================================
 //
 // IMPORTANT: We disable faer's internal GEMM parallelism because for typical
@@ -20,16 +39,27 @@
 //   - n * r >= THRESHOLD → parallel GEMM with faer::Par::rayon(nthreads)
 // Estimated threshold: ~50,000-100,000 elements (e.g., 128×128 grid with 3+ bands)
 //
+#[cfg(feature = "native-linalg")]
 use std::sync::Once;
 
+#[cfg(feature = "native-linalg")]
 static INIT_FAER: Once = Once::new();
 
 /// Initialize faer with sequential execution (no internal parallelism).
 /// Safe to call multiple times - only the first call takes effect.
+/// 
+/// This is a no-op when using the wasm-linalg backend.
+#[cfg(feature = "native-linalg")]
 pub(crate) fn init_faer_sequential() {
     INIT_FAER.call_once(|| {
         faer::set_global_parallelism(faer::Par::Seq);
     });
+}
+
+/// No-op for wasm-linalg backend (nalgebra doesn't have global parallelism settings).
+#[cfg(feature = "wasm-linalg")]
+pub(crate) fn init_faer_sequential() {
+    // No-op: nalgebra doesn't have global parallelism settings
 }
 
 // ============================================================================
@@ -59,6 +89,7 @@ pub mod polarization;
 pub mod profiler;
 pub mod reference;
 pub mod symmetry;
+pub mod timing;
 pub mod units;
 
 // ============================================================================

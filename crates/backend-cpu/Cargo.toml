@@ -7,17 +7,24 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = []
+default = ["native-linalg", "parallel"]
+native-linalg = ["mpb2d-core/native-linalg"]
+wasm-linalg = ["mpb2d-core/wasm-linalg"]
 cuda = ["mpb2d-backend-cuda/cuda", "dep:mpb2d-backend-cuda"]
 
+# Enable parallel FFT with rayon. Disable for WASM builds.
+parallel = ["dep:rayon", "dep:num_cpus"]
+
 [dependencies]
-mpb2d-core = { path = "../core" }
+mpb2d-core = { path = "../core", default-features = false }
 mpb2d-backend-cuda = { path = "../backend-cuda", optional = true }
 num-complex.workspace = true
-rayon.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
-num_cpus.workspace = true
+
+# Optional parallel dependencies (not available in WASM)
+rayon = { workspace = true, optional = true }
+num_cpus = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true

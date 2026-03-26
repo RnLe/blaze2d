@@ -1,35 +1,86 @@
 # Envelope Approximation (EA) solver for moiré lattices
 # Solves: H ψ = E ψ  where  H = V(R) - (η²/2) ∇·M⁻¹(R)∇
+#
+# The EA solver computes low-energy eigenstates for effective Hamiltonians
+# arising in moiré heterostructures. Unlike the Maxwell solver, EA mode:
+#   - Does NOT use a k-path (solves at a single point in real space)
+#   - Returns eigenvalues and real-space eigenvectors
+#   - Requires binary input files for potential and mass tensor
+#
+# Binary file format: f64 little-endian, row-major (C-order)
+#   - Potential:   Nx×Ny values
+#   - Mass inverse: Nx×Ny×4 values [m_xx, m_xy, m_yx, m_yy] per grid point
+#   - Group velocity (optional): Nx×Ny×2 values [vg_x, vg_y]
+
+# =============================================================================
+# BULK SECTION - Identifies this as a parameter sweep configuration
+# =============================================================================
 
 [bulk]
-threads = 4
-verbose = true
+threads = 1                    # Number of parallel threads (0 = all cores)
+verbose = true                 # Print progress messages
+# dry_run = false              # Set true to just count jobs without running
+
+# =============================================================================
+# SOLVER TYPE
+# =============================================================================
 
 [solver]
-type = "ea"
+type = "ea"                    # "maxwell" for photonic crystals, "ea" for envelope approx
+
+# =============================================================================
+# EA-SPECIFIC CONFIGURATION
+# =============================================================================
 
 [ea]
 # Binary input files (f64 little-endian, row-major)
-potential = "data/potential_64x64.bin"    # Nx×Ny f64
-mass_inv = "data/mass_inv_64x64.bin"      # Nx×Ny×4 f64 [m_xx, m_xy, m_yx, m_yy]
-# vg = "data/group_velocity_64x64.bin"    # Optional drift term
+potential = "data/potential_64x64.bin"    # V(R): Nx×Ny f64 values
+mass_inv = "data/mass_inv_64x64.bin"      # M⁻¹(R): Nx×Ny×4 f64 [m_xx, m_xy, m_yx, m_yy]
+# vg = "data/group_velocity_64x64.bin"    # Optional: v_g(R) for drift term, Nx×Ny×2
 
-eta = 0.1              # Small parameter for kinetic term
-domain_size = [10.0, 10.0]
-periodic = true
+eta = 0.1                      # Small parameter η for kinetic term scale
+domain_size = [10.0, 10.0]     # Physical domain size [Lx, Ly] in appropriate units
+periodic = true                # Periodic boundary conditions (true/false)
+
+# =============================================================================
+# COMPUTATIONAL GRID
+# =============================================================================
 
 [grid]
-nx = 64
-ny = 64
-lx = 10.0
-ly = 10.0
+nx = 64                        # Grid points in x (must match input file dimensions)
+ny = 64                        # Grid points in y
+lx = 10.0                      # Domain size x (should match ea.domain_size[0])
+ly = 10.0                      # Domain size y (should match ea.domain_size[1])
+
+# =============================================================================
+# EIGENSOLVER CONFIGURATION
+# =============================================================================
 
 [eigensolver]
-n_bands = 12
-max_iter = 500
-tol = 1e-6
+n_bands = 12                   # Number of eigenvalues to compute
+max_iter = 500                 # Maximum LOBPCG iterations (EA may need more than Maxwell)
+tol = 1e-6                     # Convergence tolerance
+# block_size = 0               # LOBPCG block size (0 = auto = n_bands + 2)
+# record_diagnostics = false   # Record per-iteration diagnostics
+
+# =============================================================================
+# OUTPUT CONFIGURATION
+# =============================================================================
 
 [output]
-mode = "full"
-directory = "./ea_output"
-prefix = "ea_job"
+mode = "full"                  # "full" (one file per job) or "selective"
+directory = "./ea_output"      # Output directory
+prefix = "ea_job"              # Filename prefix (produces ea_job_000000.csv, etc.)
+# io_mode = "sync"             # "sync", "batch", or "stream"
+
+# =============================================================================
+# PARAMETER SWEEPS (Optional)
+# =============================================================================
+# EA mode supports sweeping eta and potentially other parameters.
+# Example:
+#
+# [[sweeps]]
+# parameter = "eta"
+# min = 0.05
+# max = 0.2
+# step = 0.05

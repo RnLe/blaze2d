@@ -990,6 +990,30 @@ pub struct BulkSection {
     /// Dry run: count jobs without executing
     #[serde(default)]
     pub dry_run: bool,
+
+    /// Skip calculating the final Γ-point (copy from initial Γ instead)
+    ///
+    /// When the k-path loops back to Γ (e.g., Γ→X→M→Γ), by default the final
+    /// Γ-point is fully calculated. Set to `true` to copy the initial Γ-point
+    /// result instead, which is faster but may miss eigenvector differences.
+    ///
+    /// Default: `false` (calculate final Γ-point)
+    #[serde(default)]
+    pub skip_final_gamma: bool,
+
+    /// Disable band tracking between k-points.
+    ///
+    /// When enabled, skips the polar decomposition + Hungarian algorithm band
+    /// tracking step. Bands will be output in the order the eigensolver produces
+    /// them (typically sorted by eigenvalue).
+    ///
+    /// Use this for non-sequential k-paths (e.g., 2D grids around a k-point)
+    /// where the tracking algorithm may incorrectly swap bands due to large
+    /// jumps or direction changes in k-space.
+    ///
+    /// Default: `false` (band tracking enabled)
+    #[serde(default)]
+    pub disable_band_tracking: bool,
 }
 
 impl Default for BulkSection {
@@ -998,6 +1022,8 @@ impl Default for BulkSection {
             threads: None,
             verbose: false,
             dry_run: false,
+            skip_final_gamma: false,
+            disable_band_tracking: false,
         }
     }
 }
