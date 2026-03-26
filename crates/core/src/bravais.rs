@@ -227,7 +227,7 @@ impl LatticeParams {
 /// # Examples
 ///
 /// ```
-/// use mpb2d_core::bravais::BravaisLattice;
+/// use blaze2d_core::bravais::BravaisLattice;
 ///
 /// // Simple square lattice with a = 1
 /// let square = BravaisLattice::square(1.0);

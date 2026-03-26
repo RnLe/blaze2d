@@ -14,8 +14,8 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use mpb2d_backend_cpu::CpuBackend;
-use mpb2d_core::{
+use blaze2d_backend_cpu::CpuBackend;
+use blaze2d_core::{
     bandstructure::{self, BandStructureJob, RunOptions, Verbosity},
     dielectric::DielectricOptions,
     eigensolver::EigensolverConfig,
@@ -27,7 +27,7 @@ use mpb2d_core::{
 };
 
 #[cfg(feature = "cuda")]
-use mpb2d_backend_cuda::CudaBackend;
+use blaze2d_backend_cuda::CudaBackend;
 
 /// Create a standard square lattice geometry with eps=13 background and r/a=0.3 air holes.
 fn create_square_geometry() -> Geometry2D {

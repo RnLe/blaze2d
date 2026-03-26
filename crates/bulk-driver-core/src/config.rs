@@ -49,7 +49,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use mpb2d_core::{
+use blaze2d_core::{
     dielectric::DielectricOptions,
     eigensolver::EigensolverConfig,
     grid::Grid2D,

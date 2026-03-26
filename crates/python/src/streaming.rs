@@ -60,7 +60,7 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use mpb2d_bulk_driver::{
+use blaze2d_bulk_driver::{
     BatchConfig, BulkConfig, BulkDriver, CompactBandResult, CompactResultType, DriverError,
     DriverStats, FilteredStreamChannel, OutputChannel, SelectiveFilter, StreamChannel,
     StreamConfig, SweepValue,
@@ -398,7 +398,7 @@ impl BulkDriverPy {
     /// Check if this is an EA (Envelope Approximation) solver.
     #[getter]
     fn is_ea(&self) -> PyResult<bool> {
-        use mpb2d_bulk_driver::SolverType;
+        use blaze2d_bulk_driver::SolverType;
         let config = self
             .config
             .as_ref()

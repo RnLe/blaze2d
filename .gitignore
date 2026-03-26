@@ -2,7 +2,6 @@
 /target/
 
 **.csv
-**.json
 **.jsonl
 **.txt
 **.log

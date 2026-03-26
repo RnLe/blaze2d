@@ -1,4 +1,4 @@
-//! Platform-agnostic core types and logic for MPB2D bulk driver.
+//! Platform-agnostic core types and logic for Blaze bulk driver.
 //!
 //! This crate provides the shared foundation for both native and WASM bulk drivers:
 //!

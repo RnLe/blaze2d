@@ -8,7 +8,7 @@
 //!
 //! Usage:
 //! ```
-//! use mpb2d_core::profiler::{start_timer, stop_timer, print_profile};
+//! use blaze2d_core::profiler::{start_timer, stop_timer, print_profile};
 //!
 //! start_timer("my_function");
 //! // ... do work ...

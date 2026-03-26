@@ -20,10 +20,10 @@
  * 
  * INSTALLATION
  * ------------
- * 1. Build WASM module: `make wasm` in the mpb-gpu-2D repo
+ * 1. Build WASM module: `make wasm` in the blaze2d repo
  * 2. Copy wasm-dist/* to your Next.js public/wasm/ folder
  * 3. Copy this file to your hooks/ directory
- * 4. Copy mpb2d-wasm.d.ts to your types/ directory
+ * 4. Copy blaze2d-wasm.d.ts to your types/ directory
  * 
  * QUICK START
  * -----------
@@ -96,7 +96,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { MaxwellResult, DriverStats, BandResult, KPointResult } from './mpb2d-wasm';
+import type { MaxwellResult, DriverStats, BandResult, KPointResult } from './blaze2d-wasm';
 
 // =============================================================================
 // Types
@@ -186,17 +186,17 @@ export interface UseBandStructureOptions {
 // WASM Module Loading
 // =============================================================================
 
-let wasmModule: typeof import('./mpb2d-wasm') | null = null;
+let wasmModule: typeof import('./blaze2d-wasm') | null = null;
 let wasmInitPromise: Promise<void> | null = null;
 
-async function loadWasm(): Promise<typeof import('./mpb2d-wasm')> {
+async function loadWasm(): Promise<typeof import('./blaze2d-wasm')> {
     if (wasmModule) return wasmModule;
     
     if (!wasmInitPromise) {
         wasmInitPromise = (async () => {
             // Dynamic import for Next.js compatibility
             // Adjust the path based on your public folder structure
-            const mod = await import('/wasm/mpb2d_backend_wasm.js' as any);
+            const mod = await import('/wasm/blaze2d_backend_wasm.js' as any);
             await mod.default();  // Initialize WASM
             wasmModule = mod;
         })();
@@ -389,7 +389,7 @@ let wasmModule = null;
 
 async function initWasm() {
     if (wasmModule) return wasmModule;
-    const mod = await import('/wasm/mpb2d_backend_wasm.js');
+    const mod = await import('/wasm/blaze2d_backend_wasm.js');
     await mod.default();
     wasmModule = mod;
     return mod;

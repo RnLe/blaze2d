@@ -2,7 +2,7 @@
 # Append benchmark entry to YAML file
 # Usage: ./append_benchmark.sh <yaml_file> <polarization> <log_output>
 #
-# Parses the bandstructure complete line from mpb2d output and appends to YAML.
+# Parses the bandstructure complete line from blaze output and appends to YAML.
 
 YAML_FILE="$1"
 POLARIZATION="$2"
@@ -19,7 +19,7 @@ RESOLUTION="24"
 # Create header if file doesn't exist
 if [ ! -f "$YAML_FILE" ]; then
     cat > "$YAML_FILE" << EOF
-# Benchmark tracking for mpb2d solver optimization
+# Benchmark tracking for blaze solver optimization
 # Square lattice, ε_bg=$EPS_BG, r=$HOLE_RADIUS, $NUM_BANDS bands, $K_POINTS k-points, ${RESOLUTION}x${RESOLUTION} grid
 
 runs:

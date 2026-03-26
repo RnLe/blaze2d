@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use mpb2d_core::timing::Timer;
+//! use blaze2d_core::timing::Timer;
 //!
 //! let timer = Timer::start();
 //! // ... do work ...

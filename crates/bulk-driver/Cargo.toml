@@ -1,17 +1,17 @@
 [package]
-name = "mpb2d-bulk-driver"
+name = "blaze2d-bulk-driver"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Smart multi-threaded driver for bulk MPB2D parameter sweep calculations"
+description = "Smart multi-threaded driver for bulk Blaze parameter sweep calculations"
 
 [features]
 default = ["native-linalg"]
-native-linalg = ["mpb2d-core/native-linalg", "mpb2d-bulk-driver-core/native-linalg", "mpb2d-backend-cpu/native-linalg"]
-wasm-linalg = ["mpb2d-core/wasm-linalg", "mpb2d-bulk-driver-core/wasm-linalg", "mpb2d-backend-cpu/wasm-linalg"]
-cuda = ["mpb2d-backend-cpu/cuda", "dep:mpb2d-backend-cuda"]
+native-linalg = ["blaze2d-core/native-linalg", "blaze2d-bulk-driver-core/native-linalg", "blaze2d-backend-cpu/native-linalg"]
+wasm-linalg = ["blaze2d-core/wasm-linalg", "blaze2d-bulk-driver-core/wasm-linalg", "blaze2d-backend-cpu/wasm-linalg"]
+cuda = ["blaze2d-backend-cpu/cuda", "dep:blaze2d-backend-cuda"]
 
 [dependencies]
 # Workspace dependencies
@@ -25,10 +25,10 @@ thiserror.workspace = true
 num_cpus.workspace = true
 
 # Internal crates
-mpb2d-bulk-driver-core = { path = "../bulk-driver-core", default-features = false }
-mpb2d-core = { path = "../core", default-features = false }
-mpb2d-backend-cpu = { path = "../backend-cpu", default-features = false }
-mpb2d-backend-cuda = { path = "../backend-cuda", optional = true }
+blaze2d-bulk-driver-core = { path = "../bulk-driver-core", default-features = false }
+blaze2d-core = { path = "../core", default-features = false }
+blaze2d-backend-cpu = { path = "../backend-cpu", default-features = false }
+blaze2d-backend-cuda = { path = "../backend-cuda", optional = true }
 
 # Additional dependencies
 env_logger = "0.11"

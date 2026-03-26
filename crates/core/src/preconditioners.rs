@@ -37,7 +37,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use mpb2d_core::preconditioners::{OperatorPreconditioner, FourierDiagonalPreconditioner};
+//! use blaze2d_core::preconditioners::{OperatorPreconditioner, FourierDiagonalPreconditioner};
 //!
 //! // Build preconditioner
 //! let mut precond = operator.build_homogeneous_preconditioner_adaptive();

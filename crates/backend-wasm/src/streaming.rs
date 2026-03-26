@@ -29,7 +29,7 @@
 //! # Example Usage (JavaScript)
 //!
 //! ```javascript
-//! import init, { WasmBulkDriver } from 'mpb2d-wasm';
+//! import init, { WasmBulkDriver } from 'blaze2d-wasm';
 //!
 //! async function runSimulation() {
 //!     await init();
@@ -53,16 +53,16 @@
 use js_sys::{Array, Date, Function, Object, Reflect};
 use wasm_bindgen::prelude::*;
 
-use mpb2d_bulk_driver_core::{
+use blaze2d_bulk_driver_core::{
     config::{BulkConfig, SolverType},
     expansion::{expand_jobs, ExpandedJob, ExpandedJobType},
     filter::SelectiveFilter,
     result::{CompactBandResult, CompactResultType, EAResult, MaxwellResult},
 };
 
-use mpb2d_core::drivers::bandstructure::{self, Verbosity};
+use blaze2d_core::drivers::bandstructure::{self, Verbosity};
 
-use mpb2d_backend_cpu::CpuBackend;
+use blaze2d_backend_cpu::CpuBackend;
 
 // ============================================================================
 // WASM Driver Statistics
@@ -286,8 +286,8 @@ fn stats_to_js(stats: &WasmDriverStats) -> Result<JsValue, JsValue> {
 
 /// Run a single Maxwell job and convert to CompactBandResult.
 fn run_maxwell_job(
-    job: &mpb2d_core::bandstructure::BandStructureJob,
-    params: &mpb2d_bulk_driver_core::expansion::JobParams,
+    job: &blaze2d_core::bandstructure::BandStructureJob,
+    params: &blaze2d_bulk_driver_core::expansion::JobParams,
     job_index: usize,
 ) -> Result<CompactBandResult, String> {
     let backend = CpuBackend::new();
@@ -319,12 +319,12 @@ fn run_maxwell_job(
 
 /// Run a single Maxwell job with k-point streaming, calling callback for each k-point.
 fn run_maxwell_job_with_k_streaming(
-    job: &mpb2d_core::bandstructure::BandStructureJob,
-    params: &mpb2d_bulk_driver_core::expansion::JobParams,
+    job: &blaze2d_core::bandstructure::BandStructureJob,
+    params: &blaze2d_bulk_driver_core::expansion::JobParams,
     job_index: usize,
     callback: &Function,
 ) -> Result<CompactBandResult, String> {
-    use mpb2d_core::drivers::bandstructure::{run_with_k_streaming, RunOptions, KPointResult};
+    use blaze2d_core::drivers::bandstructure::{run_with_k_streaming, RunOptions, KPointResult};
     
     let backend = CpuBackend::new();
     
@@ -379,9 +379,9 @@ fn run_maxwell_job_with_k_streaming(
 
 /// Convert a KPointResult to a JavaScript object for streaming.
 fn k_result_to_js(
-    result: &mpb2d_core::drivers::bandstructure::KPointResult,
+    result: &blaze2d_core::drivers::bandstructure::KPointResult,
     job_index: usize,
-    params: &mpb2d_bulk_driver_core::expansion::JobParams,
+    params: &blaze2d_bulk_driver_core::expansion::JobParams,
 ) -> Result<JsValue, JsValue> {
     let obj = Object::new();
     
@@ -438,8 +438,8 @@ fn k_result_to_js(
 
 /// Run a single EA job and convert to CompactBandResult.
 fn run_ea_job(
-    _job: &mpb2d_bulk_driver_core::expansion::EAJobSpec,
-    _params: &mpb2d_bulk_driver_core::expansion::JobParams,
+    _job: &blaze2d_bulk_driver_core::expansion::EAJobSpec,
+    _params: &blaze2d_bulk_driver_core::expansion::JobParams,
     _job_index: usize,
 ) -> Result<CompactBandResult, String> {
     // EA solver implementation - placeholder for now

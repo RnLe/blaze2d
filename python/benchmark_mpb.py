@@ -255,7 +255,7 @@ def read_criterion_results(criterion_dir: Path, resolutions: List[int]) -> List[
 
 
 # ============================================================================
-# mpb2d Integration Functions
+# blaze Integration Functions
 # ============================================================================
 
 def generate_toml_config(resolution: int, polarization: str) -> str:
@@ -300,9 +300,9 @@ def run_blaze(resolution: int, polarization: str, workspace_root: Path) -> Tuple
         or (None, 0.0) if blaze-cli fails.
         bands[k_idx][band_idx] = frequency at k-point k_idx for band band_idx.
     """
-    cli_path = workspace_root / "target" / "release" / "mpb2d-cli"
+    cli_path = workspace_root / "target" / "release" / "blaze2d-cli"
     if not cli_path.exists():
-        cli_path = workspace_root / "target" / "debug" / "mpb2d-cli"
+        cli_path = workspace_root / "target" / "debug" / "blaze2d-cli"
     
     if not cli_path.exists():
         warnings.warn(f"blaze-cli not found at {cli_path}")
@@ -318,7 +318,7 @@ def run_blaze(resolution: int, polarization: str, workspace_root: Path) -> Tuple
         output_path = Path(f.name)
     
     try:
-        # Run mpb2d-cli with timing
+        # Run blaze2d-cli with timing
         start = time.perf_counter()
         result = subprocess.run(
             [str(cli_path), "--config", str(config_path), "--output", str(output_path), "--quiet"],
@@ -372,7 +372,7 @@ def compute_hungarian_deviations(mpb_bands: List[List[float]], blaze_bands: List
         blaze_bands: bands[k_idx][band_idx] = frequency for blaze solver
     
     Returns:
-        List of all deviations |mpb2d - mpb| after optimal matching.
+        List of all deviations |blaze - mpb| after optimal matching.
     """
     if linear_sum_assignment is None:
         warnings.warn("scipy not available, cannot compute Hungarian matching")
@@ -452,8 +452,8 @@ def create_benchmark_plot(results: List[dict], error_results: List[dict], output
     
     Colors:
     - mpb: Blue
-    - mpb2d CPU: Green
-    - mpb2d GPU: Orange
+    - Blaze CPU: Green
+    - Blaze GPU: Orange
     """
     if plt is None:
         warnings.warn("matplotlib not available, skipping plot generation")
@@ -690,7 +690,7 @@ def main() -> None:
         output = Path(__file__).parent / output
     output.parent.mkdir(parents=True, exist_ok=True)
     
-    # Workspace root for finding mpb2d-cli
+    # Workspace root for finding blaze2d-cli
     workspace_root = Path(__file__).parent.parent
     
     # Build blaze-cli (CPU backend - CUDA FFT not yet implemented)
@@ -698,13 +698,13 @@ def main() -> None:
     # so eigensolving doesn't work with CUDA. Using CPU backend for now.
     print("Building blaze-cli (CPU backend)...")
     build_result = subprocess.run(
-        ["cargo", "build", "--release", "-p", "mpb2d-cli"],
+        ["cargo", "build", "--release", "-p", "blaze2d-cli"],
         cwd=workspace_root,
         capture_output=True,
         text=True,
     )
     if build_result.returncode != 0:
-        print(f"Error building mpb2d-cli:\n{build_result.stderr}")
+        print(f"Error building blaze2d-cli:\n{build_result.stderr}")
         raise SystemExit(1)
     print("Build complete.")
     
@@ -780,7 +780,7 @@ def main() -> None:
     else:
         warnings.warn(
             f"Criterion results directory not found: {criterion_dir}\n"
-            "Run 'cargo bench --bench resolution_scaling -p mpb2d-backend-cpu --features cuda' first."
+            "Run 'cargo bench --bench resolution_scaling -p blaze2d-backend-cpu --features cuda' first."
         )
     
     # ========================================================================

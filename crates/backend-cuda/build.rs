@@ -1,4 +1,4 @@
-//! Build script for mpb2d-backend-cuda.
+//! Build script for blaze2d-backend-cuda.
 //!
 //! This script locates the CUDA toolkit and configures linking against libcufft.
 

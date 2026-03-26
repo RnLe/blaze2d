@@ -16,8 +16,8 @@
 //! on the GPU, which matches the memory layout of `Complex64` and allows
 //! direct reinterpret casts.
 
-use mpb2d_core::backend::{SpectralBackend, SpectralBuffer};
-use mpb2d_core::grid::Grid2D;
+use blaze2d_core::backend::{SpectralBackend, SpectralBuffer};
+use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 
 #[cfg(feature = "cuda")]

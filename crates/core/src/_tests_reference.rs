@@ -16,7 +16,7 @@ fn write_temp_reference_file(test_name: &str, contents: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
     let unique = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
     path.push(format!(
-        "mpb2d_core_reference_{test_name}_{}_{}.json",
+        "blaze2d_core_reference_{test_name}_{}_{}.json",
         std::process::id(),
         unique
     ));
@@ -94,7 +94,7 @@ fn load_reference_dataset_defaults_missing_k_nodes() {
 fn load_reference_dataset_returns_io_error_for_missing_file() {
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "mpb2d_core_reference_missing_{}_{}.json",
+        "blaze2d_core_reference_missing_{}_{}.json",
         std::process::id(),
         NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed)
     ));

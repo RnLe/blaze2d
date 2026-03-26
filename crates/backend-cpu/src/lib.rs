@@ -2,9 +2,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use mpb2d_core::backend::SpectralBackend;
-use mpb2d_core::field::Field2D;
-use mpb2d_core::grid::Grid2D;
+use blaze2d_core::backend::SpectralBackend;
+use blaze2d_core::field::Field2D;
+use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 use rustfft::{Fft, FftPlanner};
 
@@ -247,9 +247,9 @@ mod _tests_lib;
 #[test]
 fn test_fft_normalization() {
     use crate::CpuBackend;
-    use mpb2d_core::backend::SpectralBackend;
-    use mpb2d_core::field::Field2D;
-    use mpb2d_core::grid::Grid2D;
+    use blaze2d_core::backend::SpectralBackend;
+    use blaze2d_core::field::Field2D;
+    use blaze2d_core::grid::Grid2D;
     use std::f64::consts::PI;
 
     let backend = CpuBackend::new();
@@ -287,14 +287,14 @@ fn test_fft_normalization() {
 #[test]
 fn test_tm_operator_eigenvalue() {
     use crate::CpuBackend;
-    use mpb2d_core::backend::SpectralBackend;
-    use mpb2d_core::dielectric::{Dielectric2D, DielectricOptions};
-    use mpb2d_core::field::Field2D;
-    use mpb2d_core::geometry::Geometry2D;
-    use mpb2d_core::grid::Grid2D;
-    use mpb2d_core::lattice::Lattice2D;
-    use mpb2d_core::operators::{LinearOperator, ThetaOperator};
-    use mpb2d_core::polarization::Polarization;
+    use blaze2d_core::backend::SpectralBackend;
+    use blaze2d_core::dielectric::{Dielectric2D, DielectricOptions};
+    use blaze2d_core::field::Field2D;
+    use blaze2d_core::geometry::Geometry2D;
+    use blaze2d_core::grid::Grid2D;
+    use blaze2d_core::lattice::Lattice2D;
+    use blaze2d_core::operators::{LinearOperator, ThetaOperator};
+    use blaze2d_core::polarization::Polarization;
     use std::f64::consts::PI;
 
     let backend = CpuBackend::new();
@@ -358,14 +358,14 @@ fn test_tm_operator_eigenvalue() {
 #[test]
 fn test_te_operator_eigenvalue() {
     use crate::CpuBackend;
-    use mpb2d_core::backend::SpectralBackend;
-    use mpb2d_core::dielectric::{Dielectric2D, DielectricOptions};
-    use mpb2d_core::field::Field2D;
-    use mpb2d_core::geometry::Geometry2D;
-    use mpb2d_core::grid::Grid2D;
-    use mpb2d_core::lattice::Lattice2D;
-    use mpb2d_core::operators::{LinearOperator, ThetaOperator};
-    use mpb2d_core::polarization::Polarization;
+    use blaze2d_core::backend::SpectralBackend;
+    use blaze2d_core::dielectric::{Dielectric2D, DielectricOptions};
+    use blaze2d_core::field::Field2D;
+    use blaze2d_core::geometry::Geometry2D;
+    use blaze2d_core::grid::Grid2D;
+    use blaze2d_core::lattice::Lattice2D;
+    use blaze2d_core::operators::{LinearOperator, ThetaOperator};
+    use blaze2d_core::polarization::Polarization;
     use std::f64::consts::PI;
 
     let backend = CpuBackend::new();

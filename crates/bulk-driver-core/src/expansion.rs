@@ -35,7 +35,7 @@
 
 use std::collections::HashMap;
 
-use mpb2d_core::{
+use blaze2d_core::{
     bandstructure::BandStructureJob,
     drivers::single_solve::SingleSolveJob,
     geometry::{BasisAtom, Geometry2D},
@@ -773,12 +773,12 @@ fn create_maxwell_job(
         } else if let Some(ref preset) = spec.preset {
             // Use path preset with appropriate mapping for lattice type
             let path_type = match preset {
-                mpb2d_core::io::PathPreset::Square => PathType::Square,
-                mpb2d_core::io::PathPreset::Hexagonal | mpb2d_core::io::PathPreset::Triangular => {
+                blaze2d_core::io::PathPreset::Square => PathType::Square,
+                blaze2d_core::io::PathPreset::Hexagonal | blaze2d_core::io::PathPreset::Triangular => {
                     PathType::Hexagonal
                 }
-                mpb2d_core::io::PathPreset::Rectangular => {
-                    PathType::Custom(mpb2d_core::brillouin::BrillouinPath::Rectangular.raw_k_points())
+                blaze2d_core::io::PathPreset::Rectangular => {
+                    PathType::Custom(blaze2d_core::brillouin::BrillouinPath::Rectangular.raw_k_points())
                 }
             };
             symmetry::standard_path(&geometry.lattice, path_type, spec.segments_per_leg)
@@ -836,7 +836,7 @@ mod tests {
         BaseGeometry, BulkSection, DefaultsConfig, EAConfig, OutputConfig, ParameterRange,
         RangeSpec, SolverSection, SweepSpec,
     };
-    use mpb2d_core::{dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec};
+    use blaze2d_core::{dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec};
 
     fn make_test_config() -> BulkConfig {
         BulkConfig {
@@ -864,7 +864,7 @@ mod tests {
             grid: Grid2D::new(32, 32, 1.0, 1.0),
             polarization: Polarization::TM,
             path: Some(PathSpec {
-                preset: Some(mpb2d_core::io::PathPreset::Square),
+                preset: Some(blaze2d_core::io::PathPreset::Square),
                 segments_per_leg: 12,
                 k_path: vec![],
             }),

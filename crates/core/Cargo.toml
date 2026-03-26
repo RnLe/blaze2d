@@ -1,5 +1,5 @@
 [package]
-name = "mpb2d-core"
+name = "blaze2d-core"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -44,5 +44,5 @@ nalgebra = { version = "0.33", features = ["serde-serialize"], optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
-mpb2d-backend-cpu = { path = "../backend-cpu" }
+blaze2d-backend-cpu = { path = "../backend-cpu" }
 toml.workspace = true

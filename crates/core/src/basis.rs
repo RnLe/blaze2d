@@ -120,7 +120,7 @@ impl Default for AtomGeometry {
 /// # Examples
 ///
 /// ```
-/// use mpb2d_core::basis::{BasisAtom, AtomGeometry};
+/// use blaze2d_core::basis::{BasisAtom, AtomGeometry};
 ///
 /// // Air hole at the center of the unit cell
 /// let air_hole = BasisAtom::new([0.5, 0.5], AtomGeometry::circle(0.3), 1.0);
@@ -227,7 +227,7 @@ impl BasisAtom {
 /// # Examples
 ///
 /// ```
-/// use mpb2d_core::basis::{AtomicBasis, BasisAtom, AtomGeometry};
+/// use blaze2d_core::basis::{AtomicBasis, BasisAtom, AtomGeometry};
 ///
 /// // Single-atom basis (e.g., simple air hole lattice)
 /// let single = AtomicBasis::single(BasisAtom::air_hole([0.0, 0.0], 0.3));

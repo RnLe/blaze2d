@@ -1,8 +1,8 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use mpb2d_backend_cpu::CpuBackend;
-use mpb2d_core::{backend::SpectralBackend, field::Field2D, grid::Grid2D};
+use blaze2d_backend_cpu::CpuBackend;
+use blaze2d_core::{backend::SpectralBackend, field::Field2D, grid::Grid2D};
 use num_complex::Complex64;
 
 fn seeded_field(grid: Grid2D) -> Field2D {

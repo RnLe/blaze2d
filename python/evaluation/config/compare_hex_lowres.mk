@@ -18,8 +18,8 @@ MPB_LATTICE := hexagonal
 REFERENCE_TARGETS := \
 	$(HEX_TE_PREFIX)_mpb.json \
 	$(HEX_TM_PREFIX)_mpb.json \
-	$(HEX_TE_PREFIX)_mpb2d.csv \
-	$(HEX_TM_PREFIX)_mpb2d.csv
+	$(HEX_TE_PREFIX)_blaze.csv \
+	$(HEX_TM_PREFIX)_blaze.csv
 
 MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py \
 	--output $(HEX_TE_PREFIX)_mpb.json \
@@ -43,19 +43,19 @@ MPB_COMMAND := mamba run -n mpb-reference python ../generate_square_tm_bands.py 
 	--lattice hexagonal
 
 # Split commands for potential future benchmark support
-MPB2D_TE_CMD := cargo run --release -p mpb2d-cli -- \
+BLAZE_TE_CMD := cargo run --release -p blaze2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_te_res24.toml \
-	--output $(HEX_TE_PREFIX)_mpb2d.csv \
+	--output $(HEX_TE_PREFIX)_blaze.csv \
 	$(SMOOTHING_ARGS) \
 	--path hexagonal \
 	--segments-per-leg 10
 
-MPB2D_TM_CMD := cargo run --release -p mpb2d-cli -- \
+BLAZE_TM_CMD := cargo run --release -p blaze2d-cli -- \
 	--config ../../examples/hex_eps13_r0p3_tm_res24.toml \
-	--output $(HEX_TM_PREFIX)_mpb2d.csv \
+	--output $(HEX_TM_PREFIX)_blaze.csv \
 	$(SMOOTHING_ARGS) \
 	--path hexagonal \
 	--segments-per-leg 10
 
 # Combined command
-MPB2D_COMMAND := $(MPB2D_TE_CMD) && $(MPB2D_TM_CMD)
+BLAZE_COMMAND := $(BLAZE_TE_CMD) && $(BLAZE_TM_CMD)

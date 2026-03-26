@@ -1,4 +1,4 @@
-//! WASM-oriented backend and streaming interface for MPB2D.
+//! WASM-oriented backend and streaming interface for Blaze.
 //!
 //! This crate provides:
 //! - A WebAssembly-compatible spectral backend
@@ -21,7 +21,7 @@
 //! # Streaming Usage (JavaScript)
 //!
 //! ```javascript
-//! import init, { WasmBulkDriver } from 'mpb2d-wasm';
+//! import init, { WasmBulkDriver } from 'blaze2d-wasm';
 //!
 //! await init();
 //! const driver = new WasmBulkDriver(configToml);
@@ -70,8 +70,8 @@
 //! }
 //! ```
 
-use mpb2d_core::backend::{SpectralBackend, SpectralBuffer};
-use mpb2d_core::grid::Grid2D;
+use blaze2d_core::backend::{SpectralBackend, SpectralBuffer};
+use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 
 #[cfg(feature = "bindings")]

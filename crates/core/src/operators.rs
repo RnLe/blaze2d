@@ -39,7 +39,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use mpb2d_core::operators::{LinearOperator, ThetaOperator};
+//! use blaze2d_core::operators::{LinearOperator, ThetaOperator};
 //!
 //! // Create operator
 //! let mut theta = ThetaOperator::new(backend, dielectric, pol, bloch);
