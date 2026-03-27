@@ -1,0 +1,33 @@
+# VERY IMPORTANT:
+# .GITIGNORE IS ALSO READ BY TAILWIND
+# This means that if having this .gitignore file in the root of the project while building, the tailwind classes break for the local packages.
+# To avoid this, both docker and the gh actions remove or ignore this file.
+# Ignore sensitive files
+trace
+
+# Ignore node-related installation folders in all directories
+.next/
+node_modules/
+
+# Ignore build artifacts
+dist/
+out/
+_pagefind/
+
+# Ignore build cache (this means cloning the repo requires a full re-build. This is intentional)
+*.tsbuildinfo
+
+# Ignore vscode settings
+.vscode/
+
+# ------ wasm pkg artifacts ------
+# ignore everything in pkg/
+**/pkg/**
+
+# but keep the runtime glue code, the wasm binary, and types
+!**/pkg/*.js
+!**/pkg/*.wasm
+!**/pkg/*.d.ts
+
+# Rust build directory
+**/wasm/target/

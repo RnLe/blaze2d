@@ -1,0 +1,6 @@
+/* ...existing code... */
+.prose code::before,
+.prose code::after {
+  content: none !important;
+}
+/* ...existing code... */
