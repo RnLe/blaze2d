@@ -1,0 +1,31 @@
+# Benchmark Config B: Hex lattice, ε=13 bg, air rods (ε=1), r=0.48a
+# Based on Joannopoulos et al., Nature 1997
+
+polarization = "TM"
+
+[geometry]
+eps_bg = 13.0  # dielectric background
+
+[geometry.lattice]
+type = "hexagonal"
+a = 1.0
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.48
+eps_inside = 1.0  # air hole
+
+[grid]
+nx = 32
+ny = 32
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "hexagonal"
+segments_per_leg = 20
+
+[eigensolver]
+n_bands = 12
+max_iter = 200
+tol = 1e-7

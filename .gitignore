@@ -12,3 +12,5 @@
 **.bin
 **.npz
 **.npy
+
+**/results/

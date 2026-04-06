@@ -3,11 +3,9 @@
 import Link from 'next/link';
 
 export default function DocsNavButton() {
-  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
-  
   return (
     <Link 
-      href={`${basePath}/`}
+      href="/"
       style={{
         position: 'fixed',
         right: '2rem',
@@ -41,7 +39,7 @@ export default function DocsNavButton() {
         e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
       }}
     >
-      <span>Docs</span>
+      <span>Home</span>
       <svg 
         width="16" 
         height="16" 
