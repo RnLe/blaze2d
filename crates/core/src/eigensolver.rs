@@ -908,8 +908,18 @@ where
     /// This clones the vectors to avoid borrow conflicts with subsequent
     /// mutable operations (like orthonormalization).
     ///
-    /// Returns (subspace, (x_size, p_size, w_size)) for tracking per-block statistics.
-    fn collect_subspace(&self, p_block: &[B::Buffer]) -> (Vec<B::Buffer>, (usize, usize, usize)) {
+    /// # Returns
+    /// - `subspace`: Vectors [X, P, W]
+    /// - `bx_precomputed`: Precomputed B*X vectors (we already have these in entry.mass)
+    /// - `block_sizes`: (x_size, p_size, w_size) for tracking per-block statistics
+    ///
+    /// # Optimization
+    /// By returning the precomputed B*X vectors, we avoid recomputing them in SVQB.
+    /// This saves m mass applications per iteration.
+    fn collect_subspace_with_mass(
+        &self,
+        p_block: &[B::Buffer],
+    ) -> (Vec<B::Buffer>, Vec<B::Buffer>, (usize, usize, usize)) {
         let m = self.x_block.len();
 
         // W directions are always used when available (LOBPCG default)
@@ -918,18 +928,20 @@ where
 
         let subspace_dim = m + p_block.len() + w_size;
         let mut subspace: Vec<B::Buffer> = Vec::with_capacity(subspace_dim);
+        let mut bx_precomputed: Vec<B::Buffer> = Vec::with_capacity(m);
 
-        // Add X_k vectors (cloned)
+        // Add X_k vectors (cloned) and their precomputed B*X
         for entry in &self.x_block {
             subspace.push(entry.vector.clone());
+            bx_precomputed.push(entry.mass.clone());
         }
 
-        // Add P_k vectors (cloned)
+        // Add P_k vectors (cloned) - B*P will be computed in SVQB
         for p in p_block {
             subspace.push(p.clone());
         }
 
-        // Add W_k vectors (cloned) if available
+        // Add W_k vectors (cloned) if available - B*W will be computed in SVQB
         if has_w {
             for w in &self.w_block {
                 subspace.push(w.clone());
@@ -937,7 +949,7 @@ where
         }
 
         let block_sizes = (m, p_block.len(), w_size);
-        (subspace, block_sizes)
+        (subspace, bx_precomputed, block_sizes)
     }
 
     /// Get the current subspace dimension.
@@ -964,15 +976,32 @@ where
     /// - Rank deficiency detection and vector dropping
     /// - Numerical stability for ill-conditioned Gram matrices
     ///
+    /// # Arguments
+    /// * `q_block` - The subspace vectors [X, P, W]
+    /// * `bx_precomputed` - Precomputed B*X vectors (saves m mass applications)
+    /// * `block_sizes` - (x_size, p_size, w_size)
+    ///
+    /// # Optimization
+    /// The first `x_size` vectors already have their B*v precomputed (from entry.mass).
+    /// We only compute B*v for the P and W vectors, saving m mass applications per iteration.
+    ///
     /// Returns (Q_k, BQ_k) where BQ_k[i] = B * Q_k[i], and the SVQB result.
-    fn orthonormalize_subspace_owned(
+    fn orthonormalize_subspace_with_precomputed_mass(
         &mut self,
         mut q_block: Vec<B::Buffer>,
+        bx_precomputed: Vec<B::Buffer>,
         (x_size, p_size, w_size): (usize, usize, usize),
     ) -> (Vec<B::Buffer>, Vec<B::Buffer>, SvqbResult) {
-        // Compute B * q for each vector
+        // Build B*q block, reusing precomputed B*X and computing B*P and B*W fresh
         let mut bq_block: Vec<B::Buffer> = Vec::with_capacity(q_block.len());
-        for q in &q_block {
+
+        // First x_size vectors: use precomputed B*X (no mass applications needed!)
+        for bx in bx_precomputed {
+            bq_block.push(bx);
+        }
+
+        // Remaining vectors (P and W): compute B*v fresh
+        for q in q_block.iter().skip(x_size) {
             let mut bq = self.operator.alloc_field();
             self.operator.apply_mass(q, &mut bq);
             bq_block.push(bq);
@@ -1002,7 +1031,27 @@ where
     // Projected Operator
     // ========================================================================
 
-    /// Form the projected operator A_s = Q_k^* A Q_k.
+    /// Compute A*Q for all vectors in the orthonormalized subspace.
+    ///
+    /// This is factored out so that:
+    /// 1. `project_operator` can use it to form A_s = Q^H * AQ
+    /// 2. `update_ritz_vectors` can reuse it to compute AX = AQ * Y via GEMM
+    ///    instead of recomputing A*X from scratch (saves m operator applications per iteration)
+    ///
+    /// # Returns
+    /// A vector of buffers containing A*q_j for each q_j in q_block.
+    fn compute_aq_block(&mut self, q_block: &[B::Buffer]) -> Vec<B::Buffer> {
+        let r = q_block.len();
+        let mut aq_block: Vec<B::Buffer> = Vec::with_capacity(r);
+        for q in q_block {
+            let mut aq = self.operator.alloc_field();
+            self.operator.apply(q, &mut aq);
+            aq_block.push(aq);
+        }
+        aq_block
+    }
+
+    /// Form the projected operator A_s = Q_k^* A Q_k from precomputed A*Q.
     ///
     /// This is a small dense Hermitian matrix of size r×r where r = subspace_rank.
     /// The matrix is stored in column-major order as a flat Vec<Complex64>.
@@ -1010,26 +1059,22 @@ where
     /// Note: B_s = Q_k^* B Q_k = I by construction (SVQB ensures B-orthonormality),
     /// so we don't need to compute it explicitly.
     ///
+    /// # Arguments
+    /// * `q_block` - The B-orthonormalized subspace basis Q
+    /// * `aq_block` - Precomputed A*Q (from `compute_aq_block`)
+    ///
     /// # GPU Optimization
     /// When the `cuda` feature is enabled, the inner product computation
     /// A_s[i,j] = ⟨q_i, A*q_j⟩ is batched using `gram_matrix()`, which maps
     /// to a single cuBLAS ZGEMM call on GPU: A_s = Q^H × (A*Q).
-    fn project_operator(
-        &mut self,
+    fn project_operator_with_aq(
+        &self,
         q_block: &[B::Buffer],
-        _bq_block: &[B::Buffer], // Not used since B_s = I, but kept for future use
+        aq_block: &[B::Buffer],
     ) -> Vec<num_complex::Complex64> {
         let r = q_block.len();
         if r == 0 {
             return vec![];
-        }
-
-        // First compute A * q_j for all j (requires operator application - can't batch on GPU yet)
-        let mut aq_block: Vec<B::Buffer> = Vec::with_capacity(r);
-        for q in q_block {
-            let mut aq = self.operator.alloc_field();
-            self.operator.apply(q, &mut aq);
-            aq_block.push(aq);
         }
 
         // A_s[i,j] = <q_i, A q_j> = q_i^* (A q_j)
@@ -1039,7 +1084,7 @@ where
         {
             // GPU path: use batched gram_matrix (single ZGEMM call)
             let backend = self.operator.backend();
-            let a_projected_row_major = backend.gram_matrix(q_block, &aq_block);
+            let a_projected_row_major = backend.gram_matrix(q_block, aq_block);
 
             // Convert from row-major (gram_matrix output) to column-major (expected by dense solver)
             let mut a_projected = vec![num_complex::Complex64::ZERO; r * r];
@@ -1124,22 +1169,28 @@ where
 
     /// Update the eigenvector approximations using the Rayleigh-Ritz results.
     ///
-    /// Given the B-orthonormal subspace basis Q_k and the dense eigenpairs (Y, Θ),
+    /// Given the B-orthonormal subspace basis Q_k, precomputed A*Q, and the dense eigenpairs (Y, Θ),
     /// compute new Ritz vectors:
     ///
     /// ```text
     /// X_{k+1} = Q_k * Y_1
+    /// BX_{k+1} = BQ_k * Y_1
+    /// AX_{k+1} = AQ_k * Y_1   (reuses precomputed A*Q, avoiding m operator applications!)
     /// Λ_{k+1} = Θ_1
     /// ```
     ///
     /// where Y_1 is the (r × m) block of eigenvectors corresponding to the m
     /// smallest eigenvalues, and Θ_1 contains those eigenvalues.
     ///
-    /// This also recomputes B*X and A*X for the new approximations.
+    /// # Key Optimization
+    /// Since A*(Q*Y) = (A*Q)*Y by linearity, we can compute A*X via GEMM using
+    /// the precomputed A*Q block from `project_operator`, saving m expensive
+    /// operator applications per iteration.
     fn update_ritz_vectors(
         &mut self,
         q_block: &[B::Buffer],
         bq_block: &[B::Buffer],
+        aq_block: &[B::Buffer],
         dense_result: &DenseEigenResult,
     ) {
         let n_bands = self.config.n_bands;
@@ -1165,19 +1216,19 @@ where
                 .flat_map(|j| (0..r).map(move |i| dense_result.eigenvector(j)[i]))
                 .collect();
 
-            // Compute X_new = Q × C  and  BX_new = BQ × C  using batched GEMM
+            // Compute X_new = Q × C, BX_new = BQ × C, and AX_new = AQ × C using batched GEMM
+            // Key optimization: AX_new = AQ × C reuses precomputed A*Q, avoiding m operator applications!
             let mut new_x_vectors = backend.linear_combinations(q_block, &coeffs_x, m);
             let mut new_bx_vectors = backend.linear_combinations(bq_block, &coeffs_x, m);
+            let mut new_ax_vectors = backend.linear_combinations(aq_block, &coeffs_x, m);
 
-            // Build new block entries with A*x computed fresh
+            // Build new block entries (no fresh operator applications needed!)
             let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
-            for j in (0..m).rev() {
-                let mut ax_j = self.operator.alloc_field();
-                self.operator.apply(&new_x_vectors[j], &mut ax_j);
+            for _j in (0..m).rev() {
                 new_x_block.push(BlockEntry {
                     vector: new_x_vectors.pop().unwrap(),
                     mass: new_bx_vectors.pop().unwrap(),
-                    applied: ax_j,
+                    applied: new_ax_vectors.pop().unwrap(),
                 });
             }
             new_x_block.reverse();
@@ -1187,7 +1238,7 @@ where
         #[cfg(all(not(feature = "cuda"), feature = "native-linalg"))]
         let new_x_block = {
             // CPU path with faer: use faer GEMM for matrix multiplication
-            // X_new = Q * Y where Q is n×r and Y is r×m
+            // X_new = Q * Y, BX_new = BQ * Y, AX_new = AQ * Y where matrices are n×r and Y is r×m
             let n = q_block[0].as_slice().len();
 
             // Build Q matrix (n × r) from q_block
@@ -1202,17 +1253,25 @@ where
                 faer::c64::new(c.re, c.im)
             });
 
+            // Build AQ matrix (n × r) from aq_block (precomputed - this is the optimization!)
+            let aq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
+                let c = aq_block[col].as_slice()[row];
+                faer::c64::new(c.re, c.im)
+            });
+
             // Build Y matrix (r × m) from dense_result eigenvectors
             let y_mat = Mat::<faer::c64>::from_fn(r, m, |row, col| {
                 let c = dense_result.eigenvector(col)[row];
                 faer::c64::new(c.re, c.im)
             });
 
-            // Compute X_new = Q * Y and BX_new = BQ * Y using GEMM
+            // Compute X_new = Q * Y, BX_new = BQ * Y, and AX_new = AQ * Y using GEMM
+            // Key optimization: AX_new = AQ * Y reuses precomputed A*Q, avoiding m operator applications!
             let x_new = &q_mat * &y_mat; // n × m
             let bx_new = &bq_mat * &y_mat; // n × m
+            let ax_new = &aq_mat * &y_mat; // n × m (no fresh operator applications!)
 
-            // Build new block entries with A*x computed fresh
+            // Build new block entries
             let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
 
             for j in 0..m {
@@ -1236,9 +1295,15 @@ where
                     }
                 }
 
-                // Compute A*x_j
+                // Extract ax_j from GEMM result (no fresh operator application needed!)
                 let mut ax_j = self.operator.alloc_field();
-                self.operator.apply(&x_j, &mut ax_j);
+                {
+                    let dst = ax_j.as_mut_slice();
+                    for row in 0..n {
+                        let c = ax_new.get(row, j);
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
+                }
 
                 new_x_block.push(BlockEntry {
                     vector: x_j,
@@ -1252,7 +1317,7 @@ where
         #[cfg(all(not(feature = "cuda"), feature = "wasm-linalg"))]
         let new_x_block = {
             // CPU path with nalgebra: use nalgebra GEMM for matrix multiplication
-            // X_new = Q * Y where Q is n×r and Y is r×m
+            // X_new = Q * Y, BX_new = BQ * Y, AX_new = AQ * Y where matrices are n×r and Y is r×m
             let n = q_block[0].as_slice().len();
 
             // Build Q matrix (n × r) from q_block
@@ -1267,17 +1332,25 @@ where
                 NaComplex::new(c.re, c.im)
             });
 
+            // Build AQ matrix (n × r) from aq_block (precomputed - this is the optimization!)
+            let aq_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
+                let c = aq_block[col].as_slice()[row];
+                NaComplex::new(c.re, c.im)
+            });
+
             // Build Y matrix (r × m) from dense_result eigenvectors
             let y_mat = DMatrix::<NaComplex<f64>>::from_fn(r, m, |row, col| {
                 let c = dense_result.eigenvector(col)[row];
                 NaComplex::new(c.re, c.im)
             });
 
-            // Compute X_new = Q * Y and BX_new = BQ * Y using GEMM
+            // Compute X_new = Q * Y, BX_new = BQ * Y, and AX_new = AQ * Y using GEMM
+            // Key optimization: AX_new = AQ * Y reuses precomputed A*Q, avoiding m operator applications!
             let x_new = &q_mat * &y_mat; // n × m
             let bx_new = &bq_mat * &y_mat; // n × m
+            let ax_new = &aq_mat * &y_mat; // n × m (no fresh operator applications!)
 
-            // Build new block entries with A*x computed fresh
+            // Build new block entries
             let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
 
             for j in 0..m {
@@ -1301,9 +1374,15 @@ where
                     }
                 }
 
-                // Compute A*x_j
+                // Extract ax_j from GEMM result (no fresh operator application needed!)
                 let mut ax_j = self.operator.alloc_field();
-                self.operator.apply(&x_j, &mut ax_j);
+                {
+                    let dst = ax_j.as_mut_slice();
+                    for row in 0..n {
+                        let c = ax_new[(row, j)];
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
+                }
 
                 new_x_block.push(BlockEntry {
                     vector: x_j,
@@ -1522,12 +1601,21 @@ where
             self.apply_deflation(&mut residuals);
 
             // ================================================================
-            // Step 3: Compute B-norms of deflated residuals
-            // This is the correct metric: we measure what's left after
-            // projecting out the locked subspace
+            // Step 3: Compute B-norms of deflated residuals (LAZY)
+            // OPTIMIZATION: Residual B-norms require mass applications (expensive).
+            // Since convergence is based on eigenvalue changes (not residuals),
+            // we only compute them when needed for logging/diagnostics.
+            // This saves n_active mass applications on ~90% of iterations.
             // ================================================================
-            let residual_b_norms = self.compute_residual_b_norms(&residuals);
-            let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
+            let needs_residual_norms = should_log_iteration(iter);
+            let (residual_b_norms, relative_residuals) = if needs_residual_norms {
+                let norms = self.compute_residual_b_norms(&residuals);
+                let rel = self.compute_relative_residuals(&norms);
+                (norms, rel)
+            } else {
+                // Placeholder zeros - not used for convergence decisions
+                (vec![0.0; n_active], vec![0.0; n_active])
+            };
 
             // ================================================================
             // Step 4: Check convergence based on eigenvalue changes
@@ -1638,15 +1726,22 @@ where
 
             // ================================================================
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
+            // Also collects precomputed B*X to avoid recomputing in SVQB
             // ================================================================
-            let (subspace, block_sizes) = self.collect_subspace(&p_block);
+            let (subspace, bx_precomputed, block_sizes) =
+                self.collect_subspace_with_mass(&p_block);
 
             // ================================================================
             // Step 9: B-orthonormalize to get Q_k with Q_k^* B Q_k = I
             // Uses SVQB to handle near-linear-dependence and rank deficiency
+            // OPTIMIZATION: Reuses precomputed B*X, saving m mass applications
             // ================================================================
             let (q_block, bq_block, svqb_result) =
-                self.orthonormalize_subspace_owned(subspace, block_sizes);
+                self.orthonormalize_subspace_with_precomputed_mass(
+                    subspace,
+                    bx_precomputed,
+                    block_sizes,
+                );
             let subspace_rank = svqb_result.output_rank;
 
             // ================================================================
@@ -1679,10 +1774,13 @@ where
             }
 
             // ================================================================
-            // Step 10: Form projected operator A_s = Q_k^* A Q_k
+            // Step 10: Compute A*Q and form projected operator A_s = Q_k^* A Q_k
             // Note: B_s = Q_k^* B Q_k = I by construction (SVQB ensures this)
+            // Key optimization: A*Q is computed once and reused in step 12 to
+            // compute A*X via GEMM, avoiding m redundant operator applications.
             // ================================================================
-            let a_projected = self.project_operator(&q_block, &bq_block);
+            let aq_block = self.compute_aq_block(&q_block);
+            let a_projected = self.project_operator_with_aq(&q_block, &aq_block);
 
             // ================================================================
             // Step 11: Solve dense eigenproblem A_s Y = Y Θ
@@ -1699,9 +1797,10 @@ where
             // ================================================================
             // Step 12: Update Ritz vectors X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
             // Store previous eigenvalues first for convergence tracking
+            // A*X is computed via GEMM using precomputed A*Q (no fresh applies!)
             // ================================================================
             self.store_previous_eigenvalues();
-            self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
+            self.update_ritz_vectors(&q_block, &bq_block, &aq_block, &dense_result);
 
             // Warn if any frequencies increased (potential variational principle violation)
             // Only warn if the increase is significant compared to the convergence tolerance
@@ -2063,12 +2162,17 @@ where
             let mut p_block = self.precondition_residuals(&residuals);
             self.apply_deflation(&mut p_block);
 
-            // Build search subspace Z_k = [X_k, P_k, W_k]
-            let (subspace, block_sizes) = self.collect_subspace(&p_block);
+            // Build search subspace Z_k = [X_k, P_k, W_k] with precomputed B*X
+            let (subspace, bx_precomputed, block_sizes) =
+                self.collect_subspace_with_mass(&p_block);
 
-            // B-orthonormalize using SVQB
+            // B-orthonormalize using SVQB (reuses precomputed B*X)
             let (q_block, bq_block, svqb_result) =
-                self.orthonormalize_subspace_owned(subspace, block_sizes);
+                self.orthonormalize_subspace_with_precomputed_mass(
+                    subspace,
+                    bx_precomputed,
+                    block_sizes,
+                );
             let subspace_rank = svqb_result.output_rank;
 
             if subspace_rank == 0 {
@@ -2076,14 +2180,17 @@ where
             }
 
             // Form projected operator A_s = Q_k^* A Q_k
-            let a_projected = self.project_operator(&q_block, &bq_block);
+            // Compute A*Q once and reuse for both projection and Ritz vector update
+            let aq_block = self.compute_aq_block(&q_block);
+            let a_projected = self.project_operator_with_aq(&q_block, &aq_block);
 
             // Solve dense eigenproblem A_s Y = Y Θ
             let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
 
             // Store previous eigenvalues and update Ritz vectors
+            // A*X computed via GEMM using precomputed A*Q (no fresh applies!)
             self.store_previous_eigenvalues();
-            self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
+            self.update_ritz_vectors(&q_block, &bq_block, &aq_block, &dense_result);
             self.update_history_directions(&q_block, &dense_result);
         }
 
@@ -2452,14 +2559,21 @@ where
 
             // ================================================================
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
+            // Also collects precomputed B*X to avoid recomputing in SVQB
             // ================================================================
-            let (subspace, block_sizes) = self.collect_subspace(&p_block);
+            let (subspace, bx_precomputed, block_sizes) =
+                self.collect_subspace_with_mass(&p_block);
 
             // ================================================================
             // Step 9: B-orthonormalize to get Q_k
+            // OPTIMIZATION: Reuses precomputed B*X, saving m mass applications
             // ================================================================
             let (q_block, bq_block, svqb_result) =
-                self.orthonormalize_subspace_owned(subspace, block_sizes);
+                self.orthonormalize_subspace_with_precomputed_mass(
+                    subspace,
+                    bx_precomputed,
+                    block_sizes,
+                );
             let subspace_rank = svqb_result.output_rank;
 
             // Check subspace conditioning (detect potential near-linear dependence)
@@ -2500,8 +2614,10 @@ where
 
             // ================================================================
             // Step 10: Form projected operator A_s = Q_k^* A Q_k
+            // Compute A*Q once and reuse for both projection and Ritz vector update
             // ================================================================
-            let a_projected = self.project_operator(&q_block, &bq_block);
+            let aq_block = self.compute_aq_block(&q_block);
+            let a_projected = self.project_operator_with_aq(&q_block, &aq_block);
 
             // ================================================================
             // Step 11: Solve dense eigenproblem A_s Y = Y Θ
@@ -2518,9 +2634,10 @@ where
             // ================================================================
             // Step 12: Update Ritz vectors X_{k+1} = Q_k * Y_1, Λ_{k+1} = Θ_1
             // Store previous eigenvalues first for convergence tracking
+            // A*X computed via GEMM using precomputed A*Q (no fresh applies!)
             // ================================================================
             self.store_previous_eigenvalues();
-            self.update_ritz_vectors(&q_block, &bq_block, &dense_result);
+            self.update_ritz_vectors(&q_block, &bq_block, &aq_block, &dense_result);
 
             // Warn if any frequencies increased (potential variational principle violation)
             // Only warn if the increase is significant compared to the convergence tolerance
