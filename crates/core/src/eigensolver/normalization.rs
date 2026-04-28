@@ -315,18 +315,66 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         backend.gram_matrix(vectors, mass_vectors)
     };
 
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(all(not(feature = "cuda"), feature = "native-linalg"))]
     let gram = {
-        // CPU path: exploit Hermitian symmetry - only compute upper triangle
+        // CPU path with faer: use GEMM for Gram matrix computation
+        // G = X^H * BX where X is n×p and BX is n×p, result is p×p
+        // This is O(n*p²) with optimized BLAS instead of O(p²) separate dot products
+        let n = vectors[0].as_slice().len();
+
+        // Build X matrix (n × p) from vectors
+        let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
+            let c = vectors[col].as_slice()[row];
+            faer::c64::new(c.re, c.im)
+        });
+
+        // Build BX matrix (n × p) from mass_vectors
+        let bx_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
+            let c = mass_vectors[col].as_slice()[row];
+            faer::c64::new(c.re, c.im)
+        });
+
+        // Compute G = X^H * BX using a single GEMM call
+        let g_mat = x_mat.adjoint() * &bx_mat; // p × p
+
+        // Convert to row-major Vec<Complex64> for compatibility with eigendecomposition
         let mut gram = vec![Complex64::ZERO; p * p];
         for i in 0..p {
-            // Diagonal: real
-            gram[i * p + i] = backend.dot(&vectors[i], &mass_vectors[i]);
-            // Upper triangle
-            for j in (i + 1)..p {
-                let val = backend.dot(&vectors[i], &mass_vectors[j]);
-                gram[i * p + j] = val;
-                gram[j * p + i] = val.conj(); // Hermitian symmetry
+            for j in 0..p {
+                let c = g_mat.get(i, j);
+                gram[i * p + j] = Complex64::new(c.re, c.im);
+            }
+        }
+        gram
+    };
+
+    #[cfg(all(not(feature = "cuda"), feature = "wasm-linalg"))]
+    let gram = {
+        // CPU path with nalgebra: use GEMM for Gram matrix computation
+        // G = X^H * BX where X is n×p and BX is n×p, result is p×p
+        let n = vectors[0].as_slice().len();
+
+        // Build X matrix (n × p) from vectors
+        let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
+            let c = vectors[col].as_slice()[row];
+            NaComplex::new(c.re, c.im)
+        });
+
+        // Build BX matrix (n × p) from mass_vectors
+        let bx_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
+            let c = mass_vectors[col].as_slice()[row];
+            NaComplex::new(c.re, c.im)
+        });
+
+        // Compute G = X^H * BX using a single GEMM call
+        let g_mat = x_mat.adjoint() * &bx_mat; // p × p
+
+        // Convert to row-major Vec<Complex64> for compatibility with eigendecomposition
+        let mut gram = vec![Complex64::ZERO; p * p];
+        for i in 0..p {
+            for j in 0..p {
+                let c = g_mat[(i, j)];
+                gram[i * p + j] = Complex64::new(c.re, c.im);
             }
         }
         gram
