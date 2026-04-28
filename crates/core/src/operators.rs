@@ -131,4 +131,42 @@ pub trait LinearOperator<B: SpectralBackend> {
     fn gamma_kernel_transform(&self) -> Option<&[f64]> {
         None // Default: no transformation needed
     }
+
+    /// Apply the operator to multiple input vectors (batched).
+    ///
+    /// This computes `outputs[j] = A · inputs[j]` for all j.
+    ///
+    /// The default implementation calls `apply` for each vector.
+    /// Operators can override this for better performance by batching
+    /// internal FFT operations across all vectors.
+    ///
+    /// # Arguments
+    /// * `inputs` - Slice of input buffers
+    /// * `outputs` - Mutable slice of output buffers (must be same length as inputs)
+    fn batch_apply(&mut self, inputs: &[B::Buffer], outputs: &mut [B::Buffer]) {
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "batch_apply: inputs and outputs must have same length"
+        );
+        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+            self.apply(input, output);
+        }
+    }
+
+    /// Apply the mass operator to multiple input vectors (batched).
+    ///
+    /// This computes `outputs[j] = B · inputs[j]` for all j.
+    ///
+    /// The default implementation calls `apply_mass` for each vector.
+    fn batch_apply_mass(&mut self, inputs: &[B::Buffer], outputs: &mut [B::Buffer]) {
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "batch_apply_mass: inputs and outputs must have same length"
+        );
+        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+            self.apply_mass(input, output);
+        }
+    }
 }

@@ -7,8 +7,10 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = []
+default = ["batched-fft"]
 cuda = ["blaze2d-backend-cpu/cuda", "dep:blaze2d-backend-cuda"]
+profiling = ["blaze2d-core/profiling", "blaze2d-backend-cpu/profiling"]
+batched-fft = ["blaze2d-core/batched-fft", "blaze2d-backend-cpu/batched-fft"]
 
 [dependencies]
 clap.workspace = true

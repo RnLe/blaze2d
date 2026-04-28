@@ -306,6 +306,9 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
 
     // Step 1: Form the Gram matrix G = X^H B X
     // G is Hermitian, so we only compute upper triangle and mirror
+    #[cfg(feature = "profiling")]
+    crate::profiler::start_timer("svqb::gram_matrix");
+
     #[cfg(feature = "cuda")]
     let gram = {
         // GPU path: use batched gram_matrix (single ZGEMM call)
@@ -329,9 +332,18 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         gram
     };
 
+    #[cfg(feature = "profiling")]
+    crate::profiler::stop_timer("svqb::gram_matrix");
+
     // Step 2: Eigendecomposition of the Hermitian Gram matrix
     // G = Q Λ Q^H where Λ = diag(λ_1, ..., λ_p), sorted descending
+    #[cfg(feature = "profiling")]
+    crate::profiler::start_timer("svqb::eigendecomp");
+
     let (eigenvalues, eigenvectors) = hermitian_eigendecomposition(&gram, p);
+
+    #[cfg(feature = "profiling")]
+    crate::profiler::stop_timer("svqb::eigendecomp");
 
     // Step 3: Determine numerical rank
     let max_eigenvalue = eigenvalues.iter().cloned().fold(0.0f64, f64::max);
@@ -370,6 +382,9 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
 
     // Step 4 & 5: Build and apply transformation X_new = X_old * T
     // where T = Q_kept * Λ_kept^{-1/2} (p × rank matrix)
+
+    #[cfg(feature = "profiling")]
+    crate::profiler::start_timer("svqb::gemm");
 
     #[cfg(feature = "cuda")]
     {
@@ -517,6 +532,9 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             zero_buffer(mass_vectors[i].as_mut_slice());
         }
     }
+
+    #[cfg(feature = "profiling")]
+    crate::profiler::stop_timer("svqb::gemm");
 
     SvqbResult {
         output_rank: rank,
