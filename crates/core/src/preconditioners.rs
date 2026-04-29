@@ -105,6 +105,14 @@ pub use transverse_projection::TransverseProjectionPreconditioner;
 pub trait OperatorPreconditioner<B: SpectralBackend> {
     /// Apply the preconditioner to a buffer in-place: buffer ← M^{-1} buffer
     fn apply(&mut self, backend: &B, buffer: &mut B::Buffer);
+
+    /// Apply the preconditioner to a batch of buffers in-place.
+    /// Default implementation loops over the batch.
+    fn batch_apply(&mut self, backend: &B, buffers: &mut [B::Buffer]) {
+        for buffer in buffers {
+            self.apply(backend, buffer);
+        }
+    }
 }
 
 // ============================================================================
