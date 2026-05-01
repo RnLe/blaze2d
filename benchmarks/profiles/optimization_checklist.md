@@ -35,19 +35,28 @@
 - **Attempted**: `take_subspace_for_orthonormalization` draining x_block/w_block
 - **svqb::gemm** regressed 24.6% due to allocation churn and cache effects
 
-### 3. Matrix Building Overhead in GEMM Operations
+### 3. ~~Symmetry-based Reduction (Deep Symmetry)~~ ⚠️ MIXED RESULTS
+- **Tested**: 2026-01-06
+- **Finding**: **Regression** for small band counts (N=12)
+  - Full Symmetry (8 sectors): **+35% slowdown** (2.42s -> 3.27s)
+  - Simplified (Even/Odd): **+13% slowdown** (2.39s -> 2.70s)
+- **Root Cause**: Overhead of managing multiple `Eigensolver` instances and projectors dominates.
+  The $O(N^2)$ gain from solving smaller subspaces is negligible for small $N$.
+- **Status**: Implemented but **disabled by default**. Recommended only for large-scale calculations ($N \ge 50$).
+
+### 4. Matrix Building Overhead in GEMM Operations
 - **File**: `crates/core/src/eigensolver.rs` L1266-1286, `normalization.rs`
 - **Issue**: Builds n×r matrices element-by-element 6× per iteration
 - **Fix**: Store vectors in contiguous column-major format
 - **Expected**: ~5-10% speedup in GEMM-heavy operations
 
-### 4. Unnecessary B*P and B*W in SVQB
+### 5. Unnecessary B*P and B*W in SVQB
 - **File**: `crates/core/src/eigensolver.rs` L1006-1010
 - **Issue**: Computes 24 fresh mass applications (FFTs) for P and W blocks
 - **Fix**: Compute only needed Gram matrix blocks using available B*X
 - **Expected**: Save 24 FFTs per iteration
 
-### 5. Deflation Projection is O(k×n) Dot Products
+### 6. Deflation Projection is O(k×n) Dot Products
 - **File**: `crates/core/src/eigensolver/deflation.rs` L318-335
 - **Issue**: Serial dot products instead of batched GEMM
 - **Fix**: `C = V^H × BY` then `V -= Y × C^H` (single GEMM)

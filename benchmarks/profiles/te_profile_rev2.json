@@ -1,0 +1,15 @@
+{
+  "session_total_ms": 2651.510,
+  "timestamp": "1767720391",
+  "methods": {
+    "apply_te": { "calls": 7941, "total_ms": 705.415, "avg_us": 88.832, "min_us": 78.981, "max_us": 648.150, "pct": 26.60 },
+    "batch_apply_te": { "calls": 232, "total_ms": 665.678, "avg_us": 2869.300, "min_us": 1823.320, "max_us": 4220.054, "pct": 25.11 },
+    "svqb::gemm": { "calls": 232, "total_ms": 476.874, "avg_us": 2055.491, "min_us": 840.142, "max_us": 4290.772, "pct": 17.98 },
+    "fft_2d::inverse": { "calls": 31443, "total_ms": 397.036, "avg_us": 12.627, "min_us": 11.290, "max_us": 444.754, "pct": 14.97 },
+    "fft_2d::forward": { "calls": 31443, "total_ms": 376.473, "avg_us": 11.973, "min_us": 10.668, "max_us": 386.502, "pct": 14.20 },
+    "update_ritz_vectors": { "calls": 232, "total_ms": 365.419, "avg_us": 1575.083, "min_us": 825.696, "max_us": 2689.726, "pct": 13.78 },
+    "project_operator": { "calls": 232, "total_ms": 193.346, "avg_us": 833.389, "min_us": 380.716, "max_us": 1512.253, "pct": 7.29 },
+    "svqb::gram_matrix": { "calls": 232, "total_ms": 183.323, "avg_us": 790.187, "min_us": 341.333, "max_us": 6212.475, "pct": 6.91 },
+    "svqb::eigendecomp": { "calls": 232, "total_ms": 56.658, "avg_us": 244.218, "min_us": 82.891, "max_us": 956.550, "pct": 2.14 }
+  }
+}

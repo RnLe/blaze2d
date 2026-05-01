@@ -323,16 +323,25 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         let n = vectors[0].as_slice().len();
 
         // Build X matrix (n × p) from vectors
-        let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
-            let c = vectors[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
-        });
+        // OPTIMIZED: Explicit loop to hoist vector lookup and improve cache locality
+        let mut x_mat = Mat::<faer::c64>::zeros(n, p);
+        for col in 0..p {
+            let src = vectors[col].as_slice();
+            for row in 0..n {
+                let c = src[row];
+                x_mat.write(row, col, faer::c64::new(c.re, c.im));
+            }
+        }
 
         // Build BX matrix (n × p) from mass_vectors
-        let bx_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
-            let c = mass_vectors[col].as_slice()[row];
-            faer::c64::new(c.re, c.im)
-        });
+        let mut bx_mat = Mat::<faer::c64>::zeros(n, p);
+        for col in 0..p {
+            let src = mass_vectors[col].as_slice();
+            for row in 0..n {
+                let c = src[row];
+                bx_mat.write(row, col, faer::c64::new(c.re, c.im));
+            }
+        }
 
         // Compute G = X^H * BX using a single GEMM call
         let g_mat = x_mat.adjoint() * &bx_mat; // p × p

@@ -75,6 +75,7 @@ use crate::field::Field2D;
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
+use crate::symmetry::SymmetryProjector;
 
 // ============================================================================
 // Progress Reporting
@@ -126,29 +127,8 @@ impl ProgressInfo {
 }
 
 // ============================================================================
-// Workspace
+// Configuration
 // ============================================================================
-
-/// reusable workspace buffers to avoid allocation in the inner loop
-pub struct EigensolverWorkspace<B: SpectralBackend> {
-    pub residuals: Vec<B::Buffer>,
-    pub p_block: Vec<B::Buffer>,
-    pub q_block: Vec<B::Buffer>,
-    pub bq_block: Vec<B::Buffer>,
-    pub aq_block: Vec<B::Buffer>,
-}
-
-impl<B: SpectralBackend> EigensolverWorkspace<B> {
-    pub fn new() -> Self {
-        Self {
-            residuals: Vec::new(),
-            p_block: Vec::new(),
-            q_block: Vec::new(),
-            bq_block: Vec::new(),
-            aq_block: Vec::new(),
-        }
-    }
-}
 
 /// Main configuration for the eigensolver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -503,6 +483,8 @@ where
     iteration: usize,
     /// Whether the solver has been initialized.
     initialized: bool,
+    /// Optional symmetry projector to enforce parity constraints.
+    symmetry_projector: Option<SymmetryProjector>,
 }
 
 impl<'a, O, B> Eigensolver<'a, O, B>
@@ -536,6 +518,21 @@ where
             soft_locked: Vec::new(),
             iteration: 0,
             initialized: false,
+            symmetry_projector: None,
+        }
+    }
+
+    /// Set the symmetry projector for this solver.
+    pub fn set_symmetry_projector(&mut self, projector: SymmetryProjector) {
+        self.symmetry_projector = Some(projector);
+    }
+
+    /// Apply symmetry projection to a set of vectors.
+    fn apply_symmetry(&self, vectors: &mut [B::Buffer]) {
+        if let Some(proj) = &self.symmetry_projector {
+            for vector in vectors.iter_mut() {
+                proj.apply(vector);
+            }
         }
     }
 
@@ -613,6 +610,22 @@ where
 
         let (mut x_block, _init_result) =
             initialization::initialize_block(self.operator, &init_config, self.warm_start);
+
+        // Step 2b: Apply symmetry projection to initial block
+        // This ensures the starting subspace respects the desired parity
+        if let Some(proj) = &self.symmetry_projector {
+            let backend = self.operator.backend(); // Create backend reference for B-norm (not used here but keeps scope consistent)
+            let _ = backend; // Suppress unused warning
+            for entry in &mut x_block {
+                // Apply P to x
+                proj.apply(&mut entry.vector);
+                
+                // Recompute B*x and A*x since x changed
+                // (Note: initialize_block computed them, but projection invalidates them)
+                self.operator.apply_mass(&entry.vector, &mut entry.mass);
+                self.operator.apply(&entry.vector, &mut entry.applied);
+            }
+        }
 
         // Step 3: Project initial block against Γ mode (if present)
         // We must handle the projection and re-application carefully to avoid borrow conflicts
@@ -1886,6 +1899,7 @@ where
             // ================================================================
             self.apply_deflation(&mut residuals);
             self.apply_soft_deflation(&mut residuals);
+            self.apply_symmetry(&mut residuals);
 
             // ================================================================
             // Step 3: Compute B-norms of deflated residuals (LAZY)
@@ -2033,6 +2047,7 @@ where
             // ================================================================
             self.apply_deflation(&mut p_block);
             self.apply_soft_deflation(&mut p_block);
+            self.apply_symmetry(&mut p_block);
 
             // ================================================================
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
@@ -2157,6 +2172,12 @@ where
             // Step 13: Compute new history directions W_{k+1} = Q_k * Y_2
             // ================================================================
             self.update_history_directions(&q_block, &dense_result);
+            // Apply symmetry to W block (manually to avoid borrow checker issues with self)
+            if let Some(proj) = &self.symmetry_projector {
+                for vector in self.w_block.iter_mut() {
+                    proj.apply(vector);
+                }
+            }
 
             // ================================================================
             // Debug logging at selected iterations

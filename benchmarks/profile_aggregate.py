@@ -125,10 +125,16 @@ def main():
                         help='Path to blaze2d-cli (default: auto-detect)')
     parser.add_argument('--extra-args', nargs='*', default=[],
                         help='Extra arguments to pass to blaze2d-cli')
+    parser.add_argument('--symmetry', action='store_true',
+                        help='Enable symmetry (pass --symmetry to CLI)')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Print progress information')
     
     args = parser.parse_args()
+    
+    # Handle --symmetry explicitly
+    if args.symmetry:
+        args.extra_args.append('--symmetry')
     
     # Find CLI
     if args.cli:

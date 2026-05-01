@@ -880,7 +880,8 @@ impl BulkDriver {
 
         // Build run options from config
         let run_options = RunOptions::default()
-            .with_disable_band_tracking(self.config.bulk.disable_band_tracking);
+            .with_disable_band_tracking(self.config.bulk.disable_band_tracking)
+            .with_symmetry(self.config.bulk.enable_symmetry);
 
         // Run the solver
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
