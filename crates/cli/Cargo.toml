@@ -7,10 +7,11 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = ["batched-fft"]
+default = ["batched-fft", "mixed-precision"]
 cuda = ["blaze2d-backend-cpu/cuda", "dep:blaze2d-backend-cuda"]
 profiling = ["blaze2d-core/profiling", "blaze2d-backend-cpu/profiling"]
 batched-fft = ["blaze2d-core/batched-fft", "blaze2d-backend-cpu/batched-fft"]
+mixed-precision = ["blaze2d-core/mixed-precision", "blaze2d-backend-cpu/mixed-precision"]
 
 [dependencies]
 clap.workspace = true

@@ -104,11 +104,14 @@
 
 use log::debug;
 use num_complex::Complex64;
+#[cfg(feature = "mixed-precision")]
+use num_complex::Complex32;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::SpectralBuffer,
     brillouin::{BrillouinPath, generate_path},
+    field::FieldScalar,
     grid::Grid2D,
     lattice::{Lattice2D, LatticeClass},
 };
@@ -869,7 +872,7 @@ impl SymmetryProjector {
                 match reflection.parity {
                     Parity::Even => { /* keep as-is */ }
                     Parity::Odd => {
-                        data[idx] = Complex64::new(0.0, 0.0);
+                        data[idx] = FieldScalar::new(0.0, 0.0);
                     }
                 }
             } else {

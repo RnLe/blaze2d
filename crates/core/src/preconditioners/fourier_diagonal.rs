@@ -26,6 +26,7 @@
 //! where σ²_band ≈ c·λ_med for some constant c ∈ [0.1, 1.0].
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
+use crate::field::FieldReal;
 use crate::preconditioners::OperatorPreconditioner;
 
 /// Fraction of s_min to use for adaptive shift: σ(k) = α * s_min(k).
@@ -315,7 +316,7 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for FourierDiagonalPreconditi
             .iter_mut()
             .zip(self.inverse_diagonal.iter())
         {
-            *value *= *scale;
+            *value *= *scale as FieldReal;
         }
         backend.inverse_fft_2d(buffer);
     }
@@ -331,7 +332,7 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for FourierDiagonalPreconditi
                 .iter_mut()
                 .zip(self.inverse_diagonal.iter())
             {
-                *value *= *scale;
+                *value *= *scale as FieldReal;
             }
         }
         

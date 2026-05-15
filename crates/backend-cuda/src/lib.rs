@@ -17,6 +17,7 @@
 //! direct reinterpret casts.
 
 use blaze2d_core::backend::{SpectralBackend, SpectralBuffer};
+use blaze2d_core::field::FieldScalar;
 use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 
@@ -382,14 +383,14 @@ mod stub_field {
     #[derive(Clone)]
     pub struct CudaField {
         grid: Grid2D,
-        data: Vec<Complex64>,
+        data: Vec<FieldScalar>,
     }
 
     impl CudaField {
         pub fn zeros(grid: Grid2D) -> Self {
             Self {
                 grid,
-                data: vec![Complex64::default(); grid.len()],
+                data: vec![FieldScalar::default(); grid.len()],
             }
         }
     }
@@ -403,11 +404,11 @@ mod stub_field {
             self.grid
         }
 
-        fn as_slice(&self) -> &[Complex64] {
+        fn as_slice(&self) -> &[FieldScalar] {
             &self.data
         }
 
-        fn as_mut_slice(&mut self) -> &mut [Complex64] {
+        fn as_mut_slice(&mut self) -> &mut [FieldScalar] {
             &mut self.data
         }
     }
@@ -809,13 +810,32 @@ impl SpectralBackend for CudaBackend {
 
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
         for value in buffer.as_mut_slice() {
-            *value *= alpha;
+            let v64 = Complex64::new(value.re as f64, value.im as f64);
+            let result = v64 * alpha;
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *value = result;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                *value = FieldScalar::new(result.re as f32, result.im as f32);
+            }
         }
     }
 
     fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
         for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *dst += alpha * src;
+            let src64 = Complex64::new(src.re as f64, src.im as f64);
+            let dst64 = Complex64::new(dst.re as f64, dst.im as f64);
+            let result = dst64 + alpha * src64;
+            #[cfg(not(feature = "mixed-precision"))]
+            {
+                *dst = result;
+            }
+            #[cfg(feature = "mixed-precision")]
+            {
+                *dst = FieldScalar::new(result.re as f32, result.im as f32);
+            }
         }
     }
 
@@ -823,7 +843,11 @@ impl SpectralBackend for CudaBackend {
         x.as_slice()
             .iter()
             .zip(y.as_slice())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = Complex64::new(a.re as f64, a.im as f64);
+                let b64 = Complex64::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum()
     }
 }

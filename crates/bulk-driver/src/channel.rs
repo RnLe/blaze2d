@@ -67,7 +67,7 @@ impl CompactBandResultExt for CompactBandResult {
                 let eigenvectors: Vec<Vec<[f64; 2]>> = ea_result.eigenvectors.iter()
                     .map(|field| {
                         field.as_slice().iter()
-                            .map(|c| [c.re, c.im])
+                            .map(|c| [c.re as f64, c.im as f64])
                             .collect()
                     })
                     .collect();

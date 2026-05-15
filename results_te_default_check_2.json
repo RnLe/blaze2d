@@ -1,0 +1,116 @@
+{
+  "session_total_ms": 27578.343,
+  "session_std_ms": 0,
+  "iterations": 1,
+  "timestamp": "1767741733",
+  "methods": {
+    "update_ritz_vectors": {
+      "calls": 5630,
+      "total_ms": 4725.425,
+      "avg_us": 839.329,
+      "min_us": 451.207,
+      "max_us": 2772.075,
+      "std_ms": 0,
+      "pct": 17.13
+    },
+    "fft_2d::forward": {
+      "calls": 517857,
+      "total_ms": 2516.132,
+      "avg_us": 4.859,
+      "min_us": 4.154,
+      "max_us": 434.704,
+      "std_ms": 0,
+      "pct": 9.12
+    },
+    "apply_te": {
+      "calls": 137625,
+      "total_ms": 5466.532,
+      "avg_us": 39.72,
+      "min_us": 34.409,
+      "max_us": 474.484,
+      "std_ms": 0,
+      "pct": 19.82
+    },
+    "project_operator": {
+      "calls": 5630,
+      "total_ms": 2535.064,
+      "avg_us": 450.278,
+      "min_us": 159.997,
+      "max_us": 2059.47,
+      "std_ms": 0,
+      "pct": 9.19
+    },
+    "orthonormalize_subspace": {
+      "calls": 5630,
+      "total_ms": 9743.102,
+      "avg_us": 1730.569,
+      "min_us": 584.998,
+      "max_us": 10585.474,
+      "std_ms": 0,
+      "pct": 35.33
+    },
+    "svqb::gemm": {
+      "calls": 5630,
+      "total_ms": 6230.593,
+      "avg_us": 1106.677,
+      "min_us": 324.632,
+      "max_us": 5587.247,
+      "std_ms": 0,
+      "pct": 22.59
+    },
+    "fft_2d::inverse": {
+      "calls": 517857,
+      "total_ms": 2630.411,
+      "avg_us": 5.079,
+      "min_us": 4.313,
+      "max_us": 415.289,
+      "std_ms": 0,
+      "pct": 9.54
+    },
+    "svqb::eigendecomp": {
+      "calls": 5630,
+      "total_ms": 303.987,
+      "avg_us": 53.994,
+      "min_us": 18.06,
+      "max_us": 347.999,
+      "std_ms": 0,
+      "pct": 1.1
+    },
+    "svqb::gram_matrix": {
+      "calls": 5630,
+      "total_ms": 2463.597,
+      "avg_us": 437.584,
+      "min_us": 172.314,
+      "max_us": 6259.117,
+      "std_ms": 0,
+      "pct": 8.93
+    },
+    "compute_aq_block": {
+      "calls": 5630,
+      "total_ms": 5606.213,
+      "avg_us": 995.775,
+      "min_us": 529.495,
+      "max_us": 2819.204,
+      "std_ms": 0,
+      "pct": 20.33
+    },
+    "svqb": {
+      "calls": 5630,
+      "total_ms": 9638.55,
+      "avg_us": 1711.998,
+      "min_us": 581.733,
+      "max_us": 10441.539,
+      "std_ms": 0,
+      "pct": 34.95
+    },
+    "batch_apply_te": {
+      "calls": 5630,
+      "total_ms": 5458.456,
+      "avg_us": 969.53,
+      "min_us": 517.031,
+      "max_us": 2669.554,
+      "std_ms": 0,
+      "pct": 19.79
+    }
+  }
+}

@@ -8,7 +8,7 @@
 
 use crate::CpuBackend;
 use blaze2d_core::backend::SpectralBackend;
-use blaze2d_core::field::Field2D;
+use blaze2d_core::field::{Field2D, FieldScalar, FieldReal};
 use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 use std::f64::consts::PI;
@@ -25,7 +25,7 @@ fn fft_roundtrip_recovers_signal() {
 
     // Initialize with a simple pattern
     for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new(idx as f64, -(idx as f64));
+        *value = FieldScalar::new(idx as FieldReal, -(idx as FieldReal));
     }
     let original = field.clone();
 
@@ -35,7 +35,7 @@ fn fft_roundtrip_recovers_signal() {
 
     for (rec, expect) in field.as_slice().iter().zip(original.as_slice()) {
         let diff = (*rec - *expect).norm();
-        assert!(diff < 1e-9, "FFT roundtrip diverged: diff={diff}");
+        assert!(diff < 1e-4, "FFT roundtrip diverged: diff={diff}");
     }
 }
 
@@ -46,16 +46,16 @@ fn fft_roundtrip_preserves_energy_norm() {
     let mut field = Field2D::zeros(grid);
 
     for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new((idx as f64).sin(), (idx as f64).cos());
+        *value = FieldScalar::new((idx as FieldReal).sin(), (idx as FieldReal).cos());
     }
 
-    let before = field.as_slice().iter().map(|v| v.norm_sqr()).sum::<f64>();
+    let before: f64 = field.as_slice().iter().map(|v| v.norm_sqr() as f64).sum();
     backend.forward_fft_2d(&mut field);
     backend.inverse_fft_2d(&mut field);
-    let after = field.as_slice().iter().map(|v| v.norm_sqr()).sum::<f64>();
+    let after: f64 = field.as_slice().iter().map(|v| v.norm_sqr() as f64).sum();
 
     assert!(
-        (before - after).abs() < 1e-9,
+        (before - after).abs() < 1e-4,
         "energy drifted by {}",
         after - before
     );
@@ -65,12 +65,12 @@ fn fft_roundtrip_preserves_energy_norm() {
 fn fft_forward_of_constant_is_dc_component() {
     let backend = CpuBackend::new();
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
-    let n = (grid.nx * grid.ny) as f64;
+    let n = (grid.nx * grid.ny) as FieldReal;
     let mut field = Field2D::zeros(grid);
 
     // Constant field of value 1.0
     for value in field.as_mut_slice().iter_mut() {
-        *value = Complex64::new(1.0, 0.0);
+        *value = FieldScalar::new(1.0, 0.0);
     }
 
     backend.forward_fft_2d(&mut field);
@@ -78,14 +78,14 @@ fn fft_forward_of_constant_is_dc_component() {
     // DC component should be n (sum of all 1s)
     let dc = field.as_slice()[0];
     assert!(
-        (dc - Complex64::new(n, 0.0)).norm() < 1e-9,
+        (dc - FieldScalar::new(n, 0.0)).norm() < 1e-4,
         "DC component should be {n}, got {dc}"
     );
 
     // All other components should be zero
     for (idx, &value) in field.as_slice().iter().enumerate().skip(1) {
         assert!(
-            value.norm() < 1e-9,
+            value.norm() < 1e-4,
             "Non-DC component at index {idx} should be zero, got {value}"
         );
     }
@@ -104,7 +104,8 @@ fn fft_of_plane_wave_is_single_peak() {
         for ix in 0..nx {
             let idx = iy * nx + ix;
             let x = ix as f64 / nx as f64;
-            field.as_mut_slice()[idx] = Complex64::from_polar(1.0, 2.0 * PI * x);
+            let c = Complex64::from_polar(1.0, 2.0 * PI * x);
+            field.as_mut_slice()[idx] = FieldScalar::new(c.re as FieldReal, c.im as FieldReal);
         }
     }
 
@@ -112,11 +113,11 @@ fn fft_of_plane_wave_is_single_peak() {
 
     // The peak should be at index (1, 0) = index 1
     let peak_idx = 1;
-    let peak = field.as_slice()[peak_idx].norm();
+    let peak = field.as_slice()[peak_idx].norm() as f64;
     let n = (nx * ny) as f64;
 
     assert!(
-        (peak - n).abs() < 1e-6,
+        (peak - n).abs() < 1e-4,
         "Peak amplitude should be {n}, got {peak}"
     );
 }
@@ -132,7 +133,7 @@ fn scale_multiplies_all_elements() {
     let mut field = Field2D::zeros(grid);
 
     for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new(idx as f64, 0.0);
+        *value = FieldScalar::new(idx as FieldReal, 0.0);
     }
 
     let alpha = Complex64::new(2.0, 1.0);
@@ -140,8 +141,9 @@ fn scale_multiplies_all_elements() {
 
     for (idx, &value) in field.as_slice().iter().enumerate() {
         let expected = alpha * Complex64::new(idx as f64, 0.0);
+        let value64 = Complex64::new(value.re as f64, value.im as f64);
         assert!(
-            (value - expected).norm() < 1e-12,
+            (value64 - expected).norm() < 1e-6,
             "index {idx}: expected {expected}, got {value}"
         );
     }
@@ -155,10 +157,10 @@ fn axpy_computes_y_plus_alpha_x() {
     let mut y = Field2D::zeros(grid);
 
     for (i, value) in x.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new(i as f64 + 1.0, 0.0);
+        *value = FieldScalar::new((i as FieldReal) + 1.0, 0.0);
     }
     for (i, value) in y.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new(0.0, i as f64);
+        *value = FieldScalar::new(0.0, i as FieldReal);
     }
 
     let alpha = Complex64::new(2.0, 0.0);
@@ -167,8 +169,9 @@ fn axpy_computes_y_plus_alpha_x() {
     // y should now be original_y + alpha * x
     for (idx, &value) in y.as_slice().iter().enumerate() {
         let expected = Complex64::new(2.0 * (idx as f64 + 1.0), idx as f64);
+        let value64 = Complex64::new(value.re as f64, value.im as f64);
         assert!(
-            (value - expected).norm() < 1e-12,
+            (value64 - expected).norm() < 1e-6,
             "index {idx}: expected {expected}, got {value}"
         );
     }
@@ -183,14 +186,14 @@ fn dot_computes_conjugate_inner_product() {
 
     // x = [1, 2, 3, 4]
     for (i, value) in x.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new(i as f64 + 1.0, 0.0);
+        *value = FieldScalar::new((i as FieldReal) + 1.0, 0.0);
     }
 
     // y = [1, i, -1, -i]
-    y.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
-    y.as_mut_slice()[1] = Complex64::new(0.0, 1.0);
-    y.as_mut_slice()[2] = Complex64::new(-1.0, 0.0);
-    y.as_mut_slice()[3] = Complex64::new(0.0, -1.0);
+    y.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
+    y.as_mut_slice()[1] = FieldScalar::new(0.0, 1.0);
+    y.as_mut_slice()[2] = FieldScalar::new(-1.0, 0.0);
+    y.as_mut_slice()[3] = FieldScalar::new(0.0, -1.0);
 
     // dot(x, y) = conj(x[0])*y[0] + conj(x[1])*y[1] + conj(x[2])*y[2] + conj(x[3])*y[3]
     //           = 1*1 + 2*i + 3*(-1) + 4*(-i)
@@ -199,7 +202,7 @@ fn dot_computes_conjugate_inner_product() {
     let expected = Complex64::new(-2.0, -2.0);
 
     assert!(
-        (result - expected).norm() < 1e-12,
+        (result - expected).norm() < 1e-6,
         "expected {expected}, got {result}"
     );
 }
@@ -212,20 +215,20 @@ fn dot_of_vector_with_itself_is_real() {
 
     // Complex vector
     for (i, value) in x.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new((i as f64).sin(), (i as f64).cos());
+        *value = FieldScalar::new((i as FieldReal).sin(), (i as FieldReal).cos());
     }
 
     let result = backend.dot(&x, &x);
 
     // <x, x> should be real and equal to ||x||²
     assert!(
-        result.im.abs() < 1e-12,
+        result.im.abs() < 1e-6,
         "self-dot should be real, got {result}"
     );
 
-    let expected_norm_sq: f64 = x.as_slice().iter().map(|v| v.norm_sqr()).sum();
+    let expected_norm_sq: f64 = x.as_slice().iter().map(|v| v.norm_sqr() as f64).sum();
     assert!(
-        (result.re - expected_norm_sq).abs() < 1e-12,
+        (result.re - expected_norm_sq).abs() < 1e-6,
         "expected {expected_norm_sq}, got {result}"
     );
 }
@@ -252,7 +255,7 @@ fn alloc_field_initializes_to_zero() {
     let field = backend.alloc_field(grid);
 
     for &value in field.as_slice() {
-        assert_eq!(value, Complex64::ZERO);
+        assert_eq!(value, FieldScalar::default());
     }
 }
 
@@ -270,10 +273,10 @@ fn combined_operations_maintain_consistency() {
     let mut b = backend.alloc_field(grid);
 
     for (idx, value) in a.as_mut_slice().iter_mut().enumerate() {
-        *value = Complex64::new((idx as f64).cos(), (idx as f64).sin());
+        *value = FieldScalar::new((idx as FieldReal).cos(), (idx as FieldReal).sin());
     }
     for value in b.as_mut_slice().iter_mut() {
-        *value = Complex64::new(1.0, 0.0);
+        *value = FieldScalar::new(1.0, 0.0);
     }
 
     // Compute <a, a> before operations
@@ -287,7 +290,7 @@ fn combined_operations_maintain_consistency() {
     let norm_sq_after = backend.dot(&a, &a).re;
 
     assert!(
-        (norm_sq_before - norm_sq_after).abs() < 1e-9,
+        (norm_sq_before - norm_sq_after).abs() < 1e-4,
         "norm changed: {norm_sq_before} -> {norm_sq_after}"
     );
 }

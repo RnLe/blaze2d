@@ -440,3 +440,37 @@ runs:
     total_time_s: 0.080
     time_per_iter_ms: 0.600
     description: ""
+
+  - timestamp: "2026-01-06T23:27:36+01:00"
+    polarization: "TE"
+    min_iter: 5
+    max_iter: 18
+    total_iterations: 195
+    total_time_s: 0.100
+    time_per_iter_ms: 0.500
+    description: ""
+  - timestamp: "2026-01-06T23:27:36+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 14
+    total_iterations: 136
+    total_time_s: 0.070
+    time_per_iter_ms: 0.500
+    description: ""
+
+  - timestamp: "2026-01-07T00:03:21+01:00"
+    polarization: "TE"
+    min_iter: 5
+    max_iter: 18
+    total_iterations: 197
+    total_time_s: 0.100
+    time_per_iter_ms: 0.500
+    description: ""
+  - timestamp: "2026-01-07T00:03:21+01:00"
+    polarization: "TM"
+    min_iter: 4
+    max_iter: 14
+    total_iterations: 136
+    total_time_s: 0.060
+    time_per_iter_ms: 0.400
+    description: ""

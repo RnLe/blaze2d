@@ -70,8 +70,11 @@ use nalgebra::{DMatrix, Complex as NaComplex};
 
 use num_complex::Complex64;
 
+#[cfg(feature = "mixed-precision")]
+use num_complex::Complex32;
+
 use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::Field2D;
+use crate::field::{Field2D, FieldScalar};
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
@@ -167,10 +170,20 @@ const ENABLE_GAMMA_DEFLATION: bool = true;
 
 impl Default for EigensolverConfig {
     fn default() -> Self {
+        // When using mixed-precision (f32 storage), the noise floor is higher due to 
+        // |G|^2 amplification of quantization noise. We relax the default tolerance 
+        // to 1e-4 to ensure robust convergence. The eigenvalue accuracy (bands) 
+        // remains high (approx 1e-8) due to the variational principle (error is quadratic).
+        #[cfg(feature = "mixed-precision")]
+        let default_tol = 1e-4;
+
+        #[cfg(not(feature = "mixed-precision"))]
+        let default_tol = 1e-6;
+
         Self {
             n_bands: 8,
             max_iter: 200,
-            tol: 1e-6,
+            tol: default_tol,
             block_size: 0,
             record_diagnostics: false,
             k_index: None,
@@ -1391,16 +1404,16 @@ where
             // Result is r×r in column-major order
             let n = q_block[0].as_slice().len();
 
-            // Build Q matrix (n × r) from q_block
+            // Build Q matrix (n × r) from q_block - upcast to f64
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
-            // Build AQ matrix (n × r) from aq_block
+            // Build AQ matrix (n × r) from aq_block - upcast to f64
             let aq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
             // Compute A_s = Q^H * AQ using GEMM
@@ -1427,13 +1440,13 @@ where
             // Build Q matrix (n × r) from q_block
             let q_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Build AQ matrix (n × r) from aq_block
             let aq_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Compute A_s = Q^H * AQ using GEMM
@@ -1537,22 +1550,22 @@ where
             // X_new = Q * Y, BX_new = BQ * Y, AX_new = AQ * Y where matrices are n×r and Y is r×m
             let n = q_block[0].as_slice().len();
 
-            // Build Q matrix (n × r) from q_block
+            // Build Q matrix (n × r) from q_block - upcast to f64
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
-            // Build BQ matrix (n × r) from bq_block
+            // Build BQ matrix (n × r) from bq_block - upcast to f64
             let bq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = bq_block[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
-            // Build AQ matrix (n × r) from aq_block (precomputed - this is the optimization!)
+            // Build AQ matrix (n × r) from aq_block (precomputed - this is the optimization!) - upcast to f64
             let aq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
             // Build Y matrix (r × m) from dense_result eigenvectors
@@ -1577,7 +1590,10 @@ where
                     let dst = x_j.as_mut_slice();
                     for row in 0..n {
                         let c = x_new.get(row, j);
-                        dst[row] = Complex64::new(c.re, c.im);
+                        #[cfg(not(feature = "mixed-precision"))]
+                        { dst[row] = Complex64::new(c.re, c.im); }
+                        #[cfg(feature = "mixed-precision")]
+                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                     }
                 }
 
@@ -1587,7 +1603,10 @@ where
                     let dst = bx_j.as_mut_slice();
                     for row in 0..n {
                         let c = bx_new.get(row, j);
-                        dst[row] = Complex64::new(c.re, c.im);
+                        #[cfg(not(feature = "mixed-precision"))]
+                        { dst[row] = Complex64::new(c.re, c.im); }
+                        #[cfg(feature = "mixed-precision")]
+                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                     }
                 }
 
@@ -1597,7 +1616,10 @@ where
                     let dst = ax_j.as_mut_slice();
                     for row in 0..n {
                         let c = ax_new.get(row, j);
-                        dst[row] = Complex64::new(c.re, c.im);
+                        #[cfg(not(feature = "mixed-precision"))]
+                        { dst[row] = Complex64::new(c.re, c.im); }
+                        #[cfg(feature = "mixed-precision")]
+                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                     }
                 }
 
@@ -1619,25 +1641,25 @@ where
             // Build Q matrix (n × r) from q_block
             let q_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Build BQ matrix (n × r) from bq_block
             let bq_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = bq_block[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Build AQ matrix (n × r) from aq_block (precomputed - this is the optimization!)
             let aq_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Build Y matrix (r × m) from dense_result eigenvectors
             let y_mat = DMatrix::<NaComplex<f64>>::from_fn(r, m, |row, col| {
                 let c = dense_result.eigenvector(col)[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Compute X_new = Q * Y, BX_new = BQ * Y, and AX_new = AQ * Y using GEMM
@@ -1656,7 +1678,10 @@ where
                     let dst = x_j.as_mut_slice();
                     for row in 0..n {
                         let c = x_new[(row, j)];
-                        dst[row] = Complex64::new(c.re, c.im);
+                        #[cfg(not(feature = "mixed-precision"))]
+                        { dst[row] = Complex64::new(c.re, c.im); }
+                        #[cfg(feature = "mixed-precision")]
+                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                     }
                 }
 
@@ -1666,7 +1691,10 @@ where
                     let dst = bx_j.as_mut_slice();
                     for row in 0..n {
                         let c = bx_new[(row, j)];
-                        dst[row] = Complex64::new(c.re, c.im);
+                        #[cfg(not(feature = "mixed-precision"))]
+                        { dst[row] = Complex64::new(c.re, c.im); }
+                        #[cfg(feature = "mixed-precision")]
+                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                     }
                 }
 
@@ -1676,7 +1704,10 @@ where
                     let dst = ax_j.as_mut_slice();
                     for row in 0..n {
                         let c = ax_new[(row, j)];
-                        dst[row] = Complex64::new(c.re, c.im);
+                        #[cfg(not(feature = "mixed-precision"))]
+                        { dst[row] = Complex64::new(c.re, c.im); }
+                        #[cfg(feature = "mixed-precision")]
+                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                     }
                 }
 
@@ -1752,10 +1783,10 @@ where
             // W_new = Q * Y_w where Q is n×r and Y_w is r×n_w
             let n = q_block[0].as_slice().len();
 
-            // Build Q matrix (n × r) from q_block
+            // Build Q matrix (n × r) from q_block - upcast to f64
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                faer::c64::new(c.re, c.im)
+                faer::c64::new(c.re as f64, c.im as f64)
             });
 
             // Build Y_w matrix (r × n_w) from dense_result eigenvectors (columns w_start..w_end)
@@ -1774,7 +1805,10 @@ where
                 let dst = w.as_mut_slice();
                 for row in 0..n {
                     let c = w_new.get(row, j);
-                    dst[row] = Complex64::new(c.re, c.im);
+                    #[cfg(not(feature = "mixed-precision"))]
+                    { dst[row] = Complex64::new(c.re, c.im); }
+                    #[cfg(feature = "mixed-precision")]
+                    { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                 }
                 new_w_block.push(w);
             }
@@ -1790,13 +1824,13 @@ where
             // Build Q matrix (n × r) from q_block
             let q_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Build Y_w matrix (r × n_w) from dense_result eigenvectors (columns w_start..w_end)
             let y_w_mat = DMatrix::<NaComplex<f64>>::from_fn(r, n_w, |row, col| {
                 let c = dense_result.eigenvector(w_start + col)[row];
-                NaComplex::new(c.re, c.im)
+                NaComplex::new(c.re as f64, c.im as f64)
             });
 
             // Compute W_new = Q * Y_w using GEMM
@@ -1809,7 +1843,10 @@ where
                 let dst = w.as_mut_slice();
                 for row in 0..n {
                     let c = w_new[(row, j)];
-                    dst[row] = Complex64::new(c.re, c.im);
+                    #[cfg(not(feature = "mixed-precision"))]
+                    { dst[row] = Complex64::new(c.re, c.im); }
+                    #[cfg(feature = "mixed-precision")]
+                    { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
                 }
                 new_w_block.push(w);
             }
