@@ -1,6 +1,7 @@
 name: mpb-reference
 channels:
   - conda-forge
+  - pip
 dependencies:
   - python=3.11
   - numpy

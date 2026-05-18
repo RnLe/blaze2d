@@ -28,11 +28,11 @@ export default function PyPICard() {
     }}>
       {/* Python Icon */}
       <img
-        src={`${basePath}/icons/Python-logo-notext.svg.png`}
+        src={`${basePath}/icons/python.svg`}
         alt="Python"
         style={{
-          width: '48px',
-          height: '48px',
+          width: '64px',
+          height: '64px',
         }}
       />
 

@@ -28,4 +28,4 @@ segments_per_leg = 12
 [eigensolver]
 n_bands = 10
 max_iter = 200
-tol = 1e-8
+tol = 1e-4

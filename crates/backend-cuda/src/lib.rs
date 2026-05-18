@@ -19,7 +19,7 @@
 use blaze2d_core::backend::{SpectralBackend, SpectralBuffer};
 use blaze2d_core::field::FieldScalar;
 use blaze2d_core::grid::Grid2D;
-use num_complex::Complex64;
+use num_complex::{Complex32, Complex64};
 
 #[cfg(feature = "cuda")]
 use std::sync::Arc;
@@ -120,24 +120,43 @@ impl Clone for CudaBackend {
 mod gpu_field {
     use super::*;
 
-    /// Reinterpret a slice of Complex64 as a slice of f64 pairs.
-    /// This is safe because Complex64 is repr(C) with layout [re: f64, im: f64].
-    fn complex_to_f64_slice(data: &[Complex64]) -> &[f64] {
+    use std::cell::{Cell, UnsafeCell};
+
+    /// Convert FieldScalar slice to f64 pairs for GPU transfer.
+    /// GPU always uses f64 for numerical stability in cuBLAS operations.
+    fn fieldscalar_to_f64_vec(data: &[FieldScalar]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(data.len() * 2);
+        for c in data {
+            result.push(c.re as f64);
+            result.push(c.im as f64);
+        }
+        result
+    }
+
+    /// Convert f64 pairs from GPU to FieldScalar slice.
+    fn f64_to_fieldscalar_vec(data: &[f64]) -> Vec<FieldScalar> {
+        let mut result = Vec::with_capacity(data.len() / 2);
+        for chunk in data.chunks_exact(2) {
+            result.push(FieldScalar::new(chunk[0] as f32, chunk[1] as f32));
+        }
+        result
+    }
+
+    /// Reinterpret a slice of FieldScalar as a slice of f32 pairs (for FFT).
+    fn fieldscalar_to_f32_slice(data: &[FieldScalar]) -> &[f32] {
         unsafe {
             std::slice::from_raw_parts(
-                data.as_ptr() as *const f64,
+                data.as_ptr() as *const f32,
                 data.len() * 2,
             )
         }
     }
 
-    use std::cell::{Cell, UnsafeCell};
-
-    /// Reinterpret a mutable slice of Complex64 as a mutable slice of f64 pairs.
-    fn complex_to_f64_slice_mut(data: &mut [Complex64]) -> &mut [f64] {
+    /// Reinterpret a mutable slice of FieldScalar as a mutable slice of f32 pairs (for FFT).
+    fn fieldscalar_to_f32_slice_mut(data: &mut [FieldScalar]) -> &mut [f32] {
         unsafe {
             std::slice::from_raw_parts_mut(
-                data.as_mut_ptr() as *mut f64,
+                data.as_mut_ptr() as *mut f32,
                 data.len() * 2,
             )
         }
@@ -147,9 +166,15 @@ mod gpu_field {
     ///
     /// This type maintains data on both host and device memory:
     /// - `device_data`: Primary storage on GPU (as f64 pairs: [re, im, re, im, ...])
-    /// - `host_cache`: Cached host copy as Complex64 for `SpectralBuffer` trait
+    /// - `host_cache`: Cached host copy as FieldScalar for `SpectralBuffer` trait
     /// - `host_dirty`: Flag indicating host cache needs refresh from device
     /// - `device_dirty`: Flag indicating device needs refresh from host
+    ///
+    /// # Mixed Precision Strategy
+    ///
+    /// - Host storage: FieldScalar (f32) for memory bandwidth efficiency
+    /// - GPU storage: f64 for numerical stability in cuBLAS operations
+    /// - Conversions happen during host↔device transfers
     ///
     /// # Synchronization
     ///
@@ -170,8 +195,8 @@ mod gpu_field {
         /// GPU-resident data as f64 pairs (primary storage for GPU operations)
         /// Layout: [re_0, im_0, re_1, im_1, ...] with length = 2 * grid.len()
         device_data: UnsafeCell<CudaSlice<f64>>,
-        /// Host-side cache as Complex64 for SpectralBuffer trait compatibility
-        host_cache: UnsafeCell<Vec<Complex64>>,
+        /// Host-side cache as FieldScalar (f32) for SpectralBuffer trait compatibility
+        host_cache: UnsafeCell<Vec<FieldScalar>>,
         /// Stream for synchronization
         stream: Arc<CudaStream>,
         /// True if host cache is stale (device has newer data)
@@ -191,7 +216,7 @@ mod gpu_field {
             let device_data = stream
                 .alloc_zeros::<f64>(len * 2)
                 .expect("Failed to allocate GPU memory");
-            let host_cache = vec![Complex64::default(); len];
+            let host_cache = vec![FieldScalar::default(); len];
             
             Self {
                 grid,
@@ -203,19 +228,43 @@ mod gpu_field {
             }
         }
 
-        /// Create a GPU field from host data.
-        pub fn from_host(stream: Arc<CudaStream>, grid: Grid2D, data: Vec<Complex64>) -> Self {
+        /// Create a GPU field from host data (as FieldScalar/f32).
+        pub fn from_host_f32(stream: Arc<CudaStream>, grid: Grid2D, data: Vec<FieldScalar>) -> Self {
             assert_eq!(data.len(), grid.len(), "Data length must match grid size");
-            // Convert Complex64 slice to f64 slice and copy to device
-            let f64_data = complex_to_f64_slice(&data);
+            // Convert FieldScalar (f32) to f64 for GPU storage
+            let f64_data = fieldscalar_to_f64_vec(&data);
             let device_data = stream
-                .clone_htod(f64_data)
+                .clone_htod(&f64_data)
                 .expect("Failed to copy data to GPU");
             
             Self {
                 grid,
                 device_data: UnsafeCell::new(device_data),
                 host_cache: UnsafeCell::new(data),
+                stream,
+                host_dirty: Cell::new(false),
+                device_dirty: Cell::new(false),
+            }
+        }
+
+        /// Create a GPU field from host data (as Complex64, for GEMM output).
+        pub fn from_host(stream: Arc<CudaStream>, grid: Grid2D, data: Vec<Complex64>) -> Self {
+            assert_eq!(data.len(), grid.len(), "Data length must match grid size");
+            // Convert Complex64 to FieldScalar for host cache and f64 for GPU
+            let f64_data: Vec<f64> = data.iter()
+                .flat_map(|c| [c.re, c.im])
+                .collect();
+            let host_cache: Vec<FieldScalar> = data.iter()
+                .map(|c| FieldScalar::new(c.re as f32, c.im as f32))
+                .collect();
+            let device_data = stream
+                .clone_htod(&f64_data)
+                .expect("Failed to copy data to GPU");
+            
+            Self {
+                grid,
+                device_data: UnsafeCell::new(device_data),
+                host_cache: UnsafeCell::new(host_cache),
                 stream,
                 host_dirty: Cell::new(false),
                 device_dirty: Cell::new(false),
@@ -243,10 +292,15 @@ mod gpu_field {
                 // Safety: Single-threaded access pattern, no aliasing possible
                 let host_cache = unsafe { &mut *self.host_cache.get() };
                 let device_data = unsafe { &*self.device_data.get() };
-                let f64_slice = complex_to_f64_slice_mut(host_cache);
+                // GPU stores f64, need to download and convert to f32
+                let mut f64_buf = vec![0.0f64; host_cache.len() * 2];
                 self.stream
-                    .memcpy_dtoh(device_data, f64_slice)
+                    .memcpy_dtoh(device_data, &mut f64_buf)
                     .expect("Failed to sync device to host");
+                // Convert f64 pairs to FieldScalar (f32)
+                for (i, chunk) in f64_buf.chunks_exact(2).enumerate() {
+                    host_cache[i] = FieldScalar::new(chunk[0] as f32, chunk[1] as f32);
+                }
                 self.host_dirty.set(false);
             }
         }
@@ -261,9 +315,10 @@ mod gpu_field {
                 // Safety: Single-threaded access pattern, no aliasing possible
                 let host_cache = unsafe { &*self.host_cache.get() };
                 let device_data = unsafe { &mut *self.device_data.get() };
-                let f64_slice = complex_to_f64_slice(host_cache);
+                // Convert FieldScalar (f32) to f64 for GPU
+                let f64_data = fieldscalar_to_f64_vec(host_cache);
                 self.stream
-                    .memcpy_htod(f64_slice, device_data)
+                    .memcpy_htod(&f64_data, device_data)
                     .expect("Failed to sync host to device");
                 self.device_dirty.set(false);
             }
@@ -274,10 +329,15 @@ mod gpu_field {
             // Safety: Single-threaded access pattern, no aliasing possible
             let host_cache = unsafe { &mut *self.host_cache.get() };
             let device_data = unsafe { &*self.device_data.get() };
-            let f64_slice = complex_to_f64_slice_mut(host_cache);
+            // GPU stores f64, need to download and convert to f32
+            let mut f64_buf = vec![0.0f64; host_cache.len() * 2];
             self.stream
-                .memcpy_dtoh(device_data, f64_slice)
+                .memcpy_dtoh(device_data, &mut f64_buf)
                 .expect("Failed to sync device to host");
+            // Convert f64 pairs to FieldScalar (f32)
+            for (i, chunk) in f64_buf.chunks_exact(2).enumerate() {
+                host_cache[i] = FieldScalar::new(chunk[0] as f32, chunk[1] as f32);
+            }
             self.host_dirty.set(false);
         }
 
@@ -286,9 +346,10 @@ mod gpu_field {
             // Safety: Single-threaded access pattern, no aliasing possible
             let host_cache = unsafe { &*self.host_cache.get() };
             let device_data = unsafe { &mut *self.device_data.get() };
-            let f64_slice = complex_to_f64_slice(host_cache);
+            // Convert FieldScalar (f32) to f64 for GPU
+            let f64_data = fieldscalar_to_f64_vec(host_cache);
             self.stream
-                .memcpy_htod(f64_slice, device_data)
+                .memcpy_htod(&f64_data, device_data)
                 .expect("Failed to sync host to device");
             self.device_dirty.set(false);
         }
@@ -326,9 +387,10 @@ mod gpu_field {
             self.ensure_host_current();
             // Safety: Single-threaded access pattern, no aliasing during clone
             let host_cache = unsafe { &*self.host_cache.get() };
-            let f64_slice = complex_to_f64_slice(host_cache);
+            // Convert f32 to f64 for GPU storage
+            let f64_data = fieldscalar_to_f64_vec(host_cache);
             let device_data = self.stream
-                .clone_htod(f64_slice)
+                .clone_htod(&f64_data)
                 .expect("Failed to clone GPU memory");
             
             Self {
@@ -351,7 +413,7 @@ mod gpu_field {
             self.grid
         }
 
-        fn as_slice(&self) -> &[Complex64] {
+        fn as_slice(&self) -> &[FieldScalar] {
             // Sync is "logically const" - doesn't change observable state
             self.ensure_host_current();
             // Safety: Single-threaded access pattern, no aliasing possible
@@ -359,7 +421,7 @@ mod gpu_field {
             unsafe { &*self.host_cache.get() }
         }
 
-        fn as_mut_slice(&mut self) -> &mut [Complex64] {
+        fn as_mut_slice(&mut self) -> &mut [FieldScalar] {
             self.ensure_host_current();
             self.device_dirty.set(true);
             // Safety: We have &mut self, so exclusive access is guaranteed
@@ -431,6 +493,7 @@ impl SpectralBackend for CudaBackend {
 
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer) {
         // Use CPU FFT via rustfft - cuFFT has too much overhead for small grids
+        // FFT is done in f32 (FieldScalar) per mixed-precision strategy
         use rustfft::FftPlanner;
         
         let grid = buffer.grid();
@@ -438,7 +501,7 @@ impl SpectralBackend for CudaBackend {
         
         // Get data on host side for FFT
         let data = buffer.as_mut_slice();
-        let mut planner = FftPlanner::<f64>::new();
+        let mut planner = FftPlanner::<f32>::new();
         let fft_x = planner.plan_fft_forward(nx);
         let fft_y = planner.plan_fft_forward(ny);
         
@@ -450,7 +513,7 @@ impl SpectralBackend for CudaBackend {
         }
         
         // Column FFTs (need to gather/scatter)
-        let mut col_buf = vec![Complex64::ZERO; ny];
+        let mut col_buf = vec![Complex32::ZERO; ny];
         for col in 0..nx {
             for row in 0..ny {
                 col_buf[row] = data[row * nx + col];
@@ -464,14 +527,15 @@ impl SpectralBackend for CudaBackend {
 
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer) {
         // Use CPU FFT via rustfft
+        // FFT is done in f32 (FieldScalar) per mixed-precision strategy
         use rustfft::FftPlanner;
         
         let grid = buffer.grid();
         let (nx, ny) = (grid.nx, grid.ny);
-        let scale = 1.0 / (nx * ny) as f64;
+        let scale = 1.0 / (nx * ny) as f32;
         
         let data = buffer.as_mut_slice();
-        let mut planner = FftPlanner::<f64>::new();
+        let mut planner = FftPlanner::<f32>::new();
         let fft_x = planner.plan_fft_inverse(nx);
         let fft_y = planner.plan_fft_inverse(ny);
         
@@ -483,7 +547,7 @@ impl SpectralBackend for CudaBackend {
         }
         
         // Column FFTs (need to gather/scatter)
-        let mut col_buf = vec![Complex64::ZERO; ny];
+        let mut col_buf = vec![Complex32::ZERO; ny];
         for col in 0..nx {
             for row in 0..ny {
                 col_buf[row] = data[row * nx + col];
@@ -606,11 +670,12 @@ impl SpectralBackend for CudaBackend {
         //   C = G (p × q), ldc = p
         
         // Allocate device memory for matrices X, Y, and G
+        // Convert FieldScalar (f32) to Complex64 (f64) for numerical stability in dot products
         let x_host: Vec<Complex64> = x.iter()
-            .flat_map(|buf| buf.as_slice().iter().copied())
+            .flat_map(|buf| buf.as_slice().iter().map(|c| Complex64::new(c.re as f64, c.im as f64)))
             .collect();
         let y_host: Vec<Complex64> = y.iter()
-            .flat_map(|buf| buf.as_slice().iter().copied())
+            .flat_map(|buf| buf.as_slice().iter().map(|c| Complex64::new(c.re as f64, c.im as f64)))
             .collect();
         
         // We need to transpose from "p vectors of length n" to "n × p column-major"
@@ -721,9 +786,10 @@ impl SpectralBackend for CudaBackend {
         //   out = X (n × m), ldc = n
         
         // Build Q matrix: concatenate all input vectors
+        // Convert FieldScalar (f32) to Complex64 (f64) for GPU computation
         // This produces column-major (n × r) since each vector is contiguous
         let q_host: Vec<Complex64> = q.iter()
-            .flat_map(|buf| buf.as_slice().iter().copied())
+            .flat_map(|buf| buf.as_slice().iter().map(|c| Complex64::new(c.re as f64, c.im as f64)))
             .collect();
         
         // Coeffs are already column-major from the trait specification

@@ -99,12 +99,12 @@ help:
 # ============================================================================
 build:
 	@echo "Building blaze2d with profiling enabled (batched FFT)..."
-	cd $(ROOT_DIR) && cargo build --release -p blaze2d-cli --features profiling
+	cd $(ROOT_DIR) && RUSTFLAGS="-C target-cpu=native" cargo build --release -p blaze2d-cli --features profiling
 	@echo "Build complete."
 
 build-sequential:
 	@echo "Building blaze2d with profiling enabled (sequential FFT)..."
-	cd $(ROOT_DIR) && CARGO_TARGET_DIR=$(ROOT_DIR)/target/release-sequential cargo build --release -p blaze2d-cli --features profiling --no-default-features
+	cd $(ROOT_DIR) && RUSTFLAGS="-C target-cpu=native" CARGO_TARGET_DIR=$(ROOT_DIR)/target/release-sequential cargo build --release -p blaze2d-cli --features profiling --no-default-features
 	@echo "Build complete."
 
 # Check that CLI exists

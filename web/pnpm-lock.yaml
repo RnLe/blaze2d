@@ -44,11 +44,17 @@ importers:
       '@visx/grid':
         specifier: ^3.5.0
         version: 3.12.0(react@19.2.1)
+      '@visx/group':
+        specifier: ^3.12.0
+        version: 3.12.0(react@19.2.1)
       '@visx/scale':
         specifier: ^3.5.0
         version: 3.12.0
       '@visx/shape':
         specifier: ^3.5.0
+        version: 3.12.0(react@19.2.1)
+      '@visx/text':
+        specifier: ^3.12.0
         version: 3.12.0(react@19.2.1)
       '@xterm/xterm':
         specifier: ^5.5.0

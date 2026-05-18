@@ -66,7 +66,7 @@ segments_per_leg = 12
 [eigensolver]
 n_bands = 8
 max_iter = 200
-tol = 1e-6
+tol = 1e-4
 
 [dielectric.smoothing]
 mesh_size = 4

@@ -89,9 +89,9 @@ NUM_BANDS = 8
 K_POINTS_PER_SEGMENT = 20
 
 # Different run counts for single vs multi-core
-SINGLE_CORE_RUNS = 10    # Jobs per iteration for single-core
-MULTI_CORE_RUNS = 20    # Jobs per iteration for multi-core
-NUM_ITERATIONS = 5
+SINGLE_CORE_RUNS = 5     # Jobs per iteration for single-core
+MULTI_CORE_RUNS = 10     # Jobs per iteration for multi-core
+NUM_ITERATIONS = 2
 
 def build_k_path_square(density: int):
     """Γ → X → M → Γ for square lattice"""

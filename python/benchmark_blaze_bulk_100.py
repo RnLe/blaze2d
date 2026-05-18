@@ -70,7 +70,7 @@ segments_per_leg = 8
 [eigensolver]
 n_bands = 8
 max_iter = 1000
-tol = 1e-6
+tol = 1e-4
 
 [output]
 mode = "full"

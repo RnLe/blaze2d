@@ -107,7 +107,7 @@ segments_per_leg = 10          # Points per segment (default: 8)
 # Eigensolver settings
 [eigensolver]
 n_bands = 8                    # Number of bands
-tol = 1e-6                     # Convergence tolerance
+tol = 1e-4                     # Convergence tolerance
 max_iter = 200                 # Maximum iterations
 block_size = 0                 # LOBPCG block size (0 = auto)
 # record_diagnostics = false   # Per-iteration diagnostics
@@ -168,7 +168,7 @@ periodic = true
 
 [eigensolver]
 n_bands = 12
-tol = 1e-6
+tol = 1e-4
 max_iter = 500
 
 [output]
