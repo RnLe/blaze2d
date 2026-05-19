@@ -445,18 +445,30 @@ body:not(:has(.blaze-layout)) .prose {
   text-align: start !important;
 }
 
-/* Links - white, no underline */
-body:not(:has(.blaze-layout)) a:not(.blog-card-link),
-body:not(:has(.blaze-layout)) .prose a:not(.blog-card-link) {
+/* Links - white, no underline by default */
+body:not(:has(.blaze-layout)) a:not(.blog-card-link) {
   color: #ffffff !important;
   text-decoration: none !important;
   transition: opacity 0.15s ease !important;
 }
 
-body:not(:has(.blaze-layout)) a:not(.blog-card-link):hover,
-body:not(:has(.blaze-layout)) .prose a:not(.blog-card-link):hover {
+body:not(:has(.blaze-layout)) a:not(.blog-card-link):hover {
   opacity: 0.7 !important;
-  text-decoration: none !important;
+}
+
+/* Links in MDX article content - underlined */
+body:not(:has(.blaze-layout)) article a:not(.blog-card-link),
+body:not(:has(.blaze-layout)) .narrow a,
+body:not(:has(.blaze-layout)) .narrow-centered a {
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+}
+
+/* Remove arrow icon from external links in article content */
+body:not(:has(.blaze-layout)) article a svg,
+body:not(:has(.blaze-layout)) .narrow a svg,
+body:not(:has(.blaze-layout)) .narrow-centered a svg {
+  display: none !important;
 }
 
 /* Blog card - NO opacity transitions, clean styling */
