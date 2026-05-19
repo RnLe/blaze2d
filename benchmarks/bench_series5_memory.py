@@ -14,6 +14,8 @@ Three parameter sweeps:
 Memory is measured using /usr/bin/time -v for subprocess calls, which gives
 reliable Peak RSS measurements that are comparable across Python and Rust.
 
+Each configuration is run multiple times (default: 3) to get error bars.
+
 Output: results/series5_memory/
 """
 
@@ -25,6 +27,7 @@ import json
 import argparse
 import tempfile
 import re
+import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -55,6 +58,19 @@ DEFAULT_RESOLUTION = 32
 DEFAULT_BANDS = 8
 DEFAULT_K_PER_SEG = 10
 
+# Number of runs per configuration for error bars
+DEFAULT_NUM_RUNS = 3
+
+# Single-core environment variables
+SINGLE_CORE_ENV = {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "GOTO_NUM_THREADS": "1",
+}
+
 
 @dataclass
 class MemoryResult:
@@ -72,12 +88,20 @@ class MemoryResult:
 
 
 @dataclass
-class SweepResults:
-    """Results for a parameter sweep."""
-    sweep_variable: str
-    sweep_values: List[int]
-    fixed_params: Dict
-    results: List[MemoryResult] = field(default_factory=list)
+class AggregatedMemoryResult:
+    """Aggregated memory measurement result across multiple runs."""
+    solver: str
+    polarization: str
+    resolution: int
+    num_bands: int
+    k_points_per_segment: int
+    peak_rss_mb_mean: float
+    peak_rss_mb_std: float
+    elapsed_seconds_mean: float
+    elapsed_seconds_std: float
+    num_runs: int
+    success: bool
+    raw_results: List[Dict] = field(default_factory=list)
 
 
 def parse_time_v_output(output: str) -> Tuple[int, float]:
@@ -163,12 +187,17 @@ solver.run_{pol_lower}()
     try:
         mpb_python = "/home/renlephy/.local/share/mamba/envs/mpb-reference/bin/python"
         
+        # Merge single-core env with current env
+        env = os.environ.copy()
+        env.update(SINGLE_CORE_ENV)
+        
         # Run with /usr/bin/time -v to measure memory
         result = subprocess.run(
             ["/usr/bin/time", "-v", mpb_python, str(script_path)],
             capture_output=True,
             text=True,
             timeout=600,  # 10 min timeout
+            env=env,
         )
         
         # /usr/bin/time outputs to stderr
@@ -275,6 +304,10 @@ def run_blaze_memory_test(
                 capture_output=True,
             )
         
+        # Merge single-core env with current env
+        env = os.environ.copy()
+        env.update(SINGLE_CORE_ENV)
+        
         # Run with /usr/bin/time -v to measure memory
         result = subprocess.run(
             ["/usr/bin/time", "-v", str(blaze_cli), 
@@ -284,6 +317,7 @@ def run_blaze_memory_test(
             text=True,
             timeout=600,
             cwd=PROJECT_ROOT,
+            env=env,
         )
         
         output = result.stderr
@@ -326,20 +360,11 @@ def run_sweep(
     fixed_bands: int,
     fixed_k_per_seg: int,
     polarizations: List[str] = ["TM", "TE"],
-) -> SweepResults:
-    """Run a parameter sweep and collect memory results."""
+    num_runs: int = DEFAULT_NUM_RUNS,
+) -> List[AggregatedMemoryResult]:
+    """Run a parameter sweep and collect aggregated memory results with error bars."""
     
-    fixed_params = {
-        "resolution": fixed_resolution,
-        "num_bands": fixed_bands,
-        "k_points_per_segment": fixed_k_per_seg,
-    }
-    
-    results = SweepResults(
-        sweep_variable=sweep_variable,
-        sweep_values=sweep_values,
-        fixed_params=fixed_params,
-    )
+    aggregated_results = []
     
     for value in sweep_values:
         # Set parameters based on sweep variable
@@ -355,27 +380,75 @@ def run_sweep(
         for pol in polarizations:
             print(f"  {sweep_variable}={value}, {pol}:", end=" ", flush=True)
             
-            # Run MPB
-            print("MPB...", end=" ", flush=True)
-            mpb_result = run_mpb_memory_test(res, bands, pol, k_seg)
-            results.results.append(mpb_result)
+            # Run MPB multiple times
+            print(f"MPB×{num_runs}...", end=" ", flush=True)
+            mpb_runs = []
+            for run_idx in range(num_runs):
+                mpb_result = run_mpb_memory_test(res, bands, pol, k_seg)
+                if mpb_result.success:
+                    mpb_runs.append(mpb_result)
             
-            # Run Blaze2D
-            print("Blaze2D...", end=" ", flush=True)
-            blaze_result = run_blaze_memory_test(res, bands, pol, k_seg)
-            results.results.append(blaze_result)
+            if mpb_runs:
+                mpb_mem_values = [r.peak_rss_mb for r in mpb_runs]
+                mpb_time_values = [r.elapsed_seconds for r in mpb_runs]
+                mpb_agg = AggregatedMemoryResult(
+                    solver="MPB",
+                    polarization=pol,
+                    resolution=res,
+                    num_bands=bands,
+                    k_points_per_segment=k_seg,
+                    peak_rss_mb_mean=statistics.mean(mpb_mem_values),
+                    peak_rss_mb_std=statistics.stdev(mpb_mem_values) if len(mpb_mem_values) > 1 else 0.0,
+                    elapsed_seconds_mean=statistics.mean(mpb_time_values),
+                    elapsed_seconds_std=statistics.stdev(mpb_time_values) if len(mpb_time_values) > 1 else 0.0,
+                    num_runs=len(mpb_runs),
+                    success=True,
+                    raw_results=[asdict(r) for r in mpb_runs],
+                )
+                aggregated_results.append(mpb_agg)
+            
+            # Run Blaze2D multiple times
+            print(f"Blaze×{num_runs}...", end=" ", flush=True)
+            blaze_runs = []
+            for run_idx in range(num_runs):
+                blaze_result = run_blaze_memory_test(res, bands, pol, k_seg)
+                if blaze_result.success:
+                    blaze_runs.append(blaze_result)
+            
+            if blaze_runs:
+                blaze_mem_values = [r.peak_rss_mb for r in blaze_runs]
+                blaze_time_values = [r.elapsed_seconds for r in blaze_runs]
+                blaze_agg = AggregatedMemoryResult(
+                    solver="Blaze2D",
+                    polarization=pol,
+                    resolution=res,
+                    num_bands=bands,
+                    k_points_per_segment=k_seg,
+                    peak_rss_mb_mean=statistics.mean(blaze_mem_values),
+                    peak_rss_mb_std=statistics.stdev(blaze_mem_values) if len(blaze_mem_values) > 1 else 0.0,
+                    elapsed_seconds_mean=statistics.mean(blaze_time_values),
+                    elapsed_seconds_std=statistics.stdev(blaze_time_values) if len(blaze_time_values) > 1 else 0.0,
+                    num_runs=len(blaze_runs),
+                    success=True,
+                    raw_results=[asdict(r) for r in blaze_runs],
+                )
+                aggregated_results.append(blaze_agg)
             
             # Print summary
-            if mpb_result.success and blaze_result.success:
-                ratio = mpb_result.peak_rss_mb / blaze_result.peak_rss_mb if blaze_result.peak_rss_mb > 0 else 0
-                print(f"MPB={mpb_result.peak_rss_mb:.1f}MB, Blaze={blaze_result.peak_rss_mb:.1f}MB, ratio={ratio:.2f}x")
+            if mpb_runs and blaze_runs:
+                mpb_mean = statistics.mean([r.peak_rss_mb for r in mpb_runs])
+                blaze_mean = statistics.mean([r.peak_rss_mb for r in blaze_runs])
+                ratio = mpb_mean / blaze_mean if blaze_mean > 0 else 0
+                mpb_std = statistics.stdev([r.peak_rss_mb for r in mpb_runs]) if len(mpb_runs) > 1 else 0
+                blaze_std = statistics.stdev([r.peak_rss_mb for r in blaze_runs]) if len(blaze_runs) > 1 else 0
+                print(f"MPB={mpb_mean:.1f}±{mpb_std:.1f}MB, Blaze={blaze_mean:.1f}±{blaze_std:.1f}MB, ratio={ratio:.1f}×")
             else:
-                print(f"MPB={'OK' if mpb_result.success else 'FAIL'}, Blaze={'OK' if blaze_result.success else 'FAIL'}")
+                print(f"MPB={'OK' if mpb_runs else 'FAIL'}, Blaze={'OK' if blaze_runs else 'FAIL'}")
     
-    return results
+    return aggregated_results
 
 
-def run_series(output_dir: Path):
+def run_series(output_dir: Path, num_runs: int = DEFAULT_NUM_RUNS):
     """Run the full memory benchmark series."""
     
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -384,6 +457,8 @@ def run_series(output_dir: Path):
     print("Benchmark Series 5: Memory Usage Comparison")
     print("=" * 70)
     print(f"Config: Square lattice, ε={EPSILON} rods, r={RADIUS}a")
+    print(f"Runs per config: {num_runs}")
+    print(f"Single-core mode: OMP_NUM_THREADS=1")
     print(f"MPB tolerance: {MPB_TOLERANCE} (f64)")
     print(f"Blaze tolerance: {BLAZE_TOLERANCE} (mixed-precision f32)")
     print("=" * 70)
@@ -398,6 +473,8 @@ def run_series(output_dir: Path):
             "eps_bg": EPS_BG,
             "mpb_tolerance": MPB_TOLERANCE,
             "blaze_tolerance": BLAZE_TOLERANCE,
+            "num_runs": num_runs,
+            "single_core": True,
         },
         "sweeps": {},
     }
@@ -407,18 +484,19 @@ def run_series(output_dir: Path):
     print(f"  Fixed: bands={DEFAULT_BANDS}, k_per_seg={DEFAULT_K_PER_SEG}")
     print("-" * 50)
     
-    res_sweep = run_sweep(
+    res_results = run_sweep(
         sweep_variable="resolution",
         sweep_values=RESOLUTION_SWEEP,
         fixed_resolution=0,  # Will be overridden
         fixed_bands=DEFAULT_BANDS,
         fixed_k_per_seg=DEFAULT_K_PER_SEG,
+        num_runs=num_runs,
     )
     all_results["sweeps"]["resolution"] = {
         "variable": "resolution",
         "values": RESOLUTION_SWEEP,
         "fixed": {"num_bands": DEFAULT_BANDS, "k_points_per_segment": DEFAULT_K_PER_SEG},
-        "results": [asdict(r) for r in res_sweep.results],
+        "results": [asdict(r) for r in res_results],
     }
     
     # Sweep 2: Number of bands
@@ -426,18 +504,19 @@ def run_series(output_dir: Path):
     print(f"  Fixed: resolution={DEFAULT_RESOLUTION}, k_per_seg={DEFAULT_K_PER_SEG}")
     print("-" * 50)
     
-    bands_sweep = run_sweep(
+    bands_results = run_sweep(
         sweep_variable="num_bands",
         sweep_values=BANDS_SWEEP,
         fixed_resolution=DEFAULT_RESOLUTION,
         fixed_bands=0,  # Will be overridden
         fixed_k_per_seg=DEFAULT_K_PER_SEG,
+        num_runs=num_runs,
     )
     all_results["sweeps"]["num_bands"] = {
         "variable": "num_bands",
         "values": BANDS_SWEEP,
         "fixed": {"resolution": DEFAULT_RESOLUTION, "k_points_per_segment": DEFAULT_K_PER_SEG},
-        "results": [asdict(r) for r in bands_sweep.results],
+        "results": [asdict(r) for r in bands_results],
     }
     
     # Sweep 3: K-points per segment
@@ -445,18 +524,19 @@ def run_series(output_dir: Path):
     print(f"  Fixed: resolution={DEFAULT_RESOLUTION}, bands={DEFAULT_BANDS}")
     print("-" * 50)
     
-    kpts_sweep = run_sweep(
+    kpts_results = run_sweep(
         sweep_variable="k_points_per_segment",
         sweep_values=K_POINTS_SWEEP,
         fixed_resolution=DEFAULT_RESOLUTION,
         fixed_bands=DEFAULT_BANDS,
         fixed_k_per_seg=0,  # Will be overridden
+        num_runs=num_runs,
     )
     all_results["sweeps"]["k_points_per_segment"] = {
         "variable": "k_points_per_segment",
         "values": K_POINTS_SWEEP,
         "fixed": {"resolution": DEFAULT_RESOLUTION, "num_bands": DEFAULT_BANDS},
-        "results": [asdict(r) for r in kpts_sweep.results],
+        "results": [asdict(r) for r in kpts_results],
     }
     
     # Save results
@@ -475,10 +555,12 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark Series 5: Memory Usage")
     parser.add_argument("--output", type=str, default="results/series5_memory",
                         help="Output directory")
+    parser.add_argument("--runs", type=int, default=DEFAULT_NUM_RUNS,
+                        help=f"Number of runs per configuration (default: {DEFAULT_NUM_RUNS})")
     args = parser.parse_args()
     
     output_dir = SCRIPT_DIR / args.output
-    run_series(output_dir)
+    run_series(output_dir, num_runs=args.runs)
 
 
 if __name__ == "__main__":

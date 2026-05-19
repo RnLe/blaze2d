@@ -61,15 +61,18 @@ def extract_sweep_data(sweep_data: dict, polarization: str) -> Dict[str, Dict]:
     
     Returns dict with 'mpb' and 'blaze' keys, each containing:
         - values: list of sweep variable values
-        - memory_mb: list of peak RSS in MB
-        - elapsed: list of elapsed times
+        - memory_mb: list of peak RSS in MB (mean if multiple runs)
+        - memory_mb_std: list of std deviations (0 if single run)
+        - elapsed: list of elapsed times (mean if multiple runs)
+    
+    Supports both old format (single run) and new format (multiple runs with mean/std).
     """
     values = sweep_data["values"]
     results = sweep_data["results"]
     
     data = {
-        "mpb": {"values": [], "memory_mb": [], "elapsed": []},
-        "blaze": {"values": [], "memory_mb": [], "elapsed": []},
+        "mpb": {"values": [], "memory_mb": [], "memory_mb_std": [], "elapsed": []},
+        "blaze": {"values": [], "memory_mb": [], "memory_mb_std": [], "elapsed": []},
     }
     
     for r in results:
@@ -83,15 +86,23 @@ def extract_sweep_data(sweep_data: dict, polarization: str) -> Dict[str, Dict]:
         value = r[sweep_var]
         
         data[solver_key]["values"].append(value)
-        data[solver_key]["memory_mb"].append(r["peak_rss_mb"])
-        data[solver_key]["elapsed"].append(r["elapsed_seconds"])
+        
+        # Check if new format with mean/std or old format
+        if "peak_rss_mb_mean" in r:
+            data[solver_key]["memory_mb"].append(r["peak_rss_mb_mean"])
+            data[solver_key]["memory_mb_std"].append(r["peak_rss_mb_std"])
+            data[solver_key]["elapsed"].append(r["elapsed_seconds_mean"])
+        else:
+            data[solver_key]["memory_mb"].append(r["peak_rss_mb"])
+            data[solver_key]["memory_mb_std"].append(0.0)
+            data[solver_key]["elapsed"].append(r["elapsed_seconds"])
     
     return data
 
 
 def plot_memory_sweep(ax: plt.Axes, sweep_data: dict, polarization: str, 
                       xlabel: str, title_suffix: str = ""):
-    """Plot memory usage as bar chart for a single sweep and polarization."""
+    """Plot memory usage as bar chart for a single sweep and polarization with error bars."""
     
     data = extract_sweep_data(sweep_data, polarization)
     
@@ -109,15 +120,21 @@ def plot_memory_sweep(ax: plt.Axes, sweep_data: dict, polarization: str,
     # Create dicts for easy lookup
     mpb_dict = dict(zip(data["mpb"]["values"], data["mpb"]["memory_mb"]))
     blaze_dict = dict(zip(data["blaze"]["values"], data["blaze"]["memory_mb"]))
+    mpb_std_dict = dict(zip(data["mpb"]["values"], data["mpb"]["memory_mb_std"]))
+    blaze_std_dict = dict(zip(data["blaze"]["values"], data["blaze"]["memory_mb_std"]))
     
     mpb_mem = [mpb_dict.get(v, 0) for v in sweep_values]
     blaze_mem = [blaze_dict.get(v, 0) for v in sweep_values]
+    mpb_std = [mpb_std_dict.get(v, 0) for v in sweep_values]
+    blaze_std = [blaze_std_dict.get(v, 0) for v in sweep_values]
     
-    # Create bars
+    # Create bars with error bars
     ax.bar(x - width/2, mpb_mem, width, label=LABELS["mpb"], 
-           color=COLORS["mpb"], alpha=0.85, edgecolor='white', linewidth=0.5)
+           color=COLORS["mpb"], alpha=0.85, edgecolor='white', linewidth=0.5,
+           yerr=mpb_std, capsize=3)
     ax.bar(x + width/2, blaze_mem, width, label=LABELS["blaze"],
-           color=COLORS["blaze"], alpha=0.85, edgecolor='white', linewidth=0.5)
+           color=COLORS["blaze"], alpha=0.85, edgecolor='white', linewidth=0.5,
+           yerr=blaze_std, capsize=3)
     
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Peak Memory (MB)")

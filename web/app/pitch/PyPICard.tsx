@@ -1,8 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+import { getAssetPath } from '../../lib/paths';
 
 export default function PyPICard() {
   const [copied, setCopied] = useState(false);
@@ -28,7 +27,7 @@ export default function PyPICard() {
     }}>
       {/* Python Icon */}
       <img
-        src={`${basePath}/icons/python.svg`}
+        src={getAssetPath('/icons/python.svg')}
         alt="Python"
         style={{
           width: '64px',

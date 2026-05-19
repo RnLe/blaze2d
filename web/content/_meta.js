@@ -10,7 +10,7 @@ export default {
     title: 'Demo',
   },
   potential: {
-    title: 'Potential',
+    title: 'Optimization Potential',
   },
   pitch: {
     title: 'Pitch',
