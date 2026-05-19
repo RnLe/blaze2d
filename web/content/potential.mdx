@@ -1,0 +1,32 @@
+<div className="narrow-centered">
+
+<span className="date">Updated on January 8, 2026</span>
+
+# Potential of Blaze 2D
+
+Blaze 2D explores new avenues for rapid photonic band structure computation by identifying key bottlenecks and optimizing them. While the current version achieves significant speedups, there are many avenues left exploring.
+
+## What we tried
+
+- <a href="#wasm-backend">WASM Backend Integration</a>
+- <a href="#gpu-acceleration">GPU Acceleration (CUDA)</a>
+- <a href="#iterative-solvers">Alternative Iterative Solvers</a>
+- <a href="#matrix-preconditioning">Matrix Preconditioning Strategies</a>
+
+## WASM Backend Integration
+
+We explored compiling the Rust core to WebAssembly to enable client-side simulation. This approach successfully allows the demo to run entirely in the browser without server-side computation.
+
+## GPU Acceleration (CUDA)
+
+Initial experiments with cuBLAS and custom CUDA kernels showed promise for larger lattice sizes. However, for the small matrix sizes typical in 2D photonic crystals (e.g., 32x32 to 64x64 grid points), the PCI-E transfer overhead often negated the computational gains.
+
+## Alternative Iterative Solvers
+
+We tested LOBPCG and Davidson methods against the subspace iteration currently used. While LOBPCG shows better convergence rates for some eigenvalue problems, the lightweight nature of our subspace iteration implementation proved more cache-efficient for the specific problem size regime we target.
+
+## Matrix Preconditioning Strategies
+
+Various incomplete LU and Cholesky preconditioners were benchmarked. The trade-off between the setup cost of the preconditioner and the reduction in iteration count was analyzed, leading to our current optimized choice.
+
+</div>
