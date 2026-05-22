@@ -24,42 +24,66 @@ async function hoistSingleCoreData() {
   console.log('Hoisting single-core benchmark data...');
   
   const blazePath = join(benchmarksPath, 'blaze2d_speed_single_results.json');
+  const blazeFullPath = join(benchmarksPath, 'blaze2d_speed_single_full_results.json');
   const mpbPath = join(benchmarksPath, 'mpb_speed_single_results.json');
 
-  // Check if source files exist
+  // Check if source files exist (full precision is optional)
   if (!existsSync(blazePath) || !existsSync(mpbPath)) {
     console.log('Single-core benchmark files not found, skipping...');
     return false;
   }
 
-  const [blazeRaw, mpbRaw] = await Promise.all([
+  const filesToRead = [
     readFile(blazePath, 'utf-8'),
     readFile(mpbPath, 'utf-8'),
-  ]);
+  ];
+  
+  // Optionally read full precision data if available
+  const hasFullPrecision = existsSync(blazeFullPath);
+  if (hasFullPrecision) {
+    filesToRead.push(readFile(blazeFullPath, 'utf-8'));
+  }
+
+  const [blazeRaw, mpbRaw, blazeFullRaw] = await Promise.all(filesToRead);
 
   const blazeData = JSON.parse(blazeRaw);
   const mpbData = JSON.parse(mpbRaw);
+  const blazeFullData = hasFullPrecision ? JSON.parse(blazeFullRaw) : null;
 
   // Transform to unified format
   const result = {
     mpb: {},
     blaze: {},
+    blazeFull: {},
     metadata: {
       timestamp: blazeData.timestamp,
       source: 'static',
       hoistedAt: new Date().toISOString(),
       blazeFile: 'blaze2d_speed_single_results.json',
+      blazeFullFile: hasFullPrecision ? 'blaze2d_speed_single_full_results.json' : null,
       mpbFile: 'mpb_speed_single_results.json',
+      hasFullPrecision,
     },
   };
 
-  // Transform Blaze data
+  // Transform Blaze data (mixed precision)
   for (const [configKey, config] of Object.entries(blazeData.configs)) {
     result.blaze[configKey] = {
       mean_ms: config.mean_ms,
       std_ms: config.std_ms,
       description: config.description,
     };
+  }
+
+  // Transform Blaze full precision data (if available)
+  if (blazeFullData) {
+    for (const [configKey, config] of Object.entries(blazeFullData.configs)) {
+      result.blazeFull[configKey] = {
+        mean_ms: config.mean_ms,
+        std_ms: config.std_ms,
+        description: config.description,
+      };
+    }
   }
 
   // Transform MPB data
@@ -185,43 +209,67 @@ async function hoistMultiCoreData() {
   console.log('Hoisting multi-core benchmark data...');
   
   const blazePath = join(benchmarksPath, 'blaze2d_speed_multi_results.json');
+  const blazeFullPath = join(benchmarksPath, 'blaze2d_speed_multi_full_results.json');
   const mpbPath = join(benchmarksPath, 'mpb_speed_multi-native_results.json');
 
-  // Check if source files exist
+  // Check if source files exist (full precision is optional)
   if (!existsSync(blazePath) || !existsSync(mpbPath)) {
     console.log('Multi-core benchmark files not found, skipping...');
     return false;
   }
 
-  const [blazeRaw, mpbRaw] = await Promise.all([
+  const filesToRead = [
     readFile(blazePath, 'utf-8'),
     readFile(mpbPath, 'utf-8'),
-  ]);
+  ];
+  
+  // Optionally read full precision data if available
+  const hasFullPrecision = existsSync(blazeFullPath);
+  if (hasFullPrecision) {
+    filesToRead.push(readFile(blazeFullPath, 'utf-8'));
+  }
+
+  const [blazeRaw, mpbRaw, blazeFullRaw] = await Promise.all(filesToRead);
 
   const blazeData = JSON.parse(blazeRaw);
   const mpbData = JSON.parse(mpbRaw);
+  const blazeFullData = hasFullPrecision ? JSON.parse(blazeFullRaw) : null;
 
   // Transform to unified format
   const result = {
     mpb: {},
     blaze: {},
+    blazeFull: {},
     metadata: {
       timestamp: blazeData.timestamp,
       source: 'static',
       hoistedAt: new Date().toISOString(),
       num_threads: blazeData.num_threads || 16,
       blazeFile: 'blaze2d_speed_multi_results.json',
+      blazeFullFile: hasFullPrecision ? 'blaze2d_speed_multi_full_results.json' : null,
       mpbFile: 'mpb_speed_multi-native_results.json',
+      hasFullPrecision,
     },
   };
 
-  // Transform Blaze data
+  // Transform Blaze data (mixed precision)
   for (const [configKey, config] of Object.entries(blazeData.configs)) {
     result.blaze[configKey] = {
       mean_ms: config.mean_ms,
       std_ms: config.std_ms,
       description: config.description,
     };
+  }
+
+  // Transform Blaze full precision data (if available)
+  if (blazeFullData) {
+    for (const [configKey, config] of Object.entries(blazeFullData.configs)) {
+      result.blazeFull[configKey] = {
+        mean_ms: config.mean_ms,
+        std_ms: config.std_ms,
+        description: config.description,
+      };
+    }
   }
 
   // Transform MPB Native data (nested structure with polarizations)
