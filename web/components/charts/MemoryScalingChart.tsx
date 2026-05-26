@@ -486,7 +486,7 @@ export default function MemoryScalingChart({
         fontStyle: 'italic',
         textAlign: 'left',
       }}>
-        Log-log plot of memory scaling with resolution. Dashed lines show power-law fits to the measured data.
+        Dashed lines show power-law fits to the measured data; the lower-right dashed line indicates an O(N²) reference scaling.
       </p>
     </div>
   );

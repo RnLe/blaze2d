@@ -155,7 +155,6 @@ export default function MemoryUsageChart({
         fontStyle: 'italic',
         textAlign: 'left',
       }}>
-        Blaze uses ~{avgReduction}× less memory than MPB on average across {sweepLabel.toLowerCase()} values.
       </p>
     </div>
   );

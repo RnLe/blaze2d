@@ -23,7 +23,7 @@ import { Citation, Reference, References } from '../components/Citation'
 <HeroImage src="/banners/blaze_intro.webp" alt="Blaze: High-Performance Photonic Crystal Solver" />
 <div className="narrow-centered">
 
-<span className="date">January 7, 2026</span>
+<span className="date">January 8, 2026</span>
 
 # Blaze: A High-Performance Solver for Photonic Crystals
 
@@ -72,7 +72,7 @@ The architectural age of legacy solvers is most evident in parallel execution.<C
 
 Blaze avoids this contention by parallelizing entire jobs rather than individual operations, a strategy optimized for large-scale parameter sweeps.
 
-The chart below reveals a clear three-tier performance hierarchy. The legacy solver struggles with thread overhead. Blaze in Full Precision scales efficiently but remains sensitive to the higher algebraic load of TE modes (approx. ``240–350 ms``). In contrast, the Mixed Precision mode hits a "hard floor" at roughly ``170 ms``. By halving the memory requirement for state vectors, Blaze masks the computational complexity of the TE mode, proving that the solver has hit the physical memory bandwidth limit of the machine.
+The chart below reveals a clear three-tier performance hierarchy. The legacy solver struggles with thread overhead. Blaze in Full Precision scales efficiently but remains sensitive to the higher algebraic load of TE modes (approx. ``240–350 ms``). In contrast, the Mixed Precision mode hits a "hard floor" at roughly ``160 ms``. By halving the memory requirement for state vectors, Blaze masks the computational complexity of the TE mode, proving that the solver has hit the physical memory bandwidth limit of the machine.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
@@ -94,6 +94,79 @@ The chart below reveals a clear three-tier performance hierarchy. The legacy sol
 </div>
 
 </div>
+<div className="narrow">
+## Memory Efficiency
+
+High-performance computing is increasingly defined by data movement. A major limitation of MPB is its static memory management; benchmarks reveal that the legacy solver reserves a large, fixed memory block (approx. ``190 MB``) ***regardless*** of the problem size.
+
+Blaze adopts a dynamic allocation strategy. As shown below, this results in a dramatic reduction in peak memory usage for standard resolutions. This reduction is critical: by keeping the working set small, Blaze allows the CPU to operate almost entirely within its high-speed L3 cache, avoiding the latency penalty of fetching data from main RAM.
+
+Fundamentally, the storage requirements for FFTs and operator workspaces scale directly with the grid resolution ($N$). Therefore, analyzing memory growth against resolution provides the most critical insight into the architectural efficiency.
+
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryUsageChart width={1000} height={380} sweep="resolution" />
+</div>
+
+<div className="narrow">
+
+This efficiency extends to the dimensionality of the search space. In the LOBPCG algorithm, the search space size is determined by the number of bands ($3n$). While one might expect memory usage to scale with this complexity, both solvers maintain a constant footprint even as the number of bands increases.
+
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryUsageChart width={1000} height={380} sweep="num_bands" />
+</div>
+<div className="narrow">
+
+### Memory Scaling Laws
+
+To understand the limits of this efficiency, we analyzed how the relative advantage evolves. At low resolutions, MPB is dominated by its static overhead, giving Blaze a ``20×`` advantage. As the resolution increases, the physical storage requirements for the grid naturally grow, and the ratio asymptotically approaches ``1x``. As mentioned, for the number of bands sweep, both solvers maintain constant memory usage, resulting in a flat ratio.
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryRatioChart width={1000} height={380} />
+</div>
+
+<div className="narrow">
+
+For varying resolutions, MPB’s memory usage is effectively constant <br />($N^{0.06}$), confirming the pre-allocation hypothesis.
+In contrast, Blaze follows a near-linear trend ($N^{1.09}$), scaling predictably with the problem size. Notably, this footprint is identical for both TM and TE polarizations, proving that the storage cost in Blaze is determined strictly by grid topology, independent of the operator's computational complexity.
+
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
+  <MemoryScalingChart width={1000} height={380} />
+</div>
+
+
+<div className="narrow">
+## Accuracy Validation
+
+The significant reduction in precision and memory footprint raises a critical question: **does this compromise physical accuracy?** To verify this, we compared the eigenfrequencies calculated by Blaze against high-precision reference scans.
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '2rem 0', width: '100%', maxWidth: '1200px', marginLeft: 'auto', marginRight: 'auto', flexWrap: 'wrap' }}>
+  <BandComparisonChart width={550} height={420} polarization="TM" />
+  <BandComparisonChart width={550} height={420} polarization="TE" />
+</div>
+
+<div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '2rem 0', width: '100%', maxWidth: '900px', marginLeft: 'auto', marginRight: 'auto', flexWrap: 'wrap' }}>
+  <DeviationBoxPlotChart width={400} height={400} polarization="TM" />
+  <DeviationBoxPlotChart width={400} height={400} polarization="TE" />
+</div>
+
+<div className="narrow">
+## Deviation Analysis
+
+The data reveals a distinct behavior for each polarization. Transverse Magnetic (TM) modes show near-perfect agreement <br />($10^{-4}$; Blaze's internal tolerance), with Blaze often converging to slightly lower eigenvalues for higher bands than the reference, suggesting a more robust minimization in the LOBPCG solver.
+
+For Transverse Electric (TE) modes, a systematic upward shift is observable. This deviation is not an artifact of mixed precision, but stems from differences in the inverse epsilon tensor smoothing and operator definitions. While the absolute frequencies differ slightly due to this gauge freedom, the qualitative physics remain intact, specifically band crossings and topological features.
+
+Finally, the deviating trajectories observed in higher bands are an expected characteristic of the mixed-precision approach. The reduced precision may leave some fine-grained degeneracies unlifted; however, these resolve naturally when the search space is expanded to include additional bands.
+
+</div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
   <ThroughputScalingChart width={1000} height={380} />
@@ -101,22 +174,6 @@ The chart below reveals a clear three-tier performance hierarchy. The legacy sol
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
   <SpeedupScalingChart width={1000} height={380} />
-</div>
-
-<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
-  <MemoryUsageChart width={1000} height={380} sweep="resolution" />
-</div>
-
-<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
-  <MemoryUsageChart width={1000} height={380} sweep="num_bands" />
-</div>
-
-<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
-  <MemoryRatioChart width={1000} height={380} />
-</div>
-
-<div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
-  <MemoryScalingChart width={1000} height={380} />
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -149,16 +206,6 @@ The chart below reveals a clear three-tier performance hierarchy. The legacy sol
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
   <BandsBarChart width={1000} height={380} />
-</div>
-
-<div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '2rem 0', width: '100%', maxWidth: '1200px', marginLeft: 'auto', marginRight: 'auto', flexWrap: 'wrap' }}>
-  <BandComparisonChart width={550} height={420} polarization="TM" />
-  <BandComparisonChart width={550} height={420} polarization="TE" />
-</div>
-
-<div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '2rem 0', width: '100%', maxWidth: '900px', marginLeft: 'auto', marginRight: 'auto', flexWrap: 'wrap' }}>
-  <DeviationBoxPlotChart width={400} height={400} polarization="TM" />
-  <DeviationBoxPlotChart width={400} height={400} polarization="TE" />
 </div>
 
 <EpsilonGridViewer initialResolution={64} size={400} />
