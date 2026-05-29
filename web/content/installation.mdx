@@ -1,0 +1,194 @@
+import HeroImage from '../components/HeroImage'
+
+<HeroImage src="/banners/blaze_installation.webp" alt="Install, Run and Test Blaze" />
+<div className="narrow-centered">
+
+<span className="date">January 9, 2026</span>
+
+# Install, Run and Test Blaze
+
+*Get started with Blaze.*
+
+---
+
+<div style={{ textAlign: 'left', fontSize: '0.9rem', lineHeight: 1.8 }}>
+
+**Contents**
+
+1. [Quick Install via PyPI](#quick-install-via-pypi)
+2. [Running Blaze](#running-blaze)
+3. [Building from Source](#building-from-source)
+4. [Reproducing Benchmarks](#reproducing-benchmarks)
+
+</div>
+
+</div>
+
+<div className="narrow">
+
+Blaze is designed to be accessible. Whether you're a researcher looking for a quick photonic band structure calculation or a developer who wants to explore the codebase, there's an installation path for you.
+
+## Quick Install via PyPI
+
+The fastest way to get started is through Python's package manager:
+
+```bash
+pip install blaze2d
+```
+
+This installs the pre-built binaries and Python bindings. For usage examples and API documentation, visit the [PyPI project page](https://pypi.org/project/blaze2d/).
+
+</div>
+
+<div className="narrow">
+## Running Blaze
+
+Blaze offers two interfaces for running simulations:
+
+| Interface | Best For |
+|-----------|----------|
+| **CLI flags** | Quick single runs, scripting |
+| **TOML files** | Reproducible simulations, parameter sweeps |
+
+### CLI Flags
+
+For quick, one-off calculations, you can specify all parameters directly on the command line:
+
+```bash
+blaze2d --lattice square --eps-bg 13.0 --radius 0.3 --polarization TM --resolution 24
+```
+
+This is ideal for rapid prototyping or when integrating Blaze into shell scripts.
+
+### TOML Configuration Files
+
+<div style={{
+  background: 'rgba(76, 175, 80, 0.12)',
+  border: '1px solid rgba(76, 175, 80, 0.4)',
+  borderRadius: '6px',
+  padding: '0.85rem 1.1rem',
+  margin: '1.25rem 0',
+  fontSize: '0.9rem',
+  lineHeight: 1.6,
+}}>
+  <strong>Recommended:</strong> TOML configuration files are the intended way to use Blaze for serious work. They make your simulations **reproducible**, **shareable**, and **version-controllable**; without sharing actual code.
+</div>
+
+TOML files separate your simulation parameters from the execution environment. This modern, modular approach means you can:
+
+- **Share configurations** with collaborators without compatibility issues
+- **Track changes** in version control more easily
+- **Reproduce results** months or years later with identical parameters
+- **Organize parameter sweeps** in a clean, readable format
+
+```bash
+blaze2d run examples/square_eps13_r0p3_tm_res24.toml
+```
+
+The repository includes numerous example configurations in the ``examples/`` directory, covering square and hexagonal lattices, various polarizations, and bulk parameter sweeps.
+
+</div>
+
+<div className="narrow">
+## Building from Source
+
+For those who want to modify Blaze, contribute to development, or simply prefer building from source:
+
+```bash
+git clone https://github.com/RnLe/blaze2d.git
+cd blaze2d
+cargo build --release
+```
+
+The compiled binary will be available at ``target/release/blaze2d``.
+
+### Requirements
+
+- **Rust 1.91+** (install via [rustup](https://rustup.rs/))
+- **Python 3.9+** (for Python bindings, optional)
+
+### Running Tests
+
+If you want to inspect the testing infrastructure or verify your build:
+
+```bash
+cargo test
+```
+
+This runs the full test suite, including unit tests for the core solver algorithms, integration tests for the CLI, and validation tests that compare results against reference solutions.
+
+</div>
+
+<div className="narrow">
+## Reproducing Benchmarks
+
+All performance benchmarks shown in the [Blaze introduction](/blaze) can be reproduced from the ``benchmarks/`` directory. The suite is organized with a clean Makefile that automates the entire process.
+
+### Quick Start
+
+```bash
+cd benchmarks
+
+# Run everything (takes 10-20 minutes)
+make all
+
+# Or run specific categories
+make single    # Single-core benchmarks (MPB vs Blaze)
+make multi     # Multi-core benchmarks (16 threads)
+
+# Generate all plots from existing data
+make plot
+```
+
+### Benchmark Series
+
+The benchmarks are organized into focused series, each targeting a specific aspect of solver performance:
+
+| Series | Target | Command |
+|--------|--------|---------|
+| **Series 1** | Epsilon sweep (dielectric contrast) | ``make series1`` |
+| **Series 2** | Number of bands scaling | ``make series2`` |
+| **Series 3** | Grid resolution scaling | ``make series3`` |
+| **Series 4** | LOBPCG iteration count | ``make series4`` |
+| **Series 5** | Memory usage comparison | ``make series5`` |
+| **Series 6** | Accuracy validation (f32 vs f64) | ``make series6`` |
+| **Series 7** | Multi-threading scaling | ``make series7`` |
+
+Each series has a corresponding ``make plot-seriesX`` target to regenerate its plots independently.
+
+### Benchmark Requirements
+
+The benchmark suite compares Blaze against [MIT Photonic Bands (MPB)](https://mpb.readthedocs.io/), which requires a dedicated conda environment. The Makefile will automatically check for this environment and guide you through setup if needed.
+
+**First-time setup:**
+
+```bash
+cd benchmarks
+
+# Option 1: Let the Makefile create the environment (auto-detects mamba/conda)
+make setup-env
+
+# Option 2: Create manually
+mamba env create -f environment.yml   # recommended (faster)
+conda env create -f environment.yml   # alternative
+```
+
+The ``environment.yml`` file includes MPB, meep, and all required dependencies. Once installed, the environment will be auto-detected whether you use conda or mamba.
+
+**Verify your setup:**
+
+```bash
+make check-env
+```
+
+If the environment is missing, you'll see clear instructions on how to set it up.
+
+**Summary of requirements:**
+
+- **MPB**: Auto-installed via ``make setup-env`` or ``conda env create -f environment.yml``
+- **Blaze2D**: Rust toolchain (automatically built by the Makefile)
+- **Plotting**: Python with ``matplotlib`` and ``numpy`` (included in the environment)
+
+Run ``make help`` for a comprehensive overview of all available targets and their parameters.
+
+</div>

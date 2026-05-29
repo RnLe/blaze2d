@@ -34,7 +34,7 @@ export default function BlogCard({
     <Link 
       href={href} 
       className="blog-card-link"
-      style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
+      style={{ textDecoration: 'none', color: 'inherit', display: 'block', height: '100%' }}
       onMouseEnter={() => {
         if (imageRef.current) {
           imageRef.current.style.transform = 'scale(1.05)';
@@ -54,7 +54,8 @@ export default function BlogCard({
           backgroundColor: '#fff',
           boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
           cursor: 'pointer',
-          maxWidth: '400px',
+          width: '100%',
+          height: '100%',
           overflow: 'hidden',
         }}
       >
@@ -84,7 +85,7 @@ export default function BlogCard({
         </div>
 
         {/* Content */}
-        <div style={{ padding: '20px' }}>
+        <div style={{ padding: '20px', flex: 1, display: 'flex', flexDirection: 'column' }}>
           {/* Date and tags row */}
           {(date || tags) && (
             <div
@@ -153,6 +154,7 @@ export default function BlogCard({
                 color: '#666',
                 margin: 0,
                 lineHeight: 1.5,
+                flex: 1,
               }}
             >
               {description}
@@ -170,10 +172,10 @@ export function BlogCardGrid({ children }: { children: React.ReactNode }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+        gridTemplateColumns: 'repeat(2, 1fr)',
         gap: '24px',
         padding: '24px 0',
-        justifyItems: 'center',
+        maxWidth: '800px',
       }}
     >
       {children}

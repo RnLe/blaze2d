@@ -2,9 +2,14 @@
 #
 # Speed benchmarks comparing MPB vs Blaze2D
 # - Single-core: Fair 1-thread comparison
-# - Multi-core: 16 threads parallel comparison
+# - Multi-core: Parallel comparison using all physical cores
 
-.PHONY: all quick single multi analyze plot clean help
+# Auto-detect number of physical CPU cores
+# Linux: use nproc; macOS: use sysctl
+NUM_CORES := $(shell nproc 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)
+NUM_JOBS := $(shell echo $$(($(NUM_CORES) * 2)))
+
+.PHONY: all quick single multi analyze plot clean help check-env setup-env
 .PHONY: mpb-single mpb-multi blaze-single blaze-single-full blaze-multi blaze-multi-full
 .PHONY: single-mpb single-blaze multi-mpb multi-blaze
 .PHONY: series1 series1-quick plot-series1
@@ -29,12 +34,12 @@ quick: quick-single quick-multi analyze plot
 single: single-mpb single-blaze
 
 # Multi-core benchmarks only  
-multi: mpb-multi-native mpb-multi-process blaze-multi
+multi: mpb-multi-native blaze-multi
 
 # Individual solver targets
 single-mpb: mpb-single
 single-blaze: blaze-single
-multi-mpb: mpb-multi-native mpb-multi-process  # Runs both MPB variants
+multi-mpb: mpb-multi-native
 multi-blaze: blaze-multi
 
 # ============================================================================
@@ -45,30 +50,23 @@ multi-blaze: blaze-multi
 SINGLE_CORE_ENV := OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
                    VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 GOTO_NUM_THREADS=1
 
-mpb-single:
+mpb-single: check-env
 	@echo "========================================"
 	@echo "MPB Single-Core Benchmark"
 	@echo "========================================"
-	$(SINGLE_CORE_ENV) python bench_mpb_speed.py --cores 1 --output results
+	$(SINGLE_CORE_ENV) $(MPB_PYTHON) bench_mpb_speed.py --cores 1 --output results
 
-mpb-multi-native:
+mpb-multi-native: check-env
 	@echo "========================================"
-	@echo "MPB Multi-Core Benchmark (Native Threads)"
+	@echo "MPB Multi-Core Benchmark (Native Threads, $(NUM_CORES) cores)"
 	@echo "========================================"
-	OMP_NUM_THREADS=16 python bench_mpb_speed.py --runs 32 --iterations 2 --output results --tag multi-native
+	OMP_NUM_THREADS=$(NUM_CORES) $(MPB_PYTHON) bench_mpb_speed.py --runs $(NUM_JOBS) --iterations 2 --output results --tag multi-native
 
-mpb-multi-process:
-	@echo "========================================"
-	@echo "MPB Multi-Core Benchmark (Multiprocessing)"
-	@echo "========================================"
-	$(MPB_PYTHON) bench_mpb_multiprocess.py --jobs 32 --workers 16 --iterations 2 --output results --tag multi-process
+mpb-single-quick: check-env
+	$(SINGLE_CORE_ENV) $(MPB_PYTHON) bench_mpb_speed.py --cores 1 --quick --output results
 
-mpb-single-quick:
-	$(SINGLE_CORE_ENV) python bench_mpb_speed.py --cores 1 --quick --output results
-
-mpb-multi-quick:
-	OMP_NUM_THREADS=16 python bench_mpb_speed.py --runs 32 --iterations 2 --output results --tag multi-native
-	$(MPB_PYTHON) bench_mpb_multiprocess.py --jobs 32 --workers 16 --iterations 2 --output results --tag multi-process
+mpb-multi-quick: check-env
+	OMP_NUM_THREADS=$(NUM_CORES) $(MPB_PYTHON) bench_mpb_speed.py --runs $(NUM_JOBS) --iterations 2 --output results --tag multi-native
 
 # ============================================================================
 # Blaze2D Benchmarks (using unified bulk-driver script)
@@ -90,23 +88,23 @@ blaze-single-full:
 
 blaze-multi:
 	@echo "========================================"
-	@echo "Blaze2D Multi-Core Benchmark (bulk-driver -j 16)"
+	@echo "Blaze2D Multi-Core Benchmark (bulk-driver -j $(NUM_CORES))"
 	@echo "========================================"
 	RUSTFLAGS="-C target-cpu=native" cargo build --release -p blaze2d-bulk-driver
-	python bench_blaze2d.py --mode multi --threads 16 --jobs 32 --iterations 2 --output results
+	python bench_blaze2d.py --mode multi --threads $(NUM_CORES) --jobs $(NUM_JOBS) --iterations 2 --output results
 
 blaze-multi-full:
 	@echo "========================================"
-	@echo "Blaze2D Multi-Core Benchmark (Full Precision f64)"
+	@echo "Blaze2D Multi-Core Benchmark (Full Precision f64, $(NUM_CORES) cores)"
 	@echo "========================================"
 	@echo "Building with --no-default-features --features native-linalg"
-	python bench_blaze2d.py --mode multi --threads 16 --jobs 32 --iterations 2 --output results --full-precision
+	python bench_blaze2d.py --mode multi --threads $(NUM_CORES) --jobs $(NUM_JOBS) --iterations 2 --output results --full-precision
 
 blaze-single-quick:
 	python bench_blaze2d.py --mode single --quick --output results
 
 blaze-multi-quick:
-	python bench_blaze2d.py --mode multi --threads 16 --jobs 32 --iterations 2 --output results
+	python bench_blaze2d.py --mode multi --threads $(NUM_CORES) --jobs $(NUM_JOBS) --iterations 2 --output results
 
 # ============================================================================
 # Quick test targets
@@ -191,7 +189,7 @@ plot:
 # Square lattice, r=0.2a, 64×64 resolution, 8 bands, single-core only
 # ============================================================================
 
-series1:
+series1: check-env
 	@echo "========================================"
 	@echo "Series 1: Epsilon Sweep (Full)"
 	@echo "========================================"
@@ -199,7 +197,7 @@ series1:
 	$(SINGLE_CORE_ENV) $(MPB_PYTHON) bench_series1_epsilon.py --output results/series1_epsilon
 	python plot_series1_epsilon.py --output results/series1_epsilon
 
-series1-quick:
+series1-quick: check-env
 	@echo "========================================"
 	@echo "Series 1: Epsilon Sweep (Quick)"
 	@echo "========================================"
@@ -219,7 +217,7 @@ plot-series1:
 # Square lattice, ε=8.9 rods, r=0.2a, 32×32 resolution, single-core only
 # ============================================================================
 
-series2:
+series2: check-env
 	@echo "========================================"
 	@echo "Series 2: Bands Sweep (Full)"
 	@echo "========================================"
@@ -227,7 +225,7 @@ series2:
 	$(SINGLE_CORE_ENV) $(MPB_PYTHON) bench_series2_bands.py --output results/series2_bands
 	python plot_series2_bands.py --results-dir results/series2_bands --summary
 
-series2-quick:
+series2-quick: check-env
 	@echo "========================================"
 	@echo "Series 2: Bands Sweep (Quick)"
 	@echo "========================================"
@@ -247,7 +245,7 @@ plot-series2:
 # Square lattice, ε=8.9 rods, r=0.2a, 10 bands, single-core only
 # ============================================================================
 
-series3:
+series3: check-env
 	@echo "========================================"
 	@echo "Series 3: Resolution Sweep (Full)"
 	@echo "========================================"
@@ -255,7 +253,7 @@ series3:
 	$(SINGLE_CORE_ENV) $(MPB_PYTHON) bench_series3_resolution.py --output results/series3_resolution
 	python plot_series3_resolution.py --input results/series3_resolution
 
-series3-quick:
+series3-quick: check-env
 	@echo "========================================"
 	@echo "Series 3: Resolution Sweep (Quick)"
 	@echo "========================================"
@@ -275,7 +273,7 @@ plot-series3:
 # Square lattice, ε=8.9 rods, r=0.2a, 32×32, 8 bands
 # ============================================================================
 
-series4:
+series4: check-env
 	@echo "========================================"
 	@echo "Series 4: Iteration Count Comparison"
 	@echo "========================================"
@@ -295,7 +293,7 @@ plot-series4:
 # Three sweeps: resolution, bands, k-points per segment
 # ============================================================================
 
-series5:
+series5: check-env
 	@echo "========================================"
 	@echo "Series 5: Memory Usage Comparison"
 	@echo "========================================"
@@ -316,14 +314,14 @@ plot-series5:
 # Uses Hungarian algorithm for optimal band matching
 # ============================================================================
 
-series6:
+series6: check-env
 	@echo "========================================"
 	@echo "Series 6: Accuracy Comparison (Full)"
 	@echo "========================================"
 	$(MPB_PYTHON) bench_series6_accuracy.py --output results/series6_accuracy
 	python plot_series6_accuracy.py --output results/series6_accuracy/plots
 
-series6-quick:
+series6-quick: check-env
 	@echo "========================================"
 	@echo "Series 6: Accuracy Comparison (Skip f64)"
 	@echo "========================================"
@@ -340,25 +338,25 @@ plot-series6:
 # Series 7: Multi-Threading Scaling
 # Measures scaling with thread count: 1, 2, 4, 8, 12, 16
 # Two resolutions: low (16×16) and high (128×128)
-# Three solvers: Blaze2D, MPB-OMP, MPB-Multiproc
+# Two solvers: Blaze2D, MPB-OMP (native OpenMP threads)
 # Small benchmark: 2× threads jobs, 2 iterations
 # ============================================================================
 
-series7:
+series7: check-env
 	@echo "========================================"
 	@echo "Series 7: Multi-Threading Scaling (Full)"
 	@echo "========================================"
 	$(MPB_PYTHON) bench_series7_scaling.py --output results/series7_scaling
 	python plot_series7_scaling.py --output results/series7_scaling/plots
 
-series7-low:
+series7-low: check-env
 	@echo "========================================"
 	@echo "Series 7: Scaling (Low Resolution Only)"
 	@echo "========================================"
 	$(MPB_PYTHON) bench_series7_scaling.py --low-only --output results/series7_scaling
 	python plot_series7_scaling.py --output results/series7_scaling/plots
 
-series7-high:
+series7-high: check-env
 	@echo "========================================"
 	@echo "Series 7: Scaling (High Resolution Only)"
 	@echo "========================================"
@@ -372,29 +370,56 @@ plot-series7:
 	python plot_series7_scaling.py --output results/series7_scaling/plots
 
 # ============================================================================
-# Bulk Comparison: Fair MPB multiprocessing vs Blaze2D bulk-driver
-# Config A TM, 64×64, 16 workers, 100 jobs × 5 iterations
+# Configuration
 # ============================================================================
 
-MPB_PYTHON := /home/renlephy/.local/share/mamba/envs/mpb-reference/bin/python
+# Auto-detect conda/mamba environment path (prefer mamba if available)
+# Uses environment variables: MAMBA_ROOT_PREFIX (mamba) or CONDA_PREFIX (conda)
+# Falls back to parsing `conda info --base` if variables not set
+CONDA_BASE := $(or $(MAMBA_ROOT_PREFIX),$(shell conda info --base 2>/dev/null))
+MPB_ENV_NAME := mpb-reference
+MPB_PYTHON := $(CONDA_BASE)/envs/$(MPB_ENV_NAME)/bin/python
 
-bulk-compare: bulk-mpb bulk-blaze
-	@echo "========================================"
-	@echo "BULK COMPARISON COMPLETE"
-	@echo "========================================"
-	@echo "Results in: results/"
+# ============================================================================
+# Environment Setup
+# ============================================================================
 
-bulk-mpb:
-	@echo "========================================"
-	@echo "MPB Multiprocessing (16 workers, 32 jobs × 2 iter)"
-	@echo "========================================"
-	$(MPB_PYTHON) bench_mpb_multiprocess.py --jobs 32 --workers 16 --iterations 2
+check-env:
+	@if [ ! -f "$(MPB_PYTHON)" ]; then \
+		echo "========================================"; \
+		echo "ERROR: MPB environment not found!"; \
+		echo "========================================"; \
+		echo ""; \
+		echo "The 'mpb-reference' conda environment is required for MPB benchmarks."; \
+		echo "Expected Python at: $(MPB_PYTHON)"; \
+		echo ""; \
+		echo "To set up the environment, run:"; \
+		echo ""; \
+		echo "    make setup-env"; \
+		echo ""; \
+		echo "Or manually:"; \
+		echo ""; \
+		echo "    mamba env create -f environment.yml   # (recommended, faster)"; \
+		echo "    conda env create -f environment.yml   # (alternative)"; \
+		echo ""; \
+		exit 1; \
+	else \
+		echo "MPB environment found: $(MPB_PYTHON)"; \
+	fi
 
-bulk-blaze:
+setup-env:
 	@echo "========================================"
-	@echo "Blaze2D Bulk Driver (16 threads, 32 jobs × 2 iter)"
+	@echo "Setting up MPB reference environment"
 	@echo "========================================"
-	python bench_blaze2d.py --mode multi --threads 16 --jobs 32 --iterations 2 --config config_a_tm --output results
+	@if command -v mamba >/dev/null 2>&1; then \
+		echo "Using mamba (faster)..."; \
+		mamba env create -f environment.yml; \
+	else \
+		echo "Using conda..."; \
+		conda env create -f environment.yml; \
+	fi
+	@echo ""
+	@echo "Environment created! You can now run benchmarks."
 
 # ============================================================================
 # Utility targets
@@ -418,6 +443,10 @@ summary:
 
 help:
 	@echo "Blaze2D Benchmark Suite"
+	@echo ""
+	@echo "Setup:"
+	@echo "  check-env    - Verify MPB conda environment is installed"
+	@echo "  setup-env    - Create the mpb-reference conda environment"
 	@echo ""
 	@echo "Main Targets:"
 	@echo "  all          - Run full benchmark suite (single + multi core)"
@@ -464,7 +493,7 @@ help:
 	@echo ""
 	@echo "Benchmark Samples:"
 	@echo "  Single-core: 5 runs × 2 iterations = 10 samples per config"
-	@echo "  Multi-core: 32 jobs × 2 iterations = 64 samples per config (16 threads)"
+	@echo "  Multi-core: $(NUM_JOBS) jobs × 2 iterations ($(NUM_CORES) threads)"
 	@echo ""
 	@echo "Series 1 (Epsilon Sweep):"
 	@echo "  Parameters: square lattice, r=0.2a, 64×64, 8 bands, single-core"
@@ -500,7 +529,7 @@ help:
 	@echo "Series 7 (Multi-Threading Scaling):"
 	@echo "  Thread counts: 1, 2, 4, 8, 12, 16"
 	@echo "  Resolutions: low (16×16), high (128×128)"
-	@echo "  Solvers: Blaze2D, MPB-OMP (native threads), MPB-Multiproc (workers)"
+	@echo "  Solvers: Blaze2D, MPB-OMP (native threads)"
 	@echo "  Measures: Throughput, speedup, parallel efficiency"
 	@echo "  Small benchmark: 2× thread count jobs, 2 iterations"
 	@echo ""
