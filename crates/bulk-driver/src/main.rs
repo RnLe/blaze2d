@@ -16,11 +16,13 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use env_logger::Builder;
 use log::{error, warn};
+use rustfft::FftNum;
 
-use blaze2d_bulk_driver::{BulkConfig, BulkDriver};
+use blaze2d_bulk_driver::{BulkConfig, BulkDriver, Precision};
+use blaze2d_core::field::Real;
 
 // ============================================================================
 // CLI Arguments
@@ -80,6 +82,29 @@ struct Cli {
     /// Benchmark mode: run real solves but skip file output
     #[arg(long)]
     benchmark: bool,
+
+    /// Storage precision: f32 or f64. Overrides the `[solver].precision` TOML
+    /// key when set; otherwise the TOML value (default f64) is used.
+    #[arg(long, value_enum)]
+    precision: Option<PrecisionArg>,
+}
+
+/// CLI-friendly storage-precision argument.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum PrecisionArg {
+    /// Single precision: Complex<f32> storage (f64 accumulation).
+    F32,
+    /// Double precision: Complex<f64> storage.
+    F64,
+}
+
+impl From<PrecisionArg> for Precision {
+    fn from(value: PrecisionArg) -> Self {
+        match value {
+            PrecisionArg::F32 => Precision::F32,
+            PrecisionArg::F64 => Precision::F64,
+        }
+    }
 }
 
 // ============================================================================
@@ -162,6 +187,10 @@ fn main() {
     if let Some(ref output_file) = cli.output_file {
         config.output.filename = output_file.clone();
     }
+    // Precision: CLI flag overrides the TOML `[solver].precision` key.
+    if let Some(p) = cli.precision {
+        config.solver.precision = p.into();
+    }
 
     // Determine thread mode from CLI
     let requested_threads = if cli.threads == 0 {
@@ -171,9 +200,19 @@ fn main() {
         Some(cli.threads)
     };
 
-    // Create driver with thread mode
-    let driver = BulkDriver::new(config, requested_threads);
+    // Dispatch on storage precision: build the precision-correct BulkDriver
+    // monomorphisation, then run the (precision-agnostic) execution logic.
+    match config.solver.precision {
+        Precision::F32 => execute(BulkDriver::<f32>::new(config, requested_threads), &cli),
+        Precision::F64 => execute(BulkDriver::<f64>::new(config, requested_threads), &cli),
+    }
+}
 
+/// Execute the requested driver action (show-jobs / stress / benchmark / dry-run / run).
+///
+/// Generic over storage precision `R` so the same logic serves
+/// `BulkDriver<f32>` and `BulkDriver<f64>`.
+fn execute<R: Real + FftNum>(driver: BulkDriver<R>, cli: &Cli) {
     // Show job details if requested
     if let Some(n) = cli.show_jobs {
         println!("Showing first {} job configurations:\n", n);

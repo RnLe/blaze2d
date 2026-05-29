@@ -102,6 +102,47 @@ pub struct Dielectric2D {
 }
 
 impl Dielectric2D {
+    pub fn from_sampled_epsilon(
+        grid: Grid2D,
+        reciprocal_b1: [f64; 2],
+        reciprocal_b2: [f64; 2],
+        eps_r: Vec<f64>,
+        inv_eps_tensors: Option<Vec<[f64; 4]>>,
+    ) -> Self {
+        assert_eq!(
+            eps_r.len(),
+            grid.len(),
+            "external epsilon length must match grid size"
+        );
+
+        if let Some(tensors) = &inv_eps_tensors {
+            assert_eq!(
+                tensors.len(),
+                grid.len(),
+                "external tensor length must match grid size"
+            );
+        }
+
+        let inv_eps_r = eps_r
+            .iter()
+            .map(|&val| {
+                assert!(val > 0.0, "permittivity must be positive");
+                1.0 / val
+            })
+            .collect();
+
+        Self {
+            eps_r,
+            inv_eps_r,
+            inv_eps_tensors,
+            unsmoothed_eps: None,
+            unsmoothed_inv_eps: None,
+            grid,
+            reciprocal_b1,
+            reciprocal_b2,
+        }
+    }
+
     pub fn from_geometry(geom: &Geometry2D, grid: Grid2D, opts: &DielectricOptions) -> Self {
         assert!(
             grid.nx > 0 && grid.ny > 0,
@@ -545,11 +586,15 @@ fn build_anisotropic_inv_tensor(normal: [f64; 2], avg_eps: f64, avg_inv: f64) ->
     let p_xx = nx * nx;
     let p_xy = nx * ny;
     let p_yy = ny * ny;
+    // The operator uses the grad-div formulation: -∇·(η∇H).
+    // The smoothing formula gives η in the curl-curl convention.
+    // Converting: η^grad = R^T η^curl R (90° rotation),
+    // which swaps xx↔yy and negates off-diagonals.
     [
-        base + delta * p_xx,
-        delta * p_xy,
-        delta * p_xy,
-        base + delta * p_yy,
+        base + delta * p_yy,   // η^grad_xx = η^curl_yy
+        -delta * p_xy,          // η^grad_xy = -η^curl_xy
+        -delta * p_xy,          // η^grad_yx = -η^curl_yx
+        base + delta * p_xx,   // η^grad_yy = η^curl_xx
     ]
 }
 
@@ -574,4 +619,162 @@ fn fractional_cell_size(count: usize) -> f64 {
 
 fn vector_norm(v: [f64; 2]) -> f64 {
     (v[0] * v[0] + v[1] * v[1]).sqrt()
+}
+
+// ============================================================================
+// DielectricDerivative — spatial derivative of the dielectric
+// ============================================================================
+
+/// Holds the spatial derivative of the dielectric profile w.r.t. a registry
+/// coordinate R_j, computed via central finite differences.
+///
+/// For TE: stores ∂ε⁻¹/∂R_j (scalar and tensor forms).
+/// For TM: stores ∂ε/∂R_j (scalar only).
+///
+/// # Units
+///
+/// The derivative is in units of [ε or ε⁻¹] per [fractional coordinate],
+/// since the atom shift `dR` is given in fractional lattice coordinates.
+/// When converting to physical derivatives, divide by the lattice constant a.
+// Physics notation: R denotes the atomic position vector in fractional coordinates.
+// Snake-case enforcement is suppressed to keep derivative symbols (dR, inv_2dR, etc.) readable.
+#[allow(non_snake_case)]
+#[derive(Debug, Clone)]
+pub struct DielectricDerivative {
+    /// ∂ε⁻¹/∂R_j (isotropic part) — shape [grid_size], used by TE.
+    pub d_inv_eps: Vec<f64>,
+
+    /// ∂ε⁻¹/∂R_j (tensor part) — shape [grid_size][4], row-major [xx, xy, yx, yy].
+    /// Only present when smoothing is enabled. Used by TE with anisotropic smoothing.
+    pub d_inv_eps_tensors: Option<Vec<[f64; 4]>>,
+
+    /// ∂ε/∂R_j — shape [grid_size], used by TM.
+    pub d_eps: Vec<f64>,
+
+    /// ∂²ε/∂R_j² — shape [grid_size], used by exact TM second-order export.
+    pub d2_eps: Vec<f64>,
+
+    /// ∂ρ/∂R_j with ρ = ε^(-1/2) — shape [grid_size].
+    pub d_rho: Vec<f64>,
+
+    /// ∂²ρ/∂R_j² with ρ = ε^(-1/2) — shape [grid_size].
+    pub d2_rho: Vec<f64>,
+
+    /// Which spatial direction j ∈ {0, 1} this derivative is for (0 = x, 1 = y).
+    pub direction: usize,
+
+    /// The finite-difference step size used (in fractional coordinates).
+    pub dR: f64,
+
+    /// The grid these derivatives live on.
+    pub grid: Grid2D,
+}
+
+impl DielectricDerivative {
+    /// Compute ∂ε/∂R_j and ∂ε⁻¹/∂R_j via central finite differences.
+    ///
+    /// Shifts the specified `atom_index` by ±dR in direction `direction`,
+    /// builds the full dielectric at each shifted geometry, and differences.
+    ///
+    /// # Arguments
+    ///
+    /// * `geom` — Base geometry (unshifted)
+    /// * `grid` — Computational grid
+    /// * `opts` — Dielectric construction options (smoothing, etc.)
+    /// * `atom_index` — Which atom to shift
+    /// * `direction` — 0 for x, 1 for y (fractional coordinates)
+    /// * `dR` — Step size in fractional coordinates (e.g., 0.001)
+    #[allow(non_snake_case)]
+    pub fn from_finite_difference(
+        geom: &Geometry2D,
+        grid: Grid2D,
+        opts: &DielectricOptions,
+        atom_index: usize,
+        direction: usize,
+        dR: f64,
+    ) -> Self {
+        assert!(direction < 2, "direction must be 0 (x) or 1 (y)");
+        assert!(atom_index < geom.atoms.len(), "atom_index out of range");
+        assert!(dR > 0.0, "dR must be positive");
+
+        // Build geometry with atom shifted by +dR
+        let geom_plus = shift_atom(geom, atom_index, direction, dR);
+        let diel_plus = Dielectric2D::from_geometry(&geom_plus, grid, opts);
+
+        // Build geometry with atom shifted by -dR
+        let geom_minus = shift_atom(geom, atom_index, direction, -dR);
+        let diel_minus = Dielectric2D::from_geometry(&geom_minus, grid, opts);
+
+        let diel_center = Dielectric2D::from_geometry(geom, grid, opts);
+
+        let inv_2dR = 1.0 / (2.0 * dR);
+        let inv_dR_sq = 1.0 / (dR * dR);
+        let len = grid.len();
+
+        // ∂ε⁻¹/∂R_j via central FD
+        let d_inv_eps: Vec<f64> = (0..len)
+            .map(|i| (diel_plus.inv_eps_r[i] - diel_minus.inv_eps_r[i]) * inv_2dR)
+            .collect();
+
+        // ∂ε/∂R_j via central FD
+        let d_eps: Vec<f64> = (0..len)
+            .map(|i| (diel_plus.eps_r[i] - diel_minus.eps_r[i]) * inv_2dR)
+            .collect();
+
+        let d2_eps: Vec<f64> = (0..len)
+            .map(|i| {
+                (diel_plus.eps_r[i] - 2.0 * diel_center.eps_r[i] + diel_minus.eps_r[i]) * inv_dR_sq
+            })
+            .collect();
+
+        let rho_plus: Vec<f64> = diel_plus.eps_r.iter().map(|&eps| eps.powf(-0.5)).collect();
+        let rho_center: Vec<f64> = diel_center.eps_r.iter().map(|&eps| eps.powf(-0.5)).collect();
+        let rho_minus: Vec<f64> = diel_minus.eps_r.iter().map(|&eps| eps.powf(-0.5)).collect();
+
+        let d_rho: Vec<f64> = (0..len)
+            .map(|i| (rho_plus[i] - rho_minus[i]) * inv_2dR)
+            .collect();
+
+        let d2_rho: Vec<f64> = (0..len)
+            .map(|i| (rho_plus[i] - 2.0 * rho_center[i] + rho_minus[i]) * inv_dR_sq)
+            .collect();
+
+        // Tensor derivatives (if smoothing is on)
+        let d_inv_eps_tensors = match (&diel_plus.inv_eps_tensors, &diel_minus.inv_eps_tensors) {
+            (Some(t_plus), Some(t_minus)) => {
+                let d_tensors: Vec<[f64; 4]> = (0..len)
+                    .map(|i| {
+                        [
+                            (t_plus[i][0] - t_minus[i][0]) * inv_2dR,
+                            (t_plus[i][1] - t_minus[i][1]) * inv_2dR,
+                            (t_plus[i][2] - t_minus[i][2]) * inv_2dR,
+                            (t_plus[i][3] - t_minus[i][3]) * inv_2dR,
+                        ]
+                    })
+                    .collect();
+                Some(d_tensors)
+            }
+            _ => None,
+        };
+
+        Self {
+            d_inv_eps,
+            d_inv_eps_tensors,
+            d_eps,
+            d2_eps,
+            d_rho,
+            d2_rho,
+            direction,
+            dR,
+            grid,
+        }
+    }
+}
+
+/// Create a copy of the geometry with one atom shifted by `delta` in fractional
+/// coordinate `direction` (0=x, 1=y).
+fn shift_atom(geom: &Geometry2D, atom_index: usize, direction: usize, delta: f64) -> Geometry2D {
+    let mut shifted = geom.clone();
+    shifted.atoms[atom_index].pos[direction] += delta;
+    shifted
 }

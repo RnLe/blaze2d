@@ -6,7 +6,7 @@
 use std::f64::consts::PI;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::FieldReal;
+use crate::field::Real;
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 
@@ -89,7 +89,7 @@ impl<B: SpectralBackend> LinearOperator<B> for ToyLaplacian<B> {
             for ix in 0..nx {
                 let idx = iy * nx + ix;
                 let k2 = self.kx[ix] * self.kx[ix] + self.ky[iy] * self.ky[iy];
-                data[idx] *= k2 as FieldReal;
+                data[idx] *= <B::Real as Real>::from_accum(k2);
             }
         }
         self.backend.inverse_fft_2d(&mut self.scratch);
@@ -218,7 +218,7 @@ impl<B: SpectralBackend> LinearOperator<B> for ToyDiagonalSPD<B> {
 
         let data = self.scratch.as_mut_slice();
         for (k, value) in data.iter_mut().enumerate() {
-            *value *= self.eigenvalues[k] as FieldReal;
+            *value *= <B::Real as Real>::from_accum(self.eigenvalues[k]);
         }
 
         self.backend.inverse_fft_2d(&mut self.scratch);

@@ -5,7 +5,10 @@
 use std::f64::consts::PI;
 
 use super::backend::SpectralBackend;
-use super::bandstructure::{BandStructureJob, Verbosity, compute_k_path_distances, run};
+use super::bandstructure::{
+    BandStructureJob, RunOptions, compute_k_path_distances, run_with_diagnostics_and_options,
+    run_with_options,
+};
 use super::dielectric::DielectricOptions;
 use super::eigensolver::EigensolverConfig;
 use super::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
@@ -23,6 +26,7 @@ use super::polarization::Polarization;
 struct TestBackend;
 
 impl SpectralBackend for TestBackend {
+    type Real = f64;
     type Buffer = Field2D;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {
@@ -178,7 +182,7 @@ fn test_run_single_k_point() {
     let backend = TestBackend;
     let job = test_job(vec![[0.0, 0.0]]);
 
-    let result = run(backend, &job, Verbosity::Quiet);
+    let result = run_with_options(backend, &job, RunOptions::default());
 
     assert_eq!(result.k_path.len(), 1);
     assert_eq!(result.bands.len(), 1);
@@ -191,7 +195,7 @@ fn test_run_multiple_k_points() {
     let backend = TestBackend;
     let job = test_job(vec![[0.0, 0.0], [0.25, 0.0], [0.5, 0.0]]);
 
-    let result = run(backend, &job, Verbosity::Quiet);
+    let result = run_with_options(backend, &job, RunOptions::default());
 
     assert_eq!(result.k_path.len(), 3);
     assert_eq!(result.bands.len(), 3);
@@ -206,7 +210,7 @@ fn test_bandstructure_result_structure() {
     let k_path = vec![[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]];
     let job = test_job(k_path.clone());
 
-    let result = run(backend, &job, Verbosity::Quiet);
+    let result = run_with_options(backend, &job, RunOptions::default());
 
     // Check that result has correct structure
     assert_eq!(result.k_path, k_path);
@@ -242,7 +246,7 @@ fn test_uniform_epsilon_runs_without_panic() {
         dielectric: DielectricOptions::default(),
     };
 
-    let result = run(backend, &job, Verbosity::Quiet);
+    let result = run_with_options(backend, &job, RunOptions::default());
 
     // Verify we got a result with the expected structure
     assert_eq!(result.bands.len(), 1);
@@ -253,5 +257,47 @@ fn test_uniform_epsilon_runs_without_panic() {
     assert!(
         omega >= 0.0,
         "frequency should be non-negative, got {omega}"
+    );
+}
+
+#[test]
+fn test_merge_diagnostics_matches_plain() {
+    // Regression guard for the run_with_options / run_with_diagnostics_and_options
+    // merge: both entry points now share `run_core` with identical setup and
+    // warm-start behavior. They are NOT bit-identical because the recording path
+    // calls the eigensolver's `solve_with_diagnostics` (eager residual norms +
+    // different internal convergence accounting) while the plain path calls
+    // `solve`; both terminate within the same convergence tolerance, so the
+    // bands must agree to within a small multiple of that tolerance. This
+    // catches any setup / warm-start / band-tracking regression from the merge
+    // (which would shift eigenvalues by O(0.01) or reorder bands), while
+    // tolerating the legitimate ~tol-scale divergence between the two solvers.
+    const TOL: f64 = 5e-3; // ~50× the eigensolver tol (1e-4); observed Δ ~1.4e-4
+    let k_path = vec![[0.0, 0.0], [0.25, 0.0], [0.5, 0.0], [0.5, 0.5]];
+
+    let plain = run_with_options(TestBackend, &test_job(k_path.clone()), RunOptions::default());
+    let diag = run_with_diagnostics_and_options(
+        TestBackend,
+        &test_job(k_path.clone()),
+        "merge_regression",
+        RunOptions::default(),
+    );
+
+    assert_eq!(plain.k_path, diag.result.k_path);
+    assert_eq!(plain.bands.len(), diag.result.bands.len());
+    for (kp, (pb, db)) in plain.bands.iter().zip(diag.result.bands.iter()).enumerate() {
+        assert_eq!(pb.len(), db.len(), "band count mismatch at k#{kp}");
+        for (band, (&p, &d)) in pb.iter().zip(db.iter()).enumerate() {
+            assert!(
+                (p - d).abs() < TOL,
+                "k#{kp} band {band}: plain={p} diag={d} differ beyond {TOL}"
+            );
+        }
+    }
+
+    // The diagnostics path must have recorded one run per solved k-point.
+    assert!(
+        !diag.study.runs.is_empty(),
+        "diagnostics study should record at least one k-point run"
     );
 }

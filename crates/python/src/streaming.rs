@@ -27,11 +27,6 @@
 //!             plt.plot(result['distances'], band)
 //!         plt.pause(0.01)
 //!
-//! # Or with callback
-//! def on_result(result):
-//!     print(f"Job {result['job_index']} complete")
-//!
-//! driver.run_with_callback(on_result)
 //! ```
 //!
 //! # Example Usage (Python) - EA Mode
@@ -39,7 +34,7 @@
 //! ```python
 //! from blaze import BulkDriver
 //!
-//! driver = BulkDriver("ea_config.toml")
+//! driver = BulkDriver("operator_data_config.toml")
 //!
 //! for result in driver.run_streaming():
 //!     if result['result_type'] == 'ea':
@@ -62,9 +57,10 @@ use pyo3::types::{PyDict, PyList};
 
 use blaze2d_bulk_driver::{
     BatchConfig, BulkConfig, BulkDriver, CompactBandResult, CompactResultType, DriverError,
-    DriverStats, FilteredStreamChannel, OutputChannel, SelectiveFilter, StreamChannel,
+    DriverStats, FilteredStreamChannel, OutputChannel, Precision, SelectiveFilter, StreamChannel,
     StreamConfig, SweepValue,
 };
+
 
 // ============================================================================
 // Python Result Wrapper
@@ -140,35 +136,82 @@ fn result_to_py_dict(py: Python<'_>, result: &CompactBandResult) -> PyResult<Py<
                 maxwell.bands.first().map(|b| b.len()).unwrap_or(0),
             )?;
         }
-        CompactResultType::EA(ea) => {
-            dict.set_item("result_type", "ea")?;
+        CompactResultType::OperatorData(h) => {
+            dict.set_item("result_type", "ea_hamiltonian")?;
 
-            // Eigenvalues
-            dict.set_item("eigenvalues", ea.eigenvalues.clone())?;
-
-            // Eigenvectors as 3D list: [band_index][grid_index][re, im]
-            // Each eigenvector is a flattened 2D grid of complex values
-            let eigenvectors_py = PyList::empty(py);
-            for ev in &ea.eigenvectors {
-                let band_vec = PyList::empty(py);
-                for &[re, im] in ev {
-                    band_vec.append((re, im))?;
+            // Helper to convert complex pairs to Python list of (re, im) tuples
+            let complex_to_py = |py: Python<'_>, data: &[[f64; 2]]| -> PyResult<Py<PyList>> {
+                let list = PyList::empty(py);
+                for &[re, im] in data {
+                    list.append((re, im))?;
                 }
-                eigenvectors_py.append(band_vec)?;
+                Ok(list.into())
+            };
+
+            dict.set_item("k0", (h.k0[0], h.k0[1]))?;
+            dict.set_item("registry", (h.registry[0], h.registry[1]))?;
+            dict.set_item("n_retained", h.n_retained)?;
+            dict.set_item("n_remote", h.n_remote)?;
+            dict.set_item("grid_dims", (h.grid_dims[0], h.grid_dims[1]))?;
+            dict.set_item("eigenvalues", h.eigenvalues.clone())?;
+            dict.set_item("polarization", h.polarization.as_str())?;
+            dict.set_item("n_iterations", h.n_iterations)?;
+            dict.set_item("converged", h.converged)?;
+            dict.set_item("num_bands", h.eigenvalues.len())?;
+
+            // Velocity matrices: dict with keys "x", "y"
+            let vel = PyDict::new(py);
+            vel.set_item("x", complex_to_py(py, &h.velocity_matrices[0])?)?;
+            vel.set_item("y", complex_to_py(py, &h.velocity_matrices[1])?)?;
+            dict.set_item("velocity_matrices", vel)?;
+
+            // W matrices: dict with keys "xx", "xy", "yx", "yy"
+            let w = PyDict::new(py);
+            w.set_item("xx", complex_to_py(py, &h.w_matrices[0][0])?)?;
+            w.set_item("xy", complex_to_py(py, &h.w_matrices[0][1])?)?;
+            w.set_item("yx", complex_to_py(py, &h.w_matrices[1][0])?)?;
+            w.set_item("yy", complex_to_py(py, &h.w_matrices[1][1])?)?;
+            dict.set_item("w_matrices", w)?;
+
+            // Mass tensor inverse: same layout
+            let mass = PyDict::new(py);
+            mass.set_item("xx", complex_to_py(py, &h.mass_tensor_inv[0][0])?)?;
+            mass.set_item("xy", complex_to_py(py, &h.mass_tensor_inv[0][1])?)?;
+            mass.set_item("yx", complex_to_py(py, &h.mass_tensor_inv[1][0])?)?;
+            mass.set_item("yy", complex_to_py(py, &h.mass_tensor_inv[1][1])?)?;
+            dict.set_item("mass_tensor_inv", mass)?;
+
+            // R-derivative matrices (optional)
+            if let Some(ref r_deriv) = h.r_derivative_matrices {
+                let rd = PyDict::new(py);
+                rd.set_item("x", complex_to_py(py, &r_deriv[0])?)?;
+                rd.set_item("y", complex_to_py(py, &r_deriv[1])?)?;
+                dict.set_item("r_derivative_matrices", rd)?;
             }
-            dict.set_item("eigenvectors", eigenvectors_py)?;
 
-            // Grid dimensions for reshaping eigenvectors to 2D
-            dict.set_item("grid_dims", (ea.grid_dims[0], ea.grid_dims[1]))?;
+            if let Some(ref metric_deriv) = h.metric_derivative_matrices {
+                let md = PyDict::new(py);
+                md.set_item("x", complex_to_py(py, &metric_deriv[0])?)?;
+                md.set_item("y", complex_to_py(py, &metric_deriv[1])?)?;
+                dict.set_item("metric_derivative_matrices", md)?;
+            }
 
-            // Solver info
-            dict.set_item("n_iterations", ea.n_iterations)?;
-            dict.set_item("converged", ea.converged)?;
+            if let Some(ref berry) = h.berry_connection_matrices {
+                let bc = PyDict::new(py);
+                bc.set_item("x", complex_to_py(py, &berry[0])?)?;
+                bc.set_item("y", complex_to_py(py, &berry[1])?)?;
+                dict.set_item("berry_connection_matrices", bc)?;
+            }
 
-            // Convenience accessor
-            dict.set_item("num_eigenvalues", ea.eigenvalues.len())?;
-            // For compatibility with code that checks num_bands
-            dict.set_item("num_bands", ea.eigenvalues.len())?;
+            // Born–Huang potential (optional)
+            if let Some(ref bh) = h.born_huang {
+                dict.set_item("born_huang", complex_to_py(py, bh)?)?;
+            }
+
+            // Overlap matrix (optional)
+            if let Some(ref ov) = h.overlap_matrix {
+                dict.set_item("overlap_matrix", complex_to_py(py, ov)?)?;
+            }
         }
     }
 
@@ -348,9 +391,13 @@ impl BulkDriverPy {
     /// Args:
     ///     config_path: Path to the bulk configuration TOML file
     ///     threads: Number of threads (-1 for adaptive, 0 for default)
+    ///     precision: Storage precision: "f32" or "f64". When `None`, the
+    ///         value from `[solver].precision` in the TOML is used (defaults
+    ///         to "f64"). Picks between `CpuBackend<f32>` and `CpuBackend<f64>`
+    ///         monomorphisations shipped in the same wheel.
     #[new]
-    #[pyo3(signature = (config_path, threads=0))]
-    fn new(config_path: &str, threads: i32) -> PyResult<Self> {
+    #[pyo3(signature = (config_path, threads=0, precision=None))]
+    fn new(config_path: &str, threads: i32, precision: Option<&str>) -> PyResult<Self> {
         let path = PathBuf::from(config_path);
 
         // Validate file exists
@@ -362,14 +409,38 @@ impl BulkDriverPy {
         }
 
         // Try to parse config
-        let config = BulkConfig::from_file(&path)
+        let mut config = BulkConfig::from_file(&path)
             .map_err(|e| PyValueError::new_err(format!("invalid configuration: {}", e)))?;
+
+        // Apply precision kwarg override (kwarg wins over TOML)
+        if let Some(p) = precision {
+            config.solver.precision = match p {
+                "f32" | "single" => Precision::F32,
+                "f64" | "double" => Precision::F64,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "precision must be 'f32' or 'f64', got {:?}",
+                        other
+                    )));
+                }
+            };
+        }
 
         Ok(Self {
             config_path: path,
             config: Some(config),
             threads,
         })
+    }
+
+    /// Get the storage precision being used: "f32" or "f64".
+    #[getter]
+    fn precision(&self) -> PyResult<String> {
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
+        Ok(format!("{}", config.solver.precision))
     }
 
     /// Get the number of jobs that will be executed.
@@ -398,7 +469,7 @@ impl BulkDriverPy {
         Ok(format!("{}", config.solver.solver_type).to_lowercase())
     }
 
-    /// Check if this is an EA (Envelope Approximation) solver.
+    /// Check if this is an operator-data extraction solver.
     #[getter]
     fn is_ea(&self) -> PyResult<bool> {
         use blaze2d_bulk_driver::SolverType;
@@ -406,7 +477,7 @@ impl BulkDriverPy {
             .config
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
-        Ok(matches!(config.solver.solver_type, SolverType::EA))
+        Ok(matches!(config.solver.solver_type, SolverType::OperatorData))
     }
 
     /// Run the computation with streaming output.
@@ -455,19 +526,32 @@ impl BulkDriverPy {
             Some(self.threads)
         };
 
-        // Create driver and streaming channel
-        let driver = BulkDriver::new(config, threads);
+        // Create streaming channel
         let stream = Arc::new(StreamChannel::new(StreamConfig::default()));
         let receiver = stream.add_channel_subscriber();
 
         // Clone for the computation thread
         let stream_clone = stream.clone();
 
-        // Spawn computation in background thread
-        let handle = thread::spawn(move || {
-            let channel = OutputChannel::Stream(stream_clone);
-            driver.run_with_channel(channel)
-        });
+        // Dispatch on storage precision: build the precision-correct BulkDriver
+        // monomorphisation and spawn the worker thread.
+        let precision = config.solver.precision;
+        let handle = match precision {
+            Precision::F32 => {
+                let driver: BulkDriver<f32> = BulkDriver::new(config, threads);
+                thread::spawn(move || {
+                    let channel = OutputChannel::Stream(stream_clone);
+                    driver.run_with_channel(channel)
+                })
+            }
+            Precision::F64 => {
+                let driver: BulkDriver<f64> = BulkDriver::new(config, threads);
+                thread::spawn(move || {
+                    let channel = OutputChannel::Stream(stream_clone);
+                    driver.run_with_channel(channel)
+                })
+            }
+        };
 
         Ok(BandResultIterator {
             receiver,
@@ -524,17 +608,26 @@ impl BulkDriverPy {
             band_indices.unwrap_or_default(),
         );
 
-        // Create driver and filtered streaming channel
-        let driver = BulkDriver::new(config, threads);
+        // Create filtered streaming channel
         let stream = Arc::new(FilteredStreamChannel::new(filter, StreamConfig::default()));
         let receiver = stream.add_channel_subscriber();
 
         let stream_clone = stream.clone();
-
-        let handle = thread::spawn(move || {
-            let channel = OutputChannel::Stream(stream_clone);
-            driver.run_with_channel(channel)
-        });
+        let precision = config.solver.precision;
+        let handle = match precision {
+            Precision::F32 => {
+                let driver: BulkDriver<f32> = BulkDriver::new(config, threads);
+                thread::spawn(move || {
+                    driver.run_with_channel(OutputChannel::Stream(stream_clone))
+                })
+            }
+            Precision::F64 => {
+                let driver: BulkDriver<f64> = BulkDriver::new(config, threads);
+                thread::spawn(move || {
+                    driver.run_with_channel(OutputChannel::Stream(stream_clone))
+                })
+            }
+        };
 
         Ok(BandResultIterator {
             receiver,
@@ -590,17 +683,22 @@ impl BulkDriverPy {
             band_indices.unwrap_or_default(),
         );
 
-        let driver = BulkDriver::new(config, threads);
-
         // Use collecting subscriber
         let stream = Arc::new(FilteredStreamChannel::new(filter, StreamConfig::default()));
         let collector = stream.add_collecting_subscriber();
         let stream_clone = stream.clone();
+        let precision = config.solver.precision;
 
-        // Run with GIL released
-        let stats_result = py.allow_threads(|| {
-            let channel = OutputChannel::Stream(stream_clone);
-            driver.run_with_channel(channel)
+        // Run with GIL released; dispatch on storage precision
+        let stats_result = py.allow_threads(|| match precision {
+            Precision::F32 => {
+                let driver: BulkDriver<f32> = BulkDriver::new(config, threads);
+                driver.run_with_channel(OutputChannel::Stream(stream_clone))
+            }
+            Precision::F64 => {
+                let driver: BulkDriver<f64> = BulkDriver::new(config, threads);
+                driver.run_with_channel(OutputChannel::Stream(stream_clone))
+            }
         });
 
         let stats =
@@ -652,15 +750,23 @@ impl BulkDriverPy {
             Some(self.threads)
         };
 
-        let driver = BulkDriver::new(config, threads);
-
         let batch_config = BatchConfig {
             buffer_size_bytes: buffer_size_mb * 1024 * 1024,
             ..Default::default()
         };
 
-        // Run with GIL released
-        let result = py.allow_threads(|| driver.run_batched(batch_config));
+        let precision = config.solver.precision;
+        // Run with GIL released; dispatch on storage precision
+        let result = py.allow_threads(|| match precision {
+            Precision::F32 => {
+                let driver: BulkDriver<f32> = BulkDriver::new(config, threads);
+                driver.run_batched(batch_config)
+            }
+            Precision::F64 => {
+                let driver: BulkDriver<f64> = BulkDriver::new(config, threads);
+                driver.run_batched(batch_config)
+            }
+        });
 
         match result {
             Ok(stats) => {
@@ -669,10 +775,12 @@ impl BulkDriverPy {
                 dict.set_item("completed", stats.completed)?;
                 dict.set_item("failed", stats.failed)?;
                 dict.set_item("total_time_secs", stats.total_time.as_secs_f64())?;
-                dict.set_item(
-                    "jobs_per_second",
-                    stats.completed as f64 / stats.total_time.as_secs_f64(),
-                )?;
+                if stats.total_time.as_secs_f64() > 0.0 {
+                    dict.set_item(
+                        "jobs_per_second",
+                        stats.completed as f64 / stats.total_time.as_secs_f64(),
+                    )?;
+                }
                 Ok(dict.into())
             }
             Err(e) => Err(PyRuntimeError::new_err(format!("driver error: {}", e))),
@@ -695,10 +803,18 @@ impl BulkDriverPy {
             Some(self.threads)
         };
 
-        let driver = BulkDriver::new(config, threads);
-
-        // Run with GIL released
-        let result = py.allow_threads(|| driver.run());
+        let precision = config.solver.precision;
+        // Run with GIL released; dispatch on storage precision
+        let result = py.allow_threads(|| match precision {
+            Precision::F32 => {
+                let driver: BulkDriver<f32> = BulkDriver::new(config, threads);
+                driver.run()
+            }
+            Precision::F64 => {
+                let driver: BulkDriver<f64> = BulkDriver::new(config, threads);
+                driver.run()
+            }
+        });
 
         match result {
             Ok(stats) => {
@@ -723,7 +839,8 @@ impl BulkDriverPy {
             .clone()
             .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
 
-        let driver = BulkDriver::new(config, None);
+        // dry_run only counts jobs (precision-independent); pick f64 arbitrarily.
+        let driver = BulkDriver::<f64>::new(config, None);
         let stats = driver.dry_run();
 
         let dict = PyDict::new(py);

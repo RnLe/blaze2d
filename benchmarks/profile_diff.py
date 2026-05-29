@@ -20,7 +20,7 @@ import json
 import sys
 import argparse
 from datetime import datetime
-from typing import Dict, Tuple, Optional, TextIO, List
+from typing import Dict, Tuple, List
 from pathlib import Path
 
 # ANSI color codes
@@ -246,7 +246,7 @@ def append_report(
         # Separator for new entry
         f.write("\n")
         f.write("=" * 90 + "\n")
-        f.write(f"                                  PROFILE COMPARISON\n")
+        f.write("                                  PROFILE COMPARISON\n")
         f.write("=" * 90 + "\n")
         f.write(f"Timestamp:   {timestamp}\n")
         if label:
@@ -255,7 +255,7 @@ def append_report(
             f.write(f"Baseline:    {baseline_path}\n")
         if current_path:
             f.write(f"Current:     {current_path}\n")
-        f.write(f"Description: \n")  # Left blank for manual entry
+        f.write("Description: \n")  # Left blank for manual entry
         f.write("-" * 90 + "\n")
         f.write("\n")
         

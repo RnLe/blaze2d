@@ -73,24 +73,25 @@ pub use batch::BatchChannel;
 // Re-export channel types
 pub use channel::{
     BackpressurePolicy, BatchConfig, ChannelError, ChannelStats, CompactBandResult,
-    CompactBandResultExt, CompactResultType, EAResult, MaxwellResult, OutputChannel,
+    CompactBandResultExt, CompactResultType, MaxwellResult, OutputChannel,
     OutputChannelSink, StreamConfig,
 };
 
 // Re-export configuration
 pub use config::{
-    BatchSettings, BulkConfig, BulkConfigNativeExt, EAConfig, IoMode, OutputConfig, OutputMode,
-    ParameterRange, RangeSpec, SelectiveSpec, SolverSection, SolverType, SweepSpec, SweepValue,
+    BatchSettings, BulkConfig, BulkConfigNativeExt, IoMode, OutputConfig, OutputMode,
+    ParameterRange, Precision, RangeSpec, SelectiveSpec, SolverSection, SolverType, SweepSpec,
+    SweepValue,
 };
 
 // Re-export driver
 pub use driver::{
-    BulkDriver, DriverError, DriverStats, EAJobResult, JobError, JobResult, JobResultType,
+    BulkDriver, DriverError, DriverStats, JobError, JobResult, JobResultType,
     ThreadMode,
 };
 
 // Re-export job expansion
-pub use expansion::{EAJobSpec, ExpandedJob, ExpandedJobType, JobParams, expand_jobs};
+pub use expansion::{ExpandedJob, ExpandedJobType, JobParams, expand_jobs};
 
 // Re-export legacy output writer
 pub use output::OutputWriter;

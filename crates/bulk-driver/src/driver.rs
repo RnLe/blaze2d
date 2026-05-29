@@ -14,20 +14,13 @@ use log::{debug, error, warn};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-use blaze2d_core::drivers::ProgressInfo;
-use blaze2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity};
-use blaze2d_core::profiler::print_profile;
+use blaze2d_core::drivers::bandstructure::{self, BandStructureResult, RunOptions};
+use blaze2d_core::profiler::print_stats;
 
-#[cfg(feature = "cuda")]
-use blaze2d_backend_cuda::CudaBackend;
-
-#[cfg(not(feature = "cuda"))]
 use blaze2d_backend_cpu::CpuBackend;
-
-#[cfg(feature = "cuda")]
-type Backend = CudaBackend;
-#[cfg(not(feature = "cuda"))]
-type Backend = CpuBackend;
+use blaze2d_core::field::Real;
+use rustfft::FftNum;
+use std::marker::PhantomData;
 
 use crate::adaptive::{AdaptiveConfig, AdaptiveThreadManager, AdjustmentReason};
 use crate::batch::BatchChannel;
@@ -35,7 +28,7 @@ use crate::channel::{
     BatchConfig, CompactBandResult, CompactBandResultExt, OutputChannel, StreamConfig,
 };
 use crate::config::{BulkConfig, BulkConfigNativeExt, OutputMode, SelectiveSpec, SolverType};
-use crate::expansion::{EAJobSpec, ExpandedJob, ExpandedJobType, expand_jobs};
+use crate::expansion::{OperatorDataJobSpec, ExpandedJob, ExpandedJobType, expand_jobs};
 use crate::output::OutputWriter;
 use crate::stream::{FilteredStreamChannel, SelectiveFilter, StreamChannel};
 
@@ -49,7 +42,7 @@ pub struct JobResult {
     /// Job index (matches ExpandedJob.index)
     pub index: usize,
 
-    /// The result (Maxwell or EA)
+    /// The result (Maxwell band structure or operator-data extraction)
     pub result: JobResultType,
 
     /// Execution time
@@ -64,8 +57,8 @@ pub struct JobResult {
 pub enum JobResultType {
     /// Maxwell band structure result
     Maxwell(BandStructureResult),
-    /// EA eigenvalue result
-    EA(EAJobResult),
+    /// Operator-data extraction result
+    OperatorData(OperatorDataJobResult),
 }
 
 impl JobResult {
@@ -76,29 +69,13 @@ impl JobResult {
             _ => None,
         }
     }
-
-    /// Get the EA result, if this is an EA job.
-    pub fn ea(&self) -> Option<&EAJobResult> {
-        match &self.result {
-            JobResultType::EA(r) => Some(r),
-            _ => None,
-        }
-    }
 }
 
-/// Result from an EA eigenvalue problem.
+/// Result from an operator-data extraction job.
 #[derive(Debug, Clone)]
-pub struct EAJobResult {
-    /// Computed eigenvalues
-    pub eigenvalues: Vec<f64>,
-    /// Computed eigenvectors as Field2D
-    pub eigenvectors: Vec<blaze2d_core::field::Field2D>,
-    /// Grid dimensions [nx, ny]
-    pub grid_dims: [usize; 2],
-    /// Number of iterations taken
-    pub n_iterations: usize,
-    /// Whether convergence was achieved
-    pub converged: bool,
+pub struct OperatorDataJobResult {
+    /// The full OperatorData from the extraction pipeline.
+    pub ingredients: blaze2d_core::operator_data::OperatorData,
 }
 
 /// Error during job execution.
@@ -140,7 +117,7 @@ impl PreRunReport {
         // Job summary with solver type
         let solver_str = match config.solver_type() {
             SolverType::Maxwell => "Maxwell",
-            SolverType::EA => "EA",
+            SolverType::OperatorData => "EA Hamiltonian",
         };
         lines.push(format!(
             "  Solver: {}  │  Jobs: {}  │  Threads: {}",
@@ -170,9 +147,8 @@ impl PreRunReport {
                 fixed.push(format!("atoms={}", base_atoms_count));
             }
         } else {
-            // EA solver - show EA-specific fixed parameters
+            // Non-Maxwell (operator-data extraction): show grid + band count.
             fixed.push(format!("grid={}×{}", config.grid.nx, config.grid.ny));
-            fixed.push(format!("η={:.4}", config.ea.eta));
             fixed.push(format!("n_bands={}", config.eigensolver.n_bands));
         }
 
@@ -287,7 +263,7 @@ impl PreRunReport {
 /// - Parallel execution using a thread pool (with optional adaptive sizing)
 /// - Progress tracking and logging
 /// - Output batching and writing
-pub struct BulkDriver {
+pub struct BulkDriver<R: Real + FftNum = f64> {
     /// Configuration
     config: BulkConfig,
 
@@ -299,6 +275,8 @@ pub struct BulkDriver {
 
     /// Verbose output (debug logs)
     verbose: bool,
+
+    _precision: PhantomData<R>,
 }
 
 /// Thread management mode.
@@ -310,7 +288,7 @@ pub enum ThreadMode {
     Adaptive,
 }
 
-impl BulkDriver {
+impl<R: Real + FftNum> BulkDriver<R> {
     /// Create a new bulk driver from configuration.
     pub fn new(config: BulkConfig, requested_threads: Option<i32>) -> Self {
         let thread_mode = match requested_threads {
@@ -335,6 +313,7 @@ impl BulkDriver {
             jobs,
             thread_mode,
             verbose,
+            _precision: PhantomData,
         }
     }
 
@@ -370,11 +349,6 @@ impl BulkDriver {
         if self.jobs.is_empty() {
             warn!("no jobs to execute (parameter ranges resulted in zero configurations)");
             return Ok(DriverStats::default());
-        }
-
-        // Special case: single EA job gets detailed progress bar (no threading)
-        if self.is_single_ea_job() {
-            return self.run_single_ea_with_progress();
         }
 
         // Create adaptive thread manager
@@ -430,10 +404,7 @@ impl BulkDriver {
         let verbose = self.verbose;
 
         // Initialize backend (share FFT planner cache across jobs)
-        #[cfg(feature = "cuda")]
-        let backend = CudaBackend::new();
-        #[cfg(not(feature = "cuda"))]
-        let backend = CpuBackend::new();
+        let backend = CpuBackend::<R>::new();
 
         // Execute jobs in parallel
         pool.install(|| {
@@ -582,11 +553,6 @@ impl BulkDriver {
             return Ok(DriverStats::default());
         }
 
-        // Special case: single EA job gets detailed progress bar (no threading)
-        if self.is_single_ea_job() {
-            return self.run_single_ea_with_channel(channel);
-        }
-
         // Create adaptive thread manager
         let adaptive_mgr = match &self.thread_mode {
             ThreadMode::Fixed(n) => Arc::new(AdaptiveThreadManager::fixed(*n)),
@@ -649,14 +615,7 @@ impl BulkDriver {
             self.jobs.par_iter().for_each_init(
                 || {
                     // Initialize thread-local backend to avoid Mutex contention on FFT planner
-                    #[cfg(feature = "cuda")]
-                    {
-                        CudaBackend::new()
-                    }
-                    #[cfg(not(feature = "cuda"))]
-                    {
-                        CpuBackend::new()
-                    }
+                    CpuBackend::<R>::new()
                 },
                 |backend, expanded_job| {
                     let job_start = Instant::now();
@@ -846,11 +805,12 @@ impl BulkDriver {
         let stream_clone = stream.clone();
 
         let handle = std::thread::spawn(move || {
-            let driver = BulkDriver {
+            let driver = BulkDriver::<R> {
                 config,
                 jobs,
                 thread_mode,
                 verbose,
+                _precision: PhantomData,
             };
             let channel = OutputChannel::Stream(stream_clone);
             driver.run_with_channel(channel)
@@ -910,11 +870,12 @@ impl BulkDriver {
         let stream_clone = stream.clone();
 
         let handle = std::thread::spawn(move || {
-            let driver = BulkDriver {
+            let driver = BulkDriver::<R> {
                 config,
                 jobs,
                 thread_mode,
                 verbose,
+                _precision: PhantomData,
             };
             // FilteredStreamChannel implements OutputChannelSink, so use Stream variant
             let channel = OutputChannel::Stream(stream_clone);
@@ -956,10 +917,12 @@ impl BulkDriver {
     }
 
     /// Execute a single job.
-    fn execute_job(&self, expanded: &ExpandedJob, backend: Backend) -> Result<JobResult, JobError> {
+    fn execute_job(&self, expanded: &ExpandedJob, backend: CpuBackend<R>) -> Result<JobResult, JobError> {
         match &expanded.job_type {
             ExpandedJobType::Maxwell(job) => self.execute_maxwell_job(expanded.index, job, backend),
-            ExpandedJobType::EA(spec) => self.execute_ea_job(expanded.index, spec, backend),
+            ExpandedJobType::OperatorData(spec) => {
+                self.execute_operator_data_job(expanded.index, spec, backend)
+            }
         }
     }
 
@@ -968,18 +931,17 @@ impl BulkDriver {
         &self,
         index: usize,
         job: &blaze2d_core::bandstructure::BandStructureJob,
-        backend: Backend,
+        backend: CpuBackend<R>,
     ) -> Result<JobResult, JobError> {
         let start = Instant::now();
 
         // Build run options from config
         let run_options = RunOptions::default()
-            .with_disable_band_tracking(self.config.bulk.disable_band_tracking)
-            .with_symmetry(self.config.bulk.enable_symmetry);
+            .with_disable_band_tracking(self.config.bulk.disable_band_tracking);
 
         // Run the solver
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            bandstructure::run_with_options(backend, job, Verbosity::Quiet, run_options)
+            bandstructure::run_with_options(backend, job, run_options)
         }));
 
         match result {
@@ -1005,84 +967,67 @@ impl BulkDriver {
         }
     }
 
-    /// Execute an EA eigenvalue problem.
-    fn execute_ea_job(
+    /// Execute an EA Hamiltonian extraction job.
+    fn execute_operator_data_job(
         &self,
         index: usize,
-        spec: &EAJobSpec,
-        backend: Backend,
+        spec: &OperatorDataJobSpec,
+        backend: CpuBackend<R>,
     ) -> Result<JobResult, JobError> {
-        use blaze2d_core::drivers::single_solve;
-        use blaze2d_core::operators::EAOperatorBuilder;
+        use blaze2d_core::dielectric::DielectricOptions;
+        use blaze2d_core::drivers::operator_data::{self, OperatorDataJob};
+        use blaze2d_core::operator_data::OperatorDataConfig;
+        use blaze2d_core::eigensolver::EigensolverConfig;
 
         let start = Instant::now();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Read input data files
-            let potential = read_f64_binary(&spec.potential_path)
-                .map_err(|e| format!("failed to read potential: {}", e))?;
-            let mass_inv = read_f64_binary(&spec.mass_inv_path)
-                .map_err(|e| format!("failed to read mass_inv: {}", e))?;
-            let vg = spec
-                .vg_path
-                .as_ref()
-                .map(|p| read_f64_binary(p).map_err(|e| format!("failed to read vg: {}", e)))
-                .transpose()?;
+            let operator_data_config = OperatorDataConfig {
+                band_lo: 0,
+                n_retained: spec.n_retained,
+                n_remote: spec.n_remote,
+                compute_mass_tensor: spec.compute_mass_tensor,
+                compute_born_huang: spec.compute_born_huang,
+                compute_slow_coefficient: spec.compute_slow_coefficient,
+                compute_overlap: false,
+            };
 
-            let nx = spec.grid.nx;
-            let ny = spec.grid.ny;
-            let [lx, ly] = spec.domain_size;
-            let dx = lx / nx as f64;
-            let dy = ly / ny as f64;
+            let eigensolver = EigensolverConfig {
+                n_bands: spec.n_retained + spec.n_remote,
+                tol: spec.tolerance,
+                max_iter: spec.max_iterations,
+                ..EigensolverConfig::default()
+            };
 
-            // Build EAOperator
-            let mut builder = EAOperatorBuilder::new(backend.clone(), nx, ny)
-                .with_spacing(dx, dy)
-                .with_eta(spec.eta)
-                .with_potential(potential)
-                .with_mass_inv(mass_inv);
+            let job = OperatorDataJob {
+                geom: spec.geom.clone(),
+                grid: spec.grid,
+                pol: spec.pol,
+                k0: spec.k0,
+                registry: spec.registry,
+                operator_data_config,
+                eigensolver,
+                dielectric: DielectricOptions::default(),
+                fd_step: spec.fd_step,
+                atom_index: spec.atom_index,
+                compute_dielectric_derivatives: spec.compute_r_derivatives
+                    || spec.compute_born_huang
+                    || spec.compute_slow_coefficient,
+            };
 
-            if let Some(vg_data) = vg {
-                builder = builder.with_vg(vg_data);
+            let ea_result = operator_data::run(backend, &job);
+
+            OperatorDataJobResult {
+                ingredients: ea_result.ingredients,
             }
-
-            let mut operator = builder.build();
-
-            // Apply gauge shift if potential has negative values
-            let (v_min, v_max, _) = operator.potential_stats();
-            if v_min < 0.0 {
-                let v_scale = (v_max - v_min).max(v_max.abs()).max(v_min.abs()).max(1e-10);
-                let margin = 0.01 * v_scale;
-                operator.apply_gauge_shift_for_positive_spectrum(margin);
-            }
-
-            // Run the solve with preconditioner
-            let mut precond = operator.build_preconditioner();
-            let solve_result =
-                single_solve::solve(&mut operator, Some(&mut precond), &spec.solve_config);
-
-            // Correct eigenvalues by removing gauge shift
-            let corrected_eigenvalues = operator.correct_eigenvalues(&solve_result.eigenvalues);
-
-            Ok::<_, String>(EAJobResult {
-                eigenvalues: corrected_eigenvalues,
-                eigenvectors: solve_result.eigenvectors,
-                grid_dims: [nx, ny],
-                n_iterations: solve_result.iterations,
-                converged: solve_result.converged,
-            })
         }));
 
         match result {
-            Ok(Ok(ea_result)) => Ok(JobResult {
+            Ok(op_data_result) => Ok(JobResult {
                 index,
-                result: JobResultType::EA(ea_result),
+                result: JobResultType::OperatorData(op_data_result),
                 duration: start.elapsed(),
                 notes: vec![],
-            }),
-            Ok(Err(msg)) => Err(JobError {
-                index,
-                message: msg,
             }),
             Err(e) => {
                 let msg = if let Some(s) = e.downcast_ref::<&str>() {
@@ -1098,415 +1043,6 @@ impl BulkDriver {
                 })
             }
         }
-    }
-
-    /// Check if this is a single EA job (should run without threading with progress).
-    fn is_single_ea_job(&self) -> bool {
-        self.jobs.len() == 1 && matches!(&self.jobs[0].job_type, ExpandedJobType::EA(_))
-    }
-
-    /// Execute a single EA job with a detailed progress bar.
-    ///
-    /// This is used when there's exactly one EA job. Threading is disabled
-    /// and a detailed progress bar shows iteration count, trace, and relative
-    /// trace change.
-    fn run_single_ea_with_progress(&self) -> Result<DriverStats, DriverError> {
-        use blaze2d_core::drivers::single_solve;
-        use blaze2d_core::operators::EAOperatorBuilder;
-
-        let expanded = &self.jobs[0];
-        let spec = match &expanded.job_type {
-            ExpandedJobType::EA(s) => s,
-            _ => unreachable!("run_single_ea_with_progress called for non-EA job"),
-        };
-
-        // Select backend (no threading)
-        #[cfg(feature = "cuda")]
-        let backend = CudaBackend::new();
-        #[cfg(not(feature = "cuda"))]
-        let backend = CpuBackend::new();
-
-        // Read input data
-        let potential = read_f64_binary(&spec.potential_path)
-            .map_err(|e| DriverError::ConfigError(format!("failed to read potential: {}", e)))?;
-        let mass_inv = read_f64_binary(&spec.mass_inv_path)
-            .map_err(|e| DriverError::ConfigError(format!("failed to read mass_inv: {}", e)))?;
-        let vg = spec
-            .vg_path
-            .as_ref()
-            .map(|p| {
-                read_f64_binary(p)
-                    .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
-            })
-            .transpose()?;
-
-        let nx = spec.grid.nx;
-        let ny = spec.grid.ny;
-        let [lx, ly] = spec.domain_size;
-        let dx = lx / nx as f64;
-        let dy = ly / ny as f64;
-
-        // Build EAOperator
-        let mut builder = EAOperatorBuilder::new(backend.clone(), nx, ny)
-            .with_spacing(dx, dy)
-            .with_eta(spec.eta)
-            .with_potential(potential)
-            .with_mass_inv(mass_inv);
-
-        if let Some(vg_data) = vg {
-            builder = builder.with_vg(vg_data);
-        }
-
-        let mut operator = builder.build();
-
-        // Check if potential has negative values that would cause negative eigenvalues
-        let (v_min_orig, v_max, _v_mean) = operator.potential_stats();
-        let needs_gauge_shift = v_min_orig < 0.0;
-
-        // Apply gauge shift if needed to ensure positive eigenvalues
-        // This allows the FFT preconditioner to work effectively
-        let gauge_shift = if needs_gauge_shift {
-            // Use a margin of 1% of the potential scale
-            let v_scale = (v_max - v_min_orig)
-                .max(v_max.abs())
-                .max(v_min_orig.abs())
-                .max(1e-10);
-            let margin = 0.01 * v_scale;
-            operator.apply_gauge_shift_for_positive_spectrum(margin)
-        } else {
-            0.0
-        };
-
-        // Estimate spectral properties (15 power iterations)
-        let (lambda_max, v_min_shifted, spectral_spread) = operator.estimate_condition_number(15);
-
-        // Build adaptive FFT preconditioner
-        let preconditioner = operator.build_preconditioner();
-        let precond_summary = preconditioner.format_summary();
-
-        // Print header with spectral info
-        println!("╭─────────────────────────────────────────────────╮");
-        println!("│      Blaze Single EA Solve (with progress)     │");
-        println!("╰─────────────────────────────────────────────────╯");
-        println!();
-        println!("  Grid: {}×{}", spec.grid.nx, spec.grid.ny);
-        println!("  η: {:.4}", spec.eta);
-        println!("  n_bands: {}", spec.solve_config.n_bands);
-        println!("  max_iter: {}", spec.solve_config.max_iterations);
-        println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
-        if needs_gauge_shift {
-            println!(
-                "  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})",
-                gauge_shift,
-                v_min_orig,
-                v_min_orig + gauge_shift
-            );
-        }
-        println!(
-            "  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}",
-            lambda_max, v_min_shifted, spectral_spread
-        );
-        println!("  {}", precond_summary);
-        println!();
-
-        let start_time = Instant::now();
-
-        // Create progress bar for iterations
-        let max_iter = spec.solve_config.max_iterations;
-        let pb = ProgressBar::new(max_iter as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} iter {pos:>4}/{len} │ trace={msg}")
-                .unwrap()
-                .progress_chars("█▓░"),
-        );
-
-        // Run the solve with preconditioner (now always works due to gauge shift)
-        let mut precond = operator.build_preconditioner();
-        let solve_result = single_solve::solve_with_progress(
-            &mut operator,
-            Some(&mut precond),
-            &spec.solve_config,
-            |progress: &ProgressInfo| {
-                pb.set_position((progress.iteration + 1) as u64);
-                let trace_str = match progress.trace_rel_change {
-                    Some(change) if change < f64::INFINITY => {
-                        format!("{:.6} (Δ={:.2e})", progress.trace, change)
-                    }
-                    _ => format!("{:.6}", progress.trace),
-                };
-                pb.set_message(trace_str);
-            },
-        );
-
-        pb.finish_and_clear();
-
-        let elapsed = start_time.elapsed();
-
-        // Correct eigenvalues by removing gauge shift
-        let corrected_eigenvalues = operator.correct_eigenvalues(&solve_result.eigenvalues);
-
-        // Print result summary
-        println!();
-        if solve_result.converged {
-            println!(
-                "✓ Converged in {} iterations ({:.2}s)",
-                solve_result.iterations,
-                elapsed.as_secs_f64()
-            );
-        } else {
-            println!(
-                "⚠ Did not converge after {} iterations ({:.2}s)",
-                solve_result.iterations,
-                elapsed.as_secs_f64()
-            );
-        }
-
-        println!();
-        println!("Eigenvalues (physical, gauge-corrected):");
-        for (i, &ev) in corrected_eigenvalues.iter().enumerate() {
-            println!("  band {:>2}: {:.10}", i + 1, ev);
-        }
-        if gauge_shift != 0.0 {
-            println!();
-            println!(
-                "  (raw solver eigenvalues were shifted by +{:.6})",
-                gauge_shift
-            );
-        }
-
-        // Setup output writer and write result
-        let output_writer = OutputWriter::new(&self.config.output, &self.jobs)
-            .map_err(|e| DriverError::OutputError(e.to_string()))?;
-        let mut output_writer = output_writer;
-
-        let job_result = JobResult {
-            index: expanded.index,
-            result: JobResultType::EA(EAJobResult {
-                eigenvalues: corrected_eigenvalues, // Store corrected eigenvalues
-                eigenvectors: solve_result.eigenvectors,
-                grid_dims: [nx, ny],
-                n_iterations: solve_result.iterations,
-                converged: solve_result.converged,
-            }),
-            duration: elapsed,
-            notes: vec![],
-        };
-
-        output_writer
-            .write_result(expanded, &job_result)
-            .map_err(|e| DriverError::OutputError(e.to_string()))?;
-        output_writer
-            .finalize()
-            .map_err(|e| DriverError::OutputError(e.to_string()))?;
-
-        println!();
-        println!(
-            "Output written to: {}",
-            self.config.output.directory.display()
-        );
-
-        Ok(DriverStats {
-            total_jobs: 1,
-            completed: 1,
-            failed: 0,
-            total_time: elapsed,
-            errors: vec![],
-            adaptive_summary: None,
-        })
-    }
-
-    /// Execute a single EA job with progress bar and channel output.
-    ///
-    /// This combines the detailed progress display with streaming/batch output.
-    fn run_single_ea_with_channel(
-        &self,
-        channel: OutputChannel,
-    ) -> Result<DriverStats, DriverError> {
-        use blaze2d_core::drivers::single_solve;
-        use blaze2d_core::operators::EAOperatorBuilder;
-
-        let expanded = &self.jobs[0];
-        let spec = match &expanded.job_type {
-            ExpandedJobType::EA(s) => s,
-            _ => unreachable!("run_single_ea_with_channel called for non-EA job"),
-        };
-
-        // Select backend (no threading)
-        #[cfg(feature = "cuda")]
-        let backend = CudaBackend::new();
-        #[cfg(not(feature = "cuda"))]
-        let backend = CpuBackend::new();
-
-        // Read input data
-        let potential = read_f64_binary(&spec.potential_path)
-            .map_err(|e| DriverError::ConfigError(format!("failed to read potential: {}", e)))?;
-        let mass_inv = read_f64_binary(&spec.mass_inv_path)
-            .map_err(|e| DriverError::ConfigError(format!("failed to read mass_inv: {}", e)))?;
-        let vg = spec
-            .vg_path
-            .as_ref()
-            .map(|p| {
-                read_f64_binary(p)
-                    .map_err(|e| DriverError::ConfigError(format!("failed to read vg: {}", e)))
-            })
-            .transpose()?;
-
-        let nx = spec.grid.nx;
-        let ny = spec.grid.ny;
-        let [lx, ly] = spec.domain_size;
-        let dx = lx / nx as f64;
-        let dy = ly / ny as f64;
-
-        // Build EAOperator
-        let mut builder = EAOperatorBuilder::new(backend.clone(), nx, ny)
-            .with_spacing(dx, dy)
-            .with_eta(spec.eta)
-            .with_potential(potential)
-            .with_mass_inv(mass_inv);
-
-        if let Some(vg_data) = vg {
-            builder = builder.with_vg(vg_data);
-        }
-
-        let mut operator = builder.build();
-
-        // Check if potential has negative values that would cause negative eigenvalues
-        let (v_min_orig, v_max, _v_mean) = operator.potential_stats();
-        let needs_gauge_shift = v_min_orig < 0.0;
-
-        // Apply gauge shift if needed to ensure positive eigenvalues
-        // This allows the FFT preconditioner to work effectively
-        let gauge_shift = if needs_gauge_shift {
-            // Use a margin of 1% of the potential scale
-            let v_scale = (v_max - v_min_orig)
-                .max(v_max.abs())
-                .max(v_min_orig.abs())
-                .max(1e-10);
-            let margin = 0.01 * v_scale;
-            operator.apply_gauge_shift_for_positive_spectrum(margin)
-        } else {
-            0.0
-        };
-
-        // Estimate spectral properties (15 power iterations)
-        let (lambda_max, v_min_shifted, spectral_spread) = operator.estimate_condition_number(15);
-
-        // Build adaptive FFT preconditioner
-        let preconditioner = operator.build_preconditioner();
-        let precond_summary = preconditioner.format_summary();
-
-        // Print header with spectral info
-        println!("╭─────────────────────────────────────────────────╮");
-        println!("│      Blaze Single EA Solve (with progress)     │");
-        println!("╰─────────────────────────────────────────────────╯");
-        println!();
-        println!("  Grid: {}×{}", spec.grid.nx, spec.grid.ny);
-        println!("  η: {:.4}", spec.eta);
-        println!("  n_bands: {}", spec.solve_config.n_bands);
-        println!("  max_iter: {}", spec.solve_config.max_iterations);
-        println!("  tolerance: {:.2e}", spec.solve_config.tolerance);
-        if needs_gauge_shift {
-            println!(
-                "  Gauge shift: σ = {:.6} (V_min was {:.6}, now {:.6})",
-                gauge_shift,
-                v_min_orig,
-                v_min_orig + gauge_shift
-            );
-        }
-        println!(
-            "  Spectrum: λ_max={:.6}, V_min={:.6}, spread={:.4}",
-            lambda_max, v_min_shifted, spectral_spread
-        );
-        println!("  {}", precond_summary);
-        println!();
-
-        let start_time = Instant::now();
-
-        // Create progress bar for iterations
-        let max_iter = spec.solve_config.max_iterations;
-        let pb = ProgressBar::new(max_iter as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} iter {pos:>4}/{len} │ trace={msg}")
-                .unwrap()
-                .progress_chars("█▓░"),
-        );
-
-        // Run the solve with preconditioner (now always works due to gauge shift)
-        let mut precond = operator.build_preconditioner();
-        let solve_result = single_solve::solve_with_progress(
-            &mut operator,
-            Some(&mut precond),
-            &spec.solve_config,
-            |progress: &ProgressInfo| {
-                pb.set_position((progress.iteration + 1) as u64);
-                let trace_str = match progress.trace_rel_change {
-                    Some(change) if change < f64::INFINITY => {
-                        format!("{:.6} (Δ={:.2e})", progress.trace, change)
-                    }
-                    _ => format!("{:.6}", progress.trace),
-                };
-                pb.set_message(trace_str);
-            },
-        );
-
-        pb.finish_and_clear();
-
-        let elapsed = start_time.elapsed();
-
-        // Correct eigenvalues by removing gauge shift
-        let corrected_eigenvalues = operator.correct_eigenvalues(&solve_result.eigenvalues);
-
-        // Print result summary
-        println!();
-        if solve_result.converged {
-            println!(
-                "✓ Converged in {} iterations ({:.2}s)",
-                solve_result.iterations,
-                elapsed.as_secs_f64()
-            );
-        } else {
-            println!(
-                "⚠ Did not converge after {} iterations ({:.2}s)",
-                solve_result.iterations,
-                elapsed.as_secs_f64()
-            );
-        }
-
-        // Create job result and send through channel
-        let job_result = JobResult {
-            index: expanded.index,
-            result: JobResultType::EA(EAJobResult {
-                eigenvalues: corrected_eigenvalues, // Store corrected eigenvalues
-                eigenvectors: solve_result.eigenvectors,
-                grid_dims: [nx, ny],
-                n_iterations: solve_result.iterations,
-                converged: solve_result.converged,
-            }),
-            duration: elapsed,
-            notes: vec![],
-        };
-
-        // Send result through channel
-        let compact = CompactBandResult::from_job_result(expanded, &job_result);
-        if let Err(e) = channel.send(compact) {
-            error!("failed to send EA result: {}", e);
-        }
-
-        // Close channel and get stats
-        let _channel_stats = channel
-            .close()
-            .map_err(|e| DriverError::OutputError(e.to_string()))?;
-
-        Ok(DriverStats {
-            total_jobs: 1,
-            completed: 1,
-            failed: 0,
-            total_time: elapsed,
-            errors: vec![],
-            adaptive_summary: None,
-        })
     }
 
     /// Perform a dry run: expand jobs and report statistics without executing.
@@ -1623,16 +1159,7 @@ impl BulkDriver {
         // Execute jobs in parallel (no output writing)
         pool.install(|| {
             self.jobs.par_iter().for_each_init(
-                || {
-                    #[cfg(feature = "cuda")]
-                    {
-                        CudaBackend::new()
-                    }
-                    #[cfg(not(feature = "cuda"))]
-                    {
-                        CpuBackend::new()
-                    }
-                },
+                || CpuBackend::<R>::new(),
                 |backend, expanded_job| {
                     let job_start = Instant::now();
                     let result = self.execute_job(expanded_job, backend.clone());
@@ -1717,7 +1244,7 @@ impl BulkDriver {
 
         // Print profiling breakdown
         println!();
-        print_profile();
+        print_stats();
 
         Ok(DriverStats {
             total_jobs: self.jobs.len(),
@@ -1858,40 +1385,6 @@ impl BulkDriver {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/// Read a binary file containing f64 values in row-major (C-order) layout.
-fn read_f64_binary(path: &std::path::Path) -> Result<Vec<f64>, std::io::Error> {
-    use std::fs::File;
-    use std::io::Read;
-
-    let mut file = File::open(path)?;
-    let file_len = file.metadata()?.len() as usize;
-
-    // Each f64 is 8 bytes
-    if file_len % 8 != 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "file size {} is not a multiple of 8 (expected f64 array)",
-                file_len
-            ),
-        ));
-    }
-
-    let n_values = file_len / 8;
-    let mut data = vec![0.0f64; n_values];
-
-    // Read directly into the slice
-    // SAFETY: f64 has no alignment requirements stricter than 8, and we're
-    // reading exactly the right number of bytes
-    let bytes = unsafe { std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, file_len) };
-    file.read_exact(bytes)?;
-
-    // Handle endianness if needed (assuming little-endian for now)
-    // TODO: Add endianness detection/conversion if needed
-
-    Ok(data)
-}
 
 // ============================================================================
 // Statistics

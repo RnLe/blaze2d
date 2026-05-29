@@ -20,11 +20,6 @@
 //! - [`ToyLaplacian`]: Simple periodic Laplacian
 //! - [`ToyDiagonalSPD`]: Diagonal SPD operator with known spectrum
 //!
-//! ## Envelope Approximation Operators (Moiré Lattices)
-//!
-//! The [`envelope_approximation`] submodule provides operators for moiré lattice
-//! band structure calculations using the envelope approximation.
-//!
 //! # Operator Trait
 //!
 //! All operators implement [`LinearOperator<B>`], which requires:
@@ -52,12 +47,10 @@
 use crate::backend::SpectralBackend;
 use crate::grid::Grid2D;
 
-pub mod envelope_approximation;
 pub mod maxwell;
 pub mod test_operators;
 
 // Re-export commonly used types
-pub use envelope_approximation::{EAOperator, EAOperatorBuilder};
 pub use maxwell::ThetaOperator;
 pub use test_operators::{ToyDiagonalSPD, ToyLaplacian};
 

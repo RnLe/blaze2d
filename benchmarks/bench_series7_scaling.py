@@ -20,17 +20,13 @@ Output: results/series7_scaling/
 import subprocess
 import time
 import os
-import sys
 import json
 import argparse
 import tempfile
-import multiprocessing as mp
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Tuple
-from contextlib import redirect_stdout, redirect_stderr
-from io import StringIO
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 import numpy as np
 
@@ -184,6 +180,7 @@ def run_blaze_benchmark(
                 "--config", str(config_path),
                 "--benchmark",
                 "-j", str(threads),
+                "--precision", "f32",  # Blaze "mixed precision" series
             ]
             
             start = time.perf_counter()
@@ -300,7 +297,7 @@ print(f"TIME:{{elapsed}}")
                     result.throughputs.append(num_jobs / elapsed)
                     break
             else:
-                print(f"\n  Warning: couldn't parse MPB-OMP output")
+                print("\n  Warning: couldn't parse MPB-OMP output")
         finally:
             script_path.unlink(missing_ok=True)
     
@@ -418,7 +415,7 @@ if __name__ == "__main__":
                     result.throughputs.append(num_jobs / elapsed)
                     break
             else:
-                print(f"\n  Warning: couldn't parse MPB-Multiproc output")
+                print("\n  Warning: couldn't parse MPB-Multiproc output")
         finally:
             script_path.unlink(missing_ok=True)
     
@@ -447,9 +444,9 @@ def run_series(
     print("=" * 70)
     print(f"Resolutions: {[RESOLUTIONS[r] for r in resolutions]}")
     print(f"Thread counts: {thread_counts}")
-    print(f"Jobs per run: 2× thread count")
+    print("Jobs per run: 2× thread count")
     print(f"Iterations: {NUM_ITERATIONS}")
-    print(f"Solvers: Blaze2D, MPB-OMP")
+    print("Solvers: Blaze2D, MPB-OMP")
     print("=" * 70)
     
     # Build Blaze
@@ -488,7 +485,7 @@ def run_series(
             print("-" * 40)
             
             # Blaze2D
-            print(f"  Blaze2D...", end=" ", flush=True)
+            print("  Blaze2D...", end=" ", flush=True)
             blaze_res = run_blaze_benchmark(res_val, threads, num_jobs, NUM_ITERATIONS)
             print(f"{blaze_res.mean_throughput:.1f} ± {blaze_res.std_throughput:.1f} jobs/s")
             all_results["results"][res_name]["blaze"].append({
@@ -502,7 +499,7 @@ def run_series(
             })
             
             # MPB with OMP
-            print(f"  MPB-OMP...", end=" ", flush=True)
+            print("  MPB-OMP...", end=" ", flush=True)
             omp_res = run_mpb_omp_benchmark(res_val, threads, num_jobs, NUM_ITERATIONS)
             print(f"{omp_res.mean_throughput:.1f} ± {omp_res.std_throughput:.1f} jobs/s")
             all_results["results"][res_name]["mpb_omp"].append({

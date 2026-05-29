@@ -214,23 +214,22 @@ eps_bg = {{ min = 12.999, max = 13.001, step = {step:.10f} }}
 }
 
 
-def build_bulk_driver(full_precision: bool = False):
+def build_bulk_driver():
     """Build blaze2d-bulk-driver in release mode.
-    
-    Args:
-        full_precision: If True, build with f64 precision throughout (no mixed-precision).
+
+    The single binary contains both f32 and f64 monomorphisations; precision is
+    selected at runtime via the ``--precision`` flag (see ``run_bulk_benchmark``),
+    not at build time. (Historically this rebuilt with ``--no-default-features
+    --features native-linalg`` for f64 vs the now-removed ``mixed-precision``
+    Cargo feature for f32.)
     """
-    mode_str = "full-precision f64" if full_precision else "mixed-precision f32/f64"
-    print(f"Building blaze2d-bulk-driver (release, {mode_str})...")
+    print("Building blaze2d-bulk-driver (release)...")
     # Enable native CPU optimizations for maximum performance
     env = os.environ.copy()
     env["RUSTFLAGS"] = "-C target-cpu=native"
-    
+
     cmd = ["cargo", "build", "--release", "-p", "blaze2d-bulk-driver"]
-    if full_precision:
-        # Disable default features (which includes mixed-precision) and only enable native-linalg
-        cmd.extend(["--no-default-features", "--features", "native-linalg"])
-    
+
     result = subprocess.run(
         cmd,
         cwd=PROJECT_ROOT,
@@ -260,22 +259,25 @@ def generate_bulk_config(template: str, num_jobs: int) -> str:
     return template.format(step=step)
 
 
-def run_bulk_benchmark(binary: Path, config_content: str, num_threads: int) -> float:
+def run_bulk_benchmark(binary: Path, config_content: str, num_threads: int,
+                       precision: str = "f32") -> float:
     """Run bulk driver and return elapsed time in seconds.
-    
+
     Uses --benchmark flag: runs real solves but skips file output.
+    `precision` selects f32 (mixed) or f64 (full) storage at runtime.
     """
     # Write config to temp file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
         f.write(config_content)
         config_path = Path(f.name)
-    
+
     try:
         cmd = [
             str(binary),
             "--config", str(config_path),
             "--benchmark",  # Real solves, NO file output
             "-j", str(num_threads),
+            "--precision", precision,
         ]
         
         start = time.perf_counter()
@@ -288,7 +290,7 @@ def run_bulk_benchmark(binary: Path, config_content: str, num_threads: int) -> f
         elapsed = time.perf_counter() - start
         
         if result.returncode != 0:
-            print(f"\nWARNING: bulk driver returned non-zero exit code")
+            print("\nWARNING: bulk driver returned non-zero exit code")
             print(result.stderr[:500] if result.stderr else "No stderr")
         
         return elapsed
@@ -297,7 +299,8 @@ def run_bulk_benchmark(binary: Path, config_content: str, num_threads: int) -> f
 
 
 def run_benchmark_config(config_name: str, config_info: dict, binary: Path,
-                         num_jobs: int, num_iterations: int, num_threads: int) -> dict:
+                         num_jobs: int, num_iterations: int, num_threads: int,
+                         precision: str = "f32") -> dict:
     """Run benchmark for a specific configuration."""
     
     results = {
@@ -319,7 +322,7 @@ def run_benchmark_config(config_name: str, config_info: dict, binary: Path,
     for iteration in range(num_iterations):
         print(f"  Iteration {iteration + 1}/{num_iterations}: ", end="", flush=True)
         
-        elapsed = run_bulk_benchmark(binary, config_content, num_threads)
+        elapsed = run_bulk_benchmark(binary, config_content, num_threads, precision)
         iteration_times.append(elapsed)
         
         throughput = num_jobs / elapsed
@@ -422,20 +425,22 @@ Examples:
     print("=" * 70)
     print(f"Blaze2D Speed Benchmark - {core_mode.upper()}-CORE MODE (Bulk Driver)")
     print("=" * 70)
-    print(f"Resolution: 64×64")
-    print(f"Bands: 8")
-    print(f"K-points: 61 (20 per segment)")
+    print("Resolution: 64×64")
+    print("Bands: 8")
+    print("K-points: 61 (20 per segment)")
     print(f"Jobs per iteration: {num_jobs}")
     print(f"Iterations: {args.iterations}")
     print(f"Total jobs per config: {num_jobs * args.iterations}")
     print(f"Threads: {num_threads}")
-    print(f"Output mode: --benchmark (no file output)")
+    print("Output mode: --benchmark (no file output)")
     print("=" * 70)
     
     if not args.no_build:
-        build_bulk_driver(full_precision=args.full_precision)
-    
+        build_bulk_driver()
+
     binary = get_bulk_driver_binary()
+    # Precision is selected at runtime via the --precision flag (build once).
+    precision = "f64" if args.full_precision else "f32"
     precision_str = "full-precision (f64)" if args.full_precision else "mixed-precision (f32/f64)"
     print(f"Using binary: {binary}")
     print(f"Precision: {precision_str}")
@@ -464,7 +469,7 @@ Examples:
             continue
         results = run_benchmark_config(
             config_name, config_info, binary,
-            num_jobs, args.iterations, num_threads
+            num_jobs, args.iterations, num_threads, precision
         )
         all_results["configs"][config_name] = results
     

@@ -23,13 +23,10 @@
 //! where u₀ has value 1 for all Fourier components.
 
 use log::{debug, warn};
-use num_complex::Complex64;
-
-#[cfg(feature = "mixed-precision")]
-use num_complex::Complex32;
+use num_complex::{Complex, Complex64};
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::{Field2D, FieldScalar};
+use crate::field::{Field2D, Real, cscalar};
 use crate::operators::LinearOperator;
 
 use super::normalization::{normalize_to_unit_b_norm_with_tol, project_out};
@@ -113,7 +110,7 @@ pub struct InitializationResult {
 ///
 /// Uses a simple xorshift-based PRNG seeded by the phase value.
 /// The resulting values are real-valued in the range [-1, 1].
-pub fn seed_random_vector(data: &mut [FieldScalar], phase: f64) {
+pub fn seed_random_vector<R: Real>(data: &mut [Complex<R>], phase: f64) {
     let mut state = phase.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15);
     if state == 0 {
         state = 0xDEAD_BEEF_CAFE_BABE;
@@ -123,14 +120,7 @@ pub fn seed_random_vector(data: &mut [FieldScalar], phase: f64) {
         state ^= state >> 7;
         state ^= state << 17;
         let real = ((state >> 12) as f64) / ((1u64 << 52) as f64) * 2.0 - 1.0;
-        #[cfg(not(feature = "mixed-precision"))]
-        {
-            *value = Complex64::new(real, 0.0);
-        }
-        #[cfg(feature = "mixed-precision")]
-        {
-            *value = Complex32::new(real as f32, 0.0);
-        }
+        *value = cscalar::<R>(real, 0.0);
     }
 }
 
@@ -180,11 +170,7 @@ where
 {
     // Allocate and fill with constant 1.0
     let mut u0 = operator.alloc_field();
-    #[cfg(not(feature = "mixed-precision"))]
-    u0.as_mut_slice().fill(Complex64::new(1.0, 0.0));
-    #[cfg(feature = "mixed-precision")]
-    u0.as_mut_slice().fill(Complex32::new(1.0, 0.0));
-
+    u0.as_mut_slice().fill(cscalar::<B::Real>(1.0, 0.0));
     // Check if the operator uses a transformed basis (e.g., transformed TE)
     // If so, apply the transformation factor: v₀ = transform · u₀
     if let Some(transform) = operator.gamma_kernel_transform() {
@@ -192,14 +178,7 @@ where
             "[gamma] Applying kernel transformation for transformed operator (e.g., ε^{{1/2}} for TE)"
         );
         for (value, &factor) in u0.as_mut_slice().iter_mut().zip(transform.iter()) {
-            #[cfg(not(feature = "mixed-precision"))]
-            {
-                *value *= factor;
-            }
-            #[cfg(feature = "mixed-precision")]
-            {
-                *value *= factor as f32;
-            }
+            *value *= <B::Real as Real>::from_accum(factor);
         }
     }
 
@@ -320,7 +299,8 @@ where
     (entries, result)
 }
 
-/// Build a block entry from a Field2D (e.g., warm-start vector).
+/// Build a block entry from an f64 Field2D warm-start vector, demoting to
+/// the backend's storage precision (`B::Real`) on the way in.
 fn build_entry_from_field<O, B>(
     operator: &mut O,
     field: &Field2D,
@@ -332,7 +312,13 @@ where
     B: SpectralBackend,
 {
     let mut vector = operator.alloc_field();
-    vector.as_mut_slice().copy_from_slice(field.as_slice());
+    let dst = vector.as_mut_slice();
+    for (d, &s) in dst.iter_mut().zip(field.as_slice().iter()) {
+        *d = Complex::new(
+            <B::Real as Real>::from_accum(s.re),
+            <B::Real as Real>::from_accum(s.im),
+        );
+    }
     build_entry_from_buffer(operator, vector, existing, zero_tol)
 }
 

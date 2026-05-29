@@ -293,6 +293,7 @@ fn inner_product(x: &[FieldScalar], y: &[FieldScalar]) -> Complex64 {
 struct MockProjectionBackend;
 
 impl SpectralBackend for MockProjectionBackend {
+    type Real = f64;
     type Buffer = Field2D;
 
     fn forward_fft_2d(&self, _buffer: &mut Self::Buffer) {}

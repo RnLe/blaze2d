@@ -124,16 +124,11 @@ impl OutputWriter {
             (OutputMode::Full, crate::driver::JobResultType::Maxwell(_)) => {
                 self.write_full_maxwell(job, result)
             }
-            (OutputMode::Full, crate::driver::JobResultType::EA(_)) => {
-                self.write_full_ea(job, result)
-            }
             (OutputMode::Selective, crate::driver::JobResultType::Maxwell(_)) => {
                 self.accumulate_selective(job, result)
             }
-            (OutputMode::Selective, crate::driver::JobResultType::EA(_)) => {
-                // EA doesn't have k-points, so selective mode just writes eigenvalues
-                self.write_full_ea(job, result)
-            }
+            // Operator-data results are streamed to Python, not written to CSV
+            (_, crate::driver::JobResultType::OperatorData(_)) => Ok(()),
         }
     }
 
@@ -195,83 +190,6 @@ impl OutputWriter {
 
         writer.flush()?;
         debug!("wrote {}", path.display());
-
-        Ok(())
-    }
-
-    /// Write full mode output for EA (one file per job).
-    fn write_full_ea(&mut self, job: &ExpandedJob, result: &JobResult) -> Result<(), OutputError> {
-        let ea_result = result.ea().expect("expected EA result");
-
-        // Write eigenvalues CSV
-        let csv_filename = format!("{}_{:06}_ea.csv", self.config.prefix, job.index);
-        let csv_path = self.output_dir.join(csv_filename);
-
-        let file = File::create(&csv_path)?;
-        let mut writer = BufWriter::new(file);
-
-        // Write header with parameters
-        let param_cols = job.params.to_columns();
-        write!(writer, "job_index")?;
-        for (name, _) in &param_cols {
-            write!(writer, ",{}", name)?;
-        }
-        write!(writer, ",n_iterations,converged,band_index,eigenvalue")?;
-        writeln!(writer)?;
-
-        // Write data rows (one per eigenvalue)
-        for (band_idx, eigenvalue) in ea_result.eigenvalues.iter().enumerate() {
-            write!(writer, "{}", job.index)?;
-            for (_, value) in &param_cols {
-                write!(writer, ",{}", value)?;
-            }
-            write!(
-                writer,
-                ",{},{},{},{}",
-                ea_result.n_iterations,
-                ea_result.converged,
-                band_idx + 1, // 1-based band index
-                eigenvalue
-            )?;
-            writeln!(writer)?;
-        }
-
-        writer.flush()?;
-        debug!("wrote {}", csv_path.display());
-
-        // Write eigenvectors to binary file
-        // Format: [n_bands: u64][nx: u64][ny: u64] followed by
-        // n_bands × (nx × ny × 2) f64 values (interleaved real/imag)
-        let eigvec_filename = format!("{}_{:06}_eigenvectors.bin", self.config.prefix, job.index);
-        let eigvec_path = self.output_dir.join(eigvec_filename);
-
-        let eigvec_file = File::create(&eigvec_path)?;
-        let mut eigvec_writer = BufWriter::new(eigvec_file);
-
-        let n_bands = ea_result.eigenvectors.len() as u64;
-        let grid = ea_result
-            .eigenvectors
-            .first()
-            .map(|f| f.grid())
-            .unwrap_or_else(|| blaze2d_core::grid::Grid2D::new(1, 1, 1.0, 1.0));
-        let nx = grid.nx as u64;
-        let ny = grid.ny as u64;
-
-        // Write header
-        eigvec_writer.write_all(&n_bands.to_le_bytes())?;
-        eigvec_writer.write_all(&nx.to_le_bytes())?;
-        eigvec_writer.write_all(&ny.to_le_bytes())?;
-
-        // Write eigenvector data (interleaved real/imag)
-        for field in &ea_result.eigenvectors {
-            for c in field.as_slice() {
-                eigvec_writer.write_all(&c.re.to_le_bytes())?;
-                eigvec_writer.write_all(&c.im.to_le_bytes())?;
-            }
-        }
-
-        eigvec_writer.flush()?;
-        debug!("wrote {}", eigvec_path.display());
 
         Ok(())
     }

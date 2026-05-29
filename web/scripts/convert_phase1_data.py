@@ -15,7 +15,6 @@ Usage:
 
 import sys
 import json
-import struct
 from pathlib import Path
 
 import h5py

@@ -178,6 +178,7 @@ def run_blaze_benchmark(epsilon: float, polarization: str, binary: Path) -> floa
             "--config", str(config_path),
             "--benchmark",
             "-j", "1",
+            "--precision", "f32",  # Blaze "mixed precision" series
         ]
         
         start = time.perf_counter()
@@ -222,7 +223,7 @@ def run_series(output_dir: Path, quick: bool = False):
     print("Benchmark Series 1: Epsilon Sweep")
     print("=" * 70)
     print(f"Epsilon values: {len(epsilons)} ({epsilons[0]:.1f} to {epsilons[-1]:.1f})")
-    print(f"Polarizations: TM, TE")
+    print("Polarizations: TM, TE")
     print(f"Iterations per value: {iterations}")
     print(f"Resolution: {RESOLUTION}×{RESOLUTION}")
     print(f"Bands: {NUM_BANDS}")

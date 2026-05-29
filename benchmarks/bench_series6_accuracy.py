@@ -21,7 +21,6 @@ Output: results/series6_accuracy/
 
 import subprocess
 import os
-import sys
 import json
 import csv
 import argparse
@@ -29,8 +28,8 @@ import tempfile
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Optional
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -243,15 +242,11 @@ def run_blaze(
     output_csv = tempfile.mktemp(suffix='.csv')
     
     try:
-        # Build command
-        if use_mixed_precision:
-            # Default features include mixed-precision
-            build_cmd = ["cargo", "build", "--release", "-p", "blaze2d-cli"]
-        else:
-            # Disable default features to get full f64 precision
-            build_cmd = ["cargo", "build", "--release", "-p", "blaze2d-cli", 
-                        "--no-default-features", "--features", "batched-fft"]
-        
+        # Build once — the binary contains both f32 and f64 monomorphisations;
+        # precision is selected at runtime via --precision (build no longer
+        # depends on the removed mixed-precision Cargo feature).
+        build_cmd = ["cargo", "build", "--release", "-p", "blaze2d-cli"]
+
         # Build
         subprocess.run(
             build_cmd,
@@ -259,11 +254,14 @@ def run_blaze(
             capture_output=True,
             env={**os.environ, "RUSTFLAGS": "-C target-cpu=native"},
         )
-        
+
         blaze_cli = PROJECT_ROOT / "target" / "release" / "blaze2d-cli"
-        
+
+        # f32 = mixed precision (f32 storage, f64 accumulation); f64 = full precision.
+        precision = "f32" if use_mixed_precision else "f64"
         result = subprocess.run(
-            [str(blaze_cli), "--config", str(config_path), "--output", output_csv],
+            [str(blaze_cli), "--config", str(config_path), "--output", output_csv,
+             "--precision", precision],
             capture_output=True,
             text=True,
             timeout=600,

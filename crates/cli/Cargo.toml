@@ -7,11 +7,9 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = ["batched-fft", "mixed-precision"]
-cuda = ["blaze2d-backend-cpu/cuda", "dep:blaze2d-backend-cuda"]
+default = ["batched-fft"]
 profiling = ["blaze2d-core/profiling", "blaze2d-backend-cpu/profiling"]
 batched-fft = ["blaze2d-core/batched-fft", "blaze2d-backend-cpu/batched-fft"]
-mixed-precision = ["blaze2d-core/mixed-precision", "blaze2d-backend-cpu/mixed-precision"]
 
 [dependencies]
 clap.workspace = true
@@ -19,7 +17,6 @@ env_logger = "0.11"
 log.workspace = true
 blaze2d-core = { path = "../core" }
 blaze2d-backend-cpu = { path = "../backend-cpu" }
-blaze2d-backend-cuda = { path = "../backend-cuda", optional = true }
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true

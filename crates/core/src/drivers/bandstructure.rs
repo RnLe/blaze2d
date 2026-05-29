@@ -39,9 +39,9 @@
 //! # Usage
 //!
 //! ```ignore
-//! use blaze2d_core::bandstructure::{run, BandStructureJob, Verbosity};
+//! use blaze2d_core::bandstructure::{run_with_options, BandStructureJob, RunOptions};
 //!
-//! let result = run(backend, &job, Verbosity::Verbose);
+//! let result = run_with_options(backend, &job, RunOptions::default());
 //! // result.bands[k_index][band_index] gives ω for each (k, band) pair
 //! ```
 
@@ -139,26 +139,8 @@ pub struct BandStructureResult {
 // Verbosity Control
 // ============================================================================
 
-/// Controls the verbosity of progress output during band-structure computation.
-///
-/// **Note:** This is now deprecated. Use the `log` crate with appropriate log levels instead.
-/// The bandstructure module now uses `log::info!`, `log::debug!`, and `log::warn!`
-/// for all output. Configure your log filter to control verbosity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verbosity {
-    /// No progress output (deprecated: use log filter instead).
-    Quiet,
-    /// Print progress information (deprecated: use log filter instead).
-    Verbose,
-}
-
-impl Verbosity {
-    /// Returns true if verbose output is enabled.
-    #[allow(dead_code)]
-    fn enabled(self) -> bool {
-        matches!(self, Verbosity::Verbose)
-    }
-}
+// (Previously a `Verbosity` enum lived here.) All progress reporting is now
+// done through the `log` crate; configure RUST_LOG/log filters to control output.
 
 /// Options for band structure computation.
 #[derive(Debug, Clone)]
@@ -212,12 +194,6 @@ pub struct RunOptions {
     ///
     /// Default: false (band tracking is enabled)
     pub disable_band_tracking: bool,
-    /// Enable symmetry-based reduction (parity projection).
-    ///
-    /// When enabled, the solver decomposes the problem into symmetry sectors
-    /// (e.g., Even/Odd) based on the active mirror symmetries at each k-point.
-    /// This resolves degeneracies and improves convergence stability.
-    pub enable_symmetry: bool,
 }
 
 impl Default for RunOptions {
@@ -230,7 +206,6 @@ impl Default for RunOptions {
             band_window_blend: 0.5,        // Equal mix of adaptive and band-window
             band_window_scale: 0.5,        // Conservative scaling of median eigenvalue
             disable_band_tracking: false,  // Band tracking enabled by default
-            enable_symmetry: false,        // Symmetry disabled by default
         }
     }
 }
@@ -306,17 +281,7 @@ impl RunOptions {
         self.disable_band_tracking = disabled;
         self
     }
-
-    /// Enable symmetry-based reduction.
-    pub fn with_symmetry(mut self, enabled: bool) -> Self {
-        self.enable_symmetry = enabled;
-        self
-    }
 }
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
 
 // ============================================================================
 // Main Entry Point
@@ -334,7 +299,7 @@ impl RunOptions {
 ///
 /// - `backend`: The spectral backend (CPU, CUDA, etc.)
 /// - `job`: The band-structure job configuration
-/// - `verbosity`: Controls progress output
+/// - `options`: Preconditioner, warm-start, and band-tracking options
 ///
 /// # Returns
 ///
@@ -349,22 +314,27 @@ impl RunOptions {
 /// 3. Create and run the eigensolver
 /// 4. Extract eigenfrequencies ω = √λ from eigenvalues λ = ω²
 /// 5. Store eigenvectors for warm-starting the next k-point
-pub fn run<B: SpectralBackend + Clone>(
-    backend: B,
-    job: &BandStructureJob,
-    verbosity: Verbosity,
-) -> BandStructureResult {
-    run_with_options(backend, job, verbosity, RunOptions::default())
-}
-
-/// Compute the photonic band structure with custom options.
-///
-/// Like [`run`] but allows customization of preconditioner type and shift mode.
 pub fn run_with_options<B: SpectralBackend + Clone>(
     backend: B,
     job: &BandStructureJob,
-    _verbosity: Verbosity,
     options: RunOptions,
+) -> BandStructureResult {
+    run_core(backend, job, options, None)
+}
+
+/// Shared implementation behind [`run_with_options`] and
+/// [`run_with_diagnostics_and_options`].
+///
+/// When `study` is `Some`, per-iteration convergence diagnostics are recorded
+/// into it via the eigensolver's `solve_with_diagnostics` path; when `None`,
+/// the faster plain `solve` path is used. The two solver paths differ in their
+/// internal convergence accounting, so this function branches on `study`
+/// rather than always recording.
+fn run_core<B: SpectralBackend + Clone>(
+    backend: B,
+    job: &BandStructureJob,
+    options: RunOptions,
+    mut study: Option<&mut ConvergenceStudy>,
 ) -> BandStructureResult {
     // ========================================================================
     // Setup Phase
@@ -584,6 +554,7 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         // Use subspace prediction if enabled, otherwise fall back to simple copy
         // Note: _predicted_vectors owns the data that warm_slice borrows from
         let _predicted_vectors: Option<Vec<Field2D>>;
+        let warm_start_used: bool;
         let warm_slice: Option<&[Field2D]> = if let Some(ref mut history) = subspace_history {
             // Use subspace prediction for warm-start
             let prediction = history.predict(k_frac, eps_for_tracking.as_deref());
@@ -593,25 +564,22 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
                     k_idx, prediction.method_used, prediction.singular_value_min
                 );
                 _predicted_vectors = Some(prediction.predicted_vectors);
+                warm_start_used = true;
                 _predicted_vectors.as_deref()
             } else {
                 _predicted_vectors = None;
+                warm_start_used = false;
                 None
             }
         } else if !warm_start_store.is_empty() {
             // Simple copy warm-start (original behavior)
             _predicted_vectors = None;
+            warm_start_used = true;
             Some(warm_start_store.as_slice())
         } else {
             _predicted_vectors = None;
+            warm_start_used = false;
             None
-        };
-
-        // Configure eigensolver
-        let eigensolver_config = {
-            let mut cfg = job.eigensolver.clone();
-            cfg.k_index = Some(k_idx);
-            cfg
         };
 
         // Construct the Maxwell operator Θ for this k-point
@@ -662,126 +630,63 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
             }
         };
 
-        // Detect symmetry sectors
-        // We enable "simplify" mode to limit to Even/Odd only (max 2 sectors)
-        // to avoid overhead on small N problems.
-        let sectors = if options.enable_symmetry {
-            crate::symmetry::enumerate_sectors(
-                k_frac,
-                job.geom.lattice.classify(),
-                1e-6,
-                true, // Simplify: restrict to max 1 mirror axis (2 sectors)
-            )
-        } else {
-            crate::symmetry::SectorSchedule::trivial(k_frac)
-        };
-
-        // Solve each sector and collect results
-        let mut sector_eigenpairs: Vec<(f64, Field2D)> = Vec::new(); // (eigenvalue, eigenvector)
-        let mut k_iterations = 0;
-
-        for sector in &sectors.sectors {
-            if options.enable_symmetry && !sector.is_trivial() {
-                debug!("[bandstructure] Solving sector: {}", sector.label);
-            }
-
-            // Configure solver for this sector
-            // Optimization: reduce n_bands if using multiple symmetry sectors
-            // Simplified logic: Even split with minimal buffer.
-            let mut sector_config = eigensolver_config.clone();
-            if options.enable_symmetry && sectors.sectors.len() > 1 {
-                let n_total = job.eigensolver.n_bands;
-                // ceil(N/2) roughly, assuming 2 sectors.
-                // If N=12 -> target=6. If N=6 -> target=3.
-                // We add +1 just to be safe against slight asymmetry (e.g. 7 even, 5 odd).
-                let target = (n_total / 2) + 1;
-
-                sector_config.n_bands = target;
-                debug!(
-                    "[bandstructure] Sector optimization: target {} bands (reduced from {})",
-                    target, n_total
-                );
-            }
-
-            // Create symmetry projector (if applicable)
-            let projector = crate::symmetry::projector_for_sector(job.grid, sector);
-
-            // Filter warm start vectors through the projector
-            // This ensures we only pass vectors that belong to this symmetry sector,
-            // preventing the solver from being initialized with orthogonal (zeroed) vectors.
-            let filtered_warm_storage;
-            let warm_start_ref = if let (Some(ws), Some(proj)) = (warm_slice, &projector) {
-                // Project and filter out null vectors
-                let filtered: Vec<crate::field::Field2D> = ws
-                    .iter()
-                    .map(|f| {
-                        let mut p = f.clone();
-                        proj.apply(&mut p);
-                        p
-                    })
-                    .filter(|f| {
-                        // Check L2 norm squared > threshold (upcast for mixed-precision)
-                        let norm_sq: f64 = f
-                            .as_slice()
-                            .iter()
-                            .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
-                            .sum();
-                        norm_sq > 1e-6
-                    })
-                    .take(sector_config.n_bands)
-                    .collect();
-
-                if !filtered.is_empty() {
-                    filtered_warm_storage = Some(filtered);
-                    filtered_warm_storage.as_deref()
-                } else {
-                    None
-                }
-            } else {
-                warm_slice
-            };
+        // Solve the eigenproblem at this k-point.
+        //
+        // Branch on diagnostics: the recording path uses
+        // `solve_with_diagnostics` (eager residual norms + per-iteration
+        // snapshots), the plain path uses the faster `solve`. The two have
+        // distinct internal convergence accounting, so we call the matching
+        // one rather than always recording.
+        let k_iterations;
+        let final_evals: Vec<f64>;
+        let mut eigenvectors: Vec<Field2D>;
+        if let Some(study) = study.as_deref_mut() {
+            let mut cfg = job.eigensolver.clone();
+            cfg.k_index = Some(k_idx);
+            cfg.record_diagnostics = true;
+            let run_label = format!("{}_k{:03}", study.name, k_idx);
 
             let mut solver = Eigensolver::new(
                 &mut theta,
-                sector_config,
+                cfg,
                 preconditioner_opt.as_mut().map(|p| {
                     &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>
                 }),
-                warm_start_ref,
+                warm_slice,
             );
 
-            // Configure symmetry projector
-            if let Some(proj) = projector {
-                solver.set_symmetry_projector(proj);
-            }
+            let diag_result = solver.solve_with_diagnostics(&run_label);
+            k_iterations = diag_result.result.iterations;
+            final_evals = diag_result.result.eigenvalues.clone();
+            eigenvectors = solver.all_eigenvectors();
+
+            // Record per-k-point diagnostics into the study.
+            let mut run_data = diag_result.diagnostics;
+            run_data.config.k_index = Some(k_idx);
+            run_data.config.k_point = Some(k_frac);
+            run_data.config.bloch = Some(bloch);
+            run_data.config.polarization = Some(format!("{:?}", job.pol));
+            run_data.config.preconditioner_type = options.precond_type;
+            run_data.config.warm_start_enabled = warm_start_used;
+            study.add_run(run_data);
+        } else {
+            let mut cfg = job.eigensolver.clone();
+            cfg.k_index = Some(k_idx);
+
+            let mut solver = Eigensolver::new(
+                &mut theta,
+                cfg,
+                preconditioner_opt.as_mut().map(|p| {
+                    &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>
+                }),
+                warm_slice,
+            );
 
             let result = solver.solve();
-            k_iterations += result.iterations;
-
-            // Collect results from this sector
-            let active_evals = result.eigenvalues;
-            let active_vecs = solver.all_eigenvectors(); // Note: Includes deflated vectors
-
-            // Pair up eigenvalues and eigenvectors
-            // Eigensolver guarantees result.eigenvalues and all_eigenvectors() are aligned and same length
-            for (ev, vec) in active_evals.into_iter().zip(active_vecs.into_iter()) {
-                sector_eigenpairs.push((ev, vec));
-            }
+            k_iterations = result.iterations;
+            final_evals = result.eigenvalues;
+            eigenvectors = solver.all_eigenvectors();
         }
-
-        // Sort merged results by eigenvalue (ascending)
-        sector_eigenpairs
-            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Truncate to requested number of bands
-        let n_requested = job.eigensolver.n_bands;
-        if sector_eigenpairs.len() > n_requested {
-            sector_eigenpairs.truncate(n_requested);
-        }
-
-        // Unzip into separate vectors
-        let (final_evals, mut eigenvectors): (Vec<f64>, Vec<Field2D>) =
-            sector_eigenpairs.into_iter().unzip();
 
         // Convert eigenvalues (ω²) to frequencies (ω)
         let mut omegas: Vec<f64> = final_evals
@@ -878,12 +783,18 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
         0.0
     };
 
+    let diag_suffix = if study.is_some() {
+        " (diagnostics recorded)"
+    } else {
+        ""
+    };
     info!(
-        "[bandstructure] complete: {} k-points, {} total iterations, {:.2}s ({:.1}ms/iter)",
+        "[bandstructure] complete: {} k-points, {} total iterations, {:.2}s ({:.1}ms/iter){}",
         job.k_path.len(),
         total_iterations,
         solve_elapsed,
-        time_per_iter_ms
+        time_per_iter_ms,
+        diag_suffix
     );
 
     // Build initial result
@@ -912,504 +823,18 @@ pub struct BandStructureResultWithDiagnostics {
 
 /// Compute the photonic band structure with full convergence diagnostics.
 ///
-/// This is similar to [`run`] but additionally records per-iteration data
-/// for each k-point solve, producing a [`ConvergenceStudy`] that can be
-/// serialized to JSON for analysis.
-///
-/// # Arguments
-///
-/// - `backend`: The spectral backend (CPU, CUDA, etc.)
-/// - `job`: The band-structure job configuration
-/// - `verbosity`: Controls progress output
-/// - `study_name`: Name for the convergence study
-/// - `precond_type`: Type of preconditioner to use (None, FourierDiagonalKernelCompensated, TransverseProjection)
-///
-/// # Returns
-///
-/// A [`BandStructureResultWithDiagnostics`] containing both the band structure
-/// and the full convergence study data.
-pub fn run_with_diagnostics<B: SpectralBackend + Clone>(
-    backend: B,
-    job: &BandStructureJob,
-    verbosity: Verbosity,
-    study_name: impl Into<String>,
-    precond_type: PreconditionerType,
-) -> BandStructureResultWithDiagnostics {
-    run_with_diagnostics_and_options(
-        backend,
-        job,
-        verbosity,
-        study_name,
-        RunOptions::new().with_preconditioner(precond_type),
-    )
-}
-
-/// Compute the photonic band structure with full convergence diagnostics and custom options.
-///
-/// Like [`run_with_diagnostics`] but uses RunOptions for configuration.
+/// Records per-iteration data for each k-point solve into a
+/// [`ConvergenceStudy`] that can be serialized to JSON for analysis. This is a
+/// thin wrapper over [`run_core`]; the only difference from [`run_with_options`]
+/// is that a study recorder is threaded through the solve.
 pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     backend: B,
     job: &BandStructureJob,
-    _verbosity: Verbosity,
     study_name: impl Into<String>,
     options: RunOptions,
 ) -> BandStructureResultWithDiagnostics {
-    // ========================================================================
-    // Setup Phase
-    // ========================================================================
-
-    let study_name = study_name.into();
-
-    // Resolve Auto preconditioner type based on polarization
-    let precond_type = options.precond_type.resolve_for_polarization(job.pol);
-
-    // Compute reciprocal lattice for proper k-space coordinate conversion.
-    // This is essential for non-orthogonal lattices (hexagonal, oblique) where
-    // the fractional k-coordinates must be transformed using the reciprocal
-    // lattice vectors, not just multiplied by 2π.
-    let reciprocal = job.geom.lattice.reciprocal();
-
-    info!(
-        "[bandstructure] grid={}x{} pol={:?} bands={} k_points={} lattice={:?} (diagnostics={})",
-        job.grid.nx,
-        job.grid.ny,
-        job.pol,
-        job.eigensolver.n_bands,
-        job.k_path.len(),
-        job.geom.lattice.classify(),
-        study_name
-    );
-
-    debug!("[bandstructure] precond={:?}", precond_type);
-
-    // Sample the dielectric function from geometry
-    let dielectric = Dielectric2D::from_geometry(&job.geom, job.grid, &job.dielectric);
-
-    // Compute dielectric contrast for diagnostics
-    let eps = dielectric.eps();
-    let eps_min = eps.iter().cloned().fold(f64::INFINITY, f64::min);
-    let eps_max = eps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let eps_contrast = if eps_min > 1e-15 {
-        eps_max / eps_min
-    } else {
-        f64::INFINITY
-    };
-
-    info!(
-        "[bandstructure] dielectric: ε=[{:.3}, {:.3}] contrast={:.1}x precond={:?}",
-        eps_min, eps_max, eps_contrast, precond_type,
-    );
-
-    if options.disable_band_tracking {
-        warn!("[bandstructure] Band tracking DISABLED - bands will be sorted by eigenvalue only");
-    }
-
-    // ========================================================================
-    // Operator Diagnostics (one-time, before k-point loop)
-    // ========================================================================
-    // Use a non-Γ k-point for condition number estimates (Γ has κ → ∞ due to DC mode)
-    {
-        // Find first non-Γ k-point for diagnostics
-        let diag_k_idx = job.k_path.iter().position(|&k| !is_gamma_point(k));
-        if let Some(idx) = diag_k_idx {
-            let k_frac = job.k_path[idx];
-            // Convert fractional k-coordinates to Cartesian Bloch wavevector
-            // using the reciprocal lattice (essential for non-orthogonal lattices)
-            let bloch = reciprocal.fractional_to_cartesian(k_frac);
-
-            // Create temporary operator for diagnostics
-            let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
-
-            // Build preconditioner for diagnostics (always using adaptive shift)
-            let mut preconditioner_opt: Option<
-                Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
-            > = match precond_type {
-                PreconditionerType::Auto => {
-                    unreachable!("Auto should be resolved before this point")
-                }
-                PreconditionerType::None => None,
-                PreconditionerType::FourierDiagonalKernelCompensated => {
-                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                }
-                PreconditionerType::TransverseProjection => Some(Box::new(
-                    theta.build_transverse_projection_preconditioner_adaptive(),
-                )),
-                PreconditionerType::Multigrid => {
-                    unimplemented!("Multigrid preconditioner not yet implemented")
-                }
-            };
-
-            const POWER_ITERATIONS: usize = 15;
-
-            // Self-adjointness check
-            let self_adj_err = theta.check_self_adjointness();
-            let self_adj_status = if self_adj_err < 1e-12 {
-                "exact"
-            } else if self_adj_err < 1e-6 {
-                "good"
-            } else {
-                "WARN"
-            };
-
-            // Condition number estimates
-            let (lambda_max, lambda_min, kappa) = theta.estimate_condition_number(POWER_ITERATIONS);
-
-            if let Some(ref mut precond) = preconditioner_opt {
-                let (_pm_max, _pm_min, pm_kappa) = theta
-                    .estimate_preconditioned_condition_number(&mut **precond, POWER_ITERATIONS);
-                let reduction = kappa / pm_kappa;
-                info!(
-                    "[bandstructure] κ(A)≈{:.1} κ(M⁻¹A)≈{:.1} ({:.1}x reduction) self-adjoint={} ({:.1e})",
-                    kappa, pm_kappa, reduction, self_adj_status, self_adj_err
-                );
-            } else {
-                info!(
-                    "[bandstructure] κ(A)≈{:.1} (λ_max≈{:.2e}, λ_min≈{:.2e}) self-adjoint={} ({:.1e})",
-                    kappa, lambda_max, lambda_min, self_adj_status, self_adj_err
-                );
-            }
-        }
-    }
-
-    // Initialize convergence study
-    let mut study = ConvergenceStudy::new(&study_name);
-
-    // ========================================================================
-    // K-Point Loop
-    // ========================================================================
-
-    // Storage for warm-start vectors from previous k-point (simple mode)
-    let warm_start_limit = job.eigensolver.n_bands;
-    let mut warm_start_store: Vec<Field2D> = Vec::new();
-
-    // Subspace prediction history (rotation-based warm-start)
-    let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction {
-        let mut history = SubspaceHistory::new(warm_start_limit);
-        if options.use_extrapolation {
-            history.enable_extrapolation();
-            info!("[bandstructure] Subspace prediction enabled (rotation + extrapolation)");
-        } else {
-            info!("[bandstructure] Subspace prediction enabled (rotation-only)");
-        }
-        Some(history)
-    } else {
-        None
-    };
-
-    // Track if previous k-point was Γ (to skip warm-start after Γ)
-    // Γ eigenvectors span a different subspace that doesn't overlap well with k≠0
-    let mut prev_was_gamma = false;
-
-    // Storage for band tracking: eigenvectors from previous k-point
-    // Note: When starting at Γ with proper deflation, Γ eigenvectors are reliable
-    // and can be used for warm-starting subsequent k-points.
-    let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
-
-    // Storage for previous frequencies (ω) for degenerate block disambiguation
-    // These are used by track_bands_with_frequencies to break ties when
-    // singular values indicate near-degenerate bands.
-    let mut prev_omegas: Option<Vec<f64>> = None;
-
-    // Storage for previous eigenvalues (ω² = λ) for band-window preconditioner shift
-    let mut prev_eigenvalues: Option<Vec<f64>> = None;
-
-    // Log if band-window shift is enabled
-    if options.use_band_window_shift {
-        info!(
-            "[bandstructure] Band-window shift enabled (blend={:.2}, scale={:.2})",
-            options.band_window_blend, options.band_window_scale
-        );
-    }
-
-    // Get dielectric epsilon for B-weighted overlaps
-    // - TE mode: B = I, use standard inner product (None)
-    // - TM mode (generalized): B = ε, use ε-weighted inner product
-    let eps_for_tracking: Option<Vec<f64>> = if job.pol == Polarization::TM {
-        Some(dielectric.eps().to_vec())
-    } else {
-        None
-    };
-
-    // Detect if we can reuse the first Γ-point result for the last k-point
-    // This avoids redundant computation when the path is e.g., Γ→X→M→Γ
-    let first_is_gamma = job.k_path.first().map_or(false, |&k| is_gamma_point(k));
-    let last_is_gamma = job.k_path.last().map_or(false, |&k| is_gamma_point(k));
-    let reuse_gamma = first_is_gamma && last_is_gamma && job.k_path.len() > 1;
-    let last_k_idx = job.k_path.len().saturating_sub(1);
-
-    // Storage for first Γ-point frequencies (to reuse for last k-point if applicable)
-    let mut first_gamma_omegas: Option<Vec<f64>> = None;
-
-    // Accumulate results
-    let mut bands: Vec<Vec<f64>> = Vec::with_capacity(job.k_path.len());
-    let mut total_iterations = 0usize;
-
-    // Start timing the solve phase (excludes setup/diagnostics)
-    let solve_start = Instant::now();
-
-    for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
-        // Check if this is a Γ-point (k ≈ 0)
-        // At Γ, the constant mode (DC) is deflated by the eigensolver.
-        let is_gamma = is_gamma_point(k_frac);
-
-        // Reuse first Γ-point result for the last k-point (avoid duplicate solve)
-        // This is valid when the path loops back to Γ (e.g., Γ→X→M→Γ)
-        if reuse_gamma && k_idx == last_k_idx {
-            if let Some(ref gamma_omegas) = first_gamma_omegas {
-                debug!(
-                    "[bandstructure] k#{:03} is duplicate Γ-point: reusing result from k#000",
-                    k_idx
-                );
-                bands.push(gamma_omegas.clone());
-                // Don't update warm-start or tracking state - not needed for last point
-                continue;
-            }
-        }
-
-        if is_gamma {
-            debug!(
-                "[bandstructure] k#{:03} is Γ-point: constant mode will be deflated",
-                k_idx
-            );
-        }
-
-        // Convert fractional k-point to Cartesian Bloch wavevector using the
-        // reciprocal lattice. This is essential for non-orthogonal lattices
-        // (hexagonal, oblique) where M=(0.5,0) in fractional coordinates does
-        // NOT map to [π, 0] in Cartesian k-space.
-        let bloch = reciprocal.fractional_to_cartesian(k_frac);
-
-        // Construct the Maxwell operator Θ for this k-point
-        let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
-
-        // Prepare warm-start using subspace prediction or simple copy
-        // Note: _predicted_vectors owns the data that warm_slice borrows from
-        let _predicted_vectors: Option<Vec<Field2D>>;
-        let warm_start_used: bool;
-        let warm_slice: Option<&[Field2D]> = if prev_was_gamma {
-            // Skip warm-start when coming from Γ: those eigenvectors don't overlap well with k≠0
-            debug!(
-                "[bandstructure] k#{:03}: skipping warm-start (previous was Γ-point)",
-                k_idx
-            );
-            _predicted_vectors = None;
-            warm_start_used = false;
-            None
-        } else if let Some(ref mut history) = subspace_history {
-            // Use subspace prediction for warm-start
-            let prediction = history.predict(k_frac, eps_for_tracking.as_deref());
-            if prediction.has_prediction() {
-                debug!(
-                    "[bandstructure] k#{:03} using {:?} prediction (σ_min={:.4})",
-                    k_idx, prediction.method_used, prediction.singular_value_min
-                );
-                _predicted_vectors = Some(prediction.predicted_vectors);
-                warm_start_used = true;
-                _predicted_vectors.as_deref()
-            } else {
-                _predicted_vectors = None;
-                warm_start_used = false;
-                None
-            }
-        } else if !warm_start_store.is_empty() {
-            // Simple copy warm-start (original behavior)
-            _predicted_vectors = None;
-            warm_start_used = true;
-            Some(warm_start_store.as_slice())
-        } else {
-            _predicted_vectors = None;
-            warm_start_used = false;
-            None
-        };
-
-        // Create label for this k-point run
-        let run_label = format!("{}_k{:03}", study_name, k_idx);
-
-        // Create eigensolver config with diagnostics enabled
-        let mut eigensolver_config = job.eigensolver.clone();
-        eigensolver_config.record_diagnostics = true;
-
-        // Build preconditioner
-        // Use band-window shift if enabled AND we have previous eigenvalues,
-        // otherwise fall back to adaptive shift.
-        let use_band_window = options.use_band_window_shift && prev_eigenvalues.is_some();
-        let mut preconditioner_opt: Option<
-            Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
-        > = match precond_type {
-            PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
-            PreconditionerType::None => None,
-            PreconditionerType::FourierDiagonalKernelCompensated => {
-                if use_band_window {
-                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                    Some(Box::new(
-                        theta.build_homogeneous_preconditioner_band_window(
-                            eigenvalues,
-                            Some(options.band_window_blend),
-                            Some(options.band_window_scale),
-                        ),
-                    ))
-                } else {
-                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                }
-            }
-            PreconditionerType::TransverseProjection => {
-                if use_band_window {
-                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                    Some(Box::new(
-                        theta.build_transverse_projection_preconditioner_band_window(
-                            eigenvalues,
-                            Some(options.band_window_blend),
-                            Some(options.band_window_scale),
-                        ),
-                    ))
-                } else {
-                    Some(Box::new(
-                        theta.build_transverse_projection_preconditioner_adaptive(),
-                    ))
-                }
-            }
-            PreconditionerType::Multigrid => {
-                unimplemented!("Multigrid preconditioner not yet implemented")
-            }
-        };
-
-        // Create and run the eigensolver
-        let mut solver = Eigensolver::new(
-            &mut theta,
-            eigensolver_config,
-            preconditioner_opt
-                .as_mut()
-                .map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
-            warm_slice,
-        );
-
-        let diag_result = solver.solve_with_diagnostics(&run_label);
-        let mut omegas: Vec<f64> = diag_result
-            .result
-            .eigenvalues
-            .iter()
-            .map(|&ev| if ev > 0.0 { ev.sqrt() } else { 0.0 })
-            .collect();
-        // Use all_eigenvectors() to include deflated vectors (e.g., Γ constant mode)
-        let mut eigenvectors = solver.all_eigenvectors();
-
-        // ====================================================================
-        // Band Tracking: reorder by overlap with previous k-point
-        // Uses polar decomposition + frequency continuity for degenerate blocks.
-        // ====================================================================
-        if !options.disable_band_tracking {
-            if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
-                let tracking_result = track_bands_with_frequencies(
-                    prev_vecs,
-                    &eigenvectors,
-                    prev_freqs,
-                    &omegas,
-                    eps_for_tracking.as_deref(),
-                );
-
-                // Always log σ_min for diagnostic purposes
-                let perm_str = if tracking_result.had_swaps {
-                    format!("{:?}", tracking_result.permutation)
-                } else {
-                    "identity".to_string()
-                };
-                let blocks_str = if tracking_result.degenerate_blocks.is_empty() {
-                    String::new()
-                } else {
-                    format!(" blocks={:?}", tracking_result.degenerate_blocks)
-                };
-                info!(
-                    "[band_tracking] k#{:03} σ_min={:.6} perm={}{}",
-                    k_idx, tracking_result.sigma_min, perm_str, blocks_str
-                );
-
-                if tracking_result.had_swaps {
-                    apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
-
-                    // Log warnings for near-degenerate regions (low sigma_min)
-                    if tracking_result.sigma_min < 0.1 {
-                        warn!(
-                            "[bandstructure] k#{:03} band tracking: near-degeneracy (σ_min={:.4}), may be unreliable",
-                            k_idx, tracking_result.sigma_min
-                        );
-                    }
-                }
-            }
-        }
-
-        // Store eigenvectors for band tracking at next k-point
-        prev_eigenvectors = Some(eigenvectors.clone());
-
-        // Store frequencies (ω) for degenerate block disambiguation at next k-point
-        prev_omegas = Some(omegas.clone());
-
-        // Store eigenvalues (ω²) for band-window preconditioner shift at next k-point
-        prev_eigenvalues = Some(diag_result.result.eigenvalues.clone());
-
-        // Update subspace history or warm-start store for next k-point
-        if let Some(ref mut history) = subspace_history {
-            // Update subspace history with converged eigenvectors
-            history.update(k_frac, &eigenvectors);
-        } else {
-            // Simple copy for traditional warm-start
-            warm_start_store.clear();
-            for vec in eigenvectors.iter().take(warm_start_limit) {
-                warm_start_store.push(vec.clone());
-            }
-        }
-
-        // Track if this k-point was Γ for next iteration
-        prev_was_gamma = is_gamma;
-
-        total_iterations += diag_result.result.iterations;
-
-        // Update the diagnostics with k-point info and add to study
-        let mut run_data = diag_result.diagnostics;
-        run_data.config.k_index = Some(k_idx);
-        run_data.config.k_point = Some(k_frac);
-        run_data.config.bloch = Some(bloch);
-        run_data.config.polarization = Some(format!("{:?}", job.pol));
-        run_data.config.preconditioner_type = options.precond_type;
-        run_data.config.warm_start_enabled = warm_start_used;
-        study.add_run(run_data);
-
-        // Store first Γ-point result for potential reuse at end of path
-        if reuse_gamma && k_idx == 0 && is_gamma {
-            first_gamma_omegas = Some(omegas.clone());
-        }
-
-        bands.push(omegas);
-    } // end k-point loop
-
-    // ========================================================================
-    // Finalize
-    // ========================================================================
-
-    let solve_elapsed = solve_start.elapsed().as_secs_f64();
-    let time_per_iter_ms = if total_iterations > 0 {
-        solve_elapsed * 1000.0 / total_iterations as f64
-    } else {
-        0.0
-    };
-
-    info!(
-        "[bandstructure] complete: {} k-points, {} total iterations, {:.2}s ({:.1}ms/iter) (diagnostics recorded)",
-        job.k_path.len(),
-        total_iterations,
-        solve_elapsed,
-        time_per_iter_ms
-    );
-
-    // Build initial result
-    let result = BandStructureResult {
-        k_path: job.k_path.clone(),
-        distances: compute_k_path_distances(&job.k_path),
-        bands,
-    };
-
-    // Rotate output to start from Γ-point (if path was internally rotated)
-    let result = rotate_result_to_gamma(result);
-
+    let mut study = ConvergenceStudy::new(study_name);
+    let result = run_core(backend, job, options, Some(&mut study));
     BandStructureResultWithDiagnostics { result, study }
 }
 

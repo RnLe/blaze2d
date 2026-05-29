@@ -1125,7 +1125,7 @@ mod tests {
     }
 
     fn fs(re: f64, im: f64) -> FieldScalar {
-        FieldScalar::new(re as f32, im as f32)
+        FieldScalar::new(re, im)
     }
 
     #[test]

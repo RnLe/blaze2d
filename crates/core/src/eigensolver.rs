@@ -70,15 +70,11 @@ use nalgebra::{Complex as NaComplex, DMatrix};
 
 use num_complex::Complex64;
 
-#[cfg(feature = "mixed-precision")]
-use num_complex::Complex32;
-
 use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::Field2D;
+use crate::field::{Field2D, Real, cscalar};
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
-use crate::symmetry::SymmetryProjector;
 
 // ============================================================================
 // Progress Reporting
@@ -174,10 +170,6 @@ impl Default for EigensolverConfig {
         // |G|^2 amplification of quantization noise. We relax the default tolerance
         // to 1e-4 to ensure robust convergence. The eigenvalue accuracy (bands)
         // remains high (approx 1e-8) due to the variational principle (error is quadratic).
-        #[cfg(feature = "mixed-precision")]
-        let default_tol = 1e-4;
-
-        #[cfg(not(feature = "mixed-precision"))]
         let default_tol = 1e-6;
 
         Self {
@@ -235,6 +227,18 @@ impl EigensolverConfig {
 /// Determine if we should emit debug logs at this iteration.
 ///
 /// Logging schedule: iterations 1, 2, 3, 4, 5, 10, 20, 50, 100, then every 50.
+/// Promote a backend buffer (storage precision) to a `Vec<Complex<f64>>`
+/// (accumulation precision). The canonical input/output boundary helper for
+/// the eigensolver — internal blocks live at `B::Real`, the public API
+/// always sees f64.
+#[inline]
+fn buffer_to_f64_vec<B: SpectralBackend>(buf: &B::Buffer) -> Vec<Complex64> {
+    buf.as_slice()
+        .iter()
+        .map(|c| Complex64::new(c.re.to_accum(), c.im.to_accum()))
+        .collect()
+}
+
 fn should_log_iteration(iter: usize) -> bool {
     let iter_1based = iter + 1; // Convert 0-based to 1-based
     match iter_1based {
@@ -385,42 +389,6 @@ impl ConvergenceInfo {
 
         self.all_converged = self.n_converged >= self.band_states.len();
     }
-
-    /// Update convergence info based on new residual norms (legacy method).
-    #[allow(dead_code)]
-    pub fn update(&mut self, relative_residuals: &[f64], tol: f64) {
-        self.n_converged = 0;
-        self.max_residual = 0.0;
-
-        for (i, &res) in relative_residuals.iter().enumerate() {
-            if i >= self.band_states.len() {
-                break;
-            }
-            self.relative_residuals[i] = res;
-
-            // Skip locked bands
-            if self.band_states[i] == BandState::Locked {
-                continue;
-            }
-
-            if res < tol {
-                self.band_states[i] = BandState::Converged;
-                self.n_converged += 1;
-            } else {
-                self.band_states[i] = BandState::Active;
-                self.max_residual = self.max_residual.max(res);
-            }
-        }
-
-        // Count previously converged bands
-        self.n_converged = self
-            .band_states
-            .iter()
-            .filter(|&&s| s == BandState::Converged || s == BandState::Locked)
-            .count();
-
-        self.all_converged = self.n_converged >= self.band_states.len();
-    }
 }
 
 /// Result of the eigensolver.
@@ -496,8 +464,6 @@ where
     iteration: usize,
     /// Whether the solver has been initialized.
     initialized: bool,
-    /// Optional symmetry projector to enforce parity constraints.
-    symmetry_projector: Option<SymmetryProjector>,
 }
 
 impl<'a, O, B> Eigensolver<'a, O, B>
@@ -531,21 +497,6 @@ where
             soft_locked: Vec::new(),
             iteration: 0,
             initialized: false,
-            symmetry_projector: None,
-        }
-    }
-
-    /// Set the symmetry projector for this solver.
-    pub fn set_symmetry_projector(&mut self, projector: SymmetryProjector) {
-        self.symmetry_projector = Some(projector);
-    }
-
-    /// Apply symmetry projection to a set of vectors.
-    fn apply_symmetry(&self, vectors: &mut [B::Buffer]) {
-        if let Some(proj) = &self.symmetry_projector {
-            for vector in vectors.iter_mut() {
-                proj.apply(vector);
-            }
         }
     }
 
@@ -623,22 +574,6 @@ where
 
         let (mut x_block, _init_result) =
             initialization::initialize_block(self.operator, &init_config, self.warm_start);
-
-        // Step 2b: Apply symmetry projection to initial block
-        // This ensures the starting subspace respects the desired parity
-        if let Some(proj) = &self.symmetry_projector {
-            let backend = self.operator.backend(); // Create backend reference for B-norm (not used here but keeps scope consistent)
-            let _ = backend; // Suppress unused warning
-            for entry in &mut x_block {
-                // Apply P to x
-                proj.apply(&mut entry.vector);
-
-                // Recompute B*x and A*x since x changed
-                // (Note: initialize_block computed them, but projection invalidates them)
-                self.operator.apply_mass(&entry.vector, &mut entry.mass);
-                self.operator.apply(&entry.vector, &mut entry.applied);
-            }
-        }
 
         // Step 3: Project initial block against Γ mode (if present)
         // We must handle the projection and re-application carefully to avoid borrow conflicts
@@ -1063,85 +998,6 @@ where
         }
     }
 
-    /// Lock converged bands and move them to the deflation subspace (HARD locking).
-    ///
-    /// NOTE: This is the old hard locking approach. Prefer `soft_lock_bands` for
-    /// better numerical stability.
-    ///
-    /// # Arguments
-    /// * `bands_to_lock` - Indices of bands to lock (in the current active block)
-    ///
-    /// # Returns
-    /// The number of bands successfully locked.
-    #[allow(dead_code)]
-    fn lock_converged_bands(&mut self, bands_to_lock: &[usize]) -> usize {
-        if bands_to_lock.is_empty() {
-            return 0;
-        }
-
-        let mut locked_count = 0;
-
-        // Sort in reverse order so we can remove from x_block without index shifting issues
-        let mut sorted_indices: Vec<usize> = bands_to_lock.to_vec();
-        sorted_indices.sort_by(|a, b| b.cmp(a));
-
-        for &band_idx in &sorted_indices {
-            if band_idx >= self.x_block.len() {
-                continue;
-            }
-
-            // Get the band's data
-            let entry = &self.x_block[band_idx];
-            let vector = entry.vector.clone();
-            let mass = entry.mass.clone();
-            let eigenvalue = self.eigenvalues[band_idx];
-
-            // The "global" band index includes previously locked bands
-            let global_band_idx = self.deflation.len() + band_idx;
-
-            // Try to add to deflation subspace
-            let backend = self.operator.backend();
-            let added =
-                self.deflation
-                    .add_vector(backend, &vector, &mass, eigenvalue, global_band_idx);
-
-            if added {
-                locked_count += 1;
-                debug!(
-                    "[deflation] Locked band {} (λ={:.6e}, ω={:.6e})",
-                    global_band_idx + 1,
-                    eigenvalue,
-                    if eigenvalue > 0.0 {
-                        eigenvalue.sqrt()
-                    } else {
-                        0.0
-                    }
-                );
-            }
-        }
-
-        // Now remove the locked bands from x_block and eigenvalues
-        // (sorted_indices is in reverse order, so removal is safe)
-        for &band_idx in &sorted_indices {
-            if band_idx < self.x_block.len() {
-                self.x_block.remove(band_idx);
-                self.eigenvalues.remove(band_idx);
-                // Also remove from soft_locked
-                if band_idx < self.soft_locked.len() {
-                    self.soft_locked.remove(band_idx);
-                }
-            }
-        }
-
-        // Also need to trim W block if it's larger than new X block
-        let new_block_size = self.x_block.len();
-        if self.w_block.len() > new_block_size {
-            self.w_block.truncate(new_block_size);
-        }
-
-        locked_count
-    }
-
     // ========================================================================
     // Search Subspace Construction
     // ========================================================================
@@ -1364,11 +1220,6 @@ where
     /// # Arguments
     /// * `q_block` - The B-orthonormalized subspace basis Q
     /// * `aq_block` - Precomputed A*Q (from `compute_aq_block`)
-    ///
-    /// # GPU Optimization
-    /// When the `cuda` feature is enabled, the inner product computation
-    /// A_s[i,j] = ⟨q_i, A*q_j⟩ is batched using `gram_matrix()`, which maps
-    /// to a single cuBLAS ZGEMM call on GPU: A_s = Q^H × (A*Q).
     fn project_operator_with_aq(
         &self,
         q_block: &[B::Buffer],
@@ -1385,23 +1236,7 @@ where
         // A_s[i,j] = <q_i, A q_j> = q_i^* (A q_j)
         // The matrix is Hermitian, so A_s[j,i] = conj(A_s[i,j])
 
-        #[cfg(feature = "cuda")]
-        let result = {
-            // GPU path: use batched gram_matrix (single ZGEMM call)
-            let backend = self.operator.backend();
-            let a_projected_row_major = backend.gram_matrix(q_block, aq_block);
-
-            // Convert from row-major (gram_matrix output) to column-major (expected by dense solver)
-            let mut a_projected = vec![num_complex::Complex64::ZERO; r * r];
-            for i in 0..r {
-                for j in 0..r {
-                    a_projected[i + j * r] = a_projected_row_major[i * r + j];
-                }
-            }
-            a_projected
-        };
-
-        #[cfg(all(not(feature = "cuda"), feature = "native-linalg"))]
+        #[cfg(feature = "native-linalg")]
         let result = {
             // CPU path with faer: use faer GEMM for matrix multiplication
             // A_s = Q^H * AQ where Q is n×r and AQ is n×r
@@ -1411,13 +1246,13 @@ where
             // Build Q matrix (n × r) from q_block - upcast to f64
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build AQ matrix (n × r) from aq_block - upcast to f64
             let aq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Compute A_s = Q^H * AQ using GEMM
@@ -1434,7 +1269,7 @@ where
             a_projected
         };
 
-        #[cfg(all(not(feature = "cuda"), feature = "wasm-linalg"))]
+        #[cfg(feature = "wasm-linalg")]
         let result = {
             // CPU path with nalgebra: use nalgebra GEMM for matrix multiplication
             // A_s = Q^H * AQ where Q is n×r and AQ is n×r
@@ -1520,35 +1355,7 @@ where
             self.eigenvalues.push(dense_result.eigenvalue(j));
         }
 
-        #[cfg(feature = "cuda")]
-        let new_x_block = {
-            // GPU path: use batched linear_combinations (single ZGEMM call per block)
-            let backend = self.operator.backend();
-            // Build coefficient matrix in column-major order: coeffs[i + j*r] = Y[i,j]
-            let coeffs_x: Vec<num_complex::Complex64> = (0..m)
-                .flat_map(|j| (0..r).map(move |i| dense_result.eigenvector(j)[i]))
-                .collect();
-
-            // Compute X_new = Q × C, BX_new = BQ × C, and AX_new = AQ × C using batched GEMM
-            // Key optimization: AX_new = AQ × C reuses precomputed A*Q, avoiding m operator applications!
-            let mut new_x_vectors = backend.linear_combinations(q_block, &coeffs_x, m);
-            let mut new_bx_vectors = backend.linear_combinations(bq_block, &coeffs_x, m);
-            let mut new_ax_vectors = backend.linear_combinations(aq_block, &coeffs_x, m);
-
-            // Build new block entries (no fresh operator applications needed!)
-            let mut new_x_block: Vec<BlockEntry<B>> = Vec::with_capacity(m);
-            for _j in (0..m).rev() {
-                new_x_block.push(BlockEntry {
-                    vector: new_x_vectors.pop().unwrap(),
-                    mass: new_bx_vectors.pop().unwrap(),
-                    applied: new_ax_vectors.pop().unwrap(),
-                });
-            }
-            new_x_block.reverse();
-            new_x_block
-        };
-
-        #[cfg(all(not(feature = "cuda"), feature = "native-linalg"))]
+        #[cfg(feature = "native-linalg")]
         let new_x_block = {
             // CPU path with faer: use faer GEMM for matrix multiplication
             // X_new = Q * Y, BX_new = BQ * Y, AX_new = AQ * Y where matrices are n×r and Y is r×m
@@ -1557,19 +1364,19 @@ where
             // Build Q matrix (n × r) from q_block - upcast to f64
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build BQ matrix (n × r) from bq_block - upcast to f64
             let bq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = bq_block[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build AQ matrix (n × r) from aq_block (precomputed - this is the optimization!) - upcast to f64
             let aq_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build Y matrix (r × m) from dense_result eigenvectors
@@ -1594,14 +1401,7 @@ where
                     let dst = x_j.as_mut_slice();
                     for row in 0..n {
                         let c = x_new.get(row, j);
-                        #[cfg(not(feature = "mixed-precision"))]
-                        {
-                            dst[row] = Complex64::new(c.re, c.im);
-                        }
-                        #[cfg(feature = "mixed-precision")]
-                        {
-                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
-                        }
+                        dst[row] = cscalar(c.re, c.im);
                     }
                 }
 
@@ -1611,14 +1411,7 @@ where
                     let dst = bx_j.as_mut_slice();
                     for row in 0..n {
                         let c = bx_new.get(row, j);
-                        #[cfg(not(feature = "mixed-precision"))]
-                        {
-                            dst[row] = Complex64::new(c.re, c.im);
-                        }
-                        #[cfg(feature = "mixed-precision")]
-                        {
-                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
-                        }
+                        dst[row] = cscalar(c.re, c.im);
                     }
                 }
 
@@ -1628,14 +1421,7 @@ where
                     let dst = ax_j.as_mut_slice();
                     for row in 0..n {
                         let c = ax_new.get(row, j);
-                        #[cfg(not(feature = "mixed-precision"))]
-                        {
-                            dst[row] = Complex64::new(c.re, c.im);
-                        }
-                        #[cfg(feature = "mixed-precision")]
-                        {
-                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
-                        }
+                        dst[row] = cscalar(c.re, c.im);
                     }
                 }
 
@@ -1648,7 +1434,7 @@ where
             new_x_block
         };
 
-        #[cfg(all(not(feature = "cuda"), feature = "wasm-linalg"))]
+        #[cfg(feature = "wasm-linalg")]
         let new_x_block = {
             // CPU path with nalgebra: use nalgebra GEMM for matrix multiplication
             // X_new = Q * Y, BX_new = BQ * Y, AX_new = AQ * Y where matrices are n×r and Y is r×m
@@ -1694,14 +1480,7 @@ where
                     let dst = x_j.as_mut_slice();
                     for row in 0..n {
                         let c = x_new[(row, j)];
-                        #[cfg(not(feature = "mixed-precision"))]
-                        {
-                            dst[row] = Complex64::new(c.re, c.im);
-                        }
-                        #[cfg(feature = "mixed-precision")]
-                        {
-                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
-                        }
+                        dst[row] = cscalar(c.re, c.im);
                     }
                 }
 
@@ -1711,14 +1490,7 @@ where
                     let dst = bx_j.as_mut_slice();
                     for row in 0..n {
                         let c = bx_new[(row, j)];
-                        #[cfg(not(feature = "mixed-precision"))]
-                        {
-                            dst[row] = Complex64::new(c.re, c.im);
-                        }
-                        #[cfg(feature = "mixed-precision")]
-                        {
-                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
-                        }
+                        dst[row] = cscalar(c.re, c.im);
                     }
                 }
 
@@ -1728,14 +1500,7 @@ where
                     let dst = ax_j.as_mut_slice();
                     for row in 0..n {
                         let c = ax_new[(row, j)];
-                        #[cfg(not(feature = "mixed-precision"))]
-                        {
-                            dst[row] = Complex64::new(c.re, c.im);
-                        }
-                        #[cfg(feature = "mixed-precision")]
-                        {
-                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
-                        }
+                        dst[row] = cscalar(c.re, c.im);
                     }
                 }
 
@@ -1791,21 +1556,7 @@ where
             return;
         }
 
-        #[cfg(feature = "cuda")]
-        {
-            // GPU path: use batched linear_combinations (single ZGEMM call)
-            let backend = self.operator.backend();
-
-            // Build coefficient matrix in column-major order: coeffs[i + j*r] = Y[i, m+j]
-            let coeffs_w: Vec<num_complex::Complex64> = (w_start..w_end)
-                .flat_map(|j| (0..r).map(move |i| dense_result.eigenvector(j)[i]))
-                .collect();
-
-            // Compute W_new = Q × C using batched GEMM
-            self.w_block = backend.linear_combinations(q_block, &coeffs_w, n_w);
-        }
-
-        #[cfg(all(not(feature = "cuda"), feature = "native-linalg"))]
+        #[cfg(feature = "native-linalg")]
         {
             // CPU path with faer: use faer GEMM for matrix multiplication
             // W_new = Q * Y_w where Q is n×r and Y_w is r×n_w
@@ -1814,7 +1565,7 @@ where
             // Build Q matrix (n × r) from q_block - upcast to f64
             let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build Y_w matrix (r × n_w) from dense_result eigenvectors (columns w_start..w_end)
@@ -1833,21 +1584,14 @@ where
                 let dst = w.as_mut_slice();
                 for row in 0..n {
                     let c = w_new.get(row, j);
-                    #[cfg(not(feature = "mixed-precision"))]
-                    {
-                        dst[row] = Complex64::new(c.re, c.im);
-                    }
-                    #[cfg(feature = "mixed-precision")]
-                    {
-                        dst[row] = Complex32::new(c.re as f32, c.im as f32);
-                    }
+                    dst[row] = cscalar(c.re, c.im);
                 }
                 new_w_block.push(w);
             }
             self.w_block = new_w_block;
         }
 
-        #[cfg(all(not(feature = "cuda"), feature = "wasm-linalg"))]
+        #[cfg(feature = "wasm-linalg")]
         {
             // CPU path with nalgebra: use nalgebra GEMM for matrix multiplication
             // W_new = Q * Y_w where Q is n×r and Y_w is r×n_w
@@ -1875,13 +1619,8 @@ where
                 let dst = w.as_mut_slice();
                 for row in 0..n {
                     let c = w_new[(row, j)];
-                    #[cfg(not(feature = "mixed-precision"))]
                     {
                         dst[row] = Complex64::new(c.re, c.im);
-                    }
-                    #[cfg(feature = "mixed-precision")]
-                    {
-                        dst[row] = Complex32::new(c.re as f32, c.im as f32);
                     }
                 }
                 new_w_block.push(w);
@@ -1972,7 +1711,6 @@ where
             // ================================================================
             self.apply_deflation(&mut residuals);
             self.apply_soft_deflation(&mut residuals);
-            self.apply_symmetry(&mut residuals);
 
             // ================================================================
             // Step 3: Compute B-norms of deflated residuals (LAZY)
@@ -2130,7 +1868,6 @@ where
             // ================================================================
             self.apply_deflation(&mut p_block);
             self.apply_soft_deflation(&mut p_block);
-            self.apply_symmetry(&mut p_block);
 
             // ================================================================
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
@@ -2254,12 +1991,6 @@ where
             // Step 13: Compute new history directions W_{k+1} = Q_k * Y_2
             // ================================================================
             self.update_history_directions(&q_block, &dense_result);
-            // Apply symmetry to W block (manually to avoid borrow checker issues with self)
-            if let Some(proj) = &self.symmetry_projector {
-                for vector in self.w_block.iter_mut() {
-                    proj.apply(vector);
-                }
-            }
 
             // ================================================================
             // Debug logging at selected iterations
@@ -2636,9 +2367,11 @@ where
         all
     }
 
-    /// Get the current eigenvector approximations as Field2D.
+    /// Get the current eigenvector approximations as f64 fields (boundary precision).
     ///
-    /// This extracts the vector component from each BlockEntry.
+    /// This extracts the vector component from each BlockEntry. Internal storage
+    /// precision (`B::Real`) is promoted to `f64` at this boundary so downstream
+    /// code (band tracking, subspace prediction, Python bindings) is precision-agnostic.
     /// **Note**: This does NOT include locked (deflated) eigenvectors.
     /// Use [`all_eigenvectors`] to get both locked and active vectors.
     pub fn eigenvectors(&self) -> Vec<Field2D> {
@@ -2647,19 +2380,20 @@ where
             .take(self.config.n_bands)
             .map(|entry| {
                 let grid = entry.vector.grid();
-                Field2D::from_vec(grid, entry.vector.as_slice().to_vec())
+                Field2D::from_vec(grid, buffer_to_f64_vec::<B>(&entry.vector))
             })
             .collect()
     }
 
-    /// Get all eigenvectors (locked + active) as Field2D, sorted by eigenvalue.
+    /// Get all eigenvectors (locked + active) as f64 fields, sorted by eigenvalue.
     ///
     /// This returns the complete set of eigenvectors including:
     /// - Locked (deflated) vectors (e.g., Γ constant mode with ω=0)
     /// - Active vectors from the current iteration
     ///
     /// The vectors are returned in the same order as [`collect_all_eigenvalues`],
-    /// sorted by eigenvalue from smallest to largest.
+    /// sorted by eigenvalue from smallest to largest. Promoted to f64 at the
+    /// boundary regardless of internal storage precision.
     pub fn all_eigenvectors(&self) -> Vec<Field2D> {
         let grid = self.operator.grid();
 
@@ -2674,13 +2408,13 @@ where
             .iter()
             .zip(self.deflation.vectors().iter())
         {
-            let field = Field2D::from_vec(grid, vector.as_slice().to_vec());
+            let field = Field2D::from_vec(grid, buffer_to_f64_vec::<B>(vector));
             all_pairs.push((*eigenvalue, field));
         }
 
         // Add active vectors
         for (eigenvalue, entry) in self.eigenvalues.iter().zip(self.x_block.iter()) {
-            let field = Field2D::from_vec(grid, entry.vector.as_slice().to_vec());
+            let field = Field2D::from_vec(grid, buffer_to_f64_vec::<B>(&entry.vector));
             all_pairs.push((*eigenvalue, field));
         }
 

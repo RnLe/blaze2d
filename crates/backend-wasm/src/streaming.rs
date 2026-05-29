@@ -57,10 +57,10 @@ use blaze2d_bulk_driver_core::{
     config::{BulkConfig, SolverType},
     expansion::{ExpandedJob, ExpandedJobType, expand_jobs},
     filter::SelectiveFilter,
-    result::{CompactBandResult, CompactResultType, EAResult, MaxwellResult},
+    result::{CompactBandResult, CompactResultType, MaxwellResult},
 };
 
-use blaze2d_core::drivers::bandstructure::{self, Verbosity};
+use blaze2d_core::drivers::bandstructure::{self, RunOptions};
 
 use blaze2d_backend_cpu::CpuBackend;
 
@@ -141,9 +141,10 @@ fn result_to_js(result: &CompactBandResult) -> Result<JsValue, JsValue> {
             Reflect::set(&obj, &"result_type".into(), &JsValue::from_str("maxwell"))?;
             set_maxwell_fields(&obj, maxwell)?;
         }
-        CompactResultType::EA(ea) => {
-            Reflect::set(&obj, &"result_type".into(), &JsValue::from_str("ea"))?;
-            set_ea_fields(&obj, ea)?;
+        CompactResultType::OperatorData(_) => {
+            return Err(JsValue::from_str(
+                "operator-data extraction results are not yet exposed to WASM",
+            ));
         }
     }
 
@@ -190,58 +191,6 @@ fn set_maxwell_fields(obj: &Object, maxwell: &MaxwellResult) -> Result<(), JsVal
         obj,
         &"num_bands".into(),
         &JsValue::from(maxwell.bands.first().map(|b| b.len()).unwrap_or(0) as u32),
-    )?;
-
-    Ok(())
-}
-
-/// Set EA-specific fields on a JS object.
-fn set_ea_fields(obj: &Object, ea: &EAResult) -> Result<(), JsValue> {
-    // Eigenvalues
-    let eigenvalues = Array::new();
-    for ev in &ea.eigenvalues {
-        eigenvalues.push(&JsValue::from(*ev));
-    }
-    Reflect::set(obj, &"eigenvalues".into(), &eigenvalues)?;
-
-    // Eigenvectors as 3D array: [band_index][grid_index][re, im]
-    let eigenvectors = Array::new();
-    for evec in &ea.eigenvectors {
-        let vec_arr = Array::new();
-        for &[re, im] in evec {
-            let complex = Array::new();
-            complex.push(&JsValue::from(re));
-            complex.push(&JsValue::from(im));
-            vec_arr.push(&complex);
-        }
-        eigenvectors.push(&vec_arr);
-    }
-    Reflect::set(obj, &"eigenvectors".into(), &eigenvectors)?;
-
-    // Grid dimensions for reconstructing 2D structure
-    let grid_dims = Array::new();
-    grid_dims.push(&JsValue::from(ea.grid_dims[0] as u32));
-    grid_dims.push(&JsValue::from(ea.grid_dims[1] as u32));
-    Reflect::set(obj, &"grid_dims".into(), &grid_dims)?;
-
-    // Solver info
-    Reflect::set(
-        obj,
-        &"n_iterations".into(),
-        &JsValue::from(ea.n_iterations as u32),
-    )?;
-    Reflect::set(obj, &"converged".into(), &JsValue::from(ea.converged))?;
-
-    // Convenience properties
-    Reflect::set(
-        obj,
-        &"num_eigenvalues".into(),
-        &JsValue::from(ea.eigenvalues.len() as u32),
-    )?;
-    Reflect::set(
-        obj,
-        &"num_bands".into(),
-        &JsValue::from(ea.eigenvalues.len() as u32),
     )?;
 
     Ok(())
@@ -294,9 +243,9 @@ fn run_maxwell_job(
     params: &blaze2d_bulk_driver_core::expansion::JobParams,
     job_index: usize,
 ) -> Result<CompactBandResult, String> {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
 
-    let band_result = bandstructure::run(backend, job, Verbosity::Quiet);
+    let band_result = bandstructure::run_with_options(backend, job, RunOptions::default());
 
     // Normalize frequencies (divide by 2π)
     let bands: Vec<Vec<f64>> = band_result
@@ -330,7 +279,7 @@ fn run_maxwell_job_with_k_streaming(
 ) -> Result<CompactBandResult, String> {
     use blaze2d_core::drivers::bandstructure::{KPointResult, RunOptions, run_with_k_streaming};
 
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
 
     // Clone params for use in closure
     let params_clone = params.clone();
@@ -341,7 +290,6 @@ fn run_maxwell_job_with_k_streaming(
     let band_result = run_with_k_streaming(
         backend,
         job,
-        Verbosity::Quiet,
         RunOptions::default(),
         |k_result: KPointResult| {
             // Convert KPointResult to JS object and emit
@@ -466,16 +414,6 @@ fn k_result_to_js(
     Ok(obj.into())
 }
 
-/// Run a single EA job and convert to CompactBandResult.
-fn run_ea_job(
-    _job: &blaze2d_bulk_driver_core::expansion::EAJobSpec,
-    _params: &blaze2d_bulk_driver_core::expansion::JobParams,
-    _job_index: usize,
-) -> Result<CompactBandResult, String> {
-    // EA solver implementation - placeholder for now
-    Err("EA solver not yet implemented in WASM backend".to_string())
-}
-
 // ============================================================================
 // WASM Bulk Driver
 // ============================================================================
@@ -516,19 +454,19 @@ impl WasmBulkDriver {
         self.jobs.len()
     }
 
-    /// Get the solver type ("maxwell" or "ea").
+    /// Get the solver type ("maxwell" or "ea_hamiltonian").
     #[wasm_bindgen(getter, js_name = "solverType")]
     pub fn solver_type(&self) -> String {
         match self.config.solver.solver_type {
             SolverType::Maxwell => "maxwell".to_string(),
-            SolverType::EA => "ea".to_string(),
+            SolverType::OperatorData => "ea_hamiltonian".to_string(),
         }
     }
 
-    /// Check if this is an EA solver.
+    /// Check if this is an operator-data extraction solver.
     #[wasm_bindgen(getter, js_name = "isEA")]
     pub fn is_ea(&self) -> bool {
-        matches!(self.config.solver.solver_type, SolverType::EA)
+        matches!(self.config.solver.solver_type, SolverType::OperatorData)
     }
 
     /// Check if this is a Maxwell solver.
@@ -846,7 +784,7 @@ impl WasmBulkDriver {
             ExpandedJobType::Maxwell(maxwell_job) => {
                 run_maxwell_job(maxwell_job, &job.params, job.index)
             }
-            ExpandedJobType::EA(ea_job) => run_ea_job(ea_job, &job.params, job.index),
+            _ => Err("Job type not supported on wasm backend".to_string()),
         }
     }
 
@@ -860,10 +798,7 @@ impl WasmBulkDriver {
             ExpandedJobType::Maxwell(maxwell_job) => {
                 run_maxwell_job_with_k_streaming(maxwell_job, &job.params, job.index, callback)
             }
-            ExpandedJobType::EA(_ea_job) => {
-                // EA doesn't have k-points, so k-streaming doesn't apply
-                Err("K-point streaming is not supported for EA solver".to_string())
-            }
+            _ => Err("Job type not supported on wasm backend".to_string()),
         }
     }
 }

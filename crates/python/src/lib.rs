@@ -27,20 +27,23 @@
 //! ```
 
 #[cfg(feature = "bindings")]
+mod operator_data;
+#[cfg(feature = "bindings")]
 mod streaming;
 
 #[cfg(feature = "bindings")]
 mod py {
     use pyo3::prelude::*;
 
+    use crate::operator_data;
     use crate::streaming;
 
-    /// BLAZE Python module.
+    /// BLAZE native Rust module (imported as blaze._native).
     ///
     /// Provides access to the high-performance 2D photonic crystal band structure
     /// solver with streaming support for real-time analysis.
-    #[pymodule]
-    fn blaze(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    #[pymodule(name = "_native")]
+    fn blaze_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
         // Module documentation
         m.add(
             "__doc__",
@@ -50,6 +53,9 @@ mod py {
 
         // Register streaming classes
         streaming::register_streaming(m)?;
+
+        // Register EA extraction classes
+        operator_data::register_operator_data(m)?;
 
         Ok(())
     }

@@ -17,7 +17,7 @@ use thiserror::Error;
 
 // Re-export result types from core
 pub use blaze2d_bulk_driver_core::result::{
-    CompactBandResult, CompactResultType, EAResult, MaxwellResult,
+    CompactBandResult, CompactResultType, OperatorDataResult, MaxwellResult,
 };
 
 // Import expansion types for from_job_result
@@ -56,26 +56,44 @@ impl CompactBandResultExt for CompactBandResult {
                     bands,
                 })
             }
-            crate::driver::JobResultType::EA(ea_result) => {
-                // Convert eigenvectors from Field2D to serializable format
-                let eigenvectors: Vec<Vec<[f64; 2]>> = ea_result
-                    .eigenvectors
-                    .iter()
-                    .map(|field| {
-                        field
-                            .as_slice()
-                            .iter()
-                            .map(|c| [c.re as f64, c.im as f64])
-                            .collect()
-                    })
-                    .collect();
-
-                CompactResultType::EA(EAResult {
-                    eigenvalues: ea_result.eigenvalues.clone(),
-                    eigenvectors,
-                    grid_dims: ea_result.grid_dims,
-                    n_iterations: ea_result.n_iterations,
-                    converged: ea_result.converged,
+            crate::driver::JobResultType::OperatorData(ea_ham) => {
+                let ing = &ea_ham.ingredients;
+                let c2p = |v: &[blaze2d_core::field::AccumScalar]| -> Vec<[f64; 2]> {
+                    v.iter().map(|c| [c.re, c.im]).collect()
+                };
+                CompactResultType::OperatorData(OperatorDataResult {
+                    k0: ing.k0,
+                    registry: ing.registry,
+                    n_retained: ing.n_retained,
+                    n_remote: ing.n_remote,
+                    grid_dims: ing.grid_dims,
+                    eigenvalues: ing.eigenvalues.clone(),
+                    velocity_matrices: [
+                        c2p(&ing.velocity_matrices[0]),
+                        c2p(&ing.velocity_matrices[1]),
+                    ],
+                    w_matrices: [
+                        [c2p(&ing.w_matrices[0][0]), c2p(&ing.w_matrices[0][1])],
+                        [c2p(&ing.w_matrices[1][0]), c2p(&ing.w_matrices[1][1])],
+                    ],
+                    mass_tensor_inv: [
+                        [c2p(&ing.mass_tensor_inv[0][0]), c2p(&ing.mass_tensor_inv[0][1])],
+                        [c2p(&ing.mass_tensor_inv[1][0]), c2p(&ing.mass_tensor_inv[1][1])],
+                    ],
+                    r_derivative_matrices: ing.r_derivative_matrices.as_ref().map(|m| {
+                        [c2p(&m[0]), c2p(&m[1])]
+                    }),
+                    metric_derivative_matrices: ing.metric_derivative_matrices.as_ref().map(|m| {
+                        [c2p(&m[0]), c2p(&m[1])]
+                    }),
+                    berry_connection_matrices: ing.berry_connection_matrices.as_ref().map(|m| {
+                        [c2p(&m[0]), c2p(&m[1])]
+                    }),
+                    born_huang: ing.born_huang.as_ref().map(|v| c2p(v)),
+                    overlap_matrix: ing.overlap_matrix.as_ref().map(|v| c2p(v)),
+                    n_iterations: ing.n_iterations,
+                    converged: ing.converged,
+                    polarization: format!("{:?}", ing.polarization),
                 })
             }
         };

@@ -526,14 +526,15 @@ pub fn compute_smoothed_dielectric(
     //      = inv_tangential * I + (inv_normal - inv_tangential) * P
     let delta = inv_normal - inv_tangential;
 
-    // NOTE: MPB uses a swapped xx↔yy convention in its HDF5 output.
-    // After extensive comparison with MPB's epsilon.h5, swapping xx↔yy
-    // reduces TE eigenvalue trace error from ~0.08 to ~0.04 (50% improvement).
+    // The operator uses the grad-div formulation: -∇·(η∇H).
+    // The smoothing formula gives η in the curl-curl convention.
+    // Converting: η^grad = R^T η^curl R, where R is 90° rotation.
+    // This swaps xx↔yy AND negates the off-diagonal elements.
     let tensor = [
-        inv_tangential + delta * p_yy, // xx (swapped to match MPB convention)
-        delta * p_xy,                  // xy
-        delta * p_xy,                  // yx
-        inv_tangential + delta * p_xx, // yy (swapped to match MPB convention)
+        inv_tangential + delta * p_yy, // η^grad_xx = η^curl_yy
+        -delta * p_xy,                 // η^grad_xy = -η^curl_xy
+        -delta * p_xy,                 // η^grad_yx = -η^curl_yx
+        inv_tangential + delta * p_xx, // η^grad_yy = η^curl_xx
     ];
 
     (avg_eps, avg_inv_eps, tensor)

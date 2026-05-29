@@ -76,7 +76,7 @@ values = ["TM", "TE"]
 |------|------|-------------|
 | `stream_config.toml` | 5 | Streaming mode with selective output |
 | `two_atom_sweep.toml` | 243 | **Complete tutorial** - 2-atom basis with r, ε sweeps |
-| `ea_config.toml` | 1 | EA solver for moiré lattices |
+| `operator_data_config.toml` | 1 | EA solver for moiré lattices |
 
 ## Lattice Conventions
 

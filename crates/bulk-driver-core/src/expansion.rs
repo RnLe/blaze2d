@@ -31,13 +31,12 @@
 //! # Solver Types
 //!
 //! - **Maxwell**: Expands over eps_bg, resolution, polarization, lattice_type, atoms.
-//! - **EA**: Currently produces a single job (parameter sweeps TBD).
+//! - **OperatorData**: Operator-data extraction — currently a single job (k₀, registry).
 
 use std::collections::HashMap;
 
 use blaze2d_core::{
     bandstructure::BandStructureJob,
-    drivers::single_solve::SingleSolveJob,
     geometry::{BasisAtom, Geometry2D},
     grid::Grid2D,
     lattice::Lattice2D,
@@ -78,14 +77,6 @@ impl ExpandedJob {
             _ => None,
         }
     }
-
-    /// Get the EA job spec, if this is an EA job type.
-    pub fn ea_job(&self) -> Option<&EAJobSpec> {
-        match &self.job_type {
-            ExpandedJobType::EA(spec) => Some(spec),
-            _ => None,
-        }
-    }
 }
 
 /// Type of job to execute.
@@ -93,26 +84,46 @@ impl ExpandedJob {
 pub enum ExpandedJobType {
     /// Maxwell band structure job (photonic crystals)
     Maxwell(BandStructureJob),
-    /// EA single-solve job (moiré lattices)
-    EA(EAJobSpec),
+    /// Operator-data extraction job (Maxwell → multi-band ingredients)
+    OperatorData(OperatorDataJobSpec),
 }
 
-/// EA job specification (input data configuration).
+/// EA Hamiltonian extraction job specification.
 ///
-/// Unlike Maxwell jobs which have all parameters resolved, EA jobs
-/// refer to input files that are read at execution time.
+/// Defines everything needed to run the Maxwell eigenproblem at one (R, k₀) point
+/// and extract the multi-band EA Hamiltonian ingredients.
 #[derive(Debug, Clone)]
-pub struct EAJobSpec {
-    /// Grid dimensions
+pub struct OperatorDataJobSpec {
+    /// The 2D photonic crystal geometry (atoms at the registry position).
+    pub geom: Geometry2D,
+    /// Computational grid.
     pub grid: Grid2D,
-    /// SingleSolveJob configuration (n_bands, tolerance, etc.)
-    pub solve_config: SingleSolveJob,
-    /// EA-specific parameters from config
-    pub eta: f64,
-    pub domain_size: [f64; 2],
-    pub potential_path: std::path::PathBuf,
-    pub mass_inv_path: std::path::PathBuf,
-    pub vg_path: Option<std::path::PathBuf>,
+    /// Polarization mode.
+    pub pol: Polarization,
+    /// Carrier momentum k₀ in Cartesian reciprocal-space units.
+    pub k0: [f64; 2],
+    /// Registry point metadata (fractional coordinates).
+    pub registry: [f64; 2],
+    /// Number of retained bands.
+    pub n_retained: usize,
+    /// Number of remote bands.
+    pub n_remote: usize,
+    /// Whether to compute mass tensor.
+    pub compute_mass_tensor: bool,
+    /// Whether to compute Born–Huang potential.
+    pub compute_born_huang: bool,
+    /// Whether to compute the slow-coefficient potential.
+    pub compute_slow_coefficient: bool,
+    /// Whether to compute dielectric derivatives.
+    pub compute_r_derivatives: bool,
+    /// Atom index for R-derivatives.
+    pub atom_index: usize,
+    /// Finite-difference step.
+    pub fd_step: f64,
+    /// Eigensolver tolerance.
+    pub tolerance: f64,
+    /// Maximum eigensolver iterations.
+    pub max_iterations: usize,
 }
 
 /// Concrete parameter values for a job.
@@ -215,7 +226,7 @@ impl JobParams {
 ///
 /// - **New format** (`[[sweeps]]`): Uses `expand_ordered_jobs` for user-defined loop order
 /// - **Legacy format** (`[ranges]`): Uses `expand_maxwell_jobs` with hardcoded order
-/// - **EA solver**: Uses `expand_ea_jobs` (single job for now)
+/// - **OperatorData solver**: Single job per (R, k₀) point.
 pub fn expand_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
     match config.solver_type() {
         SolverType::Maxwell => {
@@ -225,7 +236,7 @@ pub fn expand_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
                 expand_maxwell_jobs_legacy(config)
             }
         }
-        SolverType::EA => expand_ea_jobs(config),
+        SolverType::OperatorData => expand_operator_data_jobs(config),
     }
 }
 
@@ -595,32 +606,59 @@ fn expand_maxwell_jobs_legacy(config: &BulkConfig) -> Vec<ExpandedJob> {
     jobs
 }
 
-/// Expand EA solver jobs.
-///
-/// Currently produces a single job since EA doesn't have parameter sweeps yet.
-fn expand_ea_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
-    let ea = &config.ea;
+/// Expand operator-data extraction jobs.
+fn expand_operator_data_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
+    let ea_ham = &config.operator_data;
+    let geometry_config = config.geometry.as_ref().expect(
+        "geometry section required for ea_hamiltonian solver",
+    );
 
-    // Build SingleSolveJob from eigensolver config
-    let solve_config = SingleSolveJob::new(config.eigensolver.n_bands)
-        .with_tolerance(config.eigensolver.tol)
-        .with_max_iterations(config.eigensolver.max_iter);
+    let lattice = build_lattice(&geometry_config.lattice, None);
+    let basis_atoms: Vec<BasisAtom> = geometry_config
+        .atoms
+        .iter()
+        .map(|a| BasisAtom {
+            pos: a.pos,
+            radius: a.radius,
+            eps_inside: a.eps_inside,
+        })
+        .collect();
 
-    let job_spec = EAJobSpec {
-        grid: config.grid.clone(),
-        solve_config,
-        eta: ea.eta,
-        domain_size: ea.domain_size,
-        potential_path: ea.potential.clone().expect("potential path required"),
-        mass_inv_path: ea.mass_inv.clone().expect("mass_inv path required"),
-        vg_path: ea.vg.clone(),
+    let geom = Geometry2D {
+        lattice,
+        eps_bg: geometry_config.eps_bg,
+        atoms: basis_atoms,
     };
 
-    // EA parameters for output labeling
+    let grid = Grid2D::new(config.grid.nx, config.grid.ny, config.grid.lx, config.grid.ly);
+
+    let pol = config
+        .defaults
+        .polarization
+        .unwrap_or(Polarization::TE);
+
+    let job_spec = OperatorDataJobSpec {
+        geom,
+        grid,
+        pol,
+        k0: ea_ham.k0,
+        registry: [0.0, 0.0], // single job at origin
+        n_retained: ea_ham.n_retained,
+        n_remote: ea_ham.n_remote,
+        compute_mass_tensor: ea_ham.compute_mass_tensor,
+        compute_born_huang: ea_ham.compute_born_huang,
+        compute_slow_coefficient: ea_ham.compute_slow_coefficient,
+        compute_r_derivatives: ea_ham.compute_r_derivatives,
+        atom_index: ea_ham.atom_index,
+        fd_step: ea_ham.fd_step,
+        tolerance: config.eigensolver.tol,
+        max_iterations: config.eigensolver.max_iter,
+    };
+
     let params = JobParams {
-        eps_bg: 0.0, // Not used for EA
+        eps_bg: geometry_config.eps_bg,
         resolution: config.grid.nx,
-        polarization: Polarization::TM, // Not used for EA
+        polarization: pol,
         lattice_type: None,
         atoms: vec![],
         sweep_values: vec![],
@@ -628,7 +666,7 @@ fn expand_ea_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
 
     vec![ExpandedJob {
         index: 0,
-        job_type: ExpandedJobType::EA(job_spec),
+        job_type: ExpandedJobType::OperatorData(job_spec),
         params,
     }]
 }
@@ -840,8 +878,8 @@ fn build_lattice(
 mod tests {
     use super::*;
     use crate::config::{
-        BaseGeometry, BulkSection, DefaultsConfig, EAConfig, OutputConfig, ParameterRange,
-        RangeSpec, SolverSection, SweepSpec,
+        BaseGeometry, BulkSection, DefaultsConfig, OperatorDataDriverConfig,
+        OutputConfig, ParameterRange, RangeSpec, SolverSection, SweepSpec,
     };
     use blaze2d_core::{
         dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec,
@@ -851,7 +889,7 @@ mod tests {
         BulkConfig {
             bulk: BulkSection::default(),
             solver: SolverSection::default(),
-            ea: EAConfig::default(),
+            operator_data: OperatorDataDriverConfig::default(),
             sweeps: vec![],
             defaults: DefaultsConfig::default(),
             geometry: Some(BaseGeometry {
@@ -1024,53 +1062,5 @@ mod tests {
         };
 
         assert_eq!(params.sweep_order_string(), "atom0.radius=0.3|eps_bg=12");
-    }
-
-    #[test]
-    fn expand_ea_single_job() {
-        use std::path::PathBuf;
-
-        let config = BulkConfig {
-            bulk: BulkSection::default(),
-            solver: SolverSection {
-                solver_type: SolverType::EA,
-            },
-            ea: EAConfig {
-                potential: Some(PathBuf::from("test_V.bin")),
-                mass_inv: Some(PathBuf::from("test_M.bin")),
-                vg: None,
-                eta: 0.5,
-                domain_size: [10.0, 10.0],
-                periodic: true,
-            },
-            sweeps: vec![],
-            defaults: DefaultsConfig::default(),
-            geometry: None,
-            grid: Grid2D::new(64, 64, 10.0, 10.0),
-            polarization: Polarization::TM,
-            path: None,
-            k_path: vec![],
-            eigensolver: EigensolverConfig {
-                n_bands: 8,
-                tol: 1e-8,
-                max_iter: 200,
-                ..Default::default()
-            },
-            dielectric: DielectricOptions::default(),
-            ranges: ParameterRange::default(),
-            output: OutputConfig::default(),
-        };
-
-        let jobs = expand_jobs(&config);
-        assert_eq!(jobs.len(), 1);
-
-        match &jobs[0].job_type {
-            ExpandedJobType::EA(spec) => {
-                assert_eq!(spec.eta, 0.5);
-                assert_eq!(spec.domain_size, [10.0, 10.0]);
-                assert_eq!(spec.solve_config.n_bands, 8);
-            }
-            _ => panic!("expected EA job type"),
-        }
     }
 }

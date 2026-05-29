@@ -20,9 +20,7 @@ Output: results/series5_memory/
 """
 
 import subprocess
-import time
 import os
-import sys
 import json
 import argparse
 import tempfile
@@ -30,7 +28,7 @@ import re
 import statistics
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from dataclasses import dataclass, field, asdict
 
 # ============================================================================
@@ -308,11 +306,14 @@ def run_blaze_memory_test(
         env = os.environ.copy()
         env.update(SINGLE_CORE_ENV)
         
-        # Run with /usr/bin/time -v to measure memory
+        # Run with /usr/bin/time -v to measure memory.
+        # --precision f32 = mixed precision (f32 storage); the memory-halving
+        # advantage in this series depends on single-precision field storage.
         result = subprocess.run(
-            ["/usr/bin/time", "-v", str(blaze_cli), 
+            ["/usr/bin/time", "-v", str(blaze_cli),
              "--config", str(config_path),
-             "--output", output_path],
+             "--output", output_path,
+             "--precision", "f32"],
             capture_output=True,
             text=True,
             timeout=600,
@@ -458,7 +459,7 @@ def run_series(output_dir: Path, num_runs: int = DEFAULT_NUM_RUNS):
     print("=" * 70)
     print(f"Config: Square lattice, ε={EPSILON} rods, r={RADIUS}a")
     print(f"Runs per config: {num_runs}")
-    print(f"Single-core mode: OMP_NUM_THREADS=1")
+    print("Single-core mode: OMP_NUM_THREADS=1")
     print(f"MPB tolerance: {MPB_TOLERANCE} (f64)")
     print(f"Blaze tolerance: {BLAZE_TOLERANCE} (mixed-precision f32)")
     print("=" * 70)

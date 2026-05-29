@@ -23,23 +23,23 @@
   },
   "blaze": {
     "config_a_tm": {
-      "mean_ms": 421.0014902004332,
-      "std_ms": 1.9722826000361238,
+      "mean_ms": 451.4277842004958,
+      "std_ms": 13.457583200215595,
       "description": "Square lattice, air bg, ε=8.9 rods, r=0.2a"
     },
     "config_a_te": {
-      "mean_ms": 579.6996939003293,
-      "std_ms": 0.2382565005973447,
+      "mean_ms": 622.1424957999261,
+      "std_ms": 6.430203000491019,
       "description": "Square lattice, air bg, ε=8.9 rods, r=0.2a"
     },
     "config_b_tm": {
-      "mean_ms": 405.17768310019164,
-      "std_ms": 0.8430036999925505,
+      "mean_ms": 454.37938289978774,
+      "std_ms": 20.670006900036242,
       "description": "Hex lattice, ε=13 bg, air rods, r=0.48a"
     },
     "config_b_te": {
-      "mean_ms": 558.7017017001926,
-      "std_ms": 0.2350187009142246,
+      "mean_ms": 613.8365257997066,
+      "std_ms": 28.801914599898737,
       "description": "Hex lattice, ε=13 bg, air rods, r=0.48a"
     }
   },
@@ -66,9 +66,9 @@
     }
   },
   "metadata": {
-    "timestamp": "2026-01-07T19:59:30.379942",
+    "timestamp": "2026-01-09T01:20:16.529122",
     "source": "static",
-    "hoistedAt": "2026-01-08T21:01:47.248Z",
+    "hoistedAt": "2026-05-29T12:11:23.963Z",
     "blazeFile": "blaze2d_speed_single_results.json",
     "blazeFullFile": "blaze2d_speed_single_full_results.json",
     "mpbFile": "mpb_speed_single_results.json",

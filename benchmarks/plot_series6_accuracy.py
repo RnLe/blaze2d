@@ -13,11 +13,10 @@ Output: results/series6_accuracy/plots/
 import json
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.ticker import AutoMinorLocator
 
 # ============================================================================
 # Style Configuration
@@ -455,7 +454,7 @@ def generate_all_plots(results_path: Path, output_dir: Path):
     results = load_results(results_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"\nGenerating Series 6 Accuracy Plots...")
+    print("\nGenerating Series 6 Accuracy Plots...")
     print(f"Output directory: {output_dir}")
     print("-" * 50)
     

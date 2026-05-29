@@ -17,11 +17,9 @@ Output:
 import json
 import argparse
 from pathlib import Path
-from datetime import datetime
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 
 # Styling
 plt.style.use('seaborn-v0_8-whitegrid')

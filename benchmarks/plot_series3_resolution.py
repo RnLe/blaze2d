@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 from matplotlib.backends.backend_pdf import PdfPages
 
 # ============================================================================

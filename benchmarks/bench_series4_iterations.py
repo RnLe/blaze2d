@@ -12,13 +12,9 @@ TM and TE polarizations on a square lattice (Config A: ε=8.9 rods, r=0.2a).
 Output: results/series4_iterations/
 """
 
-import subprocess
-import time
-import os
 import sys
 import json
 import argparse
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -100,7 +96,7 @@ def run_series(
         print(f"\n[{pol} Polarization]")
         
         # MPB
-        print(f"  Running MPB... ", end="", flush=True)
+        print("  Running MPB... ", end="", flush=True)
         try:
             mpb_result = run_mpb_with_capture(
                 resolution=resolution,
@@ -122,7 +118,7 @@ def run_series(
             results[pol]["mpb"] = None
         
         # Blaze2D
-        print(f"  Running Blaze2D... ", end="", flush=True)
+        print("  Running Blaze2D... ", end="", flush=True)
         try:
             blaze_result = run_blaze_with_diagnostics(
                 resolution=resolution,
@@ -160,14 +156,14 @@ def run_series(
             print(f"  MPB:     total={sum(mpb_iters):4d}, avg={np.mean(mpb_iters):5.1f}, "
                   f"min={min(mpb_iters):3d}, max={max(mpb_iters):3d}")
         else:
-            print(f"  MPB:     (failed)")
+            print("  MPB:     (failed)")
         
         if results[pol]["blaze"]:
             blaze_iters = [kp["iterations"] for kp in results[pol]["blaze"]["k_points"]]
             print(f"  Blaze2D: total={sum(blaze_iters):4d}, avg={np.mean(blaze_iters):5.1f}, "
                   f"min={min(blaze_iters):3d}, max={max(blaze_iters):3d}")
         else:
-            print(f"  Blaze2D: (failed)")
+            print("  Blaze2D: (failed)")
         
         # Ratio
         if results[pol]["mpb"] and results[pol]["blaze"]:

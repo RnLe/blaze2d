@@ -60,10 +60,8 @@ use blaze2d_core::{
 
 /// Type of eigensolver to use.
 ///
-/// The bulk driver can operate in different modes depending on the physics problem:
-///
 /// - `Maxwell`: Traditional photonic crystal band structure (requires geometry, k-path)
-/// - `EA`: Envelope approximation for moiré lattices (requires input data files)
+/// - `OperatorData`: Operator-data extraction from the Maxwell eigenproblem
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SolverType {
@@ -74,147 +72,120 @@ pub enum SolverType {
     #[default]
     Maxwell,
 
-    /// Envelope approximation for moiré lattices.
+    /// Operator-data extraction from the Maxwell eigenproblem.
     ///
-    /// Solves: H ψ = E ψ where H = V(R) - (η²/2)∇·M⁻¹(R)∇ - iη v_g·∇
-    /// Requires: input data files for V, M⁻¹, and optionally v_g
-    #[serde(rename = "ea")]
-    EA,
+    /// Extracts velocity matrices, mass tensor, Born–Huang potential, and
+    /// overlap matrices at each (R, k₀) point. Renamed from "EAHamiltonian"
+    /// to reflect that these are Maxwell-operator quantities; downstream
+    /// users may consume them for envelope-approximation models.
+    #[serde(rename = "operator_data", alias = "ea_hamiltonian")]
+    OperatorData,
 }
 
 impl std::fmt::Display for SolverType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SolverType::Maxwell => write!(f, "Maxwell"),
-            SolverType::EA => write!(f, "EA (Envelope Approximation)"),
+            SolverType::OperatorData => write!(f, "Operator-Data Extraction"),
         }
     }
 }
 
 // ============================================================================
-// EA (Envelope Approximation) Configuration
+// ============================================================================
+// Operator-Data Extraction Configuration
 // ============================================================================
 
-/// Configuration for Envelope Approximation (EA) solver.
+/// Configuration for EA Hamiltonian ingredient extraction.
 ///
-/// The EA solver reads pre-computed spatial data from files:
-/// - `potential`: V(R) - the effective potential on the moiré superlattice
-/// - `mass_inv`: M⁻¹(R) - the inverse mass tensor (spatially varying)
-/// - `vg`: Optional group velocity for drift terms
-///
-/// # File Format
-///
-/// All input files should be binary files containing f64 values in **row-major**
-/// (C-order) layout. The grid dimensions are inferred from the file size and
-/// the configured resolution.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct EAConfig {
-    /// Path to potential data file V(R).
-    #[serde(default)]
-    pub potential: Option<PathBuf>,
+/// This solver extracts the physical quantities (velocity matrices, mass tensor,
+/// Born–Huang potential, overlap matrices) from the Maxwell eigenproblem at each
+/// (R, k₀) point of a moiré superlattice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OperatorDataDriverConfig {
+    /// Carrier momentum k₀ in Cartesian reciprocal-space units (2π/a).
+    pub k0: [f64; 2],
 
-    /// Path to inverse mass tensor data file M⁻¹(R).
-    #[serde(default)]
-    pub mass_inv: Option<PathBuf>,
+    /// Number of retained bands in the active subspace.
+    pub n_retained: usize,
 
-    /// Path to group velocity data file v_g(R) for drift term.
-    #[serde(default)]
-    pub vg: Option<PathBuf>,
+    /// Number of remote bands for Löwdin corrections.
+    pub n_remote: usize,
 
-    /// Small parameter η in the envelope equation.
-    #[serde(default = "default_eta")]
-    pub eta: f64,
+    /// Whether to compute the Löwdin-corrected inverse mass tensor.
+    pub compute_mass_tensor: bool,
 
-    /// Physical dimensions of the simulation domain [Lx, Ly].
-    #[serde(default = "default_domain_size")]
-    pub domain_size: [f64; 2],
+    /// Whether to compute Born–Huang scalar potential.
+    pub compute_born_huang: bool,
 
-    /// Whether to use periodic boundary conditions.
-    #[serde(default = "default_periodic")]
-    pub periodic: bool,
+    /// Whether to compute the TE slow-coefficient scalar potential.
+    pub compute_slow_coefficient: bool,
+
+    /// Whether to compute dielectric derivatives for R-derivative matrix elements.
+    pub compute_r_derivatives: bool,
+
+    /// Which atom to differentiate w.r.t. for R-derivatives.
+    pub atom_index: usize,
+
+    /// Finite-difference step for dielectric derivatives (fractional coords).
+    pub fd_step: f64,
 }
 
-fn default_eta() -> f64 {
-    1.0
-}
-
-fn default_domain_size() -> [f64; 2] {
-    [1.0, 1.0]
-}
-
-fn default_periodic() -> bool {
-    true
-}
-
-impl EAConfig {
-    /// Validate the EA configuration.
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.potential.is_none() {
-            return Err(ConfigError::InvalidEAConfig(
-                "EA solver requires 'potential' file path".into(),
-            ));
+impl Default for OperatorDataDriverConfig {
+    fn default() -> Self {
+        Self {
+            k0: [0.0, 0.0],
+            n_retained: 4,
+            n_remote: 8,
+            compute_mass_tensor: true,
+            compute_born_huang: false,
+            compute_slow_coefficient: false,
+            compute_r_derivatives: true,
+            atom_index: 0,
+            fd_step: 0.001,
         }
-
-        if self.mass_inv.is_none() {
-            return Err(ConfigError::InvalidEAConfig(
-                "EA solver requires 'mass_inv' file path".into(),
-            ));
-        }
-
-        if self.eta <= 0.0 {
-            return Err(ConfigError::InvalidEAConfig(
-                "EA solver 'eta' must be positive".into(),
-            ));
-        }
-
-        if self.domain_size[0] <= 0.0 || self.domain_size[1] <= 0.0 {
-            return Err(ConfigError::InvalidEAConfig(
-                "EA solver 'domain_size' components must be positive".into(),
-            ));
-        }
-
-        Ok(())
     }
+}
 
-    /// Check if input files exist and are readable.
-    pub fn check_files(&self) -> Result<(), ConfigError> {
-        if let Some(ref path) = self.potential {
-            if !path.exists() {
-                return Err(ConfigError::InvalidEAConfig(format!(
-                    "potential file not found: {}",
-                    path.display()
-                )));
-            }
+/// Storage precision for the Maxwell eigensolver.
+///
+/// Picks between `CpuBackend<f32>` and `CpuBackend<f64>` at driver construction
+/// time. Eigenvalues, dot-product accumulation, and Rayleigh–Ritz always run in
+/// `f64`; this knob only controls **storage precision** for fields, FFTs, and
+/// preconditioners (the f32-storage / f64-accumulation invariant).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Precision {
+    /// Single precision: `Complex<f32>` storage. ~2× bandwidth at the cost of
+    /// ~7 digits of precision in eigenvectors. Eigenvalues remain f64.
+    #[serde(alias = "single")]
+    F32,
+    /// Double precision: `Complex<f64>` storage throughout. (Default.)
+    #[default]
+    #[serde(alias = "double")]
+    F64,
+}
+
+impl std::fmt::Display for Precision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Precision::F32 => write!(f, "f32"),
+            Precision::F64 => write!(f, "f64"),
         }
-
-        if let Some(ref path) = self.mass_inv {
-            if !path.exists() {
-                return Err(ConfigError::InvalidEAConfig(format!(
-                    "mass_inv file not found: {}",
-                    path.display()
-                )));
-            }
-        }
-
-        if let Some(ref path) = self.vg {
-            if !path.exists() {
-                return Err(ConfigError::InvalidEAConfig(format!(
-                    "vg file not found: {}",
-                    path.display()
-                )));
-            }
-        }
-
-        Ok(())
     }
 }
 
 /// Solver selection section in the TOML configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SolverSection {
-    /// Type of solver to use: "maxwell" or "ea"
+    /// Type of solver to use: "maxwell" or "operator_data"
     #[serde(default, rename = "type")]
     pub solver_type: SolverType,
+
+    /// Storage precision: "f32" or "f64" (default: "f64").
+    #[serde(default)]
+    pub precision: Precision,
 }
 
 // ============================================================================
@@ -1006,16 +977,6 @@ pub struct BulkSection {
     /// Default: `false` (band tracking enabled)
     #[serde(default)]
     pub disable_band_tracking: bool,
-
-    /// Enable symmetry-based reduction (parity projection).
-    ///
-    /// When enabled, the solver decomposes the problem into symmetry sectors
-    /// (e.g., Even/Odd) based on the active mirror symmetries at each k-point.
-    /// This resolves degeneracies and improves convergence stability.
-    ///
-    /// Default: `false` (symmetry disabled)
-    #[serde(default)]
-    pub enable_symmetry: bool,
 }
 
 impl Default for BulkSection {
@@ -1026,7 +987,6 @@ impl Default for BulkSection {
             dry_run: false,
             skip_final_gamma: false,
             disable_band_tracking: false,
-            enable_symmetry: false,
         }
     }
 }
@@ -1078,19 +1038,19 @@ impl Default for BulkSection {
 /// # Solver Types
 ///
 /// - **Maxwell** (default): Requires `geometry`, `k_path`/`path`, and `polarization`.
-/// - **EA**: Requires `ea` section with input file paths.
+/// - **OperatorData**: Operator-data extraction (`[operator_data]` section; legacy alias `[ea_hamiltonian]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulkConfig {
     /// Bulk execution settings (presence marks this as a bulk request)
     pub bulk: BulkSection,
 
-    /// Solver type selection (maxwell or ea)
+    /// Solver type selection (maxwell or ea_hamiltonian)
     #[serde(default)]
     pub solver: SolverSection,
 
-    /// EA (Envelope Approximation) solver configuration.
-    #[serde(default)]
-    pub ea: EAConfig,
+    /// Operator-data extraction configuration (`[operator_data]` section, alias `[ea_hamiltonian]`).
+    #[serde(default, alias = "ea_hamiltonian")]
+    pub operator_data: OperatorDataDriverConfig,
 
     // ========================================================================
     // NEW FORMAT: Ordered sweeps with [[sweeps]] array
@@ -1113,7 +1073,7 @@ pub struct BulkConfig {
     // LEGACY FORMAT: [ranges] and [geometry] sections
     // ========================================================================
     /// Base geometry (non-swept parameters).
-    /// Required for Maxwell solver, ignored for EA solver.
+    /// Required for Maxwell solver.
     /// DEPRECATED: Use `defaults.geometry` instead.
     #[serde(default)]
     pub geometry: Option<BaseGeometry>,
@@ -1227,9 +1187,9 @@ impl BulkConfig {
         self.solver.solver_type
     }
 
-    /// Check if this is an EA solver configuration.
-    pub fn is_ea(&self) -> bool {
-        self.solver.solver_type == SolverType::EA
+    /// Get the storage precision for the eigensolver.
+    pub fn precision(&self) -> Precision {
+        self.solver.precision
     }
 
     /// Check if this is a Maxwell solver configuration.
@@ -1261,7 +1221,7 @@ impl BulkConfig {
 
         match self.solver.solver_type {
             SolverType::Maxwell => self.validate_maxwell(),
-            SolverType::EA => self.validate_ea(),
+            SolverType::OperatorData => Ok(()), // Uses geometry + ea_hamiltonian; validated at runtime
         }
     }
 
@@ -1358,10 +1318,6 @@ impl BulkConfig {
         }
 
         Ok(())
-    }
-
-    fn validate_ea(&self) -> Result<(), ConfigError> {
-        self.ea.validate()
     }
 
     /// Get total number of jobs.
@@ -1461,9 +1417,6 @@ pub enum ConfigError {
 
     #[error("Invalid Maxwell solver configuration: {0}")]
     InvalidMaxwellConfig(String),
-
-    #[error("Invalid EA solver configuration: {0}")]
-    InvalidEAConfig(String),
 }
 
 // ============================================================================
@@ -1512,6 +1465,9 @@ eps_bg = 12.0
     #[test]
     fn solver_type_display() {
         assert_eq!(format!("{}", SolverType::Maxwell), "Maxwell");
-        assert_eq!(format!("{}", SolverType::EA), "EA (Envelope Approximation)");
+        assert_eq!(
+            format!("{}", SolverType::OperatorData),
+            "Operator-Data Extraction"
+        );
     }
 }

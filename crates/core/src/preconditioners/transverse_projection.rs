@@ -24,9 +24,11 @@
 //! The preconditioner is Hermitian (self-adjoint), which is essential for
 //! conjugate-gradient convergence.
 
+use num_complex::Complex;
+
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::dielectric::Dielectric2D;
-use crate::field::{FieldReal, FieldScalar};
+use crate::field::Real;
 use crate::grid::Grid2D;
 use crate::polarization::Polarization;
 use crate::preconditioners::OperatorPreconditioner;
@@ -174,12 +176,12 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
 
             for idx in 0..self.grid.len() {
                 let r_hat = input_fourier[idx];
-                let inv_k_sq = self.inverse_k_sq[idx] as FieldReal;
-                let kx = self.k_plus_g_x[idx] as FieldReal;
-                let ky = self.k_plus_g_y[idx] as FieldReal;
+                let inv_k_sq = <B::Real as Real>::from_accum(self.inverse_k_sq[idx]);
+                let kx = <B::Real as Real>::from_accum(self.k_plus_g_x[idx]);
+                let ky = <B::Real as Real>::from_accum(self.k_plus_g_y[idx]);
 
-                let factor_x = FieldScalar::new(0.0, -kx) * inv_k_sq;
-                let factor_y = FieldScalar::new(0.0, -ky) * inv_k_sq;
+                let factor_x = Complex::new(<B::Real as num_traits::Zero>::zero(), -kx) * inv_k_sq;
+                let factor_y = Complex::new(<B::Real as num_traits::Zero>::zero(), -ky) * inv_k_sq;
 
                 grad_x_data[idx] = r_hat * factor_x;
                 grad_y_data[idx] = r_hat * factor_y;
@@ -195,7 +197,7 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             let grad_x_data = self.grad_x.as_mut_slice();
             let grad_y_data = self.grad_y.as_mut_slice();
             for idx in 0..self.grid.len() {
-                let eps_val = self.eps[idx] as FieldReal;
+                let eps_val = <B::Real as Real>::from_accum(self.eps[idx]);
                 grad_x_data[idx] *= eps_val;
                 grad_y_data[idx] *= eps_val;
             }
@@ -214,11 +216,12 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             for idx in 0..self.grid.len() {
                 let g_x = grad_x_fourier[idx];
                 let g_y = grad_y_fourier[idx];
-                let inv_k_sq = self.inverse_k_sq[idx] as FieldReal;
-                let kx = self.k_plus_g_x[idx] as FieldReal;
-                let ky = self.k_plus_g_y[idx] as FieldReal;
+                let inv_k_sq = <B::Real as Real>::from_accum(self.inverse_k_sq[idx]);
+                let kx = <B::Real as Real>::from_accum(self.k_plus_g_x[idx]);
+                let ky = <B::Real as Real>::from_accum(self.k_plus_g_y[idx]);
 
-                let div = FieldScalar::new(0.0, kx) * g_x + FieldScalar::new(0.0, ky) * g_y;
+                let div = Complex::new(<B::Real as num_traits::Zero>::zero(), kx) * g_x
+                    + Complex::new(<B::Real as num_traits::Zero>::zero(), ky) * g_y;
                 output_fourier[idx] = -div * inv_k_sq;
             }
         }

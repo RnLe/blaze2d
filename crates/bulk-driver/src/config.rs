@@ -5,14 +5,9 @@
 //!
 //! # Solver Types
 //!
-//! The bulk driver supports two solver types:
-//!
-//! - **Maxwell** (default): Photonic crystal band structure calculations using the
-//!   Maxwell eigenproblem. Requires geometry, k-path, and polarization.
-//!
-//! - **EA (Envelope Approximation)**: Moiré lattice eigenproblems using the effective
-//!   Hamiltonian H = V(R) - (η²/2)∇·M⁻¹(R)∇. Requires input data files for potential,
-//!   mass tensor, and optionally group velocity for drift terms.
+//! - **Maxwell** (default): Photonic crystal band structure via the Maxwell
+//!   eigenproblem. Requires geometry, k-path, and polarization.
+//! - **OperatorData**: Operator-data extraction at a single (R, k₀) point.
 
 // Re-export all types from core
 pub use blaze2d_bulk_driver_core::config::*;

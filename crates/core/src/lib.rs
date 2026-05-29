@@ -78,6 +78,7 @@ pub mod backend;
 pub mod band_tracking;
 pub mod diagnostics;
 pub mod dielectric;
+pub mod operator_data;
 pub mod eigensolver;
 pub mod field;
 pub mod geometry;

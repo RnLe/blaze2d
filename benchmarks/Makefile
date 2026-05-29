@@ -83,7 +83,7 @@ blaze-single-full:
 	@echo "========================================"
 	@echo "Blaze2D Single-Core Benchmark (Full Precision f64)"
 	@echo "========================================"
-	@echo "Building with --no-default-features --features native-linalg"
+	@echo "Precision is selected at runtime via --precision f64 (single build)"
 	python bench_blaze2d.py --mode single --output results --full-precision
 
 blaze-multi:
@@ -97,7 +97,7 @@ blaze-multi-full:
 	@echo "========================================"
 	@echo "Blaze2D Multi-Core Benchmark (Full Precision f64, $(NUM_CORES) cores)"
 	@echo "========================================"
-	@echo "Building with --no-default-features --features native-linalg"
+	@echo "Precision is selected at runtime via --precision f64 (single build)"
 	python bench_blaze2d.py --mode multi --threads $(NUM_CORES) --jobs $(NUM_JOBS) --iterations 2 --output results --full-precision
 
 blaze-single-quick:

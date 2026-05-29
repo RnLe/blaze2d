@@ -6,7 +6,7 @@ use super::grid::Grid2D;
 #[test]
 fn zeros_initializes_all_entries_to_zero() {
     let grid = Grid2D::new(2, 3, 1.0, 1.0);
-    let field = Field2D::zeros(grid);
+    let field = Field2D::<f64>::zeros(grid);
     assert_eq!(field.len(), grid.len());
     assert!(
         field
@@ -36,7 +36,7 @@ fn field_from_vec_preserves_values() {
 #[test]
 fn idx_matches_underlying_grid_row_major_convention() {
     let grid = Grid2D::new(3, 2, 1.0, 1.0);
-    let field = Field2D::zeros(grid);
+    let field = Field2D::<f64>::zeros(grid);
     let grid = field.grid();
     for iy in 0..grid.ny {
         for ix in 0..grid.nx {
@@ -48,7 +48,7 @@ fn idx_matches_underlying_grid_row_major_convention() {
 #[test]
 fn get_and_get_mut_operate_on_correct_cell() {
     let grid = Grid2D::new(3, 2, 1.0, 1.0);
-    let mut field = Field2D::zeros(grid);
+    let mut field = Field2D::<f64>::zeros(grid);
     let grid = field.grid();
     for iy in 0..grid.ny {
         for ix in 0..grid.nx {
@@ -63,7 +63,7 @@ fn get_and_get_mut_operate_on_correct_cell() {
 #[test]
 fn field_fill_updates_all_entries() {
     let grid = Grid2D::new(3, 1, 1.0, 1.0);
-    let mut field = Field2D::zeros(grid);
+    let mut field = Field2D::<f64>::zeros(grid);
     field.fill(FieldScalar::new(0.0, 2.0));
     assert!(
         field

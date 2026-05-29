@@ -18,7 +18,6 @@ from datetime import datetime
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 from matplotlib.gridspec import GridSpec
 
 # Styling
@@ -302,10 +301,10 @@ def plot_overview(results: dict, output_dir: Path):
     ax6.axis('off')
     
     info_text = "Benchmark Configuration\n" + "=" * 30 + "\n"
-    info_text += f"Resolution: 64×64\n"
-    info_text += f"Bands: 8\n"
-    info_text += f"K-points: 61 (20/segment)\n"
-    info_text += f"Tolerance: 1e-7\n\n"
+    info_text += "Resolution: 64×64\n"
+    info_text += "Bands: 8\n"
+    info_text += "K-points: 61 (20/segment)\n"
+    info_text += "Tolerance: 1e-7\n\n"
     
     info_text += "Solver Modes\n" + "=" * 30 + "\n"
     info_text += "• Blaze2D: Rayon parallel (16 threads)\n"

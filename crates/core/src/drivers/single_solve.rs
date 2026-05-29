@@ -3,7 +3,7 @@
 //! This module provides a flexible driver for solving a single eigenvalue problem
 //! without the complexity of k-path iteration. It's designed for use cases like:
 //!
-//! - Envelope approximation eigenproblems (moiré lattices)
+//! - Operator-data extraction at a single (R, k₀) point
 //! - Testing and benchmarking eigensolvers
 //! - Any single-shot Hermitian eigenproblem
 //! - Parameter sweeps where each point is independent
@@ -23,7 +23,6 @@
 //!
 //! ```ignore
 //! use blaze2d_core::drivers::single_solve::{solve, SingleSolveJob};
-//! use blaze2d_core::operators::EAOperator;
 //!
 //! let job = SingleSolveJob::new(8).with_tolerance(1e-8);
 //! let result = solve(&mut operator, None, &job);

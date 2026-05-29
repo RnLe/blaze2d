@@ -132,7 +132,7 @@ impl SelectiveFilter {
         // Filtering only applies to Maxwell results
         let maxwell = match &result.result_type {
             CompactResultType::Maxwell(m) => m,
-            CompactResultType::EA(_) => return result.clone(),
+            _ => return result.clone(),
         };
 
         // Determine which k-indices to include

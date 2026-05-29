@@ -20,6 +20,7 @@ use crate::grid::Grid2D;
 struct TestBackend;
 
 impl SpectralBackend for TestBackend {
+    type Real = f64;
     type Buffer = Field2D;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {

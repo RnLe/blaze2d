@@ -18,6 +18,7 @@ use super::preconditioners::OperatorPreconditioner;
 struct TestBackend;
 
 impl SpectralBackend for TestBackend {
+    type Real = f64;
     type Buffer = Field2D;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {
@@ -184,7 +185,7 @@ fn assert_complex_close(lhs: AccumScalar, rhs: AccumScalar, tol: f64) {
     );
 }
 
-fn assert_fields_close(a: &Field2D, b: &Field2D, tol: f32) {
+fn assert_fields_close(a: &Field2D, b: &Field2D, tol: f64) {
     for (lhs, rhs) in a.as_slice().iter().zip(b.as_slice()) {
         assert!(
             (*lhs - *rhs).norm() < tol,

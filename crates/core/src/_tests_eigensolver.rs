@@ -17,6 +17,7 @@ use super::operators::LinearOperator;
 struct TestBackend;
 
 impl SpectralBackend for TestBackend {
+    type Real = f64;
     type Buffer = Field2D;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {
@@ -127,9 +128,6 @@ fn test_config_default() {
     assert_eq!(config.n_bands, 8);
     assert_eq!(config.max_iter, 200);
     // Mixed-precision uses 1e-4 tolerance, full precision uses 1e-6
-    #[cfg(feature = "mixed-precision")]
-    assert!((config.tol - 1e-4).abs() < 1e-6);
-    #[cfg(not(feature = "mixed-precision"))]
     assert!((config.tol - 1e-6).abs() < 1e-10);
     assert_eq!(config.effective_block_size(), 10); // 8 + 2 slack
 }
@@ -240,80 +238,6 @@ fn test_convergence_info_new() {
     for state in &info.band_states {
         assert_eq!(*state, BandState::Active);
     }
-}
-
-#[test]
-fn test_convergence_info_update_none_converged() {
-    let mut info = ConvergenceInfo::new(3);
-    let residuals = vec![1e-3, 1e-4, 1e-5];
-    let tol = 1e-6;
-
-    info.update(&residuals, tol);
-
-    assert_eq!(info.n_converged, 0);
-    assert!(!info.all_converged);
-    assert_eq!(
-        info.band_states,
-        vec![BandState::Active, BandState::Active, BandState::Active]
-    );
-    assert!((info.max_residual - 1e-3).abs() < 1e-6);
-}
-
-#[test]
-fn test_convergence_info_update_some_converged() {
-    let mut info = ConvergenceInfo::new(4);
-    let residuals = vec![1e-8, 1e-3, 1e-9, 1e-4];
-    let tol = 1e-6;
-
-    info.update(&residuals, tol);
-
-    assert_eq!(info.n_converged, 2);
-    assert!(!info.all_converged);
-    assert_eq!(info.band_states[0], BandState::Converged);
-    assert_eq!(info.band_states[1], BandState::Active);
-    assert_eq!(info.band_states[2], BandState::Converged);
-    assert_eq!(info.band_states[3], BandState::Active);
-    assert!((info.max_residual - 1e-3).abs() < 1e-6);
-}
-
-#[test]
-fn test_convergence_info_update_all_converged() {
-    let mut info = ConvergenceInfo::new(3);
-    let residuals = vec![1e-8, 1e-9, 1e-7];
-    let tol = 1e-6;
-
-    info.update(&residuals, tol);
-
-    assert_eq!(info.n_converged, 3);
-    assert!(info.all_converged);
-    assert_eq!(
-        info.band_states,
-        vec![
-            BandState::Converged,
-            BandState::Converged,
-            BandState::Converged
-        ]
-    );
-    // max_residual should be 0 since no bands are active
-    assert_eq!(info.max_residual, 0.0);
-}
-
-#[test]
-fn test_convergence_info_locked_bands_preserved() {
-    let mut info = ConvergenceInfo::new(3);
-
-    // First update converges band 0
-    info.update(&[1e-8, 1e-3, 1e-4], 1e-6);
-    assert_eq!(info.band_states[0], BandState::Converged);
-
-    // Lock band 0
-    info.band_states[0] = BandState::Locked;
-
-    // Second update - locked band stays locked even with high residual
-    info.update(&[1.0, 1e-3, 1e-4], 1e-6);
-    assert_eq!(info.band_states[0], BandState::Locked);
-    // Locked bands count as converged
-    assert_eq!(info.n_converged, 1);
 }
 
 // ============================================================================

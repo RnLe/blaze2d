@@ -19,6 +19,7 @@ impl DummyBackend {
 }
 
 impl SpectralBackend for DummyBackend {
+    type Real = f64;
     type Buffer = Field2D;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {

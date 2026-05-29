@@ -72,13 +72,29 @@ impl Geometry2D {
     }
 
     fn point_inside_atom(&self, frac_point: [f64; 2], atom: &BasisAtom) -> bool {
-        let delta_frac = [
-            wrap_signed(frac_point[0] - atom.pos[0]),
-            wrap_signed(frac_point[1] - atom.pos[1]),
-        ];
-        let delta_cart = self.lattice.fractional_to_cartesian(delta_frac);
-        let dist = (delta_cart[0] * delta_cart[0] + delta_cart[1] * delta_cart[1]).sqrt();
-        dist <= atom.radius_cartesian(&self.lattice)
+        let r_sq = {
+            let r = atom.radius_cartesian(&self.lattice);
+            r * r
+        };
+        let dx_frac = frac_point[0] - atom.pos[0];
+        let dy_frac = frac_point[1] - atom.pos[1];
+        // Check 3×3 periodic images to find the true Cartesian-nearest image.
+        // Per-component fractional wrapping is only correct for orthogonal lattices;
+        // for oblique lattices (hex, honeycomb) the Cartesian-nearest image may
+        // have a different combination of lattice translations.
+        for n1 in -1i32..=1 {
+            for n2 in -1i32..=1 {
+                let df = [
+                    wrap_signed(dx_frac) + n1 as f64,
+                    wrap_signed(dy_frac) + n2 as f64,
+                ];
+                let dc = self.lattice.fractional_to_cartesian(df);
+                if dc[0] * dc[0] + dc[1] * dc[1] <= r_sq {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
