@@ -57,16 +57,16 @@ pub use crate::diagnostics::{
     RunConfig,
 };
 
+use crate::timing::Timer;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
-use crate::timing::Timer;
 
 #[cfg(feature = "native-linalg")]
 use faer::Mat;
 
 #[cfg(feature = "wasm-linalg")]
-use nalgebra::{DMatrix, Complex as NaComplex};
+use nalgebra::{Complex as NaComplex, DMatrix};
 
 use num_complex::Complex64;
 
@@ -74,7 +74,7 @@ use num_complex::Complex64;
 use num_complex::Complex32;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::{Field2D, FieldScalar};
+use crate::field::Field2D;
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
@@ -170,9 +170,9 @@ const ENABLE_GAMMA_DEFLATION: bool = true;
 
 impl Default for EigensolverConfig {
     fn default() -> Self {
-        // When using mixed-precision (f32 storage), the noise floor is higher due to 
-        // |G|^2 amplification of quantization noise. We relax the default tolerance 
-        // to 1e-4 to ensure robust convergence. The eigenvalue accuracy (bands) 
+        // When using mixed-precision (f32 storage), the noise floor is higher due to
+        // |G|^2 amplification of quantization noise. We relax the default tolerance
+        // to 1e-4 to ensure robust convergence. The eigenvalue accuracy (bands)
         // remains high (approx 1e-8) due to the variational principle (error is quadratic).
         #[cfg(feature = "mixed-precision")]
         let default_tol = 1e-4;
@@ -632,7 +632,7 @@ where
             for entry in &mut x_block {
                 // Apply P to x
                 proj.apply(&mut entry.vector);
-                
+
                 // Recompute B*x and A*x since x changed
                 // (Note: initialize_block computed them, but projection invalidates them)
                 self.operator.apply_mass(&entry.vector, &mut entry.mass);
@@ -1024,7 +1024,6 @@ where
         newly_locked
     }
 
-
     /// Explicitly B-orthogonalize vectors against soft-locked eigenvectors.
     ///
     /// This acts like deflation: R <- R - X_soft * (X_soft^T B R)
@@ -1233,7 +1232,11 @@ where
         let m = self.x_block.len();
         let n_active = self.soft_locked.iter().take(m).filter(|&&b| !b).count();
         let has_w = !self.w_block.is_empty();
-        if has_w { m + 2 * n_active } else { m + n_active }
+        if has_w {
+            m + 2 * n_active
+        } else {
+            m + n_active
+        }
     }
 
     // ========================================================================
@@ -1268,7 +1271,7 @@ where
         (x_size, p_size, w_size): (usize, usize, usize),
     ) -> (Vec<B::Buffer>, Vec<B::Buffer>, SvqbResult) {
         crate::profiler::start_timer("orthonormalize_subspace");
-        
+
         // Build B*q block, reusing precomputed B*X and computing B*P and B*W fresh
         let mut bq_block: Vec<B::Buffer> = Vec::with_capacity(q_block.len());
 
@@ -1280,7 +1283,7 @@ where
         // Remaining vectors (P and W): compute B*v fresh using batched apply_mass
         let p_w_start = x_size;
         let p_w_count = q_block.len() - x_size;
-        
+
         if p_w_count > 0 {
             // Allocate outputs for P and W mass application
             let mut b_pw_block = Vec::with_capacity(p_w_count);
@@ -1289,8 +1292,9 @@ where
             }
 
             // Apply mass operator in batch
-            self.operator.batch_apply_mass(&q_block[p_w_start..], &mut b_pw_block);
-            
+            self.operator
+                .batch_apply_mass(&q_block[p_w_start..], &mut b_pw_block);
+
             // Append to bq_block
             bq_block.append(&mut b_pw_block);
         }
@@ -1333,7 +1337,7 @@ where
     /// A vector of buffers containing A*q_j for each q_j in q_block.
     fn compute_aq_block(&mut self, q_block: &[B::Buffer]) -> Vec<B::Buffer> {
         crate::profiler::start_timer("compute_aq_block");
-        
+
         let r = q_block.len();
         let mut aq_block: Vec<B::Buffer> = Vec::with_capacity(r);
 
@@ -1344,7 +1348,7 @@ where
 
         // Apply operator in batch to leverage optimized backends (e.g. batched FFTs)
         self.operator.batch_apply(q_block, &mut aq_block);
-        
+
         crate::profiler::stop_timer("compute_aq_block");
         aq_block
     }
@@ -1371,7 +1375,7 @@ where
         aq_block: &[B::Buffer],
     ) -> Vec<num_complex::Complex64> {
         crate::profiler::start_timer("project_operator");
-        
+
         let r = q_block.len();
         if r == 0 {
             crate::profiler::stop_timer("project_operator");
@@ -1462,7 +1466,7 @@ where
             }
             a_projected
         };
-        
+
         crate::profiler::stop_timer("project_operator");
         result
     }
@@ -1591,9 +1595,13 @@ where
                     for row in 0..n {
                         let c = x_new.get(row, j);
                         #[cfg(not(feature = "mixed-precision"))]
-                        { dst[row] = Complex64::new(c.re, c.im); }
+                        {
+                            dst[row] = Complex64::new(c.re, c.im);
+                        }
                         #[cfg(feature = "mixed-precision")]
-                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                        {
+                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                        }
                     }
                 }
 
@@ -1604,9 +1612,13 @@ where
                     for row in 0..n {
                         let c = bx_new.get(row, j);
                         #[cfg(not(feature = "mixed-precision"))]
-                        { dst[row] = Complex64::new(c.re, c.im); }
+                        {
+                            dst[row] = Complex64::new(c.re, c.im);
+                        }
                         #[cfg(feature = "mixed-precision")]
-                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                        {
+                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                        }
                     }
                 }
 
@@ -1617,9 +1629,13 @@ where
                     for row in 0..n {
                         let c = ax_new.get(row, j);
                         #[cfg(not(feature = "mixed-precision"))]
-                        { dst[row] = Complex64::new(c.re, c.im); }
+                        {
+                            dst[row] = Complex64::new(c.re, c.im);
+                        }
                         #[cfg(feature = "mixed-precision")]
-                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                        {
+                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                        }
                     }
                 }
 
@@ -1679,9 +1695,13 @@ where
                     for row in 0..n {
                         let c = x_new[(row, j)];
                         #[cfg(not(feature = "mixed-precision"))]
-                        { dst[row] = Complex64::new(c.re, c.im); }
+                        {
+                            dst[row] = Complex64::new(c.re, c.im);
+                        }
                         #[cfg(feature = "mixed-precision")]
-                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                        {
+                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                        }
                     }
                 }
 
@@ -1692,9 +1712,13 @@ where
                     for row in 0..n {
                         let c = bx_new[(row, j)];
                         #[cfg(not(feature = "mixed-precision"))]
-                        { dst[row] = Complex64::new(c.re, c.im); }
+                        {
+                            dst[row] = Complex64::new(c.re, c.im);
+                        }
                         #[cfg(feature = "mixed-precision")]
-                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                        {
+                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                        }
                     }
                 }
 
@@ -1705,9 +1729,13 @@ where
                     for row in 0..n {
                         let c = ax_new[(row, j)];
                         #[cfg(not(feature = "mixed-precision"))]
-                        { dst[row] = Complex64::new(c.re, c.im); }
+                        {
+                            dst[row] = Complex64::new(c.re, c.im);
+                        }
                         #[cfg(feature = "mixed-precision")]
-                        { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                        {
+                            dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                        }
                     }
                 }
 
@@ -1806,9 +1834,13 @@ where
                 for row in 0..n {
                     let c = w_new.get(row, j);
                     #[cfg(not(feature = "mixed-precision"))]
-                    { dst[row] = Complex64::new(c.re, c.im); }
+                    {
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                     #[cfg(feature = "mixed-precision")]
-                    { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                    {
+                        dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                    }
                 }
                 new_w_block.push(w);
             }
@@ -1844,9 +1876,13 @@ where
                 for row in 0..n {
                     let c = w_new[(row, j)];
                     #[cfg(not(feature = "mixed-precision"))]
-                    { dst[row] = Complex64::new(c.re, c.im); }
+                    {
+                        dst[row] = Complex64::new(c.re, c.im);
+                    }
                     #[cfg(feature = "mixed-precision")]
-                    { dst[row] = Complex32::new(c.re as f32, c.im as f32); }
+                    {
+                        dst[row] = Complex32::new(c.re as f32, c.im as f32);
+                    }
                 }
                 new_w_block.push(w);
             }
@@ -2058,11 +2094,21 @@ where
                             let time_per_iter = elapsed / iters as f64;
                             info!(
                                 "[eigensolver] k#{:03} ({:+.4},{:+.4}) iters={:>3} Δλ={:+.2e} ω=[{:.4}..{:.4}] elapsed={:.2}s ({:.1}ms/iter, soft_locked={})",
-                                k_idx, k_frac[0], k_frac[1], iters, max_ev_change, freq_min, freq_max,
-                                elapsed, time_per_iter * 1000.0, n_soft_locked_now
+                                k_idx,
+                                k_frac[0],
+                                k_frac[1],
+                                iters,
+                                max_ev_change,
+                                freq_min,
+                                freq_max,
+                                elapsed,
+                                time_per_iter * 1000.0,
+                                n_soft_locked_now
                             );
                             return EigensolverResult {
-                                eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
+                                eigenvalues: all_eigenvalues
+                                    [..n_bands_requested.min(all_eigenvalues.len())]
+                                    .to_vec(),
                                 iterations: iter + 1,
                                 convergence,
                                 converged: true,
@@ -2090,16 +2136,15 @@ where
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
             // Also collects precomputed B*X to avoid recomputing in SVQB
             // ================================================================
-            let (subspace, bx_precomputed, block_sizes) =
-                self.collect_subspace_with_mass(&p_block);
+            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
 
             // ================================================================
             // Step 9: B-orthonormalize to get Q_k with Q_k^* B Q_k = I
             // Uses SVQB to handle near-linear-dependence and rank deficiency
             // OPTIMIZATION: Reuses precomputed B*X, saving m mass applications
             // ================================================================
-            let (q_block, bq_block, svqb_result) =
-                self.orthonormalize_subspace_with_precomputed_mass(
+            let (q_block, bq_block, svqb_result) = self
+                .orthonormalize_subspace_with_precomputed_mass(
                     subspace,
                     bx_precomputed,
                     block_sizes,
@@ -2532,12 +2577,11 @@ where
             self.apply_soft_deflation(&mut p_block);
 
             // Build search subspace Z_k = [X_k, P_k, W_k] with precomputed B*X
-            let (subspace, bx_precomputed, block_sizes) =
-                self.collect_subspace_with_mass(&p_block);
+            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
 
             // B-orthonormalize using SVQB (reuses precomputed B*X)
-            let (q_block, bq_block, svqb_result) =
-                self.orthonormalize_subspace_with_precomputed_mass(
+            let (q_block, bq_block, svqb_result) = self
+                .orthonormalize_subspace_with_precomputed_mass(
                     subspace,
                     bx_precomputed,
                     block_sizes,
@@ -2928,15 +2972,14 @@ where
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
             // Also collects precomputed B*X to avoid recomputing in SVQB
             // ================================================================
-            let (subspace, bx_precomputed, block_sizes) =
-                self.collect_subspace_with_mass(&p_block);
+            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
 
             // ================================================================
             // Step 9: B-orthonormalize to get Q_k
             // OPTIMIZATION: Reuses precomputed B*X, saving m mass applications
             // ================================================================
-            let (q_block, bq_block, svqb_result) =
-                self.orthonormalize_subspace_with_precomputed_mass(
+            let (q_block, bq_block, svqb_result) = self
+                .orthonormalize_subspace_with_precomputed_mass(
                     subspace,
                     bx_precomputed,
                     block_sizes,
@@ -2970,7 +3013,11 @@ where
             let snapshot = IterationSnapshot::new(iter)
                 .with_eigenvalues(self.eigenvalues.clone())
                 .with_residuals(residual_b_norms.clone(), relative_residuals.clone())
-                .with_convergence_counts(convergence.n_converged, self.soft_locked_count(), n_active)
+                .with_convergence_counts(
+                    convergence.n_converged,
+                    self.soft_locked_count(),
+                    n_active,
+                )
                 .with_subspace_info(
                     svqb_result.input_count,
                     svqb_result.output_rank,

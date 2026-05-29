@@ -36,10 +36,10 @@
 //! - **ChannelSubscriber**: Sends results to a crossbeam channel
 //! - **Custom implementations**: Implement `Subscriber` trait
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use log::{debug, warn};
 use parking_lot::RwLock;
 
@@ -69,7 +69,7 @@ use crate::config::SelectiveSpec;
 ///
 /// impl Subscriber for PrintSubscriber {
 ///     fn on_result(&self, result: &CompactBandResult) {
-///         println!("Job {} complete: {} k-points", 
+///         println!("Job {} complete: {} k-points",
 ///             result.job_index, result.num_k_points());
 ///     }
 /// }
@@ -142,7 +142,10 @@ pub struct ChannelSubscriber {
 
 impl ChannelSubscriber {
     /// Create a new channel subscriber with the specified capacity and policy.
-    pub fn new(capacity: usize, backpressure: BackpressurePolicy) -> (Self, Receiver<CompactBandResult>) {
+    pub fn new(
+        capacity: usize,
+        backpressure: BackpressurePolicy,
+    ) -> (Self, Receiver<CompactBandResult>) {
         let (sender, receiver) = bounded(capacity);
         (
             Self {
@@ -358,7 +361,7 @@ impl SelectiveFilter {
     ///
     /// If the filter is not active, returns a clone of the original.
     /// This is optimized for the common case where filtering is applied.
-    /// 
+    ///
     /// Note: Filtering only applies to Maxwell results. EA results are returned unchanged.
     pub fn apply(&self, result: &CompactBandResult) -> CompactBandResult {
         use crate::channel::{CompactResultType, MaxwellResult};
@@ -615,10 +618,8 @@ impl StreamChannel {
     ///
     /// This is the recommended way to consume results asynchronously.
     pub fn add_channel_subscriber(&self) -> Receiver<CompactBandResult> {
-        let (subscriber, receiver) = ChannelSubscriber::new(
-            self.config.channel_capacity,
-            self.config.backpressure,
-        );
+        let (subscriber, receiver) =
+            ChannelSubscriber::new(self.config.channel_capacity, self.config.backpressure);
         self.subscribe(Arc::new(subscriber));
         receiver
     }
@@ -879,8 +880,14 @@ mod tests {
         let filtered = filter.apply(&result);
 
         // Should be identical
-        assert_eq!(filtered.k_path().unwrap().len(), result.k_path().unwrap().len());
-        assert_eq!(filtered.bands().unwrap().len(), result.bands().unwrap().len());
+        assert_eq!(
+            filtered.k_path().unwrap().len(),
+            result.k_path().unwrap().len()
+        );
+        assert_eq!(
+            filtered.bands().unwrap().len(),
+            result.bands().unwrap().len()
+        );
     }
 
     #[test]
@@ -897,7 +904,10 @@ mod tests {
         assert_eq!(filtered.k_path().unwrap()[1], result.k_path().unwrap()[2]);
         assert_eq!(filtered.bands().unwrap().len(), 2);
         // All bands preserved
-        assert_eq!(filtered.bands().unwrap()[0].len(), result.bands().unwrap()[0].len());
+        assert_eq!(
+            filtered.bands().unwrap()[0].len(),
+            result.bands().unwrap()[0].len()
+        );
     }
 
     #[test]
@@ -910,11 +920,20 @@ mod tests {
         let filtered = filter.apply(&result);
 
         // All k-points preserved
-        assert_eq!(filtered.k_path().unwrap().len(), result.k_path().unwrap().len());
+        assert_eq!(
+            filtered.k_path().unwrap().len(),
+            result.k_path().unwrap().len()
+        );
         // Only 2 bands
         assert_eq!(filtered.bands().unwrap()[0].len(), 2);
-        assert_eq!(filtered.bands().unwrap()[0][0], result.bands().unwrap()[0][0]);
-        assert_eq!(filtered.bands().unwrap()[0][1], result.bands().unwrap()[0][2]);
+        assert_eq!(
+            filtered.bands().unwrap()[0][0],
+            result.bands().unwrap()[0][0]
+        );
+        assert_eq!(
+            filtered.bands().unwrap()[0][1],
+            result.bands().unwrap()[0][2]
+        );
     }
 
     #[test]
@@ -930,8 +949,14 @@ mod tests {
         assert_eq!(filtered.k_path().unwrap()[0], result.k_path().unwrap()[1]);
         assert_eq!(filtered.bands().unwrap().len(), 1);
         assert_eq!(filtered.bands().unwrap()[0].len(), 2);
-        assert_eq!(filtered.bands().unwrap()[0][0], result.bands().unwrap()[1][1]);
-        assert_eq!(filtered.bands().unwrap()[0][1], result.bands().unwrap()[1][2]);
+        assert_eq!(
+            filtered.bands().unwrap()[0][0],
+            result.bands().unwrap()[1][1]
+        );
+        assert_eq!(
+            filtered.bands().unwrap()[0][1],
+            result.bands().unwrap()[1][2]
+        );
     }
 
     #[test]
@@ -940,7 +965,7 @@ mod tests {
 
         let spec = SelectiveSpec {
             k_indices: vec![0, 2],
-            k_labels: vec![], // Not resolved here
+            k_labels: vec![],  // Not resolved here
             bands: vec![1, 3], // 1-based
         };
         let filter = SelectiveFilter::from_spec(&spec);
@@ -953,8 +978,14 @@ mod tests {
         assert_eq!(filtered.k_path().unwrap().len(), 2);
         assert_eq!(filtered.bands().unwrap()[0].len(), 2);
         // Band 1 -> index 0, Band 3 -> index 2
-        assert_eq!(filtered.bands().unwrap()[0][0], result.bands().unwrap()[0][0]);
-        assert_eq!(filtered.bands().unwrap()[0][1], result.bands().unwrap()[0][2]);
+        assert_eq!(
+            filtered.bands().unwrap()[0][0],
+            result.bands().unwrap()[0][0]
+        );
+        assert_eq!(
+            filtered.bands().unwrap()[0][1],
+            result.bands().unwrap()[0][2]
+        );
     }
 
     #[test]

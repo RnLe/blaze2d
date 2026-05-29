@@ -135,7 +135,10 @@ fn result_to_py_dict(py: Python<'_>, result: &CompactBandResult) -> PyResult<Py<
 
             // Convenience accessors
             dict.set_item("num_k_points", maxwell.k_path.len())?;
-            dict.set_item("num_bands", maxwell.bands.first().map(|b| b.len()).unwrap_or(0))?;
+            dict.set_item(
+                "num_bands",
+                maxwell.bands.first().map(|b| b.len()).unwrap_or(0),
+            )?;
         }
         CompactResultType::EA(ea) => {
             dict.set_item("result_type", "ea")?;
@@ -600,7 +603,8 @@ impl BulkDriverPy {
             driver.run_with_channel(channel)
         });
 
-        let stats = stats_result.map_err(|e| PyRuntimeError::new_err(format!("driver error: {}", e)))?;
+        let stats =
+            stats_result.map_err(|e| PyRuntimeError::new_err(format!("driver error: {}", e)))?;
 
         // Convert collected results to Python list
         let results_list = PyList::empty(py);
@@ -737,11 +741,7 @@ impl BulkDriverPy {
 
     /// String representation.
     fn __repr__(&self) -> String {
-        let job_count = self
-            .config
-            .as_ref()
-            .map(|c| c.total_jobs())
-            .unwrap_or(0);
+        let job_count = self.config.as_ref().map(|c| c.total_jobs()).unwrap_or(0);
         format!(
             "BulkDriver('{}', jobs={}, threads={})",
             self.config_path.display(),

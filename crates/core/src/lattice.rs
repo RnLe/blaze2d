@@ -82,10 +82,7 @@ impl<'de> Deserialize<'de> for Lattice2D {
         #[serde(untagged)]
         enum LatticeFormat {
             /// Legacy format with explicit vectors
-            Legacy {
-                a1: [f64; 2],
-                a2: [f64; 2],
-            },
+            Legacy { a1: [f64; 2], a2: [f64; 2] },
             /// Typed format with lattice type and parameters
             Typed {
                 #[serde(rename = "type")]
@@ -124,7 +121,9 @@ impl<'de> Deserialize<'de> for Lattice2D {
                             D::Error::custom("oblique lattice requires 'b' parameter")
                         })?;
                         let alpha_deg = alpha.ok_or_else(|| {
-                            D::Error::custom("oblique lattice requires 'alpha' parameter (in degrees)")
+                            D::Error::custom(
+                                "oblique lattice requires 'alpha' parameter (in degrees)",
+                            )
                         })?;
                         let alpha_rad = alpha_deg.to_radians();
                         let a2 = [b_val * alpha_rad.cos(), b_val * alpha_rad.sin()];
@@ -160,7 +159,7 @@ impl Lattice2D {
         let h = (3.0f64).sqrt() * 0.5 * a;
         Self {
             a1: [a, 0.0],
-            a2: [half, h],  // 60° convention: a₂ = [a/2, a√3/2]
+            a2: [half, h], // 60° convention: a₂ = [a/2, a√3/2]
         }
     }
 

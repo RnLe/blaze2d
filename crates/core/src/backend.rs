@@ -46,21 +46,21 @@ pub trait SpectralBackend {
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer;
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer);
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer);
-    
+
     /// Scale buffer by a complex scalar.
     /// Note: In mixed-precision mode, alpha is converted to storage precision.
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer);
-    
+
     /// Compute y += alpha * x (axpy operation).
     /// Note: In mixed-precision mode, alpha is converted to storage precision.
     fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer);
-    
+
     /// Compute conjugate dot product ⟨x, y⟩ = x^H · y.
-    /// 
+    ///
     /// **CRITICAL for mixed precision**: This MUST accumulate in f64 even when
     /// storage is f32. Accumulating in f32 causes catastrophic cancellation
     /// during orthogonalization, leading to loss of basis independence.
-    /// 
+    ///
     /// Implementation pattern for f32 storage:
     /// ```ignore
     /// let dot: f64 = x.iter().zip(y.iter())

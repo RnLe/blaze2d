@@ -341,7 +341,7 @@ mod tests {
     fn test_selective_filter_from_spec() {
         let spec = SelectiveSpec {
             k_indices: vec![0, 2],
-            k_labels: vec![], // Not resolved here
+            k_labels: vec![],  // Not resolved here
             bands: vec![1, 3], // 1-based
         };
         let filter = SelectiveFilter::from_spec(&spec);

@@ -6,10 +6,9 @@ use super::initialization::{
     BlockEntry, InitializationConfig, initialize_block, seed_random_vector,
 };
 use crate::backend::SpectralBackend;
-use crate::field::Field2D;
+use crate::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
-use num_complex::Complex64;
 
 // ============================================================================
 // Test Backend (Identity operator)
@@ -30,23 +29,28 @@ impl SpectralBackend for TestBackend {
 
     fn inverse_fft_2d(&self, _buffer: &mut Self::Buffer) {}
 
-    fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
+    fn scale(&self, alpha: AccumScalar, buffer: &mut Self::Buffer) {
         for value in buffer.as_mut_slice() {
-            *value *= alpha;
+            *value *= FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         }
     }
 
-    fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer) {
+    fn axpy(&self, alpha: AccumScalar, x: &Self::Buffer, y: &mut Self::Buffer) {
+        let alpha_f = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
         for (dst, src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-            *dst += alpha * src;
+            *dst += alpha_f * src;
         }
     }
 
-    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64 {
+    fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> AccumScalar {
         x.as_slice()
             .iter()
             .zip(y.as_slice())
-            .map(|(a, b)| a.conj() * b)
+            .map(|(a, b)| {
+                let a64 = AccumScalar::new(a.re as f64, a.im as f64);
+                let b64 = AccumScalar::new(b.re as f64, b.im as f64);
+                a64.conj() * b64
+            })
             .sum()
     }
 }
@@ -128,7 +132,8 @@ impl LinearOperator<TestBackend> for DiagonalOperator {
             .zip(input.as_slice())
             .enumerate()
         {
-            *out = inp * self.diagonal[i];
+            let diag = self.diagonal[i] as FieldReal;
+            *out = *inp * diag;
         }
     }
 
@@ -163,8 +168,8 @@ impl LinearOperator<TestBackend> for DiagonalOperator {
 
 #[test]
 fn test_seed_random_vector_deterministic() {
-    let mut buf1 = vec![Complex64::ZERO; 10];
-    let mut buf2 = vec![Complex64::ZERO; 10];
+    let mut buf1 = vec![FieldScalar::ZERO; 10];
+    let mut buf2 = vec![FieldScalar::ZERO; 10];
 
     seed_random_vector(&mut buf1, 42.0);
     seed_random_vector(&mut buf2, 42.0);
@@ -174,8 +179,8 @@ fn test_seed_random_vector_deterministic() {
 
 #[test]
 fn test_seed_random_vector_different_seeds() {
-    let mut buf1 = vec![Complex64::ZERO; 10];
-    let mut buf2 = vec![Complex64::ZERO; 10];
+    let mut buf1 = vec![FieldScalar::ZERO; 10];
+    let mut buf2 = vec![FieldScalar::ZERO; 10];
 
     seed_random_vector(&mut buf1, 1.0);
     seed_random_vector(&mut buf2, 2.0);
@@ -188,7 +193,7 @@ fn test_seed_random_vector_different_seeds() {
 
 #[test]
 fn test_seed_random_vector_range() {
-    let mut buf = vec![Complex64::ZERO; 1000];
+    let mut buf = vec![FieldScalar::ZERO; 1000];
     seed_random_vector(&mut buf, 123.0);
 
     for val in &buf {
@@ -211,13 +216,13 @@ fn test_block_entry_rayleigh_quotient() {
 
     // Create a simple eigenvector [1, 0, 0, 0] with eigenvalue 2.0
     let mut vector = Field2D::zeros(grid);
-    vector.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+    vector.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
 
     let mut mass = Field2D::zeros(grid);
-    mass.as_mut_slice()[0] = Complex64::new(1.0, 0.0); // B*x = x for identity B
+    mass.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0); // B*x = x for identity B
 
     let mut applied = Field2D::zeros(grid);
-    applied.as_mut_slice()[0] = Complex64::new(2.0, 0.0); // A*x = 2*x
+    applied.as_mut_slice()[0] = FieldScalar::new(2.0, 0.0); // A*x = 2*x
 
     let entry = BlockEntry {
         vector,
@@ -227,7 +232,7 @@ fn test_block_entry_rayleigh_quotient() {
     let rq = entry.rayleigh_quotient(&backend);
 
     assert!(
-        (rq - 2.0).abs() < 1e-10,
+        (rq - 2.0).abs() < 1e-6,
         "Rayleigh quotient should be 2.0, got {}",
         rq
     );
@@ -240,12 +245,12 @@ fn test_block_entry_b_norm() {
 
     // Create vector [3, 4, 0, 0] with norm 5
     let mut vector = Field2D::zeros(grid);
-    vector.as_mut_slice()[0] = Complex64::new(3.0, 0.0);
-    vector.as_mut_slice()[1] = Complex64::new(4.0, 0.0);
+    vector.as_mut_slice()[0] = FieldScalar::new(3.0, 0.0);
+    vector.as_mut_slice()[1] = FieldScalar::new(4.0, 0.0);
 
     let mut mass = Field2D::zeros(grid);
-    mass.as_mut_slice()[0] = Complex64::new(3.0, 0.0);
-    mass.as_mut_slice()[1] = Complex64::new(4.0, 0.0);
+    mass.as_mut_slice()[0] = FieldScalar::new(3.0, 0.0);
+    mass.as_mut_slice()[1] = FieldScalar::new(4.0, 0.0);
 
     let applied = Field2D::zeros(grid);
 
@@ -257,7 +262,7 @@ fn test_block_entry_b_norm() {
     let norm = entry.b_norm(&backend);
 
     assert!(
-        (norm - 5.0).abs() < 1e-10,
+        (norm - 5.0).abs() < 1e-6,
         "B-norm should be 5.0, got {}",
         norm
     );
@@ -319,7 +324,7 @@ fn test_initialize_block_orthogonality() {
             let inner = backend.dot(&entries[i].vector, &entries[j].mass);
             if i == j {
                 assert!(
-                    (inner.re - 1.0).abs() < 1e-10,
+                    (inner.re - 1.0).abs() < 1e-6,
                     "Diagonal should be 1.0, got {} at ({}, {})",
                     inner.re,
                     i,
@@ -327,7 +332,7 @@ fn test_initialize_block_orthogonality() {
                 );
             } else {
                 assert!(
-                    inner.norm() < 1e-10,
+                    inner.norm() < 1e-6,
                     "Off-diagonal should be ~0, got {} at ({}, {})",
                     inner.norm(),
                     i,
@@ -350,9 +355,9 @@ fn test_initialize_block_with_warm_start() {
     // Create warm-start vectors
     let grid = Grid2D::new(16, 1, 1.0, 1.0);
     let mut warm1 = Field2D::zeros(grid);
-    warm1.as_mut_slice()[0] = Complex64::new(1.0, 0.0);
+    warm1.as_mut_slice()[0] = FieldScalar::new(1.0, 0.0);
     let mut warm2 = Field2D::zeros(grid);
-    warm2.as_mut_slice()[1] = Complex64::new(1.0, 0.0);
+    warm2.as_mut_slice()[1] = FieldScalar::new(1.0, 0.0);
     let warm_start = vec![warm1, warm2];
 
     let (entries, result) = initialize_block(&mut operator, &config, Some(&warm_start));
@@ -416,7 +421,9 @@ fn test_initialize_block_impossible() {
     let config = InitializationConfig {
         block_size: 8, // More than 4D space!
         max_random_attempts: 32,
-        zero_tolerance: 1e-12,
+        // With mixed precision (f32 storage), use f32-appropriate tolerance
+        // f32 has ~6-7 decimal digits of precision
+        zero_tolerance: 1e-5,
     };
 
     let (entries, result) = initialize_block(&mut operator, &config, None);
@@ -478,7 +485,7 @@ fn test_create_gamma_mode_unit_b_norm() {
     // For identity mass matrix, original norm should be √n
     let expected_norm = (16.0_f64).sqrt();
     assert!(
-        (original_norm - expected_norm).abs() < 1e-10,
+        (original_norm - expected_norm).abs() < 1e-6,
         "Original norm should be √n = {}, got {}",
         expected_norm,
         original_norm
@@ -489,10 +496,10 @@ fn test_create_gamma_mode_unit_b_norm() {
         .as_slice()
         .iter()
         .zip(by0.as_slice())
-        .map(|(a, b)| (a.conj() * b).re)
+        .map(|(a, b)| (a.conj() * b).re as f64)
         .sum();
     assert!(
-        (final_norm_sq - 1.0).abs() < 1e-10,
+        (final_norm_sq - 1.0).abs() < 1e-6,
         "Normalized B-norm should be 1.0, got {}",
         final_norm_sq.sqrt()
     );
@@ -538,7 +545,7 @@ fn test_create_gamma_mode_eigenvalue_zero() {
     let expected_component = 1.0 / (16.0_f64).sqrt();
     for &val in y0.as_slice() {
         assert!(
-            (val.re - expected_component).abs() < 1e-10,
+            (val.re as f64 - expected_component).abs() < 1e-6,
             "Each component should be 1/√n = {}, got {}",
             expected_component,
             val.re

@@ -24,11 +24,9 @@
 //! The preconditioner is Hermitian (self-adjoint), which is essential for
 //! conjugate-gradient convergence.
 
-use num_complex::Complex64;
-
 use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::dielectric::Dielectric2D;
-use crate::field::{FieldScalar, FieldReal};
+use crate::field::{FieldReal, FieldScalar};
 use crate::grid::Grid2D;
 use crate::polarization::Polarization;
 use crate::preconditioners::OperatorPreconditioner;

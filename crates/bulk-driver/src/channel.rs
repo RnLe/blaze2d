@@ -9,8 +9,8 @@
 //!   WASM/React components).
 //! - **Null Mode**: Discard output for pure benchmarking.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use thiserror::Error;
@@ -30,18 +30,12 @@ use crate::expansion::ExpandedJob;
 /// Extension trait for creating CompactBandResult from native driver results.
 pub trait CompactBandResultExt {
     /// Create from a job result and expanded job.
-    fn from_job_result(
-        job: &ExpandedJob,
-        result: &crate::driver::JobResult,
-    ) -> CompactBandResult;
+    fn from_job_result(job: &ExpandedJob, result: &crate::driver::JobResult) -> CompactBandResult;
 }
 
 impl CompactBandResultExt for CompactBandResult {
     /// Create from a job result and expanded job.
-    fn from_job_result(
-        job: &ExpandedJob,
-        result: &crate::driver::JobResult,
-    ) -> CompactBandResult {
+    fn from_job_result(job: &ExpandedJob, result: &crate::driver::JobResult) -> CompactBandResult {
         let result_type = match &result.result {
             crate::driver::JobResultType::Maxwell(band_result) => {
                 // Normalize frequencies (divide by 2π)
@@ -64,9 +58,13 @@ impl CompactBandResultExt for CompactBandResult {
             }
             crate::driver::JobResultType::EA(ea_result) => {
                 // Convert eigenvectors from Field2D to serializable format
-                let eigenvectors: Vec<Vec<[f64; 2]>> = ea_result.eigenvectors.iter()
+                let eigenvectors: Vec<Vec<[f64; 2]>> = ea_result
+                    .eigenvectors
+                    .iter()
                     .map(|field| {
-                        field.as_slice().iter()
+                        field
+                            .as_slice()
+                            .iter()
                             .map(|c| [c.re as f64, c.im as f64])
                             .collect()
                     })

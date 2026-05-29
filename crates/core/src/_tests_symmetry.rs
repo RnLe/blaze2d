@@ -11,10 +11,8 @@
 
 #![cfg(test)]
 
-use num_complex::Complex64;
-
 use crate::{
-    field::Field2D,
+    field::{Field2D, FieldReal, FieldScalar},
     grid::Grid2D,
     lattice::{Lattice2D, LatticeClass},
     symmetry::{
@@ -27,7 +25,7 @@ use crate::{
 // Helper Functions
 // ============================================================================
 
-fn assert_complex_eq(actual: Complex64, expected: Complex64, tol: f64, msg: &str) {
+fn assert_complex_eq(actual: FieldScalar, expected: FieldScalar, tol: FieldReal, msg: &str) {
     assert!(
         (actual - expected).norm() < tol,
         "{}: expected {:.6} + {:.6}i, got {:.6} + {:.6}i",
@@ -39,7 +37,7 @@ fn assert_complex_eq(actual: Complex64, expected: Complex64, tol: f64, msg: &str
     );
 }
 
-fn assert_complex_zero(actual: Complex64, tol: f64, msg: &str) {
+fn assert_complex_zero(actual: FieldScalar, tol: FieldReal, msg: &str) {
     assert!(
         actual.norm() < tol,
         "{}: expected ~0, got {:.6} + {:.6}i (norm={:.2e})",
@@ -75,7 +73,7 @@ fn single_reflection_projector(
 fn indexed_field(grid: Grid2D) -> Field2D {
     let mut field = Field2D::zeros(grid);
     for idx in 0..grid.len() {
-        field.as_mut_slice()[idx] = Complex64::new(idx as f64, 0.0);
+        field.as_mut_slice()[idx] = FieldScalar::new(idx as FieldReal, 0.0);
     }
     field
 }
@@ -85,7 +83,8 @@ fn complex_indexed_field(grid: Grid2D) -> Field2D {
     let mut field = Field2D::zeros(grid);
     for idx in 0..grid.len() {
         // Use different real and imaginary parts for each index
-        field.as_mut_slice()[idx] = Complex64::new(idx as f64, (idx as f64) * 0.1 + 1.0);
+        field.as_mut_slice()[idx] =
+            FieldScalar::new(idx as FieldReal, (idx as FieldReal) * 0.1 + 1.0);
     }
     field
 }
@@ -270,13 +269,13 @@ mod even_parity {
         let data = field.as_mut_slice();
 
         // Set (0,1) = 1+2i, (0,3) = 3+4i (they are partners under y-mirror)
-        data[grid.idx(0, 1)] = Complex64::new(1.0, 2.0);
-        data[grid.idx(0, 3)] = Complex64::new(3.0, 4.0);
+        data[grid.idx(0, 1)] = FieldScalar::new(1.0, 2.0);
+        data[grid.idx(0, 3)] = FieldScalar::new(3.0, 4.0);
 
         projector.apply(&mut field);
 
         // After even projection: both = (1+3)/2 + i(2+4)/2 = 2+3i
-        let expected = Complex64::new(2.0, 3.0);
+        let expected = FieldScalar::new(2.0, 3.0);
         assert_complex_eq(field.as_slice()[grid.idx(0, 1)], expected, 1e-12, "(0,1)");
         assert_complex_eq(field.as_slice()[grid.idx(0, 3)], expected, 1e-12, "(0,3)");
     }
@@ -290,8 +289,8 @@ mod even_parity {
         let data = field.as_mut_slice();
 
         // Create an already-symmetric field
-        data[grid.idx(1, 1)] = Complex64::new(5.0, 3.0);
-        data[grid.idx(1, 3)] = Complex64::new(5.0, 3.0); // Same as partner
+        data[grid.idx(1, 1)] = FieldScalar::new(5.0, 3.0);
+        data[grid.idx(1, 3)] = FieldScalar::new(5.0, 3.0); // Same as partner
 
         let original = data[grid.idx(1, 1)];
         projector.apply(&mut field);
@@ -320,7 +319,7 @@ mod even_parity {
         let data = field.as_mut_slice();
 
         // Self-partner at iy=0 (G_y = 0 axis)
-        data[grid.idx(2, 0)] = Complex64::new(7.0, -2.0);
+        data[grid.idx(2, 0)] = FieldScalar::new(7.0, -2.0);
         let original = data[grid.idx(2, 0)];
 
         projector.apply(&mut field);
@@ -343,7 +342,7 @@ mod even_parity {
         let data = field.as_mut_slice();
 
         // Nyquist frequency iy=2 is also a self-partner
-        data[grid.idx(1, 2)] = Complex64::new(3.5, 1.2);
+        data[grid.idx(1, 2)] = FieldScalar::new(3.5, 1.2);
         let original = data[grid.idx(1, 2)];
 
         projector.apply(&mut field);
@@ -365,12 +364,12 @@ mod even_parity {
         let data = field.as_mut_slice();
 
         // Partners under x-mirror: (1,0) ↔ (3,0)
-        data[grid.idx(1, 0)] = Complex64::new(10.0, 0.0);
-        data[grid.idx(3, 0)] = Complex64::new(20.0, 0.0);
+        data[grid.idx(1, 0)] = FieldScalar::new(10.0, 0.0);
+        data[grid.idx(3, 0)] = FieldScalar::new(20.0, 0.0);
 
         projector.apply(&mut field);
 
-        let expected = Complex64::new(15.0, 0.0);
+        let expected = FieldScalar::new(15.0, 0.0);
         assert_complex_eq(field.as_slice()[grid.idx(1, 0)], expected, 1e-12, "(1,0)");
         assert_complex_eq(field.as_slice()[grid.idx(3, 0)], expected, 1e-12, "(3,0)");
     }
@@ -383,7 +382,7 @@ mod even_parity {
         let mut field = complex_indexed_field(grid);
 
         projector.apply(&mut field);
-        let after_first: Vec<Complex64> = field.as_slice().to_vec();
+        let after_first: Vec<FieldScalar> = field.as_slice().to_vec();
 
         projector.apply(&mut field);
 
@@ -415,8 +414,8 @@ mod odd_parity {
         let data = field.as_mut_slice();
 
         // Set (0,1) = 1+2i, (0,3) = 3+4i
-        data[grid.idx(0, 1)] = Complex64::new(1.0, 2.0);
-        data[grid.idx(0, 3)] = Complex64::new(3.0, 4.0);
+        data[grid.idx(0, 1)] = FieldScalar::new(1.0, 2.0);
+        data[grid.idx(0, 3)] = FieldScalar::new(3.0, 4.0);
 
         projector.apply(&mut field);
 
@@ -425,13 +424,13 @@ mod odd_parity {
         // (0,3) → -(-1 - i) = 1 + i
         assert_complex_eq(
             field.as_slice()[grid.idx(0, 1)],
-            Complex64::new(-1.0, -1.0),
+            FieldScalar::new(-1.0, -1.0),
             1e-12,
             "(0,1)",
         );
         assert_complex_eq(
             field.as_slice()[grid.idx(0, 3)],
-            Complex64::new(1.0, 1.0),
+            FieldScalar::new(1.0, 1.0),
             1e-12,
             "(0,3)",
         );
@@ -446,8 +445,8 @@ mod odd_parity {
         let data = field.as_mut_slice();
 
         // Self-partner at iy=0: must be zero for odd parity
-        data[grid.idx(1, 0)] = Complex64::new(5.0, 3.0);
-        data[grid.idx(2, 0)] = Complex64::new(7.0, -1.0);
+        data[grid.idx(1, 0)] = FieldScalar::new(5.0, 3.0);
+        data[grid.idx(2, 0)] = FieldScalar::new(7.0, -1.0);
 
         projector.apply(&mut field);
 
@@ -472,7 +471,7 @@ mod odd_parity {
         let data = field.as_mut_slice();
 
         // Nyquist (iy=2) is a self-partner, must be zero for odd
-        data[grid.idx(0, 2)] = Complex64::new(100.0, 200.0);
+        data[grid.idx(0, 2)] = FieldScalar::new(100.0, 200.0);
 
         projector.apply(&mut field);
 
@@ -516,7 +515,7 @@ mod odd_parity {
         let mut field = complex_indexed_field(grid);
 
         projector.apply(&mut field);
-        let after_first: Vec<Complex64> = field.as_slice().to_vec();
+        let after_first: Vec<FieldScalar> = field.as_slice().to_vec();
 
         projector.apply(&mut field);
 
@@ -539,8 +538,8 @@ mod odd_parity {
         let data = field.as_mut_slice();
 
         // Create already-antisymmetric field
-        data[grid.idx(1, 1)] = Complex64::new(5.0, 3.0);
-        data[grid.idx(1, 3)] = Complex64::new(-5.0, -3.0); // -partner
+        data[grid.idx(1, 1)] = FieldScalar::new(5.0, 3.0);
+        data[grid.idx(1, 3)] = FieldScalar::new(-5.0, -3.0); // -partner
 
         let original = data[grid.idx(1, 1)];
         projector.apply(&mut field);
@@ -857,7 +856,7 @@ mod path_generation {
         // Custom paths should now be densified like other path types
         // With 10 segments per leg and 2 legs, we expect 10*2 + 1 = 21 points
         assert_eq!(path.len(), 21, "custom path should be densified");
-        
+
         // Should start and end at the specified corners
         assert_point_close(path[0], [0.1, 0.2]);
         assert_point_close(path[10], [0.3, 0.4]);
@@ -918,16 +917,16 @@ mod edge_cases {
         let mut field = Field2D::zeros(grid);
         let data = field.as_mut_slice();
 
-        // Large values
-        data[grid.idx(0, 1)] = Complex64::new(1e15, 1e15);
-        data[grid.idx(0, 3)] = Complex64::new(1e15, 1e15);
+        // Large values (use f32-safe range for mixed precision)
+        data[grid.idx(0, 1)] = FieldScalar::new(1e10, 1e10);
+        data[grid.idx(0, 3)] = FieldScalar::new(1e10, 1e10);
 
         projector.apply(&mut field);
 
         // Should be preserved (already symmetric)
         assert_complex_eq(
             field.as_slice()[grid.idx(0, 1)],
-            Complex64::new(1e15, 1e15),
+            FieldScalar::new(1e10, 1e10),
             1e3, // Relative tolerance
             "large values",
         );
@@ -941,17 +940,17 @@ mod edge_cases {
         let mut field = Field2D::zeros(grid);
         let data = field.as_mut_slice();
 
-        // Tiny values
-        data[grid.idx(0, 1)] = Complex64::new(1e-15, 1e-15);
-        data[grid.idx(0, 3)] = Complex64::new(3e-15, 3e-15);
+        // Tiny values (use f32-safe range for mixed precision)
+        data[grid.idx(0, 1)] = FieldScalar::new(1e-6, 1e-6);
+        data[grid.idx(0, 3)] = FieldScalar::new(3e-6, 3e-6);
 
         projector.apply(&mut field);
 
-        let expected = Complex64::new(2e-15, 2e-15);
+        let expected = FieldScalar::new(2e-6, 2e-6);
         assert_complex_eq(
             field.as_slice()[grid.idx(0, 1)],
             expected,
-            1e-16,
+            1e-7,
             "tiny values",
         );
     }
@@ -965,21 +964,21 @@ mod edge_cases {
         let data = field.as_mut_slice();
 
         // Pure imaginary values
-        data[grid.idx(0, 1)] = Complex64::new(0.0, 5.0);
-        data[grid.idx(0, 3)] = Complex64::new(0.0, 3.0);
+        data[grid.idx(0, 1)] = FieldScalar::new(0.0, 5.0);
+        data[grid.idx(0, 3)] = FieldScalar::new(0.0, 3.0);
 
         projector.apply(&mut field);
 
         // Odd: (5i - 3i)/2 = i, partner = -i
         assert_complex_eq(
             field.as_slice()[grid.idx(0, 1)],
-            Complex64::new(0.0, 1.0),
+            FieldScalar::new(0.0, 1.0),
             1e-12,
             "pure imag",
         );
         assert_complex_eq(
             field.as_slice()[grid.idx(0, 3)],
-            Complex64::new(0.0, -1.0),
+            FieldScalar::new(0.0, -1.0),
             1e-12,
             "partner",
         );
@@ -1131,7 +1130,8 @@ mod block_operations {
             .map(|i| {
                 let mut f = Field2D::zeros(grid);
                 for idx in 0..grid.len() {
-                    f.as_mut_slice()[idx] = Complex64::new((i * grid.len() + idx) as f64, 0.0);
+                    f.as_mut_slice()[idx] =
+                        FieldScalar::new((i * grid.len() + idx) as FieldReal, 0.0);
                 }
                 f
             })

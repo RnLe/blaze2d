@@ -47,7 +47,7 @@ static INIT_FAER: Once = Once::new();
 
 /// Initialize faer with sequential execution (no internal parallelism).
 /// Safe to call multiple times - only the first call takes effect.
-/// 
+///
 /// This is a no-op when using the wasm-linalg backend.
 #[cfg(feature = "native-linalg")]
 pub(crate) fn init_faer_sequential() {

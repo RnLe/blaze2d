@@ -7,16 +7,16 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, ValueEnum};
-use env_logger::Builder;
-use log::{error, info, warn};
 use blaze2d_core::{
-    brillouin::{generate_path, BrillouinPath},
+    brillouin::{BrillouinPath, generate_path},
     diagnostics::PreconditionerType,
     dielectric::Dielectric2D,
     drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity},
     io::{JobConfig, PathPreset},
 };
+use clap::{Parser, ValueEnum};
+use env_logger::Builder;
+use log::{error, info, warn};
 
 #[cfg(feature = "cuda")]
 use blaze2d_backend_cuda::CudaBackend;
@@ -29,7 +29,10 @@ use blaze2d_backend_cpu::CpuBackend;
 // ============================================================================
 
 #[derive(Parser, Debug)]
-#[command(name = "blaze", about = "Blaze 2D photonic crystal band structure solver CLI")]
+#[command(
+    name = "blaze",
+    about = "Blaze 2D photonic crystal band structure solver CLI"
+)]
 struct Cli {
     /// Path to a TOML configuration file
     #[arg(short, long)]
@@ -253,7 +256,9 @@ impl From<PrecondArg> for PreconditionerType {
         match value {
             PrecondArg::Auto => PreconditionerType::Auto,
             PrecondArg::None => PreconditionerType::None,
-            PrecondArg::FourierDiagonalKernelCompensated => PreconditionerType::FourierDiagonalKernelCompensated,
+            PrecondArg::FourierDiagonalKernelCompensated => {
+                PreconditionerType::FourierDiagonalKernelCompensated
+            }
             PrecondArg::TransverseProjection => PreconditionerType::TransverseProjection,
         }
     }
@@ -320,17 +325,24 @@ fn initialize_logging(log_file: Option<&Path>) -> Result<(), Box<dyn std::error:
                     use std::io::Write;
 
                     let level = record.level();
-                    
+
                     // ANSI color codes for log levels
                     let (color_start, color_end) = match level {
                         log::Level::Error => ("\x1b[1;31m", "\x1b[0m"), // Bold red
-                        log::Level::Warn  => ("\x1b[1;33m", "\x1b[0m"), // Bold yellow
-                        log::Level::Info  => ("\x1b[32m", "\x1b[0m"),   // Green
+                        log::Level::Warn => ("\x1b[1;33m", "\x1b[0m"),  // Bold yellow
+                        log::Level::Info => ("\x1b[32m", "\x1b[0m"),    // Green
                         log::Level::Debug => ("\x1b[36m", "\x1b[0m"),   // Cyan
                         log::Level::Trace => ("\x1b[35m", "\x1b[0m"),   // Magenta
                     };
 
-                    writeln!(buf, "{}{:5}{} {}", color_start, level, color_end, record.args())
+                    writeln!(
+                        buf,
+                        "{}{:5}{} {}",
+                        color_start,
+                        level,
+                        color_end,
+                        record.args()
+                    )
                 })
                 .init();
         }
@@ -420,10 +432,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(ref tensor_path) = cli.export_epsilon_tensor {
             if !cli.quiet {
-                info!(
-                    "exporting epsilon tensor data to {}",
-                    tensor_path.display()
-                );
+                info!("exporting epsilon tensor data to {}", tensor_path.display());
             }
             match dielectric.save_tensor_csv(tensor_path) {
                 Ok(()) => {}
@@ -557,10 +566,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(ref csv_path) = cli.iteration_csv_combined {
             if !cli.quiet {
-                info!(
-                    "writing combined iteration CSV to {}",
-                    csv_path.display()
-                );
+                info!("writing combined iteration CSV to {}", csv_path.display());
             }
             diag_result.study.save_iteration_csv_combined(csv_path)?;
         }

@@ -71,16 +71,12 @@ pub mod result;
 pub use config::{
     AtomRanges, BaseAtom, BaseGeometry, BaseLattice, BatchSettings, BulkConfig, BulkSection,
     ConfigError, DefaultsConfig, EAConfig, IoMode, LatticeTypeSpec, OutputConfig, OutputMode,
-    ParameterRange, RangeSpec, SelectiveSpec, SolverSection, SolverType, SweepDimension,
-    SweepSpec, SweepValue, ValueList, parse_atom_path, validate_parameter_path,
+    ParameterRange, RangeSpec, SelectiveSpec, SolverSection, SolverType, SweepDimension, SweepSpec,
+    SweepValue, ValueList, parse_atom_path, validate_parameter_path,
 };
 
-pub use expansion::{
-    expand_jobs, AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams,
-};
+pub use expansion::{AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams, expand_jobs};
 
 pub use filter::SelectiveFilter;
 
-pub use result::{
-    CompactBandResult, CompactResultType, ComplexPair, EAResult, MaxwellResult,
-};
+pub use result::{CompactBandResult, CompactResultType, ComplexPair, EAResult, MaxwellResult};

@@ -50,12 +50,12 @@
 //! ea.apply(&input, &mut output);
 //! ```
 
-use num_complex::Complex64;
 #[cfg(feature = "mixed-precision")]
 use num_complex::Complex32;
+use num_complex::Complex64;
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::{FieldScalar, FieldReal};
+use crate::field::{FieldReal, FieldScalar};
 use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 
@@ -236,26 +236,31 @@ impl<B: SpectralBackend> EAOperator<B> {
     /// ```
     pub fn apply_gauge_shift_for_positive_spectrum(&mut self, margin: f64) -> f64 {
         let (v_min, _, _) = self.potential_stats();
-        
+
         if v_min >= margin {
             // Already positive, no shift needed
-            log::debug!("Potential already positive (V_min = {:.4e}), no gauge shift applied", v_min);
+            log::debug!(
+                "Potential already positive (V_min = {:.4e}), no gauge shift applied",
+                v_min
+            );
             return 0.0;
         }
-        
+
         // Shift so that V_min + σ = margin
         let shift = -v_min + margin;
-        
+
         log::info!(
             "Applying gauge shift σ = {:.4e} to potential (V_min was {:.4e}, now {:.4e})",
-            shift, v_min, v_min + shift
+            shift,
+            v_min,
+            v_min + shift
         );
-        
+
         // Apply shift to all potential values
         for v in &mut self.potential {
             *v += shift;
         }
-        
+
         self.gauge_shift = shift;
         shift
     }
@@ -264,7 +269,10 @@ impl<B: SpectralBackend> EAOperator<B> {
     ///
     /// Call this after solving to get physical eigenvalues.
     pub fn correct_eigenvalues(&self, raw_eigenvalues: &[f64]) -> Vec<f64> {
-        raw_eigenvalues.iter().map(|&e| e - self.gauge_shift).collect()
+        raw_eigenvalues
+            .iter()
+            .map(|&e| e - self.gauge_shift)
+            .collect()
     }
 
     /// Check if the drift term (v_g) is present.
@@ -297,13 +305,13 @@ impl<B: SpectralBackend> EAOperator<B> {
         let mut sum = 0.0;
         let mut v_min = f64::INFINITY;
         let mut v_max = f64::NEG_INFINITY;
-        
+
         for &v in &self.potential {
             sum += v;
             v_min = v_min.min(v);
             v_max = v_max.max(v);
         }
-        
+
         (v_min, v_max, sum / n as f64)
     }
 
@@ -315,7 +323,7 @@ impl<B: SpectralBackend> EAOperator<B> {
         let mut sum = 0.0;
         let mut m_min = f64::INFINITY;
         let mut m_max = f64::NEG_INFINITY;
-        
+
         for p in 0..n {
             let m_xx = self.mass_inv[p * 4];
             let m_yy = self.mass_inv[p * 4 + 3];
@@ -324,7 +332,7 @@ impl<B: SpectralBackend> EAOperator<B> {
             m_min = m_min.min(m_eff);
             m_max = m_max.max(m_eff);
         }
-        
+
         (m_min, m_max, sum / n as f64)
     }
 
@@ -362,16 +370,15 @@ impl<B: SpectralBackend> EAOperator<B> {
     /// let mut precond = operator.build_preconditioner();
     /// let result = single_solve::solve(&mut operator, Some(&mut precond), &job);
     /// ```
-    pub fn build_preconditioner(&self) -> crate::preconditioners::fft_preconditioner::FFTPreconditioner<B> {
+    pub fn build_preconditioner(
+        &self,
+    ) -> crate::preconditioners::fft_preconditioner::FFTPreconditioner<B> {
         let (v_min, v_max, v_mean) = self.potential_stats();
         let (m_min, m_max, m_mean) = self.mass_inv_stats();
-        
+
         crate::preconditioners::fft_preconditioner::FFTPreconditioner::from_operator_stats(
-            self.nx, self.ny,
-            self.dx, self.dy,
-            self.eta,
-            v_min, v_max, v_mean,
-            m_min, m_max, m_mean,
+            self.nx, self.ny, self.dx, self.dy, self.eta, v_min, v_max, v_mean, m_min, m_max,
+            m_mean,
         )
     }
 
@@ -387,10 +394,7 @@ impl<B: SpectralBackend> EAOperator<B> {
         config: crate::preconditioners::fft_preconditioner::EAPreconditionerConfig,
     ) -> crate::preconditioners::fft_preconditioner::FFTPreconditioner<B> {
         crate::preconditioners::fft_preconditioner::FFTPreconditioner::with_config(
-            self.nx, self.ny,
-            self.dx, self.dy,
-            self.eta,
-            config,
+            self.nx, self.ny, self.dx, self.dy, self.eta, config,
         )
     }
 
@@ -491,12 +495,15 @@ impl<B: SpectralBackend> EAOperator<B> {
             std::mem::swap(&mut v, &mut av);
         }
 
-
         // For EA operators, the diagonal (potential + kinetic diagonal) provides bounds
         // The minimum potential gives a rough lower bound on eigenvalues
         let v_min = self.potential.iter().cloned().fold(f64::INFINITY, f64::min);
-        let _v_max = self.potential.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        
+        let _v_max = self
+            .potential
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
+
         // Spectral spread as a condition indicator
         let spectral_spread = (lambda_max - v_min).abs();
 
@@ -775,7 +782,10 @@ impl<B: SpectralBackend> EAOperator<B> {
         let f_ip2 = input[ip2 * self.ny + j];
 
         let denom = (12.0 * self.dx * self.dx) as FieldReal;
-        (-f_im2 + (16.0 as FieldReal) * f_im1 - (30.0 as FieldReal) * f_i + (16.0 as FieldReal) * f_ip1 - f_ip2) / denom
+        (-f_im2 + (16.0 as FieldReal) * f_im1 - (30.0 as FieldReal) * f_i
+            + (16.0 as FieldReal) * f_ip1
+            - f_ip2)
+            / denom
     }
 
     /// 4th-order Laplacian in Y: d²ψ/dy²
@@ -793,7 +803,10 @@ impl<B: SpectralBackend> EAOperator<B> {
         let f_jp2 = input[i * self.ny + jp2];
 
         let denom = (12.0 * self.dy * self.dy) as FieldReal;
-        (-f_jm2 + (16.0 as FieldReal) * f_jm1 - (30.0 as FieldReal) * f_j + (16.0 as FieldReal) * f_jp1 - f_jp2) / denom
+        (-f_jm2 + (16.0 as FieldReal) * f_jm1 - (30.0 as FieldReal) * f_j
+            + (16.0 as FieldReal) * f_jp1
+            - f_jp2)
+            / denom
     }
 
     /// 4th-order mixed derivative: d²ψ/dxdy
@@ -869,7 +882,8 @@ impl<B: SpectralBackend> EAOperator<B> {
                 let grad_x = self.grad_x_central(input, i, j);
                 let grad_y = self.grad_y_central(input, i, j);
 
-                output[p] += prefactor * ((vg_x as FieldReal) * grad_x + (vg_y as FieldReal) * grad_y);
+                output[p] +=
+                    prefactor * ((vg_x as FieldReal) * grad_x + (vg_y as FieldReal) * grad_y);
             }
         }
     }
@@ -973,7 +987,7 @@ impl<B: SpectralBackend> LinearOperator<B> for EAOperator<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::Field2D;
+    use crate::field::{AccumScalar, Field2D, FieldReal, FieldScalar};
 
     /// A minimal test backend for unit testing.
     #[derive(Clone)]
@@ -989,23 +1003,28 @@ mod tests {
         fn forward_fft_2d(&self, _buffer: &mut Field2D) {}
         fn inverse_fft_2d(&self, _buffer: &mut Field2D) {}
 
-        fn scale(&self, alpha: Complex64, buffer: &mut Field2D) {
+        fn scale(&self, alpha: AccumScalar, buffer: &mut Field2D) {
             for v in buffer.as_mut_slice() {
-                *v *= alpha;
+                *v *= FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
             }
         }
 
-        fn axpy(&self, alpha: Complex64, x: &Field2D, y: &mut Field2D) {
+        fn axpy(&self, alpha: AccumScalar, x: &Field2D, y: &mut Field2D) {
+            let alpha_f = FieldScalar::new(alpha.re as FieldReal, alpha.im as FieldReal);
             for (yi, &xi) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {
-                *yi += alpha * xi;
+                *yi += alpha_f * xi;
             }
         }
 
-        fn dot(&self, x: &Field2D, y: &Field2D) -> Complex64 {
+        fn dot(&self, x: &Field2D, y: &Field2D) -> AccumScalar {
             x.as_slice()
                 .iter()
                 .zip(y.as_slice())
-                .map(|(a, b)| a.conj() * b)
+                .map(|(a, b)| {
+                    let a64 = AccumScalar::new(a.re as f64, a.im as f64);
+                    let b64 = AccumScalar::new(b.re as f64, b.im as f64);
+                    a64.conj() * b64
+                })
                 .sum()
         }
     }
@@ -1050,7 +1069,11 @@ mod tests {
 
         // All output values should be close to V = 1.0
         for &o in output.as_slice() {
-            assert!((o.re as f64 - 1.0).abs() < 1e-10, "Expected ~1.0, got {}", o.re);
+            assert!(
+                (o.re as f64 - 1.0).abs() < 1e-10,
+                "Expected ~1.0, got {}",
+                o.re
+            );
             assert!((o.im as f64).abs() < 1e-10, "Expected real output");
         }
     }
@@ -1097,7 +1120,8 @@ mod tests {
                 let x = i as f64 * dx;
                 let y = j as f64 * dy;
                 let phase = kx * x + ky * y;
-                input.as_mut_slice()[i * ny + j] = FieldScalar::new(phase.cos() as _, phase.sin() as _);
+                input.as_mut_slice()[i * ny + j] =
+                    FieldScalar::new(phase.cos() as _, phase.sin() as _);
             }
         }
 
@@ -1159,8 +1183,10 @@ mod tests {
         let mut x = Field2D::zeros(grid);
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
-            x.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
-            y.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
+            x.as_mut_slice()[i] =
+                FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
+            y.as_mut_slice()[i] =
+                FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
         }
 
         let mut hx = Field2D::zeros(grid);
@@ -1180,8 +1206,9 @@ mod tests {
         let scale = x_hy.norm().max(hx_y.norm());
 
         // With constant mass, the discretization should be exactly Hermitian
+        // Note: With mixed precision (f32 storage), we relax tolerance to 1e-6
         assert!(
-            diff / scale < 1e-10,
+            diff / scale < 1e-6,
             "Hermitian symmetry violated: <x,Hy>={}, <Hx,y>={}",
             x_hy,
             hx_y
@@ -1225,8 +1252,10 @@ mod tests {
         let mut x = Field2D::zeros(grid);
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
-            x.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
-            y.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
+            x.as_mut_slice()[i] =
+                FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
+            y.as_mut_slice()[i] =
+                FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
         }
 
         let mut hx = Field2D::zeros(grid);
@@ -1309,7 +1338,8 @@ mod tests {
             for j in 0..ny {
                 let x = i as f64 * dx;
                 let phase = kx * x;
-                input.as_mut_slice()[i * ny + j] = FieldScalar::new(phase.cos() as _, phase.sin() as _);
+                input.as_mut_slice()[i * ny + j] =
+                    FieldScalar::new(phase.cos() as _, phase.sin() as _);
             }
         }
 
@@ -1391,8 +1421,10 @@ mod tests {
         let mut x = Field2D::zeros(grid);
         let mut y = Field2D::zeros(grid);
         for i in 0..n {
-            x.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
-            y.as_mut_slice()[i] = FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
+            x.as_mut_slice()[i] =
+                FieldScalar::new((i as f64 * 0.1).sin() as _, (i as f64 * 0.2).cos() as _);
+            y.as_mut_slice()[i] =
+                FieldScalar::new((i as f64 * 0.3).cos() as _, (i as f64 * 0.15).sin() as _);
         }
 
         let mut hx = Field2D::zeros(grid);
@@ -1523,17 +1555,19 @@ mod tests {
         // Create a potential with negative values (centered around 0)
         let mut potential = vec![0.0; n];
         for i in 0..n {
-            potential[i] = (i as f64 / n as f64) - 0.5;  // Range: [-0.5, 0.5)
+            potential[i] = (i as f64 / n as f64) - 0.5; // Range: [-0.5, 0.5)
         }
         let v_min_orig = potential.iter().cloned().fold(f64::INFINITY, f64::min);
-        let v_max = potential.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let _v_max = potential.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
         let mass_inv: Vec<f64> = (0..n).flat_map(|_| [1.0, 0.0, 0.0, 1.0]).collect();
 
         let mut op = EAOperator::new(
             TestBackend,
-            nx, ny,
-            dx, dy,
+            nx,
+            ny,
+            dx,
+            dy,
             eta,
             potential,
             mass_inv,
@@ -1558,23 +1592,37 @@ mod tests {
 
         // Check potential stats after shift
         let (v_min_after, _, _) = op.potential_stats();
-        assert!(v_min_after >= margin, 
-            "V_min after shift should be >= margin: {} >= {}", v_min_after, margin);
+        assert!(
+            v_min_after >= margin,
+            "V_min after shift should be >= margin: {} >= {}",
+            v_min_after,
+            margin
+        );
 
         // Verify shift amount: shift = -v_min_orig + margin
         let expected_shift = -v_min_orig + margin;
-        assert!((shift - expected_shift).abs() < 1e-10,
-            "Shift should be -V_min + margin = {}, got {}", expected_shift, shift);
+        assert!(
+            (shift - expected_shift).abs() < 1e-10,
+            "Shift should be -V_min + margin = {}, got {}",
+            expected_shift,
+            shift
+        );
 
         // Test eigenvalue correction
         let raw_eigenvalues = vec![0.5, 1.0, 1.5, 2.0];
         let corrected = op.correct_eigenvalues(&raw_eigenvalues);
-        
+
         for (i, (&raw, &corrected_ev)) in raw_eigenvalues.iter().zip(corrected.iter()).enumerate() {
             let expected = raw - shift;
-            assert!((corrected_ev - expected).abs() < 1e-10,
+            assert!(
+                (corrected_ev - expected).abs() < 1e-10,
                 "Corrected eigenvalue {} should be {} - {} = {}, got {}",
-                i, raw, shift, expected, corrected_ev);
+                i,
+                raw,
+                shift,
+                expected,
+                corrected_ev
+            );
         }
     }
 
@@ -1594,8 +1642,10 @@ mod tests {
 
         let mut op = EAOperator::new(
             TestBackend,
-            nx, ny,
-            dx, dy,
+            nx,
+            ny,
+            dx,
+            dy,
             eta,
             potential,
             mass_inv,
@@ -1605,7 +1655,7 @@ mod tests {
 
         // Apply gauge shift - should return 0 since potential is already positive
         let shift = op.apply_gauge_shift_for_positive_spectrum(0.01);
-        
+
         assert_eq!(shift, 0.0, "No shift needed for positive potential");
         assert_eq!(op.gauge_shift(), 0.0);
 
@@ -1688,7 +1738,6 @@ impl<B: SpectralBackend> EAOperatorBuilder<B> {
         self
     }
 
-
     /// Build the EAOperator.
     ///
     /// Uses uniform potential V=0 and identity mass M=I if not specified.
@@ -1748,4 +1797,3 @@ impl<B: SpectralBackend> EAOperatorBuilder<B> {
         operator
     }
 }
-

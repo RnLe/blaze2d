@@ -25,7 +25,7 @@
 use faer::{Mat, Side};
 
 #[cfg(feature = "wasm-linalg")]
-use nalgebra::{DMatrix, Complex as NaComplex};
+use nalgebra::{Complex as NaComplex, DMatrix};
 
 use num_complex::Complex64;
 
@@ -149,22 +149,24 @@ fn solve_hermitian_eigen_nalgebra(a_matrix: &[Complex64], dim: usize) -> DenseEi
     // Compute eigendecomposition using nalgebra's symmetric_eigen
     // This works for Hermitian matrices (complex symmetric)
     let eigen = a_na.clone().symmetric_eigen();
-    
+
     // eigenvalues are in eigen.eigenvalues (ascending order in nalgebra)
     // eigenvectors are columns of eigen.eigenvectors
-    
+
     // nalgebra returns eigenvalues as RealField (f64) for complex matrices
     let eigenvalues: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
-    
+
     // Sort eigenvalues and get the sorting permutation
     let mut indices: Vec<usize> = (0..dim).collect();
     indices.sort_by(|&i, &j| {
-        eigenvalues[i].partial_cmp(&eigenvalues[j]).unwrap_or(std::cmp::Ordering::Equal)
+        eigenvalues[i]
+            .partial_cmp(&eigenvalues[j])
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
-    
+
     // Apply sorting to eigenvalues
     let sorted_eigenvalues: Vec<f64> = indices.iter().map(|&i| eigenvalues[i]).collect();
-    
+
     // Extract eigenvectors in sorted order (column-major)
     let mut eigenvectors = vec![Complex64::new(0.0, 0.0); dim * dim];
     for (new_j, &old_j) in indices.iter().enumerate() {

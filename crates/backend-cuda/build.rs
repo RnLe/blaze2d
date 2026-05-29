@@ -20,18 +20,14 @@ fn link_cufft() {
         .or_else(|_| std::env::var("CUDA_HOME"))
         .unwrap_or_else(|_| {
             // Check common default locations
-            let default_paths = [
-                "/usr/local/cuda",
-                "/opt/cuda",
-                "/usr/lib/cuda",
-            ];
-            
+            let default_paths = ["/usr/local/cuda", "/opt/cuda", "/usr/lib/cuda"];
+
             for path in default_paths {
                 if std::path::Path::new(path).exists() {
                     return path.to_string();
                 }
             }
-            
+
             // Fall back to default, let the linker find it
             "/usr/local/cuda".to_string()
         });
@@ -53,7 +49,7 @@ fn link_cufft() {
 
     // Tell cargo to look for libraries in CUDA lib directory
     println!("cargo:rustc-link-search=native={}", lib_path);
-    
+
     // Link against cuFFT library
     // On Linux this links libcufft.so, on Windows cufft.lib
     println!("cargo:rustc-link-lib=cufft");

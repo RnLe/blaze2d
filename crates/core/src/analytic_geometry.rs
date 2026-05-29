@@ -585,15 +585,17 @@ mod tests {
         let (avg_eps, avg_inv, tensor) = compute_smoothed_dielectric(0.5, 12.0, 1.0, [1.0, 0.0]);
 
         // Check averages
-        assert!((avg_eps - 6.5).abs() < 1e-10); // (12 + 1) / 2
+        assert!((avg_eps - 6.5).abs() < 1e-6); // (12 + 1) / 2
         let expected_inv = 0.5 / 12.0 + 0.5 / 1.0;
-        assert!((avg_inv - expected_inv).abs() < 1e-10);
+        assert!((avg_inv - expected_inv).abs() < 1e-6);
 
-        // Normal direction (xx) should use avg_inv
-        // Tangential direction (yy) should use 1/avg_eps
-        assert!((tensor[0] - avg_inv).abs() < 1e-10); // xx = normal
-        assert!((tensor[3] - 1.0 / avg_eps).abs() < 1e-10); // yy = tangential
-        assert!(tensor[1].abs() < 1e-10); // xy = 0 for axis-aligned normal
+        // NOTE: MPB uses a swapped xx↔yy convention (see compute_smoothed_dielectric)
+        // With normal [1, 0] (x direction):
+        // - Physical: xx = normal direction should use avg_inv
+        // - MPB convention: tensor[0] (xx) uses tangential, tensor[3] (yy) uses normal
+        assert!((tensor[0] - 1.0 / avg_eps).abs() < 1e-6); // xx = tangential (MPB swapped)
+        assert!((tensor[3] - avg_inv).abs() < 1e-6); // yy = normal (MPB swapped)
+        assert!(tensor[1].abs() < 1e-6); // xy = 0 for axis-aligned normal
     }
 
     #[test]

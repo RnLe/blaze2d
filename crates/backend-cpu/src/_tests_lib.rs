@@ -8,7 +8,7 @@
 
 use crate::CpuBackend;
 use blaze2d_core::backend::SpectralBackend;
-use blaze2d_core::field::{Field2D, FieldScalar, FieldReal};
+use blaze2d_core::field::{Field2D, FieldReal, FieldScalar};
 use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 use std::f64::consts::PI;
@@ -307,7 +307,7 @@ fn combined_operations_maintain_consistency() {
 /// - CpuBackend provides working FFT and linear algebra
 #[test]
 fn ea_operator_single_solve_integration() {
-    use blaze2d_core::drivers::single_solve::{solve, SingleSolveJob};
+    use blaze2d_core::drivers::single_solve::{SingleSolveJob, solve};
     use blaze2d_core::operators::EAOperator;
 
     let backend = CpuBackend::new();
@@ -341,15 +341,7 @@ fn ea_operator_single_solve_integration() {
     let mass_inv: Vec<f64> = (0..n).flat_map(|_| [1.0, 0.0, 0.0, 1.0]).collect();
 
     let mut op = EAOperator::new(
-        backend,
-        nx,
-        ny,
-        dx,
-        dy,
-        eta,
-        potential,
-        mass_inv,
-        None, // no drift term
+        backend, nx, ny, dx, dy, eta, potential, mass_inv, None, // no drift term
         0.0,  // omega_ref
     );
 
@@ -370,12 +362,7 @@ fn ea_operator_single_solve_integration() {
 
     // 2. All eigenvalues should be positive (positive definite operator)
     for (i, &ev) in result.eigenvalues.iter().enumerate() {
-        assert!(
-            ev > 0.0,
-            "Eigenvalue {} should be positive, got {}",
-            i,
-            ev
-        );
+        assert!(ev > 0.0, "Eigenvalue {} should be positive, got {}", i, ev);
     }
 
     // 3. Eigenvalues should be in ascending order
@@ -407,7 +394,9 @@ fn ea_operator_single_solve_integration() {
     let backend = CpuBackend::new();
     for i in 0..result.eigenvectors.len() {
         // Check normalization
-        let norm_sq = backend.dot(&result.eigenvectors[i], &result.eigenvectors[i]).re;
+        let norm_sq = backend
+            .dot(&result.eigenvectors[i], &result.eigenvectors[i])
+            .re;
         assert!(
             (norm_sq - 1.0).abs() < 1e-4,
             "Eigenvector {} not normalized: ||v||² = {}",
@@ -417,7 +406,9 @@ fn ea_operator_single_solve_integration() {
 
         // Check orthogonality
         for j in (i + 1)..result.eigenvectors.len() {
-            let overlap = backend.dot(&result.eigenvectors[i], &result.eigenvectors[j]).norm();
+            let overlap = backend
+                .dot(&result.eigenvectors[i], &result.eigenvectors[j])
+                .norm();
             assert!(
                 overlap < 1e-4,
                 "Eigenvectors {} and {} not orthogonal: <v_i, v_j> = {}",

@@ -98,9 +98,8 @@ impl CompactBandResult {
             CompactResultType::EA(ea) => {
                 let eigenvalues_size = ea.eigenvalues.len() * 8;
                 // Each eigenvector: n_elements * 2 floats (complex) * 8 bytes
-                let eigenvectors_size: usize = ea.eigenvectors.iter()
-                    .map(|v| v.len() * 16 + 24)
-                    .sum();
+                let eigenvectors_size: usize =
+                    ea.eigenvectors.iter().map(|v| v.len() * 16 + 24).sum();
                 eigenvalues_size + eigenvectors_size + 24
             }
         };
@@ -217,7 +216,11 @@ mod tests {
             result_type: CompactResultType::EA(EAResult {
                 eigenvalues: vec![0.1, 0.2, 0.3, 0.4, 0.5],
                 eigenvectors: (0..5)
-                    .map(|_| (0..64*64).map(|i| [i as f64 * 0.01, i as f64 * 0.001]).collect())
+                    .map(|_| {
+                        (0..64 * 64)
+                            .map(|i| [i as f64 * 0.01, i as f64 * 0.001])
+                            .collect()
+                    })
                     .collect(),
                 grid_dims: [64, 64],
                 n_iterations: 50,
