@@ -61,7 +61,6 @@ use blaze2d_bulk_driver::{
     StreamConfig, SweepValue,
 };
 
-
 // ============================================================================
 // Python Result Wrapper
 // ============================================================================
@@ -433,6 +432,37 @@ impl BulkDriverPy {
         })
     }
 
+    /// Create a bulk driver directly from a TOML configuration string.
+    ///
+    /// This mirrors the file-based constructor but is friendlier for notebooks,
+    /// documentation examples, and browser-aligned snippets where the TOML is
+    /// embedded directly in Python code.
+    #[staticmethod]
+    #[pyo3(signature = (config_toml, threads=0, precision=None))]
+    fn from_toml(config_toml: &str, threads: i32, precision: Option<&str>) -> PyResult<Self> {
+        let mut config = BulkConfig::from_str(config_toml)
+            .map_err(|e| PyValueError::new_err(format!("invalid configuration: {}", e)))?;
+
+        if let Some(p) = precision {
+            config.solver.precision = match p {
+                "f32" | "single" => Precision::F32,
+                "f64" | "double" => Precision::F64,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "precision must be 'f32' or 'f64', got {:?}",
+                        other
+                    )));
+                }
+            };
+        }
+
+        Ok(Self {
+            config_path: PathBuf::from("<toml string>"),
+            config: Some(config),
+            threads,
+        })
+    }
+
     /// Get the storage precision being used: "f32" or "f64".
     #[getter]
     fn precision(&self) -> PyResult<String> {
@@ -477,7 +507,10 @@ impl BulkDriverPy {
             .config
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("configuration not loaded"))?;
-        Ok(matches!(config.solver.solver_type, SolverType::OperatorData))
+        Ok(matches!(
+            config.solver.solver_type,
+            SolverType::OperatorData
+        ))
     }
 
     /// Run the computation with streaming output.
@@ -617,15 +650,11 @@ impl BulkDriverPy {
         let handle = match precision {
             Precision::F32 => {
                 let driver: BulkDriver<f32> = BulkDriver::new(config, threads);
-                thread::spawn(move || {
-                    driver.run_with_channel(OutputChannel::Stream(stream_clone))
-                })
+                thread::spawn(move || driver.run_with_channel(OutputChannel::Stream(stream_clone)))
             }
             Precision::F64 => {
                 let driver: BulkDriver<f64> = BulkDriver::new(config, threads);
-                thread::spawn(move || {
-                    driver.run_with_channel(OutputChannel::Stream(stream_clone))
-                })
+                thread::spawn(move || driver.run_with_channel(OutputChannel::Stream(stream_clone)))
             }
         };
 

@@ -26,11 +26,15 @@ export interface JobParams {
     atoms: AtomParams[];
 }
 
+export type SweepValue = number | string;
+
 /** Maxwell solver result (photonic crystal band structure) */
 export interface MaxwellResult {
     result_type: 'maxwell';
     job_index: number;
     params: JobParams;
+    sweep_values: Record<string, SweepValue>;
+    sweep_order: string;
     
     /** K-points as [kx, ky] in reciprocal lattice units */
     k_path: [number, number][];
@@ -53,6 +57,8 @@ export interface OperatorDataDriverResult {
     result_type: 'ea';
     job_index: number;
     params: JobParams;
+    sweep_values: Record<string, SweepValue>;
+    sweep_order: string;
     
     /** Eigenvalues */
     eigenvalues: number[];
@@ -120,6 +126,12 @@ export interface KPointResult {
     
     /** Job parameters */
     params: JobParams;
+
+    /** Current ordered sweep values for this job */
+    sweep_values: Record<string, SweepValue>;
+
+    /** Parseable string like "atom0.radius=0.2|eps_bg=12" */
+    sweep_order: string;
 }
 
 /** Statistics from a driver run */
@@ -128,6 +140,7 @@ export interface DriverStats {
     completed: number;
     failed: number;
     total_time_ms: number;
+    total_time_secs: number;
     jobs_per_second?: number;
 }
 
@@ -200,7 +213,12 @@ export declare class WasmBulkDriver {
     dryRun(): DryRunResult;
     
     /** Get first N job configurations */
-    getJobConfigs(n: number): JobParams[];
+    getJobConfigs(n: number): Array<{
+        index: number;
+        params: JobParams;
+        sweep_values: Record<string, SweepValue>;
+        sweep_order: string;
+    }>;
 }
 
 /** Selective filter configuration */
