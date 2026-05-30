@@ -18,6 +18,11 @@ export interface BlogCardProps {
   date?: string;
   /** Optional tags/categories */
   tags?: string[];
+  /**
+   * When true, the image is shown at its natural aspect ratio (no cropping).
+   * The card height adapts to the image instead of forcing 16:9.
+   */
+  naturalHeight?: boolean;
 }
 
 export default function BlogCard({
@@ -27,6 +32,7 @@ export default function BlogCard({
   image,
   date,
   tags,
+  naturalHeight = false,
 }: BlogCardProps) {
   const imageRef = useRef<HTMLImageElement>(null);
 
@@ -34,7 +40,7 @@ export default function BlogCard({
     <Link 
       href={href} 
       className="blog-card-link"
-      style={{ textDecoration: 'none', color: 'inherit', display: 'block', height: '100%' }}
+      style={{ textDecoration: 'none', color: 'inherit', display: 'block', height: naturalHeight ? 'auto' : '100%' }}
       onMouseEnter={() => {
         if (imageRef.current) {
           imageRef.current.style.transform = 'scale(1.05)';
@@ -51,37 +57,56 @@ export default function BlogCard({
           display: 'flex',
           flexDirection: 'column',
           borderRadius: '12px',
-          backgroundColor: '#fff',
+          backgroundColor: '#000000',
           boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
           cursor: 'pointer',
           width: '100%',
-          height: '100%',
+          height: naturalHeight ? 'auto' : '100%',
           overflow: 'hidden',
         }}
       >
         {/* Image container */}
         <div
           style={{
-            position: 'relative',
+            position: naturalHeight ? 'static' : 'relative',
             width: '100%',
-            aspectRatio: '16 / 9',
+            ...(naturalHeight ? {} : { aspectRatio: '16 / 9' }),
             overflow: 'hidden',
-            backgroundColor: '#f0f0f0',
+            backgroundColor: '#000000',
             borderRadius: '12px',
+            isolation: 'isolate',
+            willChange: 'transform',
           }}
         >
-          <Image
-            ref={imageRef}
-            src={getAssetPath(image)}
-            loader={({ src }) => src} // Bypass automatic base path handling since we do it manually
-            alt={title}
-            fill
-            style={{
-              objectFit: 'cover',
-              borderRadius: '12px',
-            }}
-            sizes="(max-width: 768px) 100vw, 400px"
-          />
+          {naturalHeight ? (
+            // Natural mode: image sets its own height, no cropping
+            <Image
+              ref={imageRef}
+              src={getAssetPath(image)}
+              loader={({ src }) => src}
+              alt={title}
+              width={0}
+              height={0}
+              sizes="100vw"
+              style={{
+                width: '100%',
+                height: 'auto',
+                display: 'block',
+                transition: 'transform 0.3s ease',
+              }}
+            />
+          ) : (
+            // Default cover mode: fixed 16/9 crop
+            <Image
+              ref={imageRef}
+              src={getAssetPath(image)}
+              loader={({ src }) => src}
+              alt={title}
+              fill
+              style={{ objectFit: 'cover' }}
+              sizes="(max-width: 768px) 100vw, 400px"
+            />
+          )}
         </div>
 
         {/* Content */}

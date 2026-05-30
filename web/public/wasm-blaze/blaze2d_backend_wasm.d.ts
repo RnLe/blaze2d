@@ -1,41 +1,12 @@
 /* tslint:disable */
 /* eslint-disable */
-/**
- * Check if streaming mode is supported.
- */
-export function isStreamingSupported(): boolean;
-/**
- * Get the library version.
- */
-export function getVersion(): string;
-/**
- * Get supported solver types.
- */
-export function getSupportedSolvers(): Array<any>;
-/**
- * Initialize the WASM module with proper panic handling.
- * Call this once at the start of your application.
- * 
- * This sets up the panic hook so that Rust panics are printed
- * to the browser console with full stack traces instead of
- * just showing "RuntimeError: unreachable".
- */
-export function initPanicHook(): void;
-/**
- * Check if selective filtering is supported.
- */
-export function isSelectiveSupported(): boolean;
+
 export class WasmBackend {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
 }
-/**
- * WebAssembly wrapper for the bulk driver with streaming support.
- *
- * This provides a unified interface for running band structure calculations
- * in the browser, with support for both Maxwell and EA solvers.
- */
+
 export class WasmBulkDriver {
   free(): void;
   [Symbol.dispose](): void;
@@ -109,11 +80,11 @@ export class WasmBulkDriver {
    */
   readonly isMaxwell: boolean;
   /**
-   * Get the solver type ("maxwell" or "ea").
+   * Get the solver type ("maxwell" or "ea_hamiltonian").
    */
   readonly solverType: string;
   /**
-   * Check if this is an EA solver.
+   * Check if this is an operator-data extraction solver.
    */
   readonly isEA: boolean;
   /**
@@ -129,9 +100,7 @@ export class WasmBulkDriver {
    */
   readonly numBands: number;
 }
-/**
- * WASM wrapper for selective filtering configuration.
- */
+
 export class WasmSelectiveFilter {
   free(): void;
   [Symbol.dispose](): void;
@@ -173,49 +142,83 @@ export class WasmSelectiveFilter {
   readonly kIndices: Uint32Array;
 }
 
+/**
+ * Get supported solver types.
+ */
+export function getSupportedSolvers(): Array<any>;
+
+/**
+ * Get the library version.
+ */
+export function getVersion(): string;
+
+/**
+ * Initialize the WASM module with proper panic handling.
+ * Call this once at the start of your application.
+ *
+ * This sets up the panic hook so that Rust panics are printed
+ * to the browser console with full stack traces instead of
+ * just showing "RuntimeError: unreachable".
+ */
+export function initPanicHook(): void;
+
+/**
+ * Check if selective filtering is supported.
+ */
+export function isSelectiveSupported(): boolean;
+
+/**
+ * Check if streaming mode is supported.
+ */
+export function isStreamingSupported(): boolean;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
+  readonly __wbg_wasmbackend_free: (a: number, b: number) => void;
   readonly __wbg_wasmbulkdriver_free: (a: number, b: number) => void;
   readonly __wbg_wasmselectivefilter_free: (a: number, b: number) => void;
-  readonly getSupportedSolvers: () => number;
-  readonly getVersion: (a: number) => void;
+  readonly getSupportedSolvers: () => any;
+  readonly getVersion: () => [number, number];
   readonly isSelectiveSupported: () => number;
-  readonly wasmbulkdriver_dryRun: (a: number, b: number) => void;
-  readonly wasmbulkdriver_getJobConfigs: (a: number, b: number, c: number) => void;
-  readonly wasmbulkdriver_gridSize: (a: number) => number;
+  readonly wasmbulkdriver_dryRun: (a: number) => [number, number, number];
+  readonly wasmbulkdriver_getJobConfigs: (a: number, b: number) => [number, number, number];
+  readonly wasmbulkdriver_gridSize: (a: number) => any;
   readonly wasmbulkdriver_isEA: (a: number) => number;
   readonly wasmbulkdriver_isMaxwell: (a: number) => number;
   readonly wasmbulkdriver_jobCount: (a: number) => number;
-  readonly wasmbulkdriver_new: (a: number, b: number, c: number) => void;
+  readonly wasmbulkdriver_new: (a: number, b: number) => [number, number, number];
   readonly wasmbulkdriver_numBands: (a: number) => number;
-  readonly wasmbulkdriver_runCollect: (a: number, b: number) => void;
-  readonly wasmbulkdriver_runCollectFiltered: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-  readonly wasmbulkdriver_runStreamingFiltered: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-  readonly wasmbulkdriver_runWithCallback: (a: number, b: number, c: number) => void;
-  readonly wasmbulkdriver_runWithKPointStreaming: (a: number, b: number, c: number) => void;
-  readonly wasmbulkdriver_solverType: (a: number, b: number) => void;
+  readonly wasmbulkdriver_runCollect: (a: number) => [number, number, number];
+  readonly wasmbulkdriver_runCollectFiltered: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+  readonly wasmbulkdriver_runStreamingFiltered: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
+  readonly wasmbulkdriver_runWithCallback: (a: number, b: any) => [number, number, number];
+  readonly wasmbulkdriver_runWithKPointStreaming: (a: number, b: any) => [number, number, number];
+  readonly wasmbulkdriver_solverType: (a: number) => [number, number];
   readonly wasmselectivefilter_bandCount: (a: number) => number;
-  readonly wasmselectivefilter_bandIndices: (a: number, b: number) => void;
+  readonly wasmselectivefilter_bandIndices: (a: number) => [number, number];
   readonly wasmselectivefilter_clear: (a: number) => void;
   readonly wasmselectivefilter_isActive: (a: number) => number;
   readonly wasmselectivefilter_kCount: (a: number) => number;
-  readonly wasmselectivefilter_kIndices: (a: number, b: number) => void;
+  readonly wasmselectivefilter_kIndices: (a: number) => [number, number];
   readonly wasmselectivefilter_new: () => number;
   readonly wasmselectivefilter_setBandIndices: (a: number, b: number, c: number) => void;
   readonly wasmselectivefilter_setKIndices: (a: number, b: number, c: number) => void;
   readonly initPanicHook: () => void;
   readonly isStreamingSupported: () => number;
-  readonly __wbg_wasmbackend_free: (a: number, b: number) => void;
-  readonly __wbindgen_export: (a: number) => void;
-  readonly __wbindgen_export2: (a: number, b: number, c: number) => void;
-  readonly __wbindgen_export3: (a: number, b: number) => number;
-  readonly __wbindgen_export4: (a: number, b: number, c: number, d: number) => number;
-  readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+  readonly __wbindgen_exn_store: (a: number) => void;
+  readonly __externref_table_alloc: () => number;
+  readonly __wbindgen_externrefs: WebAssembly.Table;
+  readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+  readonly __wbindgen_malloc: (a: number, b: number) => number;
+  readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+  readonly __externref_table_dealloc: (a: number) => void;
+  readonly __wbindgen_start: () => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
+
 /**
 * Instantiates the given `module`, which can either be bytes or
 * a precompiled `WebAssembly.Module`.

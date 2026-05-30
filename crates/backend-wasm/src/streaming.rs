@@ -287,10 +287,18 @@ fn run_maxwell_job_with_k_streaming(
     // Accumulate all k-point results for the final CompactBandResult
     let accumulated_bands: std::cell::RefCell<Vec<Vec<f64>>> = std::cell::RefCell::new(Vec::new());
 
+    // Disable Γ-reuse so the closing Γ is solved with warm-start; this keeps
+    // band-tracking continuity across crossings (otherwise the last segment
+    // jumps to band indices from the very first Γ solve).
+    let run_options = RunOptions {
+        reuse_gamma: false,
+        ..RunOptions::default()
+    };
+
     let band_result = run_with_k_streaming(
         backend,
         job,
-        RunOptions::default(),
+        run_options,
         |k_result: KPointResult| {
             // Convert KPointResult to JS object and emit
             if let Ok(js_obj) = k_result_to_js(&k_result, job_index, &params_clone) {
