@@ -1,5 +1,7 @@
 import BlogCard, { BlogCardGrid } from '../components/BlogCard'
 
+<div className="blaze-landing-marker" style={{ display: 'none' }} />
+
 <BlogCardGrid>
   <BlogCard
     href="/blaze"
@@ -8,7 +10,6 @@ import BlogCard, { BlogCardGrid } from '../components/BlogCard'
     image="/banners/blaze_intro.webp"
     date="January 8, 2026"
     tags={["Release"]}
-    naturalHeight
   />
   <BlogCard
     href="/installation"
@@ -17,5 +18,13 @@ import BlogCard, { BlogCardGrid } from '../components/BlogCard'
     image="/banners/blaze_installation.webp"
     date="January 9, 2026"
     tags={["Guide"]}
+  />
+  <BlogCard
+    href="/examples"
+    title="Examples & Live Code"
+    description="An interactive, searchable library of runnable examples: band diagrams, sweeps, and live data inspection, powered by WebAssembly."
+    image="/banners/blaze_examples.webp"
+    date="February 12, 2026"
+    tags={["Examples"]}
   />
 </BlogCardGrid>

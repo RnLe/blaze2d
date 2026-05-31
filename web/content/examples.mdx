@@ -1,0 +1,52 @@
+import ExampleLibrary from '../components/examples/ExampleLibrary'
+import HeroImage from '../components/HeroImage'
+
+<HeroImage src="/banners/blaze_examples.webp" alt="Examples & Live Code" cropHeight={1} />
+
+<div className="examples-header">
+
+<span className="date">February 12, 2026</span>
+
+# Examples & Live Code
+
+*Run real Blaze2D code live in your browser. No install required.*
+
+---
+
+</div>
+
+<div style={{ maxWidth: '860px', margin: '0 auto' }}>
+
+Blaze2D computes the photonic band structure of 2D crystals: you describe a
+periodic arrangement of dielectric inclusions, and Blaze solves Maxwell's
+equations to find the allowed frequencies along a path through the Brillouin
+zone. The engine is written in Rust for speed, but you'll almost always drive
+it from **Python**. The high-level [`blaze.solve()`](installation) function is
+designed to get you a band diagram in a handful of lines.
+
+There are two ways to run Blaze, and the examples below use both:
+
+| Interface | Best for |
+|-----------|----------|
+| **`blaze.solve(...)` / CLI flags** | Quick single runs, scripting, exploring parameters |
+| **TOML configs via `BulkDriver`** | Reproducible, shareable, version-controllable simulations and richer geometries (e.g. multi-atom bases) |
+
+Every example on this page is **fully runnable here in the browser**. The exact
+Python snippet you see is compiled to the same Rust engine via WebAssembly, so
+the numbers you get match what `pip install blaze2d` produces on your machine.
+Click any card to open a full-screen runner: press **Run**, watch the band
+diagram fill in k-point by k-point, and inspect every field of the returned
+object in a typed, expandable view.
+
+> **A note on threads.** The browser build is single-threaded (WebAssembly here
+> runs on a single core). Examples that set a worker count still compute
+> correctly, but the thread setting is ignored for live in-browser runs. On the
+> desktop the same code distributes sweep jobs across all your cores.
+
+</div>
+
+<div id="library" style={{ width: '100%', maxWidth: '1500px', margin: '2.5rem auto 0' }}>
+
+<ExampleLibrary />
+
+</div>
