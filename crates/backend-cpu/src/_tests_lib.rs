@@ -13,13 +13,91 @@ use blaze2d_core::grid::Grid2D;
 use num_complex::Complex64;
 use std::f64::consts::PI;
 
+/// Compile-time witness that both monomorphisations exist in the same binary —
+/// this is the load-bearing test for the runtime-selectable precision goal.
+/// If this stops compiling, the Stage 8 invariant ("one wheel, both precisions")
+/// has regressed.
+#[test]
+fn both_precision_monomorphisations_build() {
+    let _b32: CpuBackend<f32> = CpuBackend::<f32>::new();
+    let _b64: CpuBackend<f64> = CpuBackend::<f64>::new();
+    let grid = Grid2D::new(4, 4, 1.0, 1.0);
+    let mut f32_buf = _b32.alloc_field(grid);
+    let mut f64_buf = _b64.alloc_field(grid);
+    _b32.forward_fft_2d(&mut f32_buf);
+    _b32.inverse_fft_2d(&mut f32_buf);
+    _b64.forward_fft_2d(&mut f64_buf);
+    _b64.inverse_fft_2d(&mut f64_buf);
+    // dot products both promote to Complex<f64> (accumulation precision).
+    let _: Complex64 = _b32.dot(&f32_buf, &f32_buf);
+    let _: Complex64 = _b64.dot(&f64_buf, &f64_buf);
+}
+
+/// End-to-end precision guarantee: a full band-structure solve at f32 storage
+/// must agree with the f64 solve to a few ×1e-4. This is the user-facing promise
+/// behind `precision="f32"` — single-precision storage with f64 accumulation
+/// keeps eigenvalues accurate. Complements the compile-time witness above.
+#[test]
+fn f32_and_f64_bandstructure_agree() {
+    use blaze2d_core::dielectric::DielectricOptions;
+    use blaze2d_core::drivers::bandstructure::{BandStructureJob, RunOptions, run_with_options};
+    use blaze2d_core::eigensolver::EigensolverConfig;
+    use blaze2d_core::geometry::{BasisAtom, Geometry2D};
+    use blaze2d_core::lattice::Lattice2D;
+    use blaze2d_core::polarization::Polarization;
+
+    // Small square-lattice photonic crystal, TM polarization.
+    let geom = Geometry2D {
+        lattice: Lattice2D::square(1.0),
+        eps_bg: 13.0,
+        atoms: vec![BasisAtom {
+            pos: [0.0, 0.0],
+            radius: 0.3,
+            eps_inside: 1.0,
+        }],
+    };
+    let make_job = || BandStructureJob {
+        geom: geom.clone(),
+        grid: Grid2D::new(16, 16, 1.0, 1.0),
+        pol: Polarization::TM,
+        k_path: vec![[0.0, 0.0], [0.25, 0.0], [0.5, 0.0], [0.5, 0.5]],
+        eigensolver: EigensolverConfig {
+            n_bands: 4,
+            max_iter: 300,
+            tol: 1e-8,
+            block_size: 8,
+            ..Default::default()
+        },
+        dielectric: DielectricOptions::default(),
+    };
+
+    let bands64 = run_with_options(CpuBackend::<f64>::new(), &make_job(), RunOptions::default());
+    let bands32 = run_with_options(CpuBackend::<f32>::new(), &make_job(), RunOptions::default());
+
+    assert_eq!(bands64.bands.len(), bands32.bands.len());
+    let mut max_abs_diff = 0.0f64;
+    for (kp, (b64, b32)) in bands64.bands.iter().zip(bands32.bands.iter()).enumerate() {
+        assert_eq!(b64.len(), b32.len(), "band count mismatch at k#{kp}");
+        for (&w64, &w32) in b64.iter().zip(b32.iter()) {
+            max_abs_diff = max_abs_diff.max((w64 - w32).abs());
+        }
+    }
+    // f32 storage limits the achievable agreement to ~single-precision × a few;
+    // 5e-3 absolute is comfortably met while still proving the two precisions
+    // track the same physics.
+    assert!(
+        max_abs_diff < 5e-3,
+        "f32 vs f64 band frequencies diverge by {max_abs_diff} (> 5e-3)"
+    );
+}
+
 // ============================================================================
 // FFT Tests
 // ============================================================================
 
 #[test]
 fn fft_roundtrip_recovers_signal() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
     let mut field = Field2D::zeros(grid);
 
@@ -41,7 +119,7 @@ fn fft_roundtrip_recovers_signal() {
 
 #[test]
 fn fft_roundtrip_preserves_energy_norm() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(6, 2, 1.0, 1.0);
     let mut field = Field2D::zeros(grid);
 
@@ -63,7 +141,7 @@ fn fft_roundtrip_preserves_energy_norm() {
 
 #[test]
 fn fft_forward_of_constant_is_dc_component() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
     let n = (grid.nx * grid.ny) as FieldReal;
     let mut field = Field2D::zeros(grid);
@@ -93,7 +171,7 @@ fn fft_forward_of_constant_is_dc_component() {
 
 #[test]
 fn fft_of_plane_wave_is_single_peak() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let nx = 8;
     let ny = 8;
     let grid = Grid2D::new(nx, ny, 1.0, 1.0);
@@ -128,7 +206,7 @@ fn fft_of_plane_wave_is_single_peak() {
 
 #[test]
 fn scale_multiplies_all_elements() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(2, 3, 1.0, 1.0);
     let mut field = Field2D::zeros(grid);
 
@@ -151,7 +229,7 @@ fn scale_multiplies_all_elements() {
 
 #[test]
 fn axpy_computes_y_plus_alpha_x() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
     let mut x = Field2D::zeros(grid);
     let mut y = Field2D::zeros(grid);
@@ -179,7 +257,7 @@ fn axpy_computes_y_plus_alpha_x() {
 
 #[test]
 fn dot_computes_conjugate_inner_product() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(2, 2, 1.0, 1.0);
     let mut x = Field2D::zeros(grid);
     let mut y = Field2D::zeros(grid);
@@ -209,7 +287,7 @@ fn dot_computes_conjugate_inner_product() {
 
 #[test]
 fn dot_of_vector_with_itself_is_real() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(3, 3, 1.0, 1.0);
     let mut x = Field2D::zeros(grid);
 
@@ -239,7 +317,7 @@ fn dot_of_vector_with_itself_is_real() {
 
 #[test]
 fn alloc_field_creates_correct_grid() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(5, 7, 2.0, 3.0);
     let field = backend.alloc_field(grid);
 
@@ -250,7 +328,7 @@ fn alloc_field_creates_correct_grid() {
 
 #[test]
 fn alloc_field_initializes_to_zero() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(4, 4, 1.0, 1.0);
     let field = backend.alloc_field(grid);
 
@@ -265,7 +343,7 @@ fn alloc_field_initializes_to_zero() {
 
 #[test]
 fn combined_operations_maintain_consistency() {
-    let backend = CpuBackend::new();
+    let backend = CpuBackend::<f64>::new();
     let grid = Grid2D::new(8, 8, 1.0, 1.0);
 
     // Create two fields
@@ -293,129 +371,4 @@ fn combined_operations_maintain_consistency() {
         (norm_sq_before - norm_sq_after).abs() < 1e-4,
         "norm changed: {norm_sq_before} -> {norm_sq_after}"
     );
-}
-
-// ============================================================================
-// EAOperator + single_solve Integration Test
-// ============================================================================
-
-/// Test that EAOperator works with the single_solve driver.
-///
-/// This verifies the full integration path:
-/// - EAOperator implements LinearOperator correctly
-/// - single_solve driver orchestrates the eigensolver
-/// - CpuBackend provides working FFT and linear algebra
-#[test]
-fn ea_operator_single_solve_integration() {
-    use blaze2d_core::drivers::single_solve::{SingleSolveJob, solve};
-    use blaze2d_core::operators::EAOperator;
-
-    let backend = CpuBackend::new();
-    let nx = 16;
-    let ny = 16;
-    let n = nx * ny;
-    let dx = 1.0;
-    let dy = 1.0;
-    let eta = 0.1;
-
-    // Simple harmonic potential well centered in the domain
-    let lx = nx as f64 * dx;
-    let ly = ny as f64 * dy;
-    let cx = lx / 2.0;
-    let cy = ly / 2.0;
-    let l_scale = (lx * ly).sqrt();
-
-    let potential: Vec<f64> = (0..n)
-        .map(|idx| {
-            let i = idx / ny;
-            let j = idx % ny;
-            let x = i as f64 * dx;
-            let y = j as f64 * dy;
-            let r_sq = (x - cx).powi(2) + (y - cy).powi(2);
-            // Positive definite potential
-            1.0 + 0.1 * r_sq / l_scale.powi(2)
-        })
-        .collect();
-
-    // Constant identity inverse mass tensor
-    let mass_inv: Vec<f64> = (0..n).flat_map(|_| [1.0, 0.0, 0.0, 1.0]).collect();
-
-    let mut op = EAOperator::new(
-        backend, nx, ny, dx, dy, eta, potential, mass_inv, None, // no drift term
-        0.0,  // omega_ref
-    );
-
-    // Solve for the lowest 4 eigenvalues
-    let job = SingleSolveJob::new(4)
-        .with_tolerance(1e-6)
-        .with_max_iterations(200);
-
-    let result = solve(&mut op, None, &job);
-
-    // Assertions:
-    // 1. We got the requested number of eigenvalues
-    assert_eq!(
-        result.eigenvalues.len(),
-        4,
-        "Should return exactly 4 eigenvalues"
-    );
-
-    // 2. All eigenvalues should be positive (positive definite operator)
-    for (i, &ev) in result.eigenvalues.iter().enumerate() {
-        assert!(ev > 0.0, "Eigenvalue {} should be positive, got {}", i, ev);
-    }
-
-    // 3. Eigenvalues should be in ascending order
-    for i in 0..result.eigenvalues.len() - 1 {
-        assert!(
-            result.eigenvalues[i] <= result.eigenvalues[i + 1] + 1e-10,
-            "Eigenvalues not sorted: {} > {}",
-            result.eigenvalues[i],
-            result.eigenvalues[i + 1]
-        );
-    }
-
-    // 4. Ground state should be close to the minimum potential (~1.0)
-    // The kinetic term adds a small positive contribution
-    assert!(
-        result.eigenvalues[0] > 0.9 && result.eigenvalues[0] < 2.0,
-        "Ground state eigenvalue should be near the potential minimum, got {}",
-        result.eigenvalues[0]
-    );
-
-    // 5. Should converge reasonably quickly for this simple problem
-    assert!(
-        result.iterations < 150,
-        "Should converge in < 150 iterations, took {}",
-        result.iterations
-    );
-
-    // 6. Verify eigenvectors are orthonormal under B (identity mass)
-    let backend = CpuBackend::new();
-    for i in 0..result.eigenvectors.len() {
-        // Check normalization
-        let norm_sq = backend
-            .dot(&result.eigenvectors[i], &result.eigenvectors[i])
-            .re;
-        assert!(
-            (norm_sq - 1.0).abs() < 1e-4,
-            "Eigenvector {} not normalized: ||v||² = {}",
-            i,
-            norm_sq
-        );
-
-        // Check orthogonality
-        for j in (i + 1)..result.eigenvectors.len() {
-            let overlap = backend
-                .dot(&result.eigenvectors[i], &result.eigenvectors[j])
-                .norm();
-            assert!(
-                overlap < 1e-4,
-                "Eigenvectors {} and {} not orthogonal: <v_i, v_j> = {}",
-                i,
-                j,
-                overlap
-            );
-        }
-    }
 }

@@ -1,96 +1,108 @@
 //! Backend traits for spectral operations.
 //!
-//! # Mixed Precision Strategy
+//! # Precision strategy (runtime-selectable f32 / f64)
 //!
-//! When the `mixed-precision` feature is enabled:
-//! - **Storage**: Fields use `Complex<f32>` for 2x bandwidth efficiency
-//! - **FFTs**: Performed in f32 (sufficient for iterative refinement)
-//! - **Dot products**: MUST accumulate in f64 to prevent catastrophic cancellation
-//! - **Rayleigh-Ritz**: Dense eigenproblem always in f64
+//! Field storage precision is parameterised by the [`Real`] trait. Each
+//! backend chooses its storage type via the [`SpectralBackend::Real`]
+//! associated type; the buffer type is constrained to
+//! `SpectralBuffer<Real = Self::Real>` so the link between backend and
+//! storage is single-sourced. Downstream code (operators, eigensolver,
+//! drivers) takes a single `B: SpectralBackend` parameter and reads
+//! `B::Real` / `B::Buffer` internally — no separate `R` generic on every
+//! signature.
 //!
-//! This follows the standard HPC "f32 storage, f64 accumulation" pattern.
+//! **The f32-storage / f64-accumulation invariant** is the single most
+//! important rule for any backend implementing this trait at `R = f32`:
+//!
+//! - **Storage**: `Complex<R>` (saves bandwidth at `R = f32`).
+//! - **FFTs**: performed in `R` (rustfft supports both).
+//! - **Dot products / Gram matrices**: returned as `Complex<f64>` and
+//!   MUST be accumulated in `Complex<f64>` even when storage is `f32`.
+//!   Use the [`Real::to_accum`] / [`Real::from_accum`] boundary helpers
+//!   in [`crate::field`]. Accumulating in `f32` causes catastrophic
+//!   cancellation during orthogonalisation.
+//! - **`scale` / `axpy`**: take `alpha: Complex<f64>` and downcast to
+//!   storage precision internally. Callers do not need to know `B::Real`
+//!   to construct the coefficient.
+//! - **Rayleigh–Ritz / SVQB dense eigen-decomp**: always runs in
+//!   `Complex<f64>` regardless of storage; the small N_band × N_band
+//!   Gram matrix is already returned at accumulation precision.
+//! - **Eigenvalues**: stored as `Vec<f64>` regardless of `R` (variational
+//!   principle — error is O(ε_storage²) in the eigenvalues even when
+//!   storage is single-precision).
+//!
+//! See [crates/core/src/field.rs](crate::field) and
+//! [docs/state_report.md](../../docs/state_report.md) §1.3.
 
-use num_complex::Complex64;
+use num_complex::{Complex, Complex64};
 
-use crate::field::{Field2D, FieldScalar};
+use crate::field::{Field2D, Real};
 use crate::grid::Grid2D;
 
+/// Storage-precision-aware view of a complex 2D field buffer.
 pub trait SpectralBuffer {
+    /// The real scalar type backing this buffer (`f32` or `f64`).
+    type Real: Real;
+
     fn len(&self) -> usize;
     fn grid(&self) -> Grid2D;
-    fn as_slice(&self) -> &[FieldScalar];
-    fn as_mut_slice(&mut self) -> &mut [FieldScalar];
+    fn as_slice(&self) -> &[Complex<Self::Real>];
+    fn as_mut_slice(&mut self) -> &mut [Complex<Self::Real>];
 }
 
-impl SpectralBuffer for Field2D {
+impl<R: Real> SpectralBuffer for Field2D<R> {
+    type Real = R;
+
     fn len(&self) -> usize {
-        self.len()
+        Field2D::<R>::len(self)
     }
 
     fn grid(&self) -> Grid2D {
-        self.grid()
+        Field2D::<R>::grid(self)
     }
 
-    fn as_slice(&self) -> &[FieldScalar] {
-        self.as_slice()
+    fn as_slice(&self) -> &[Complex<R>] {
+        Field2D::<R>::as_slice(self)
     }
 
-    fn as_mut_slice(&mut self) -> &mut [FieldScalar] {
-        self.as_mut_slice()
+    fn as_mut_slice(&mut self) -> &mut [Complex<R>] {
+        Field2D::<R>::as_mut_slice(self)
     }
 }
 
 pub trait SpectralBackend {
-    type Buffer: SpectralBuffer + Clone;
+    /// The real scalar type used for field storage (`f32` or `f64`).
+    type Real: Real;
+
+    /// Buffer type whose storage scalar matches `Self::Real`.
+    type Buffer: SpectralBuffer<Real = Self::Real> + Clone;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer;
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer);
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer);
 
-    /// Scale buffer by a complex scalar.
-    /// Note: In mixed-precision mode, alpha is converted to storage precision.
+    /// Scale buffer by a complex scalar. `alpha` is always taken at f64
+    /// accumulation precision; backends downcast to storage precision
+    /// internally if `Self::Real = f32`.
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer);
 
-    /// Compute y += alpha * x (axpy operation).
-    /// Note: In mixed-precision mode, alpha is converted to storage precision.
+    /// Compute y += alpha * x. `alpha` is always f64-precision.
     fn axpy(&self, alpha: Complex64, x: &Self::Buffer, y: &mut Self::Buffer);
 
     /// Compute conjugate dot product ⟨x, y⟩ = x^H · y.
     ///
-    /// **CRITICAL for mixed precision**: This MUST accumulate in f64 even when
-    /// storage is f32. Accumulating in f32 causes catastrophic cancellation
-    /// during orthogonalization, leading to loss of basis independence.
-    ///
-    /// Implementation pattern for f32 storage:
-    /// ```ignore
-    /// let dot: f64 = x.iter().zip(y.iter())
-    ///     .map(|(a, b)| {
-    ///         let a64 = Complex64::new(a.re as f64, a.im as f64);
-    ///         let b64 = Complex64::new(b.re as f64, b.im as f64);
-    ///         a64.conj() * b64
-    ///     })
-    ///     .fold(Complex64::new(0.0, 0.0), |acc, x| acc + x);
-    /// ```
+    /// **MUST accumulate in `Complex<f64>`** even when storage is `f32`
+    /// (see module-level doc). Backends at `R = f64` get a fast straight
+    /// loop; backends at `R = f32` should promote each summand via
+    /// [`Real::to_accum`] before adding.
     fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64;
 
     /// Compute the Gram matrix G_ij = ⟨x_i, y_j⟩ for batches of vectors.
     ///
-    /// This computes the conjugate dot product between all pairs of vectors,
-    /// returning a row-major p×q matrix where p = x.len() and q = y.len().
-    ///
-    /// # Arguments
-    /// * `x` - First set of vectors (will be conjugated)
-    /// * `y` - Second set of vectors
-    ///
-    /// # Returns
-    /// A vector of length p×q containing G in row-major order:
-    /// `result[i * q + j] = ⟨x[i], y[j]⟩ = x[i]^H · y[j]`
-    ///
-    /// # Performance
-    /// GPU backends can implement this as a single ZGEMM call: G = X^H × Y
-    /// where X and Y are (n × p) and (n × q) matrices respectively.
+    /// Result is row-major p×q where p = x.len(), q = y.len(). Always
+    /// returned as `Complex<f64>` (accumulation precision); the eigensolver
+    /// passes this directly to faer / nalgebra.
     fn gram_matrix(&self, x: &[Self::Buffer], y: &[Self::Buffer]) -> Vec<Complex64> {
-        // Default implementation using individual dot products
         let p = x.len();
         let q = y.len();
         let mut result = vec![Complex64::ZERO; p * q];
@@ -104,21 +116,9 @@ pub trait SpectralBackend {
 
     /// Compute batched linear combinations: Y = Q × C
     ///
-    /// Given a basis Q of r vectors (each of length n) and a coefficient matrix C
-    /// of size r×m (column-major), compute m output vectors where:
-    ///   y_j = Σ_i q_i * C[i,j]
-    ///
-    /// # Arguments
-    /// * `q` - Basis vectors, slice of r buffers each of length n
-    /// * `coeffs` - Coefficient matrix C in column-major order, length r×m
-    /// * `m` - Number of output vectors (columns of C)
-    ///
-    /// # Returns
-    /// Vector of m output buffers, where output[j] = Σ_i q[i] * coeffs[i + j*r]
-    ///
-    /// # Performance
-    /// GPU backends can implement this as a single ZGEMM call: Y = Q × C
-    /// where Q is treated as (n × r) and C is (r × m), yielding Y as (n × m).
+    /// Given a basis Q of r vectors (each of length n) and a coefficient
+    /// matrix C of size r×m (column-major), compute m output vectors where
+    /// `y_j = Σ_i q_i * C[i, j]`. Coefficients are at accumulation precision.
     fn linear_combinations(
         &self,
         q: &[Self::Buffer],
@@ -135,12 +135,11 @@ pub trait SpectralBackend {
         let mut outputs: Vec<Self::Buffer> = Vec::with_capacity(m);
 
         for j in 0..m {
-            // y_j = Σ_i q_i * C[i,j] where C is column-major: C[i,j] = coeffs[i + j*r]
             let mut y = q[0].clone();
-            self.scale(coeffs[j * r], &mut y); // First term: q_0 * C[0,j]
+            self.scale(coeffs[j * r], &mut y);
 
             for i in 1..r {
-                let coeff = coeffs[i + j * r]; // C[i,j] in column-major
+                let coeff = coeffs[i + j * r];
                 self.axpy(coeff, &q[i], &mut y);
             }
 
@@ -151,29 +150,14 @@ pub trait SpectralBackend {
     }
 
     /// Batched forward FFT on multiple buffers.
-    ///
-    /// This applies forward 2D FFT to all buffers in the slice.
-    /// Backends can override this for better cache locality by processing
-    /// all rows first across all buffers, then all columns.
-    ///
-    /// # Performance
-    /// CPU backends can gain significant speedup by:
-    /// 1. Processing all rows of all buffers together (better cache use of FFT plans)
-    /// 2. Then processing all columns of all buffers together
-    /// 3. Amortizing the plan lookup cost across all buffers
     fn batch_forward_fft_2d(&self, buffers: &mut [Self::Buffer]) {
-        // Default: process each buffer individually
         for buffer in buffers.iter_mut() {
             self.forward_fft_2d(buffer);
         }
     }
 
     /// Batched inverse FFT on multiple buffers.
-    ///
-    /// This applies inverse 2D FFT to all buffers in the slice.
-    /// See `batch_forward_fft_2d` for performance notes.
     fn batch_inverse_fft_2d(&self, buffers: &mut [Self::Buffer]) {
-        // Default: process each buffer individually
         for buffer in buffers.iter_mut() {
             self.inverse_fft_2d(buffer);
         }

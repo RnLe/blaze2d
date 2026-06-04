@@ -34,10 +34,10 @@ use faer::{Mat, Side};
 #[cfg(feature = "wasm-linalg")]
 use nalgebra::{Complex as NaComplex, DMatrix};
 
-use num_complex::Complex64;
+use num_complex::{Complex, Complex64};
 
 use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::FieldScalar;
+use crate::field::{Real, cscalar, czero};
 
 // ============================================================================
 // Single-Vector Normalization
@@ -310,13 +310,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     #[cfg(feature = "profiling")]
     crate::profiler::start_timer("svqb::gram_matrix");
 
-    #[cfg(feature = "cuda")]
-    let gram = {
-        // GPU path: use batched gram_matrix (single ZGEMM call)
-        backend.gram_matrix(vectors, mass_vectors)
-    };
-
-    #[cfg(all(not(feature = "cuda"), feature = "native-linalg"))]
+    #[cfg(feature = "native-linalg")]
     let gram = {
         // CPU path with faer: use GEMM for Gram matrix computation
         // G = X^H * BX where X is n×p and BX is n×p, result is p×p
@@ -327,13 +321,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         // Note: Always upcast to f64 since faer uses f64 internally
         let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
             let c = vectors[col].as_slice()[row];
-            faer::c64::new(c.re as f64, c.im as f64)
+            faer::c64::new(c.re.to_accum(), c.im.to_accum())
         });
 
         // Build BX matrix (n × p) from mass_vectors
         let bx_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
             let c = mass_vectors[col].as_slice()[row];
-            faer::c64::new(c.re as f64, c.im as f64)
+            faer::c64::new(c.re.to_accum(), c.im.to_accum())
         });
 
         // Compute G = X^H * BX using a single GEMM call
@@ -350,7 +344,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         gram
     };
 
-    #[cfg(all(not(feature = "cuda"), feature = "wasm-linalg"))]
+    #[cfg(feature = "wasm-linalg")]
     let gram = {
         // CPU path with nalgebra: use GEMM for Gram matrix computation
         // G = X^H * BX where X is n×p and BX is n×p, result is p×p
@@ -359,13 +353,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         // Build X matrix (n × p) from vectors (upcast to f64)
         let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
             let c = vectors[col].as_slice()[row];
-            NaComplex::new(c.re as f64, c.im as f64)
+            NaComplex::new(c.re.to_accum(), c.im.to_accum())
         });
 
         // Build BX matrix (n × p) from mass_vectors (upcast to f64)
         let bx_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
             let c = mass_vectors[col].as_slice()[row];
-            NaComplex::new(c.re as f64, c.im as f64)
+            NaComplex::new(c.re.to_accum(), c.im.to_accum())
         });
 
         // Compute G = X^H * BX using a single GEMM call
@@ -436,63 +430,6 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     #[cfg(feature = "profiling")]
     crate::profiler::start_timer("svqb::gemm");
 
-    #[cfg(feature = "cuda")]
-    {
-        // GPU path: use existing manual implementation
-        // Accumulate in f64 for numerical stability, then convert back to storage precision
-        let mut transform = vec![Complex64::ZERO; p * rank];
-        for (out_col, &in_col) in kept_indices.iter().enumerate() {
-            let scale = 1.0 / eigenvalues[in_col].max(1e-30).sqrt();
-            for row in 0..p {
-                transform[row * rank + out_col] = eigenvectors[row * p + in_col] * scale;
-            }
-        }
-
-        let n = vectors[0].as_slice().len();
-        let mut new_vectors: Vec<Vec<Complex64>> = vec![vec![Complex64::ZERO; n]; rank];
-        let mut new_mass: Vec<Vec<Complex64>> = vec![vec![Complex64::ZERO; n]; rank];
-
-        for in_idx in 0..p {
-            let src_vec = vectors[in_idx].as_slice();
-            let src_mass = mass_vectors[in_idx].as_slice();
-
-            for out_idx in 0..rank {
-                let coeff = transform[in_idx * rank + out_idx];
-                if coeff.re.abs() < 1e-30 && coeff.im.abs() < 1e-30 {
-                    continue;
-                }
-
-                let dst_vec = &mut new_vectors[out_idx];
-                let dst_mass = &mut new_mass[out_idx];
-
-                for k in 0..n {
-                    // Convert to f64 for accumulation (handles mixed-precision)
-                    let sv = Complex64::new(src_vec[k].re as f64, src_vec[k].im as f64);
-                    let sm = Complex64::new(src_mass[k].re as f64, src_mass[k].im as f64);
-                    dst_vec[k] += coeff * sv;
-                    dst_mass[k] += coeff * sm;
-                }
-            }
-        }
-
-        for i in 0..p {
-            if i < rank {
-                // Convert back from f64 accumulation to storage precision
-                let dst_vec = vectors[i].as_mut_slice();
-                let dst_mass = mass_vectors[i].as_mut_slice();
-                for k in 0..n {
-                    dst_vec[k] =
-                        FieldScalar::new(new_vectors[i][k].re as _, new_vectors[i][k].im as _);
-                    dst_mass[k] = FieldScalar::new(new_mass[i][k].re as _, new_mass[i][k].im as _);
-                }
-            } else {
-                zero_buffer(vectors[i].as_mut_slice());
-                zero_buffer(mass_vectors[i].as_mut_slice());
-            }
-        }
-    }
-
-    #[cfg(not(feature = "cuda"))]
     {
         // CPU path: use GEMM for matrix multiplication
         // X_new = X_old * T where X_old is n×p and T is p×rank
@@ -512,13 +449,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             // Build X_old matrix (n × p) from vectors (upcast to f64)
             let x_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
                 let c = vectors[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build M_old matrix (n × p) from mass_vectors (upcast to f64)
             let m_mat = Mat::<faer::c64>::from_fn(n, p, |row, col| {
                 let c = mass_vectors[col].as_slice()[row];
-                faer::c64::new(c.re as f64, c.im as f64)
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Compute X_new = X_old * T and M_new = M_old * T using GEMM
@@ -530,28 +467,14 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 let dst = vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = x_new.get(row, col);
-                    #[cfg(not(feature = "mixed-precision"))]
-                    {
-                        dst[row] = Complex64::new(c.re, c.im);
-                    }
-                    #[cfg(feature = "mixed-precision")]
-                    {
-                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
-                    }
+                    dst[row] = cscalar(c.re, c.im);
                 }
             }
             for col in 0..rank {
                 let dst = mass_vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = m_new.get(row, col);
-                    #[cfg(not(feature = "mixed-precision"))]
-                    {
-                        dst[row] = Complex64::new(c.re, c.im);
-                    }
-                    #[cfg(feature = "mixed-precision")]
-                    {
-                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
-                    }
+                    dst[row] = cscalar(c.re, c.im);
                 }
             }
         }
@@ -570,13 +493,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             // Build X_old matrix (n × p) from vectors (upcast to f64)
             let x_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
                 let c = vectors[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build M_old matrix (n × p) from mass_vectors
             let m_mat = DMatrix::<NaComplex<f64>>::from_fn(n, p, |row, col| {
                 let c = mass_vectors[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Compute X_new = X_old * T and M_new = M_old * T using GEMM
@@ -588,13 +511,8 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 let dst = vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = x_new[(row, col)];
-                    #[cfg(not(feature = "mixed-precision"))]
                     {
                         dst[row] = Complex64::new(c.re, c.im);
-                    }
-                    #[cfg(feature = "mixed-precision")]
-                    {
-                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
                     }
                 }
             }
@@ -602,14 +520,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 let dst = mass_vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = m_new[(row, col)];
-                    #[cfg(not(feature = "mixed-precision"))]
-                    {
-                        dst[row] = Complex64::new(c.re, c.im);
-                    }
-                    #[cfg(feature = "mixed-precision")]
-                    {
-                        dst[row] = num_complex::Complex32::new(c.re as f32, c.im as f32);
-                    }
+                    dst[row] = cscalar(c.re, c.im);
                 }
             }
         }
@@ -707,8 +618,8 @@ pub fn orthonormalize_against_basis<B: SpectralBackend>(
 
 /// Fill a buffer with zeros.
 #[inline]
-pub fn zero_buffer(data: &mut [FieldScalar]) {
-    data.fill(FieldScalar::default());
+pub fn zero_buffer<R: Real>(data: &mut [Complex<R>]) {
+    data.fill(czero::<R>());
 }
 
 /// Compute eigendecomposition of a Hermitian matrix.

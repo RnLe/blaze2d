@@ -14,8 +14,8 @@ fn seeded_field(grid: Grid2D) -> Field2D {
     for (idx, value) in field.as_mut_slice().iter_mut().enumerate() {
         let ix = idx % nx;
         let iy = idx / nx;
-        let real = ((ix as f64 + 1.0) * 0.31).sin() as f32;
-        let imag = ((iy as f64 + 1.0) * 0.47).cos() as f32;
+        let real = ((ix as f64 + 1.0) * 0.31).sin();
+        let imag = ((iy as f64 + 1.0) * 0.47).cos();
         *value = FieldScalar::new(real, imag);
     }
     field
@@ -23,10 +23,10 @@ fn seeded_field(grid: Grid2D) -> Field2D {
 
 fn bench_cpu_fft(c: &mut Criterion) {
     let configs = vec![
-        ("serial", CpuBackend::new()),
+        ("serial", CpuBackend::<f64>::new()),
         (
             "parallel",
-            CpuBackend::new_parallel().with_parallel_threshold(1),
+            CpuBackend::<f64>::new_parallel().with_parallel_threshold(1),
         ),
     ];
     let sizes = [16usize, 24, 32, 48, 64, 96, 128, 192, 256];

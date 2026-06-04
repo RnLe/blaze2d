@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use blaze2d_backend_cpu::CpuBackend;
 use blaze2d_core::{
-    bandstructure::{self, BandStructureJob, RunOptions, Verbosity},
+    bandstructure::{self, BandStructureJob, RunOptions},
     dielectric::DielectricOptions,
     eigensolver::EigensolverConfig,
     geometry::{BasisAtom, Geometry2D},
@@ -25,9 +25,6 @@ use blaze2d_core::{
     symmetry::{PathType, standard_path},
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-
-#[cfg(feature = "cuda")]
-use blaze2d_backend_cuda::CudaBackend;
 
 /// Create a standard square lattice geometry with eps=13 background and r/a=0.3 air holes.
 fn create_square_geometry() -> Geometry2D {
@@ -81,7 +78,7 @@ fn bench_resolution_scaling(c: &mut Criterion) {
     for &resolution in &resolutions {
         for (pol_name, polarization) in &polarizations {
             let job = create_job(resolution, *polarization);
-            let backend = CpuBackend::new();
+            let backend = CpuBackend::<f64>::new();
 
             let bench_name = format!("CPU/{}", pol_name);
             group.bench_function(BenchmarkId::new(&bench_name, resolution), |b| {
@@ -89,7 +86,6 @@ fn bench_resolution_scaling(c: &mut Criterion) {
                     let result = bandstructure::run_with_options(
                         backend.clone(),
                         &job,
-                        Verbosity::Quiet,
                         RunOptions::default(),
                     );
                     black_box(result)
@@ -98,31 +94,7 @@ fn bench_resolution_scaling(c: &mut Criterion) {
         }
     }
 
-    // GPU benchmarks (only when cuda feature is enabled)
-    #[cfg(feature = "cuda")]
-    {
-        let cuda_backend = CudaBackend::new();
-
-        for &resolution in &resolutions {
-            for (pol_name, polarization) in &polarizations {
-                let job = create_job(resolution, *polarization);
-                let backend = cuda_backend.clone();
-
-                let bench_name = format!("GPU/{}", pol_name);
-                group.bench_function(BenchmarkId::new(&bench_name, resolution), |b| {
-                    b.iter(|| {
-                        let result = bandstructure::run_with_options(
-                            backend.clone(),
-                            &job,
-                            Verbosity::Quiet,
-                            RunOptions::default(),
-                        );
-                        black_box(result)
-                    });
-                });
-            }
-        }
-    }
+    // GPU benchmarks removed: backend-cuda is currently a typed stub.
 
     group.finish();
 }

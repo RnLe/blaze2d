@@ -44,5 +44,10 @@ codegen-units = 1     # Maximize optimization (slower build)
 lto = "fat"           # Enable Link Time Optimization to remove cross-crate overhead (like faer::noalias_annotate)
 opt-level = 3         # Ensure maximum optimization
 
+# Python wheel profile: same as release but allows catch_unwind to work
+[profile.release-python]
+inherits = "release"
+panic = "unwind"      # Required for catch_unwind to protect Python from Rust panics
+
 [profile.bench]
 inherits = "release"
