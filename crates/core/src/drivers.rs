@@ -9,13 +9,13 @@
 //!
 //! The [`bandstructure`] submodule provides the Maxwell band structure driver:
 //!
-//! - [`run`](bandstructure::run): Compute photonic band structure along a k-path
-//! - [`run_with_options`](bandstructure::run_with_options): With custom preconditioner options
-//! - [`run_with_diagnostics`](bandstructure::run_with_diagnostics): With convergence recording
+//! - [`run_with_options`](bandstructure::run_with_options): Compute photonic band structure along a k-path
+//! - [`run_with_diagnostics_and_options`](bandstructure::run_with_diagnostics_and_options): Same with convergence recording
 //!
 //! ## Single-Solve Driver
 //!
-//! The [`single_solve`] submodule provides a generic single-shot eigensolver driver:
+//! The [`single_solve`] submodule provides a generic single-shot eigensolver driver
+//! used both for one-off Maxwell solves and by the operator-data extraction driver:
 //!
 //! - [`solve`](single_solve::solve): Solve a single eigenvalue problem
 //! - [`solve_with_diagnostics`](single_solve::solve_with_diagnostics): With convergence recording
@@ -27,33 +27,20 @@
 //! ## Band Structure
 //!
 //! ```ignore
-//! use blaze2d_core::drivers::bandstructure::{run, BandStructureJob, Verbosity};
+//! use blaze2d_core::drivers::bandstructure::{run_with_options, BandStructureJob, RunOptions};
 //!
-//! let result = run(backend, &job, Verbosity::Verbose);
+//! let result = run_with_options(backend, &job, RunOptions::default());
 //! // result.bands[k_index][band_index] gives ω for each (k, band) pair
-//! ```
-//!
-//! ## Single Solve (Envelope Approximation)
-//!
-//! ```ignore
-//! use blaze2d_core::drivers::single_solve::{solve, SingleSolveJob};
-//! use blaze2d_core::operators::EAOperator;
-//!
-//! let job = SingleSolveJob::new(10).with_tolerance(1e-10);
-//! let result = solve(&mut ea_operator, Some(&mut preconditioner), &job);
-//!
-//! for (i, &ev) in result.eigenvalues.iter().enumerate() {
-//!     println!("Band {}: E = {:.6}", i, ev);
-//! }
 //! ```
 
 pub mod bandstructure;
+pub mod operator_data;
 pub mod single_solve;
 
 // Re-export commonly used types from bandstructure
 pub use bandstructure::{
     BandStructureJob, BandStructureResult, BandStructureResultWithDiagnostics, RunOptions,
-    Verbosity, run, run_with_diagnostics, run_with_options,
+    run_with_diagnostics_and_options, run_with_options,
 };
 
 // Re-export from single_solve
