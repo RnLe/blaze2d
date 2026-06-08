@@ -4,7 +4,7 @@
 //!
 //! - **Configuration types**: `BulkConfig`, `SolverType`, `IoMode`, `OutputMode`
 //! - **Sweep types**: `SweepSpec`, `SweepDimension`, `SweepValue` for ordered sweeps
-//! - **Result types**: `CompactBandResult`, `MaxwellResult`, `EAResult`
+//! - **Result types**: `CompactBandResult`, `MaxwellResult`, `OperatorDataResult`
 //! - **Job expansion**: Convert parameter ranges into individual job specifications
 //! - **Filtering**: `SelectiveFilter` for k-point and band filtering
 //!
@@ -70,13 +70,15 @@ pub mod result;
 // Re-export all public types for convenient access
 pub use config::{
     AtomRanges, BaseAtom, BaseGeometry, BaseLattice, BatchSettings, BulkConfig, BulkSection,
-    ConfigError, DefaultsConfig, EAConfig, IoMode, LatticeTypeSpec, OutputConfig, OutputMode,
-    ParameterRange, RangeSpec, SelectiveSpec, SolverSection, SolverType, SweepDimension, SweepSpec,
-    SweepValue, ValueList, parse_atom_path, validate_parameter_path,
+    ConfigError, DefaultsConfig, IoMode, LatticeTypeSpec, OutputConfig, OutputMode,
+    ParameterRange, Precision, RangeSpec, SelectiveSpec, SolverSection, SolverType,
+    SweepDimension, SweepSpec, SweepValue, ValueList, parse_atom_path, validate_parameter_path,
 };
 
-pub use expansion::{AtomParams, EAJobSpec, ExpandedJob, ExpandedJobType, JobParams, expand_jobs};
+pub use expansion::{AtomParams, ExpandedJob, ExpandedJobType, JobParams, expand_jobs};
 
 pub use filter::SelectiveFilter;
 
-pub use result::{CompactBandResult, CompactResultType, ComplexPair, EAResult, MaxwellResult};
+pub use result::{
+    CompactBandResult, CompactResultType, ComplexPair, OperatorDataResult, MaxwellResult,
+};

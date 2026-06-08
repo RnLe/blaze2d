@@ -182,6 +182,7 @@ impl Subscriber for ChannelSubscriber {
             }
             BackpressurePolicy::DropOldest => {
                 // If full, drain one and send
+                #[allow(clippy::never_loop)]
                 loop {
                     match self.sender.try_send(result.clone()) {
                         Ok(()) => break,
@@ -373,7 +374,7 @@ impl SelectiveFilter {
         // Filtering only applies to Maxwell results
         let maxwell = match &result.result_type {
             CompactResultType::Maxwell(m) => m,
-            CompactResultType::EA(_) => return result.clone(),
+            _ => return result.clone(),
         };
 
         // Determine which k-indices to include

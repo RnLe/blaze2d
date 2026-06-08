@@ -34,7 +34,7 @@ pub struct CompactBandResult {
     /// Parameter values used for this job
     pub params: JobParams,
 
-    /// The result type (Maxwell with k-path data, or EA with eigenvalues only)
+    /// The result type (Maxwell band structure, or operator-data extraction)
     pub result_type: CompactResultType,
 }
 
@@ -43,8 +43,8 @@ pub struct CompactBandResult {
 pub enum CompactResultType {
     /// Maxwell result with full band structure
     Maxwell(MaxwellResult),
-    /// EA result with eigenvalues only (no k-path)
-    EA(EAResult),
+    /// Operator-data extraction result (matrix elements for multi-band theories)
+    OperatorData(OperatorDataResult),
 }
 
 /// Maxwell band structure result.
@@ -61,25 +61,53 @@ pub struct MaxwellResult {
     pub bands: Vec<Vec<f64>>,
 }
 
-/// EA eigenvalue result.
+/// EA Hamiltonian extraction result: all matrix elements needed for moiré theory.
 #[derive(Debug, Clone)]
-pub struct EAResult {
-    /// Computed eigenvalues
-    pub eigenvalues: Vec<f64>,
-
-    /// Computed eigenvectors as flattened complex arrays.
-    /// Each inner Vec represents one eigenvector, with complex values as [re, im] pairs.
-    /// Shape: [n_bands][grid_size], where each element is [f64; 2] (real, imag).
-    pub eigenvectors: Vec<Vec<ComplexPair>>,
-
-    /// Grid dimensions [nx, ny] for reconstructing the 2D field structure
+pub struct OperatorDataResult {
+    /// Carrier momentum k₀.
+    pub k0: [f64; 2],
+    /// Registry point (fractional coordinates).
+    pub registry: [f64; 2],
+    /// Number of retained bands.
+    pub n_retained: usize,
+    /// Number of remote bands.
+    pub n_remote: usize,
+    /// Grid dimensions [nx, ny].
     pub grid_dims: [usize; 2],
 
-    /// Number of iterations taken
-    pub n_iterations: usize,
+    /// Eigenvalues for all n_total bands: (2π/a)² units.
+    pub eigenvalues: Vec<f64>,
 
-    /// Whether convergence was achieved
+    /// Velocity matrices v^(i)_{mn}, per direction. Shape: [n_retained × n_total].
+    pub velocity_matrices: [Vec<ComplexPair>; 2],
+
+    /// Raw second-derivative matrices w^(ij)_{mn}. Shape: [n_retained × n_retained].
+    pub w_matrices: [[Vec<ComplexPair>; 2]; 2],
+
+    /// Löwdin-corrected inverse mass tensor M⁻¹_{ij,mn}. Shape: [n_retained × n_retained].
+    pub mass_tensor_inv: [[Vec<ComplexPair>; 2]; 2],
+
+    /// Registry-derivative matrices ⟨uₘ|∂L₀/∂Rⱼ|uₙ⟩. Shape: [n_retained × n_total].
+    pub r_derivative_matrices: Option<[Vec<ComplexPair>; 2]>,
+
+    /// Metric-derivative matrices ⟨uₘ|∂B/∂Rⱼ|uₙ⟩. Shape: [n_retained × n_total].
+    pub metric_derivative_matrices: Option<[Vec<ComplexPair>; 2]>,
+
+    /// Berry-connection matrices A_j in the retained space. Shape: [n_retained × n_retained].
+    pub berry_connection_matrices: Option<[Vec<ComplexPair>; 2]>,
+
+    /// Born–Huang potential Φ_{mn}(R). Shape: [n_retained × n_retained].
+    pub born_huang: Option<Vec<ComplexPair>>,
+
+    /// Overlap matrix S_{mn}. Shape: [n_retained × n_retained].
+    pub overlap_matrix: Option<Vec<ComplexPair>>,
+
+    /// Number of eigensolver iterations.
+    pub n_iterations: usize,
+    /// Whether the eigensolver converged.
     pub converged: bool,
+    /// Polarization used.
+    pub polarization: String,
 }
 
 impl CompactBandResult {
@@ -95,12 +123,17 @@ impl CompactBandResult {
                 let bands_size: usize = m.bands.iter().map(|b| b.len() * 8 + 24).sum();
                 k_path_size + distances_size + bands_size
             }
-            CompactResultType::EA(ea) => {
-                let eigenvalues_size = ea.eigenvalues.len() * 8;
-                // Each eigenvector: n_elements * 2 floats (complex) * 8 bytes
-                let eigenvectors_size: usize =
-                    ea.eigenvectors.iter().map(|v| v.len() * 16 + 24).sum();
-                eigenvalues_size + eigenvectors_size + 24
+            CompactResultType::OperatorData(h) => {
+                let eig_size = h.eigenvalues.len() * 8;
+                let vel_size: usize = h.velocity_matrices.iter().map(|v| v.len() * 16).sum();
+                let w_size: usize = h.w_matrices.iter().flat_map(|row| row.iter()).map(|v| v.len() * 16).sum();
+                let mass_size: usize = h.mass_tensor_inv.iter().flat_map(|row| row.iter()).map(|v| v.len() * 16).sum();
+                let r_size: usize = h.r_derivative_matrices.as_ref().map(|m| m.iter().map(|v| v.len() * 16).sum()).unwrap_or(0);
+                let metric_size: usize = h.metric_derivative_matrices.as_ref().map(|m| m.iter().map(|v| v.len() * 16).sum()).unwrap_or(0);
+                let berry_size: usize = h.berry_connection_matrices.as_ref().map(|m| m.iter().map(|v| v.len() * 16).sum()).unwrap_or(0);
+                let bh_size = h.born_huang.as_ref().map(|v| v.len() * 16).unwrap_or(0);
+                let ov_size = h.overlap_matrix.as_ref().map(|v| v.len() * 16).unwrap_or(0);
+                eig_size + vel_size + w_size + mass_size + r_size + metric_size + berry_size + bh_size + ov_size
             }
         };
 
@@ -111,7 +144,7 @@ impl CompactBandResult {
     pub fn num_k_points(&self) -> usize {
         match &self.result_type {
             CompactResultType::Maxwell(m) => m.k_path.len(),
-            CompactResultType::EA(_) => 1, // EA has no k-path concept
+            CompactResultType::OperatorData(_) => 1,
         }
     }
 
@@ -119,7 +152,7 @@ impl CompactBandResult {
     pub fn num_bands(&self) -> usize {
         match &self.result_type {
             CompactResultType::Maxwell(m) => m.bands.first().map(|b| b.len()).unwrap_or(0),
-            CompactResultType::EA(ea) => ea.eigenvalues.len(),
+            CompactResultType::OperatorData(h) => h.eigenvalues.len(),
         }
     }
 
@@ -127,7 +160,7 @@ impl CompactBandResult {
     pub fn k_path(&self) -> Option<&Vec<[f64; 2]>> {
         match &self.result_type {
             CompactResultType::Maxwell(m) => Some(&m.k_path),
-            CompactResultType::EA(_) => None,
+            _ => None,
         }
     }
 
@@ -135,7 +168,7 @@ impl CompactBandResult {
     pub fn distances(&self) -> Option<&Vec<f64>> {
         match &self.result_type {
             CompactResultType::Maxwell(m) => Some(&m.distances),
-            CompactResultType::EA(_) => None,
+            _ => None,
         }
     }
 
@@ -143,26 +176,21 @@ impl CompactBandResult {
     pub fn bands(&self) -> Option<&Vec<Vec<f64>>> {
         match &self.result_type {
             CompactResultType::Maxwell(m) => Some(&m.bands),
-            CompactResultType::EA(_) => None,
+            _ => None,
         }
     }
 
-    /// Get eigenvalues if this is an EA result.
+    /// Get eigenvalues if this is an EA-Hamiltonian result.
     pub fn eigenvalues(&self) -> Option<&Vec<f64>> {
         match &self.result_type {
             CompactResultType::Maxwell(_) => None,
-            CompactResultType::EA(ea) => Some(&ea.eigenvalues),
+            CompactResultType::OperatorData(h) => Some(&h.eigenvalues),
         }
     }
 
     /// Check if this is a Maxwell result.
     pub fn is_maxwell(&self) -> bool {
         matches!(self.result_type, CompactResultType::Maxwell(_))
-    }
-
-    /// Check if this is an EA result.
-    pub fn is_ea(&self) -> bool {
-        matches!(self.result_type, CompactResultType::EA(_))
     }
 }
 
@@ -202,33 +230,6 @@ mod tests {
         }
     }
 
-    fn make_test_ea_result(index: usize) -> CompactBandResult {
-        CompactBandResult {
-            job_index: index,
-            params: JobParams {
-                eps_bg: 0.0,
-                resolution: 64,
-                polarization: Polarization::TM,
-                lattice_type: None,
-                atoms: vec![],
-                sweep_values: vec![],
-            },
-            result_type: CompactResultType::EA(EAResult {
-                eigenvalues: vec![0.1, 0.2, 0.3, 0.4, 0.5],
-                eigenvectors: (0..5)
-                    .map(|_| {
-                        (0..64 * 64)
-                            .map(|i| [i as f64 * 0.01, i as f64 * 0.001])
-                            .collect()
-                    })
-                    .collect(),
-                grid_dims: [64, 64],
-                n_iterations: 50,
-                converged: true,
-            }),
-        }
-    }
-
     #[test]
     fn test_compact_result_size() {
         let result = make_test_maxwell_result(0);
@@ -243,25 +244,11 @@ mod tests {
     fn test_maxwell_accessors() {
         let result = make_test_maxwell_result(0);
         assert!(result.is_maxwell());
-        assert!(!result.is_ea());
         assert!(result.k_path().is_some());
         assert!(result.distances().is_some());
         assert!(result.bands().is_some());
         assert!(result.eigenvalues().is_none());
         assert_eq!(result.num_k_points(), 100);
         assert_eq!(result.num_bands(), 10);
-    }
-
-    #[test]
-    fn test_ea_accessors() {
-        let result = make_test_ea_result(0);
-        assert!(!result.is_maxwell());
-        assert!(result.is_ea());
-        assert!(result.k_path().is_none());
-        assert!(result.distances().is_none());
-        assert!(result.bands().is_none());
-        assert!(result.eigenvalues().is_some());
-        assert_eq!(result.num_k_points(), 1);
-        assert_eq!(result.num_bands(), 5);
     }
 }

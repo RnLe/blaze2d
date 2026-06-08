@@ -9,19 +9,15 @@ use std::path::{Path, PathBuf};
 
 use blaze2d_core::{
     brillouin::{BrillouinPath, generate_path},
-    diagnostics::PreconditionerType,
+    diagnostics::{ConvergenceStudy, PreconditionerType},
     dielectric::Dielectric2D,
-    drivers::bandstructure::{self, BandStructureResult, RunOptions, Verbosity},
+    drivers::bandstructure::{self, BandStructureJob, BandStructureResult, RunOptions},
     io::{JobConfig, PathPreset},
 };
 use clap::{Parser, ValueEnum};
 use env_logger::Builder;
 use log::{error, info, warn};
 
-#[cfg(feature = "cuda")]
-use blaze2d_backend_cuda::CudaBackend;
-
-#[cfg(not(feature = "cuda"))]
 use blaze2d_backend_cpu::CpuBackend;
 
 // ============================================================================
@@ -78,12 +74,14 @@ struct Cli {
     #[arg(long, value_enum, default_value = "auto")]
     preconditioner: PrecondArg,
 
-    /// Enable symmetry-based reduction (Deep Symmetry).
+    /// Storage precision: f64 (default) or f32.
     ///
-    /// When enabled, the solver decomposes the problem into symmetry sectors
-    /// to reduce search space and resolve degeneracies.
-    #[arg(long)]
-    symmetry: bool,
+    /// `f32` uses single-precision Complex<f32> field storage and FFTs with
+    /// f64 accumulation in dot products and Rayleigh–Ritz (the standard HPC
+    /// mixed-precision pattern); eigenvalues remain f64 either way. Independent
+    /// of the bulk driver's `[solver].precision` TOML key.
+    #[arg(long, value_enum, default_value = "f64")]
+    precision: PrecisionArg,
 
     /// Write logs to a file instead of stderr
     ///
@@ -261,6 +259,41 @@ impl From<PrecondArg> for PreconditionerType {
             }
             PrecondArg::TransverseProjection => PreconditionerType::TransverseProjection,
         }
+    }
+}
+
+/// CLI-friendly storage-precision argument.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+enum PrecisionArg {
+    /// Single precision: Complex<f32> storage (f64 accumulation).
+    F32,
+    /// Double precision: Complex<f64> storage (default).
+    #[default]
+    F64,
+}
+
+/// Run the band-structure solver on a backend of the chosen precision,
+/// returning the (always-f64) result plus an optional convergence study.
+///
+/// Generic over the backend so the same code serves `CpuBackend<f32>` and
+/// `CpuBackend<f64>`; the precision dispatch happens at the call site.
+fn run_solver<B: blaze2d_core::backend::SpectralBackend + Clone>(
+    backend: B,
+    job: &BandStructureJob,
+    run_options: RunOptions,
+    record_diagnostics: bool,
+    study_name: &str,
+) -> (BandStructureResult, Option<ConvergenceStudy>) {
+    if record_diagnostics {
+        let diag = bandstructure::run_with_diagnostics_and_options(
+            backend,
+            job,
+            study_name.to_string(),
+            run_options,
+        );
+        (diag.result, Some(diag.study))
+    } else {
+        (bandstructure::run_with_options(backend, job, run_options), None)
     }
 }
 
@@ -465,11 +498,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let verbosity = if cli.quiet {
-        Verbosity::Quiet
-    } else {
-        Verbosity::Verbose
-    };
+    let verbosity = cli.quiet;
+    let _ = verbosity; // verbosity is now controlled via RUST_LOG; kept here only to satisfy the `cli.quiet` reads below.
 
     // Build run options
     // Subspace prediction is ON by default unless --no-subspace-prediction is set
@@ -489,8 +519,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_band_window_shift(cli.band_window_shift)
         .with_band_window_blend(cli.band_window_blend)
         .with_band_window_scale(cli.band_window_scale)
-        .with_disable_band_tracking(cli.no_band_tracking)
-        .with_symmetry(cli.symmetry);
+        .with_disable_band_tracking(cli.no_band_tracking);
 
     if !cli.quiet && use_subspace_pred {
         if use_extrapolation {
@@ -504,56 +533,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("band tracking disabled (bands output in eigensolver order)");
     }
 
-    // Select backend: use CUDA if available, otherwise CPU
-    #[cfg(feature = "cuda")]
-    let backend = {
-        if !cli.quiet {
-            info!("using CUDA backend");
-        }
-        CudaBackend::new()
-    };
-    #[cfg(not(feature = "cuda"))]
-    let backend = {
-        if !cli.quiet {
-            info!("using CPU backend");
-        }
-        CpuBackend::new()
-    };
-
-    // Run the solver (with or without diagnostics)
-    let result = if cli.record_diagnostics {
-        // Derive study name from config filename if not specified
-        let study_name = cli.study_name.unwrap_or_else(|| {
+    // Derive study name (used only when recording diagnostics).
+    let study_name = if cli.record_diagnostics {
+        cli.study_name.clone().unwrap_or_else(|| {
             cli.config
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "study".to_string())
-        });
+        })
+    } else {
+        String::new()
+    };
 
-        if !cli.quiet {
+    if !cli.quiet {
+        info!("using CPU backend (precision={:?})", cli.precision);
+        if cli.record_diagnostics {
             info!(
                 "recording diagnostics: study={} preconditioner={:?}",
                 study_name, precond_type
             );
         }
+    }
 
-        let diag_result = bandstructure::run_with_diagnostics_and_options(
-            backend.clone(),
+    // Run the solver on the precision-correct backend monomorphisation.
+    // The result is always f64 regardless of storage precision.
+    let (result, study) = match cli.precision {
+        PrecisionArg::F32 => run_solver(
+            CpuBackend::<f32>::new(),
             &job,
-            verbosity,
-            &study_name,
             run_options,
-        );
+            cli.record_diagnostics,
+            &study_name,
+        ),
+        PrecisionArg::F64 => run_solver(
+            CpuBackend::<f64>::new(),
+            &job,
+            run_options,
+            cli.record_diagnostics,
+            &study_name,
+        ),
+    };
 
-        // Save diagnostics to JSON
+    // Save diagnostics artifacts (JSON + optional iteration CSVs), if recorded.
+    if let Some(study) = study {
         let diag_path = cli.diagnostics_output.as_ref().unwrap();
         if !cli.quiet {
             info!("writing diagnostics to {}", diag_path.display());
         }
+        study.save_json(diag_path)?;
 
-        diag_result.study.save_json(diag_path)?;
-
-        // Save iteration CSV if requested
         if let Some(ref csv_path) = cli.iteration_csv {
             if !cli.quiet {
                 info!(
@@ -561,28 +589,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     csv_path.display()
                 );
             }
-            diag_result.study.save_iteration_csv(csv_path)?;
+            study.save_iteration_csv(csv_path)?;
         }
 
         if let Some(ref csv_path) = cli.iteration_csv_combined {
             if !cli.quiet {
                 info!("writing combined iteration CSV to {}", csv_path.display());
             }
-            diag_result.study.save_iteration_csv_combined(csv_path)?;
+            study.save_iteration_csv_combined(csv_path)?;
         }
 
         if !cli.quiet {
             info!(
                 "diagnostics saved: {} runs, {} k-points",
-                diag_result.study.runs.len(),
-                diag_result.result.k_path.len()
+                study.runs.len(),
+                result.k_path.len()
             );
         }
-
-        diag_result.result
-    } else {
-        bandstructure::run_with_options(backend, &job, verbosity, run_options)
-    };
+    }
 
     // Write CSV output
     emit_csv(&result, cli.output.as_deref())?;

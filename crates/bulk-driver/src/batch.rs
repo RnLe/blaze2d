@@ -461,17 +461,16 @@ fn write_csv_full(path: &PathBuf, result: &CompactBandResult) -> usize {
                 bytes_written += row.len();
             }
         }
-        CompactResultType::EA(ea) => {
-            header.push_str(",n_iterations,converged,band_index,eigenvalue\n");
-
+        // EA Hamiltonian results contain complex matrix data; minimal CSV fallback
+        CompactResultType::OperatorData(h) => {
+            header.push_str(",n_retained,n_remote,band_index,eigenvalue\n");
             if let Err(e) = writer.write_all(header.as_bytes()) {
                 error!("failed to write header: {}", e);
                 return 0;
             }
             bytes_written += header.len();
 
-            // Write data rows (one per eigenvalue)
-            for (band_idx, eigenvalue) in ea.eigenvalues.iter().enumerate() {
+            for (band_idx, eigenvalue) in h.eigenvalues.iter().enumerate() {
                 let mut row = format!("{}", result.job_index);
                 for (_, value) in &param_cols {
                     row.push(',');
@@ -479,10 +478,10 @@ fn write_csv_full(path: &PathBuf, result: &CompactBandResult) -> usize {
                 }
                 row.push_str(&format!(
                     ",{},{},{},{}",
-                    ea.n_iterations,
-                    ea.converged,
+                    h.n_retained,
+                    h.n_remote,
                     band_idx + 1,
-                    eigenvalue
+                    eigenvalue,
                 ));
                 row.push('\n');
 
@@ -620,62 +619,12 @@ fn write_csv_selective(path: &PathBuf, results: &[CompactBandResult]) -> usize {
             }
         }
     } else {
-        // EA-style output with eigenvalues
-        let max_bands = results
-            .iter()
-            .filter_map(|r| match &r.result_type {
-                CompactResultType::EA(ea) => Some(ea.eigenvalues.len()),
-                _ => None,
-            })
-            .max()
-            .unwrap_or(0);
-
-        // Write header
-        let mut header = String::from("job_index");
-        for (name, _) in &param_cols {
-            header.push(',');
-            header.push_str(name);
-        }
-        header.push_str(",n_iterations,converged");
-        for i in 1..=max_bands {
-            header.push_str(&format!(",eigenvalue{}", i));
-        }
-        header.push('\n');
-
-        if let Err(e) = writer.write_all(header.as_bytes()) {
-            error!("failed to write header: {}", e);
-            return 0;
-        }
-        bytes_written += header.len();
-
-        // Write all results (one row per job for EA)
-        for result in results {
-            if let CompactResultType::EA(ea) = &result.result_type {
-                let param_values: Vec<_> = result.params.to_columns();
-
-                let mut row = format!("{}", result.job_index);
-                for (_, value) in &param_values {
-                    row.push(',');
-                    row.push_str(value);
-                }
-                row.push_str(&format!(",{},{}", ea.n_iterations, ea.converged));
-
-                for eigenvalue in &ea.eigenvalues {
-                    row.push_str(&format!(",{}", eigenvalue));
-                }
-
-                for _ in ea.eigenvalues.len()..max_bands {
-                    row.push(',');
-                }
-                row.push('\n');
-
-                if let Err(e) = writer.write_all(row.as_bytes()) {
-                    error!("failed to write row: {}", e);
-                    break;
-                }
-                bytes_written += row.len();
-            }
-        }
+        // Non-Maxwell results (e.g. operator-data extraction) are not exported
+        // via the selective CSV path; use the per-result Full writer instead.
+        info!(
+            "skipping selective CSV write: no Maxwell results among {} entries",
+            results.len()
+        );
     }
 
     if let Err(e) = writer.flush() {
