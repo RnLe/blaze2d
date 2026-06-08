@@ -97,6 +97,8 @@ pub struct WasmField {
 }
 
 impl SpectralBuffer for WasmField {
+    type Real = f64;
+
     fn len(&self) -> usize {
         self.data.len()
     }
@@ -115,6 +117,7 @@ impl SpectralBuffer for WasmField {
 }
 
 impl SpectralBackend for WasmBackend {
+    type Real = f64;
     type Buffer = WasmField;
 
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer {
@@ -133,13 +136,8 @@ impl SpectralBackend for WasmBackend {
             // Compute in f64, store in FieldScalar
             let v64 = Complex64::new(value.re as f64, value.im as f64);
             let result = v64 * alpha;
-            #[cfg(not(feature = "mixed-precision"))]
             {
                 *value = result;
-            }
-            #[cfg(feature = "mixed-precision")]
-            {
-                *value = FieldScalar::new(result.re as f32, result.im as f32);
             }
         }
     }
@@ -150,13 +148,8 @@ impl SpectralBackend for WasmBackend {
             let src64 = Complex64::new(src.re as f64, src.im as f64);
             let dst64 = Complex64::new(dst.re as f64, dst.im as f64);
             let result = dst64 + alpha * src64;
-            #[cfg(not(feature = "mixed-precision"))]
             {
                 *dst = result;
-            }
-            #[cfg(feature = "mixed-precision")]
-            {
-                *dst = FieldScalar::new(result.re as f32, result.im as f32);
             }
         }
     }

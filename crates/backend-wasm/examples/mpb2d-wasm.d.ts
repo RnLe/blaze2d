@@ -49,7 +49,7 @@ export interface MaxwellResult {
 }
 
 /** EA (Envelope Approximation) solver result */
-export interface EAResult {
+export interface OperatorDataDriverResult {
     result_type: 'ea';
     job_index: number;
     params: JobParams;
@@ -74,7 +74,7 @@ export interface EAResult {
 }
 
 /** Union type for all result types */
-export type BandResult = MaxwellResult | EAResult;
+export type BandResult = MaxwellResult | OperatorDataDriverResult;
 
 // =============================================================================
 // K-Point Streaming Types
