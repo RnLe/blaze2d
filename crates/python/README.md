@@ -14,7 +14,7 @@ pip install blaze2d
 ### Maxwell Mode (Photonic Crystals)
 
 ```python
-from blaze2d import BulkDriver
+from blaze import BulkDriver
 
 driver = BulkDriver("config.toml")
 print(f"Running {driver.job_count} jobs with {driver.solver_type} solver")
@@ -33,10 +33,10 @@ print(f"Completed in {stats['total_time_secs']:.2f}s")
 ### EA Mode (Envelope Approximation)
 
 ```python
-from blaze2d import BulkDriver
+from blaze import BulkDriver
 import numpy as np
 
-driver = BulkDriver("ea_config.toml")
+driver = BulkDriver("operator_data_config.toml")
 
 for result in driver.run_streaming():
     eigenvalues = result['eigenvalues']
@@ -203,7 +203,7 @@ driver = BulkDriver(config_path: str, threads: int = 0)
 | Key | Type | Description |
 |-----|------|-------------|
 | `job_index` | int | Job number (completion order) |
-| `result_type` | str | `"maxwell"` or `"ea"` |
+| `result_type` | str | `"maxwell"`, `"ea"`, or `"ea_hamiltonian"` |
 | `params` | dict | Full configuration snapshot |
 | `sweep_values` | dict | Current sweep parameter values |
 | `sweep_order` | str | Parseable string `"param1=val1\|param2=val2"` |
@@ -228,6 +228,46 @@ driver = BulkDriver(config_path: str, threads: int = 0)
 | `converged` | bool | Solver convergence status |
 | `n_iterations` | int | Number of iterations used |
 | `num_eigenvalues` | int | Number of eigenvalues |
+
+**EA Hamiltonian fields (result_type = "ea_hamiltonian"):**
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `k0` | tuple | Carrier momentum (kx, ky) |
+| `registry` | tuple | Registry point (Rx, Ry) |
+| `n_retained` | int | Number of retained bands |
+| `n_remote` | int | Number of remote bands |
+| `eigenvalues` | list | All n_total eigenvalues |
+| `velocity_matrices` | dict | `{"x": [...], "y": [...]}` complex (re, im) tuples |
+| `w_matrices` | dict | `{"xx": [...], "xy": [...], ...}` second derivatives |
+| `mass_tensor_inv` | dict | `{"xx": [...], ...}` Löwdin-corrected inverse mass |
+| `r_derivative_matrices` | dict | Optional `{"x": [...], "y": [...]}` |
+| `metric_derivative_matrices` | dict | Optional `{"x": [...], "y": [...]}` for `∂B/∂R` |
+| `berry_connection_matrices` | dict | Optional `{"x": [...], "y": [...]}` retained-space Berry blocks |
+| `born_huang` | list | Optional Born–Huang potential matrix; for TM this is the generalized metric-compatible geometric potential |
+| `slow_coefficient_potential` | list | Optional TE-only slow-coefficient matrix `U_sc` |
+| `overlap_matrix` | list | Optional overlap matrix |
+| `polarization` | str | "TE" or "TM" |
+
+### OperatorDataExtractor (Direct Python API)
+
+```python
+from blaze import OperatorDataExtractor
+
+result = OperatorDataExtractor.extract(
+    lattice_vectors=[[1.0, 0.0], [0.0, 1.0]],
+    atoms=[{"pos": [0.0, 0.0], "radius": 0.2, "eps_inside": 1.0}],
+    eps_bg=12.0,
+    k0=[0.0, 0.0],
+    polarization="TE",
+    resolution=32,
+    n_retained=4,
+    n_remote=8,
+)
+
+eigenvalues = result["eigenvalues"]
+mass_inv_xx = result["mass_tensor_inv_xx"]  # list of (re, im) tuples
+```
 
 ### Stats Dictionary (from `run_collect`)
 
@@ -278,7 +318,7 @@ f_Hz = omega_norm * c / a
 
 ```python
 import matplotlib.pyplot as plt
-from blaze2d import BulkDriver
+from blaze import BulkDriver
 
 driver = BulkDriver("sweep.toml")
 
