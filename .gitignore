@@ -16,3 +16,11 @@
 **/wasm-dist/
 
 **/**pycache**
+
+# Local-only research data (kept in-tree for the author, not for git).
+# Each subfolder has a README so the user can circle back later.
+**/thesis/
+/archive/
+
+# Ignore verbose docs
+docs/

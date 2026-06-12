@@ -13,7 +13,6 @@
     "sourceMap": true,
     "outDir": "dist",
     "composite": true, // for project references
-    "baseUrl": ".", // needed for path aliases below
     "paths": {},
     "lib": [
       "dom",
@@ -45,6 +44,7 @@
     "public/**/*.json",       // Include all JSON files in the public directory
     "changelog",             // Include the changelog directory
     "packages",             // Include the packages directory
+    "**/*.ts",
     "**/*.tsx",
     "**/*.jsx",
     "content/[[...mdxPath]]", "content/theory.mdx",
