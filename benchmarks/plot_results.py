@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 
 SCRIPT_DIR = Path(__file__).parent.absolute()
 

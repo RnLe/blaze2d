@@ -177,6 +177,7 @@ def run_blaze_benchmark(resolution: int, polarization: str, binary: Path) -> flo
             "--config", str(config_path),
             "--benchmark",
             "-j", "1",
+            "--precision", "f32",  # Blaze "mixed precision" series
         ]
         
         start = time.perf_counter()
@@ -221,7 +222,7 @@ def run_series(output_dir: Path, quick: bool = False):
     print("Benchmark Series 3: Resolution Sweep")
     print("=" * 70)
     print(f"Resolution values: {resolutions}")
-    print(f"Polarizations: TM, TE")
+    print("Polarizations: TM, TE")
     print(f"Iterations per value: {iterations}")
     print(f"Bands: {NUM_BANDS}")
     print(f"Config: Square lattice, ε={EPSILON} rods, r={RADIUS}a")

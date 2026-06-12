@@ -14,7 +14,7 @@ Output: results/series7_scaling/plots/
 import json
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -401,7 +401,7 @@ def generate_all_plots(results_path: Path, output_dir: Path):
     results = load_results(results_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"\nGenerating Series 7 Scaling Plots...")
+    print("\nGenerating Series 7 Scaling Plots...")
     print(f"Output directory: {output_dir}")
     print("-" * 50)
     

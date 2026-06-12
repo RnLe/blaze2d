@@ -498,6 +498,7 @@ def run_blaze2d_benchmark(config_name: str, config: dict, num_runs: int,
                 "--config", str(config_path),
                 "--benchmark",  # Real solves, NO file output
                 "-j", "1",  # Single core
+                "--precision", "f32",  # Blaze "mixed precision" series
             ]
             
             start = time.perf_counter()
@@ -510,7 +511,7 @@ def run_blaze2d_benchmark(config_name: str, config: dict, num_runs: int,
             elapsed = time.perf_counter() - start
             
             if result.returncode != 0:
-                print(f"\nWARNING: bulk driver returned non-zero exit code")
+                print("\nWARNING: bulk driver returned non-zero exit code")
                 print(result.stderr[:500] if result.stderr else "No stderr")
             
             iteration_times.append(elapsed)

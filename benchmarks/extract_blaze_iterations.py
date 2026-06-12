@@ -16,7 +16,7 @@ import tempfile
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 import sys
 
 
@@ -163,7 +163,7 @@ def run_blaze_with_diagnostics(
     
     if not blaze_binary.exists():
         # Try building it
-        print(f"Building Blaze2D CLI...", file=sys.stderr)
+        print("Building Blaze2D CLI...", file=sys.stderr)
         result = subprocess.run(
             ["cargo", "build", "--release", "-p", "blaze2d-cli"],
             cwd=project_root,
@@ -203,6 +203,7 @@ def run_blaze_with_diagnostics(
             "--record-diagnostics",
             "--diagnostics-output", str(diag_path),
             "--output", str(output_path),
+            "--precision", "f32",  # Blaze "mixed precision" series
             "--quiet",
         ]
         

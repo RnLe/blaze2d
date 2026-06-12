@@ -13,7 +13,7 @@ Creates:
 import json
 import argparse
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -224,8 +224,8 @@ def create_ratio_figure(results: dict) -> plt.Figure:
     config = results.get("config", {})
     
     fig.suptitle(
-        f"Series 5: Memory Efficiency Ratio (MPB / Blaze2D)\n"
-        f"Values > 1 mean Blaze2D uses less memory",
+        "Series 5: Memory Efficiency Ratio (MPB / Blaze2D)\n"
+        "Values > 1 mean Blaze2D uses less memory",
         fontsize=12, fontweight='bold'
     )
     
@@ -254,8 +254,8 @@ def create_scaling_figure(results: dict) -> plt.Figure:
     sweeps = results.get("sweeps", {})
     
     fig.suptitle(
-        f"Series 5: Memory Scaling with Resolution (Log-Log)\n"
-        f"Expected: O(N²) where N = resolution",
+        "Series 5: Memory Scaling with Resolution (Log-Log)\n"
+        "Expected: O(N²) where N = resolution",
         fontsize=12, fontweight='bold'
     )
     
