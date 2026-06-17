@@ -111,6 +111,25 @@ body:not(:has(.blaze-layout)) .nextra-sidebar-container {
   padding-top: 1rem !important;
 }
 
+/* Make sidebar truly fixed — immune to footer pushing it up */
+body:not(:has(.blaze-layout)) .nextra-sidebar {
+  position: fixed !important;
+  top: var(--nextra-navbar-height, 64px) !important;
+  left: 0 !important;
+  width: 16rem !important;
+  height: calc(100dvh - var(--nextra-navbar-height, 64px)) !important;
+  overflow-y: auto !important;
+  z-index: 10 !important;
+}
+
+/* Compensate for fixed sidebar — push main content to the right.
+   Only applies at ≥md where the sidebar is actually visible. */
+@media (min-width: 768px) {
+  body:not(:has(.blaze-layout)) div:has(> .nextra-sidebar) {
+    padding-left: 16rem !important;
+  }
+}
+
 /* Sidebar links - no background, moderate spacing */
 body:not(:has(.blaze-layout)) aside a,
 body:not(:has(.blaze-layout)) .nextra-sidebar a {

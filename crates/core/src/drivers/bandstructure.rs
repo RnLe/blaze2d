@@ -46,7 +46,6 @@
 //! ```
 
 use log::{debug, info, warn};
-use std::time::Instant;
 
 use crate::{
     backend::SpectralBackend,
@@ -135,6 +134,25 @@ pub struct BandStructureResult {
     pub bands: Vec<Vec<f64>>,
 }
 
+/// Incremental result emitted after a single k-point solve.
+#[derive(Debug, Clone)]
+pub struct KPointResult {
+    /// Zero-based index of the completed k-point in the path.
+    pub k_index: usize,
+    /// Total number of k-points in the path.
+    pub total_k_points: usize,
+    /// The solved k-point in fractional coordinates.
+    pub k_point: [f64; 2],
+    /// Cumulative distance along the k-path for this point.
+    pub distance: f64,
+    /// Computed eigenfrequencies ω (not ω²) for this k-point.
+    pub omegas: Vec<f64>,
+    /// Eigensolver iterations used for this solve.
+    pub iterations: usize,
+    /// Whether this point is at Γ and uses the DC-mode deflation path.
+    pub is_gamma: bool,
+}
+
 // ============================================================================
 // Verbosity Control
 // ============================================================================
@@ -194,6 +212,15 @@ pub struct RunOptions {
     ///
     /// Default: false (band tracking is enabled)
     pub disable_band_tracking: bool,
+    /// Reuse the first Γ-point result for the last k-point when the path is closed (Γ→...→Γ).
+    ///
+    /// When enabled, skips the (often redundant) solve at the closing Γ and copies the
+    /// first Γ frequencies. This is faster but breaks line continuity if bands cross
+    /// along the path, since indices at the start and end Γ may not correspond to the
+    /// same physical bands after tracking.
+    ///
+    /// Default: true.
+    pub reuse_gamma: bool,
 }
 
 impl Default for RunOptions {
@@ -206,6 +233,7 @@ impl Default for RunOptions {
             band_window_blend: 0.5,        // Equal mix of adaptive and band-window
             band_window_scale: 0.5,        // Conservative scaling of median eigenvalue
             disable_band_tracking: false,  // Band tracking enabled by default
+            reuse_gamma: true,             // Reuse first Γ for closing Γ (fast path)
         }
     }
 }
@@ -319,7 +347,27 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     job: &BandStructureJob,
     options: RunOptions,
 ) -> BandStructureResult {
-    run_core(backend, job, options, None)
+    run_core(backend, job, options, None, None)
+}
+
+/// Compute the photonic band structure while emitting each completed k-point.
+pub fn run_with_k_streaming<B, F>(
+    backend: B,
+    job: &BandStructureJob,
+    options: RunOptions,
+    mut on_k_point: F,
+) -> BandStructureResult
+where
+    B: SpectralBackend + Clone,
+    F: FnMut(KPointResult),
+{
+    run_core(
+        backend,
+        job,
+        options,
+        None,
+        Some(&mut on_k_point as &mut dyn FnMut(KPointResult)),
+    )
 }
 
 /// Shared implementation behind [`run_with_options`] and
@@ -335,6 +383,7 @@ fn run_core<B: SpectralBackend + Clone>(
     job: &BandStructureJob,
     options: RunOptions,
     mut study: Option<&mut ConvergenceStudy>,
+    mut on_k_point: Option<&mut dyn FnMut(KPointResult)>,
 ) -> BandStructureResult {
     // ========================================================================
     // Setup Phase
@@ -505,18 +554,21 @@ fn run_core<B: SpectralBackend + Clone>(
     // This avoids redundant computation when the path is e.g., Γ→X→M→Γ
     let first_is_gamma = job.k_path.first().map_or(false, |&k| is_gamma_point(k));
     let last_is_gamma = job.k_path.last().map_or(false, |&k| is_gamma_point(k));
-    let reuse_gamma = first_is_gamma && last_is_gamma && job.k_path.len() > 1;
+    let reuse_gamma = options.reuse_gamma && first_is_gamma && last_is_gamma && job.k_path.len() > 1;
     let last_k_idx = job.k_path.len().saturating_sub(1);
+    let distances = compute_k_path_distances(&job.k_path);
+    let total_k_points = job.k_path.len();
 
     // Storage for first Γ-point frequencies (to reuse for last k-point if applicable)
     let mut first_gamma_omegas: Option<Vec<f64>> = None;
+    let mut first_gamma_iterations: Option<usize> = None;
 
     // Accumulate results
     let mut bands: Vec<Vec<f64>> = Vec::with_capacity(job.k_path.len());
     let mut total_iterations = 0usize;
 
     // Start timing the solve phase (excludes setup/diagnostics)
-    let solve_start = Instant::now();
+    let solve_start = crate::timing::Timer::start();
 
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
         // Check if this is a Γ-point (k ≈ 0)
@@ -531,6 +583,17 @@ fn run_core<B: SpectralBackend + Clone>(
                     "[bandstructure] k#{:03} is duplicate Γ-point: reusing result from k#000",
                     k_idx
                 );
+                if let Some(ref mut on_k_point) = on_k_point {
+                    (**on_k_point)(KPointResult {
+                        k_index: k_idx,
+                        total_k_points,
+                        k_point: k_frac,
+                        distance: distances[k_idx],
+                        omegas: gamma_omegas.clone(),
+                        iterations: first_gamma_iterations.unwrap_or(0),
+                        is_gamma: true,
+                    });
+                }
                 bands.push(gamma_omegas.clone());
                 // Don't update warm-start or tracking state - not needed for last point
                 continue;
@@ -767,6 +830,19 @@ fn run_core<B: SpectralBackend + Clone>(
         // Store first Γ-point result for potential reuse at end of path
         if reuse_gamma && k_idx == 0 && is_gamma {
             first_gamma_omegas = Some(omegas.clone());
+            first_gamma_iterations = Some(k_iterations);
+        }
+
+        if let Some(ref mut on_k_point) = on_k_point {
+            (**on_k_point)(KPointResult {
+                k_index: k_idx,
+                total_k_points,
+                k_point: k_frac,
+                distance: distances[k_idx],
+                omegas: omegas.clone(),
+                iterations: k_iterations,
+                is_gamma,
+            });
         }
 
         bands.push(omegas);
@@ -776,7 +852,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // Finalize
     // ========================================================================
 
-    let solve_elapsed = solve_start.elapsed().as_secs_f64();
+    let solve_elapsed = solve_start.elapsed_secs();
     let time_per_iter_ms = if total_iterations > 0 {
         solve_elapsed * 1000.0 / total_iterations as f64
     } else {
@@ -800,7 +876,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // Build initial result
     let result = BandStructureResult {
         k_path: job.k_path.clone(),
-        distances: compute_k_path_distances(&job.k_path),
+        distances,
         bands,
     };
 
@@ -834,7 +910,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     options: RunOptions,
 ) -> BandStructureResultWithDiagnostics {
     let mut study = ConvergenceStudy::new(study_name);
-    let result = run_core(backend, job, options, Some(&mut study));
+    let result = run_core(backend, job, options, Some(&mut study), None);
     BandStructureResultWithDiagnostics { result, study }
 }
 

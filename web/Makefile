@@ -42,20 +42,11 @@ dev: clean
 # WASM Build Pipeline
 # ===================
 
-# Build WASM module and copy to website
+# Build WASM module into public/wasm-blaze
 .PHONY: build-wasm
 build-wasm:
 	@echo "🦀 Building WASM module..."
-	cd ../rust-wasm && wasm-pack build --target web --out-dir pkg
-	@echo "📦 Copying WASM files to website..."
-	mkdir -p public/wasm
-	cp ../rust-wasm/pkg/moire_lattice_wasm.js public/wasm/moire_lattice_wasm.js
-	cp ../rust-wasm/pkg/moire_lattice_wasm.d.ts public/wasm/moire_lattice_wasm.d.ts
-	cp ../rust-wasm/pkg/moire_lattice_wasm_bg.wasm public/wasm/moire_lattice_wasm_bg.wasm
-	cp ../rust-wasm/pkg/moire_lattice_wasm_bg.wasm.d.ts public/wasm/moire_lattice_wasm_bg.wasm.d.ts
-	cp ../rust-wasm/pkg/package.json public/wasm/package.json
-	@echo "🧹 Cleaning up WASM build artifacts..."
-	cd ../rust-wasm && rm -rf target
+	pnpm run build:wasm
 	@echo "✅ WASM module built and copied successfully!"
 
 # Build WASM and install dependencies
@@ -69,7 +60,7 @@ build-wasm-dev: build-wasm
 .PHONY: clean-wasm
 clean-wasm:
 	@echo "🧹 Cleaning WASM artifacts from website..."
-	rm -rf public/wasm/*
+	pnpm run clean:wasm
 	@echo "✅ WASM artifacts cleaned!"
 
 # Full development build including WASM

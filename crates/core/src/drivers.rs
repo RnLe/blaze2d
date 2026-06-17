@@ -10,6 +10,7 @@
 //! The [`bandstructure`] submodule provides the Maxwell band structure driver:
 //!
 //! - [`run_with_options`](bandstructure::run_with_options): Compute photonic band structure along a k-path
+//! - [`run_with_k_streaming`](bandstructure::run_with_k_streaming): Same, with a callback after each k-point
 //! - [`run_with_diagnostics_and_options`](bandstructure::run_with_diagnostics_and_options): Same with convergence recording
 //!
 //! ## Single-Solve Driver
@@ -39,8 +40,8 @@ pub mod single_solve;
 
 // Re-export commonly used types from bandstructure
 pub use bandstructure::{
-    BandStructureJob, BandStructureResult, BandStructureResultWithDiagnostics, RunOptions,
-    run_with_diagnostics_and_options, run_with_options,
+    BandStructureJob, BandStructureResult, BandStructureResultWithDiagnostics, KPointResult,
+    RunOptions, run_with_diagnostics_and_options, run_with_k_streaming, run_with_options,
 };
 
 // Re-export from single_solve

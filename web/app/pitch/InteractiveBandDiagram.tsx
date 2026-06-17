@@ -24,6 +24,9 @@ interface LatticeConfig {
   pathLabels: string[];
   /** Total k-path distance in fractional coordinates */
   pathTotalDistance: number;
+  /** Normalized cumulative distance (0..1) of each high-symmetry corner along the path.
+   *  Length matches `pathLabels`. Used to position labels so they align with the data. */
+  pathCornerFractions: number[];
 }
 
 // Calculate path distances in fractional k-space
@@ -37,56 +40,68 @@ interface LatticeConfig {
 //   Γ→X: 0.5, X→S: 0.5, S→Y: 0.5, Y→Γ: 0.5
 //   Total: 2.0
 
-const BRAVAIS_LATTICES: Record<Exclude<LatticeType, 'honeycomb'>, LatticeConfig> = {
-  square: {
-    name: 'Square',
-    getBasisVectors: () => ({
-      a1: [1, 0],
-      a2: [0, 1],
-    }),
-    atomPositions: [[0, 0]],
-    pathPreset: 'square',
-    pathLabels: ['Γ', 'X', 'M', 'Γ'],
-    pathTotalDistance: 0.5 + 0.5 + Math.sqrt(0.5), // ≈ 1.707
-  },
-  triangular: {
-    name: 'Triangular',
-    getBasisVectors: () => ({
-      a1: [1, 0],
-      a2: [0.5, Math.sqrt(3) / 2],
-    }),
-    atomPositions: [[0, 0]],
-    pathPreset: 'triangular',
-    pathLabels: ['Γ', 'M', 'K', 'Γ'],
-    pathTotalDistance: 0.5 + Math.sqrt(Math.pow(0.5 - 1/3, 2) + Math.pow(1/3, 2)) + Math.sqrt(2/9), // ≈ 1.344
-  },
-  rectangular: {
-    name: 'Rectangular',
-    getBasisVectors: (b = 1) => ({
-      a1: [1, 0],
-      a2: [0, b],
-    }),
-    atomPositions: [[0, 0]],
-    hasParameter: true,
-    parameterRange: [0.5, 2],
-    parameterName: 'b',
-    pathPreset: 'rectangular',
-    pathLabels: ['Γ', 'X', 'S', 'Y', 'Γ'],
-    pathTotalDistance: 2.0, // 0.5 + 0.5 + 0.5 + 0.5
-  },
-};
+const BRAVAIS_LATTICES: Record<Exclude<LatticeType, 'honeycomb'>, LatticeConfig> = (() => {
+  // Square: Γ(0,0) → X(0.5,0) → M(0.5,0.5) → Γ(0,0)
+  const sqLegs = [0.5, 0.5, Math.sqrt(0.5)];
+  const sqTotal = sqLegs.reduce((a, b) => a + b, 0);
+  const sqCum = [0, sqLegs[0], sqLegs[0] + sqLegs[1], sqTotal].map(d => d / sqTotal);
+
+  // Triangular: Γ(0,0) → M(0.5,0) → K(1/3,1/3) → Γ(0,0)
+  const trLegs = [
+    0.5,
+    Math.sqrt(Math.pow(0.5 - 1 / 3, 2) + Math.pow(1 / 3, 2)),
+    Math.sqrt(2 / 9),
+  ];
+  const trTotal = trLegs.reduce((a, b) => a + b, 0);
+  const trCum = [0, trLegs[0], trLegs[0] + trLegs[1], trTotal].map(d => d / trTotal);
+
+  // Rectangular: Γ → X(0.5,0) → S(0.5,0.5) → Y(0,0.5) → Γ. All legs = 0.5 in fractional space.
+  const reTotal = 2.0;
+  const reCum = [0, 0.5, 1.0, 1.5, 2.0].map(d => d / reTotal);
+
+  return {
+    square: {
+      name: 'Square',
+      getBasisVectors: () => ({ a1: [1, 0], a2: [0, 1] }),
+      atomPositions: [[0, 0]],
+      pathPreset: 'square',
+      pathLabels: ['Γ', 'X', 'M', 'Γ'],
+      pathTotalDistance: sqTotal,
+      pathCornerFractions: sqCum,
+    },
+    triangular: {
+      name: 'Triangular',
+      getBasisVectors: () => ({ a1: [1, 0], a2: [0.5, Math.sqrt(3) / 2] }),
+      atomPositions: [[0, 0]],
+      pathPreset: 'triangular',
+      pathLabels: ['Γ', 'M', 'K', 'Γ'],
+      pathTotalDistance: trTotal,
+      pathCornerFractions: trCum,
+    },
+    rectangular: {
+      name: 'Rectangular',
+      getBasisVectors: (b = 1) => ({ a1: [1, 0], a2: [0, b] }),
+      atomPositions: [[0, 0]],
+      hasParameter: true,
+      parameterRange: [0.5, 2],
+      parameterName: 'b',
+      pathPreset: 'rectangular',
+      pathLabels: ['Γ', 'X', 'S', 'Y', 'Γ'],
+      pathTotalDistance: reTotal,
+      pathCornerFractions: reCum,
+    },
+  };
+})();
 
 const SPECIAL_LATTICES: Record<'honeycomb', LatticeConfig> = {
   honeycomb: {
     name: 'Honeycomb',
-    getBasisVectors: () => ({
-      a1: [1, 0],
-      a2: [0.5, Math.sqrt(3) / 2],
-    }),
-    atomPositions: [[0, 0], [1/3, 1/3]],
+    getBasisVectors: () => ({ a1: [1, 0], a2: [0.5, Math.sqrt(3) / 2] }),
+    atomPositions: [[0, 0], [1 / 3, 1 / 3]],
     pathPreset: 'triangular',
     pathLabels: ['Γ', 'M', 'K', 'Γ'],
-    pathTotalDistance: 0.5 + Math.sqrt(Math.pow(0.5 - 1/3, 2) + Math.pow(1/3, 2)) + Math.sqrt(2/9), // ≈ 1.344
+    pathTotalDistance: BRAVAIS_LATTICES.triangular.pathTotalDistance,
+    pathCornerFractions: BRAVAIS_LATTICES.triangular.pathCornerFractions,
   },
 };
 
@@ -107,6 +122,8 @@ interface CompactCrystalBuilderProps {
   setBackgroundEpsilon: (e: number) => void;
   circleEpsilon: number;
   setCircleEpsilon: (e: number) => void;
+  nBands: number;
+  setNBands: (n: number) => void;
   isComputing: boolean;
 }
 
@@ -121,6 +138,8 @@ function CompactCrystalBuilder({
   setBackgroundEpsilon,
   circleEpsilon,
   setCircleEpsilon,
+  nBands,
+  setNBands,
   isComputing,
 }: CompactCrystalBuilderProps) {
   const lattice = ALL_LATTICES[latticeType];
@@ -349,6 +368,53 @@ function CompactCrystalBuilder({
           style={{ width: '100%', accentColor: 'rgba(100, 200, 255, 0.8)' }}
         />
       </div>
+
+      <div style={{ opacity: isComputing ? 0.5 : 1 }}>
+        <label
+          style={{
+            color: 'rgba(255,255,255,0.7)',
+            fontSize: '0.75rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>Bands: {nBands}</span>
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={nBands}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (Number.isFinite(v)) {
+                setNBands(Math.max(1, Math.min(100, v)));
+              }
+            }}
+            disabled={isComputing}
+            style={{
+              width: '48px',
+              padding: '1px 4px',
+              fontSize: '0.7rem',
+              background: 'rgba(255,255,255,0.06)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: '4px',
+            }}
+          />
+        </label>
+        <input
+          type="range"
+          min={1}
+          max={20}
+          step={1}
+          value={Math.min(nBands, 20)}
+          onChange={(e) => setNBands(parseInt(e.target.value, 10))}
+          disabled={isComputing}
+          style={{ width: '100%', accentColor: 'rgba(100, 200, 255, 0.8)' }}
+        />
+      </div>
     </div>
   );
 }
@@ -362,6 +428,7 @@ interface LiveBandPlotProps {
   teData: StreamingBandData | null;
   phase: 'idle' | 'tm' | 'te' | 'done';
   pathLabels: string[];
+  pathCornerFractions: number[];
   totalKPoints: number;
   pathTotalDistance: number;
   showDots: boolean;
@@ -371,7 +438,7 @@ interface LiveBandPlotProps {
   onSave: () => void;
 }
 
-function LiveBandPlot({ tmData, teData, phase, pathLabels, totalKPoints, pathTotalDistance, showDots, isStale, onToggleDots, onClear, onSave }: LiveBandPlotProps) {
+function LiveBandPlot({ tmData, teData, phase, pathLabels, pathCornerFractions, totalKPoints, pathTotalDistance, showDots, isStale, onToggleDots, onClear, onSave }: LiveBandPlotProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   // For streaming mode, we just track the last data length to know when to redraw
@@ -468,15 +535,15 @@ function LiveBandPlot({ tmData, teData, phase, pathLabels, totalKPoints, pathTot
     ctx.textAlign = 'center';
     ctx.fillText('Wave vector k', padding.left + plotWidth / 2, height - 5);
 
-    // High symmetry points
-    const numLegs = pathLabels.length - 1;
+    // High symmetry points (positions matched to actual data via cumulative leg distances)
     pathLabels.forEach((label, i) => {
-      const x = padding.left + (i / numLegs) * plotWidth;
+      const frac = pathCornerFractions[i] ?? (i / Math.max(pathLabels.length - 1, 1));
+      const x = padding.left + frac * plotWidth;
       ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
       ctx.font = '11px Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(label, x, padding.top + plotHeight + 16);
-      
+
       if (i > 0 && i < pathLabels.length - 1) {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
         ctx.beginPath();
@@ -487,20 +554,25 @@ function LiveBandPlot({ tmData, teData, phase, pathLabels, totalKPoints, pathTot
     });
 
     // Calculate y axis scale from data (bands is [kIndex][bandIndex])
-    // Lock the y-axis after first k-point with +20% buffer
+    // Lock the y-axis after first k-point with +20% buffer, but expand if later
+    // k-points or extra bands exceed it (keeps the plot framed for any n_bands).
     let yMax = 0.8; // Default before any data
-    
-    if (lockedYMaxRef.current !== null) {
-      // Use locked value
-      yMax = lockedYMaxRef.current;
-    } else {
-      // Check if we have first data point to lock
-      if (tmData && tmData.bands.length > 0) {
-        const tmMax = Math.max(...tmData.bands.flatMap(kBands => kBands));
-        // Lock with +20% buffer, rounded up to nearest 0.1 (no minimum)
-        lockedYMaxRef.current = Math.ceil((tmMax * 1.2) * 10) / 10;
-        yMax = lockedYMaxRef.current;
+
+    const observedMax = Math.max(
+      tmData ? Math.max(0, ...tmData.bands.flatMap(kBands => kBands)) : 0,
+      teData ? Math.max(0, ...teData.bands.flatMap(kBands => kBands)) : 0,
+    );
+
+    if (observedMax > 0) {
+      if (lockedYMaxRef.current === null) {
+        lockedYMaxRef.current = Math.ceil((observedMax * 1.2) * 10) / 10;
+      } else if (observedMax > lockedYMaxRef.current) {
+        // Expand (with same +20% headroom) when bands grow beyond the locked range
+        lockedYMaxRef.current = Math.ceil((observedMax * 1.2) * 10) / 10;
       }
+      yMax = lockedYMaxRef.current;
+    } else if (lockedYMaxRef.current !== null) {
+      yMax = lockedYMaxRef.current;
     }
 
     // Y axis ticks
@@ -618,7 +690,7 @@ function LiveBandPlot({ tmData, teData, phase, pathLabels, totalKPoints, pathTot
       ctx.fillText('Click "Compute Band Diagram" to start', width / 2, height / 2);
     }
 
-  }, [tmData, teData, phase, pathLabels, pathTotalDistance, showDots, resizeTrigger]);
+  }, [tmData, teData, phase, pathLabels, pathCornerFractions, pathTotalDistance, showDots, resizeTrigger]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: '200px' }}>
@@ -734,6 +806,7 @@ export default function InteractiveBandDiagram({ maxWidth = '1100px' }: { maxWid
   const [rectangularB, setRectangularB] = useState(1.5);
   const [backgroundEpsilon, setBackgroundEpsilon] = useState(12.9);
   const [circleEpsilon, setCircleEpsilon] = useState(1);
+  const [nBands, setNBands] = useState(8);
   
   // Band plot display options
   const [showDots, setShowDots] = useState(false);
@@ -771,8 +844,8 @@ export default function InteractiveBandDiagram({ maxWidth = '1100px' }: { maxWid
   
   // Current settings as a string for comparison
   const currentSettings = useMemo(() => 
-    JSON.stringify({ latticeType, radius, rectangularB, backgroundEpsilon, circleEpsilon }),
-    [latticeType, radius, rectangularB, backgroundEpsilon, circleEpsilon]
+    JSON.stringify({ latticeType, radius, rectangularB, backgroundEpsilon, circleEpsilon, nBands }),
+    [latticeType, radius, rectangularB, backgroundEpsilon, circleEpsilon, nBands]
   );
   
   // Detect when settings change after data exists
@@ -847,12 +920,12 @@ preset = "${lattice.pathPreset}"
 segments_per_leg = 15
 
 [eigensolver]
-n_bands = 8
+n_bands = ${nBands}
 max_iter = 200
 tol = 1e-6
 `;
     return config;
-  }, [latticeType, radius, backgroundEpsilon, circleEpsilon, basisVectors, lattice, rectangularB]);
+  }, [latticeType, radius, backgroundEpsilon, circleEpsilon, basisVectors, lattice, rectangularB, nBands]);
 
   const handleCompute = useCallback(() => {
     const config = generateConfig();
@@ -890,6 +963,8 @@ tol = 1e-6
           setBackgroundEpsilon={setBackgroundEpsilon}
           circleEpsilon={circleEpsilon}
           setCircleEpsilon={setCircleEpsilon}
+          nBands={nBands}
+          setNBands={setNBands}
           isComputing={isComputing}
         />
 
@@ -900,6 +975,7 @@ tol = 1e-6
             teData={teData}
             phase={phase}
             pathLabels={lattice.pathLabels}
+            pathCornerFractions={lattice.pathCornerFractions}
             totalKPoints={totalKPoints}
             pathTotalDistance={lattice.pathTotalDistance}
             showDots={showDots}

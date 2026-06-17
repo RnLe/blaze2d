@@ -511,9 +511,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
                 let dst = vectors[col].as_mut_slice();
                 for row in 0..n {
                     let c = x_new[(row, col)];
-                    {
-                        dst[row] = Complex64::new(c.re, c.im);
-                    }
+                    dst[row] = cscalar(c.re, c.im);
                 }
             }
             for col in 0..rank {

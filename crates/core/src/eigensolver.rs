@@ -185,6 +185,15 @@ impl Default for EigensolverConfig {
 
 impl EigensolverConfig {
     /// Compute the effective block size (auto-sizing if block_size == 0).
+    //
+    // TODO(f32-robustness): a fixed BLOCK_SIZE_SLACK can land the block boundary
+    // inside a near-degenerate eigenvalue cluster. When that happens the cluster
+    // is split across the active/inactive boundary and the mixed-precision (f32)
+    // LOBPCG block can fail to converge at isolated k-points (observed for the
+    // square-lattice TM config at exactly n_bands=15 near Γ; n_bands=14 and 16+
+    // are fine, and f64 is unaffected). A robust fix would detect a small
+    // eigenvalue gap at the block edge and adaptively grow the slack until the
+    // boundary falls in a gap, rather than using a constant slack.
     pub fn effective_block_size(&self) -> usize {
         let required = self.n_bands.max(1);
         let target = if self.block_size == 0 {
@@ -1279,13 +1288,13 @@ where
             // Build Q matrix (n × r) from q_block
             let q_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build AQ matrix (n × r) from aq_block
             let aq_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Compute A_s = Q^H * AQ using GEMM
@@ -1443,25 +1452,25 @@ where
             // Build Q matrix (n × r) from q_block
             let q_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build BQ matrix (n × r) from bq_block
             let bq_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = bq_block[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build AQ matrix (n × r) from aq_block (precomputed - this is the optimization!)
             let aq_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = aq_block[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build Y matrix (r × m) from dense_result eigenvectors
             let y_mat = DMatrix::<NaComplex<f64>>::from_fn(r, m, |row, col| {
                 let c = dense_result.eigenvector(col)[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Compute X_new = Q * Y, BX_new = BQ * Y, and AX_new = AQ * Y using GEMM
@@ -1600,13 +1609,13 @@ where
             // Build Q matrix (n × r) from q_block
             let q_mat = DMatrix::<NaComplex<f64>>::from_fn(n, r, |row, col| {
                 let c = q_block[col].as_slice()[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Build Y_w matrix (r × n_w) from dense_result eigenvectors (columns w_start..w_end)
             let y_w_mat = DMatrix::<NaComplex<f64>>::from_fn(r, n_w, |row, col| {
                 let c = dense_result.eigenvector(w_start + col)[row];
-                NaComplex::new(c.re as f64, c.im as f64)
+                NaComplex::new(c.re.to_accum(), c.im.to_accum())
             });
 
             // Compute W_new = Q * Y_w using GEMM
@@ -1619,9 +1628,7 @@ where
                 let dst = w.as_mut_slice();
                 for row in 0..n {
                     let c = w_new[(row, j)];
-                    {
-                        dst[row] = Complex64::new(c.re, c.im);
-                    }
+                    dst[row] = cscalar(c.re, c.im);
                 }
                 new_w_block.push(w);
             }

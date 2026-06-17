@@ -4,7 +4,7 @@
 # Configuration
 WASM_CRATE := blaze2d-backend-wasm
 WASM_OUT := wasm-dist
-WASM_FEATURES := streaming
+WASM_FEATURES := streaming,wasm-linalg
 
 # wasm-pack build profile (release for production)
 WASM_PROFILE := --release
