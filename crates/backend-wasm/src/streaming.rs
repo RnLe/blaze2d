@@ -54,7 +54,7 @@ use js_sys::{Array, Date, Function, Object, Reflect};
 use wasm_bindgen::prelude::*;
 
 use blaze2d_bulk_driver_core::{
-    config::{BulkConfig, SolverType},
+    config::{BulkConfig, SolverType, SweepValue},
     expansion::{ExpandedJob, ExpandedJobType, expand_jobs},
     filter::SelectiveFilter,
     result::{CompactBandResult, CompactResultType, MaxwellResult},
@@ -133,7 +133,28 @@ fn result_to_js(result: &CompactBandResult) -> Result<JsValue, JsValue> {
         atoms.push(&atom_obj);
     }
     Reflect::set(&params, &"atoms".into(), &atoms)?;
+
+    // Sweep values (ordered parameter sweep tracking), mirroring the Python
+    // bindings so the JS result shape matches `BulkDriver.run_streaming()`.
+    let sweep_values = Object::new();
+    for (name, value) in &result.params.sweep_values {
+        let py_value: JsValue = match value {
+            SweepValue::Float(f) => JsValue::from(*f),
+            SweepValue::Int(i) => JsValue::from(*i as f64),
+            SweepValue::String(s) => JsValue::from_str(s),
+        };
+        Reflect::set(&sweep_values, &JsValue::from_str(name), &py_value)?;
+    }
+    Reflect::set(&params, &"sweep_values".into(), &sweep_values)?;
+
     Reflect::set(&obj, &"params".into(), &params)?;
+
+    // Sweep order string for convenience (e.g. "atom0.radius=0.3|eps_bg=12").
+    Reflect::set(
+        &obj,
+        &"sweep_order".into(),
+        &JsValue::from_str(&result.params.sweep_order_string()),
+    )?;
 
     // Result type discriminator and type-specific data
     match &result.result_type {
@@ -417,6 +438,38 @@ fn k_result_to_js(
     if let Some(ref lt) = params.lattice_type {
         Reflect::set(&params_obj, &"lattice_type".into(), &JsValue::from_str(lt))?;
     }
+
+    // Atom parameters (mirrors the JobParams shape used in `result_to_js`).
+    let atoms = Array::new();
+    for atom in &params.atoms {
+        let atom_obj = Object::new();
+        Reflect::set(&atom_obj, &"index".into(), &JsValue::from(atom.index as u32))?;
+        let pos = Array::new();
+        pos.push(&JsValue::from(atom.pos[0]));
+        pos.push(&JsValue::from(atom.pos[1]));
+        Reflect::set(&atom_obj, &"pos".into(), &pos)?;
+        Reflect::set(&atom_obj, &"radius".into(), &JsValue::from(atom.radius))?;
+        Reflect::set(
+            &atom_obj,
+            &"eps_inside".into(),
+            &JsValue::from(atom.eps_inside),
+        )?;
+        atoms.push(&atom_obj);
+    }
+    Reflect::set(&params_obj, &"atoms".into(), &atoms)?;
+
+    // Sweep values for consistency with the final result shape.
+    let sweep_values = Object::new();
+    for (name, value) in &params.sweep_values {
+        let py_value: JsValue = match value {
+            SweepValue::Float(f) => JsValue::from(*f),
+            SweepValue::Int(i) => JsValue::from(*i as f64),
+            SweepValue::String(s) => JsValue::from_str(s),
+        };
+        Reflect::set(&sweep_values, &JsValue::from_str(name), &py_value)?;
+    }
+    Reflect::set(&params_obj, &"sweep_values".into(), &sweep_values)?;
+
     Reflect::set(&obj, &"params".into(), &params_obj)?;
 
     Ok(obj.into())

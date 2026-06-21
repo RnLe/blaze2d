@@ -21,7 +21,7 @@ import { Citation, Reference, References } from '../components/Citation'
 
 Photonic band structure calculations commonly rely on the Plane Wave Expansion (PWE) method, and [MIT Photonic Bands (MPB)](https://mpb.readthedocs.io/en/latest/) has long served as a widely used reference implementation for it.<Citation id={1} /><Citation id={2} /> MPB is trusted for its accuracy and is therefore a natural baseline for performance comparisons.
 
-We introduce **Blaze**, a Rust-based solver that modernizes the PWE approach using mixed-precision arithmetic and an improved LOBPCG algorithm.<Citation id={3} /><Citation id={4} /> By explicitly targeting memory bandwidth bottlenecks and leveraging batched Level 3 BLAS operations, Blaze offers superior single- and multi-core scaling, and achieves a 95% reduction in memory footprint while maintaining reference accuracy.
+We introduce **Blaze**, a Rust-based solver that modernizes the PWE approach using mixed-precision arithmetic and an improved LOBPCG algorithm.<Citation id={3} /><Citation id={4} /> By explicitly targeting memory bandwidth bottlenecks, Blaze offers superior single- and multi-core scaling, and achieves a 95% reduction in memory footprint for regular use cases while maintaining reference accuracy.
 
 <div style={{
   background: 'rgba(100, 150, 200, 0.08)',
@@ -32,7 +32,7 @@ We introduce **Blaze**, a Rust-based solver that modernizes the PWE approach usi
   fontSize: '0.9rem',
   lineHeight: 1.6,
 }}>
-Performance benchmarks utilize the canonical square and hexagonal lattice configurations from [Joannopoulos' seminal 1997 Nature paper](https://www.nature.com/articles/386143a0).<Citation id={5} /> Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, calculating 8 bands with 20 k-points per segment.
+Performance benchmarks utilize the canonical square and hexagonal lattice configurations from [Joannopoulos' seminal 1997 Nature paper](https://www.nature.com/articles/386143a0).<Citation id={5} /> Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, computing the lowest 8 bands with 20 k-points per segment between two high-symmetry points.
 </div>
 
 </div>
