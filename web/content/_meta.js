@@ -9,6 +9,9 @@ export default {
   installation: {
     title: 'Installation',
   },
+  examples: {
+    title: 'Examples',
+  },
   demo: {
     title: 'Demo',
   },

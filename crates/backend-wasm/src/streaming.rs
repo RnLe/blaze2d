@@ -54,8 +54,8 @@ use js_sys::{Array, Date, Function, Object, Reflect};
 use wasm_bindgen::prelude::*;
 
 use blaze2d_bulk_driver_core::{
-    config::{BulkConfig, SolverType},
-    expansion::{ExpandedJob, ExpandedJobType, expand_jobs},
+    config::{BulkConfig, SolverType, SweepValue},
+    expansion::{expand_jobs, ExpandedJob, ExpandedJobType},
     filter::SelectiveFilter,
     result::{CompactBandResult, CompactResultType, MaxwellResult},
 };
@@ -88,30 +88,56 @@ fn result_to_js(result: &CompactBandResult) -> Result<JsValue, JsValue> {
     // Job metadata
     Reflect::set(&obj, &"job_index".into(), &JsValue::from(result.job_index))?;
 
-    // Parameters as nested object
+    Reflect::set(
+        &obj,
+        &"params".into(),
+        &params_to_js(&result.params)?.into(),
+    )?;
+    set_sweep_fields(&obj, &result.params)?;
+
+    // Result type discriminator and type-specific data
+    match &result.result_type {
+        CompactResultType::Maxwell(maxwell) => {
+            Reflect::set(&obj, &"result_type".into(), &JsValue::from_str("maxwell"))?;
+            set_maxwell_fields(&obj, maxwell)?;
+        }
+        CompactResultType::OperatorData(_) => {
+            return Err(JsValue::from_str(
+                "operator-data extraction results are not yet exposed to WASM",
+            ));
+        }
+    }
+
+    Ok(obj.into())
+}
+
+/// Convert job parameters to the same nested object shape used by Python.
+fn params_to_js(
+    params_source: &blaze2d_bulk_driver_core::expansion::JobParams,
+) -> Result<Object, JsValue> {
     let params = Object::new();
     Reflect::set(
         &params,
         &"eps_bg".into(),
-        &JsValue::from(result.params.eps_bg),
+        &JsValue::from(params_source.eps_bg),
     )?;
     Reflect::set(
         &params,
         &"resolution".into(),
-        &JsValue::from(result.params.resolution as u32),
+        &JsValue::from(params_source.resolution as u32),
     )?;
     Reflect::set(
         &params,
         &"polarization".into(),
-        &JsValue::from_str(&format!("{:?}", result.params.polarization)),
+        &JsValue::from_str(&format!("{:?}", params_source.polarization)),
     )?;
-    if let Some(ref lt) = result.params.lattice_type {
+    if let Some(ref lt) = params_source.lattice_type {
         Reflect::set(&params, &"lattice_type".into(), &JsValue::from_str(lt))?;
     }
 
     // Atom parameters
     let atoms = Array::new();
-    for atom in &result.params.atoms {
+    for atom in &params_source.atoms {
         let atom_obj = Object::new();
         Reflect::set(
             &atom_obj,
@@ -133,22 +159,39 @@ fn result_to_js(result: &CompactBandResult) -> Result<JsValue, JsValue> {
         atoms.push(&atom_obj);
     }
     Reflect::set(&params, &"atoms".into(), &atoms)?;
-    Reflect::set(&obj, &"params".into(), &params)?;
 
-    // Result type discriminator and type-specific data
-    match &result.result_type {
-        CompactResultType::Maxwell(maxwell) => {
-            Reflect::set(&obj, &"result_type".into(), &JsValue::from_str("maxwell"))?;
-            set_maxwell_fields(&obj, maxwell)?;
-        }
-        CompactResultType::OperatorData(_) => {
-            return Err(JsValue::from_str(
-                "operator-data extraction results are not yet exposed to WASM",
-            ));
-        }
+    Ok(params)
+}
+
+fn sweep_value_to_js(value: &SweepValue) -> JsValue {
+    match value {
+        SweepValue::Float(f) => JsValue::from(*f),
+        SweepValue::Int(i) => JsValue::from(*i),
+        SweepValue::String(s) => JsValue::from_str(s),
+    }
+}
+
+fn set_sweep_fields(
+    obj: &Object,
+    params: &blaze2d_bulk_driver_core::expansion::JobParams,
+) -> Result<(), JsValue> {
+    let sweep_values = Object::new();
+    for (name, value) in &params.sweep_values {
+        Reflect::set(
+            &sweep_values,
+            &JsValue::from_str(name),
+            &sweep_value_to_js(value),
+        )?;
     }
 
-    Ok(obj.into())
+    Reflect::set(obj, &"sweep_values".into(), &sweep_values)?;
+    Reflect::set(
+        obj,
+        &"sweep_order".into(),
+        &JsValue::from_str(&params.sweep_order_string()),
+    )?;
+
+    Ok(())
 }
 
 /// Set Maxwell-specific fields on a JS object.
@@ -222,6 +265,11 @@ fn stats_to_js(stats: &WasmDriverStats) -> Result<JsValue, JsValue> {
 
     // Jobs per second (if time > 0)
     let total_secs = stats.total_time_ms as f64 / 1000.0;
+    Reflect::set(
+        &result,
+        &"total_time_secs".into(),
+        &JsValue::from(total_secs),
+    )?;
     if total_secs > 0.0 {
         Reflect::set(
             &result,
@@ -277,7 +325,7 @@ fn run_maxwell_job_with_k_streaming(
     job_index: usize,
     callback: &Function,
 ) -> Result<CompactBandResult, String> {
-    use blaze2d_core::drivers::bandstructure::{KPointResult, RunOptions, run_with_k_streaming};
+    use blaze2d_core::drivers::bandstructure::{run_with_k_streaming, KPointResult, RunOptions};
 
     let backend = CpuBackend::<f64>::new();
 
@@ -295,26 +343,21 @@ fn run_maxwell_job_with_k_streaming(
         ..RunOptions::default()
     };
 
-    let band_result = run_with_k_streaming(
-        backend,
-        job,
-        run_options,
-        |k_result: KPointResult| {
-            // Convert KPointResult to JS object and emit
-            if let Ok(js_obj) = k_result_to_js(&k_result, job_index, &params_clone) {
-                let _ = callback.call1(&JsValue::NULL, &js_obj);
-            }
+    let band_result = run_with_k_streaming(backend, job, run_options, |k_result: KPointResult| {
+        // Convert KPointResult to JS object and emit
+        if let Ok(js_obj) = k_result_to_js(&k_result, job_index, &params_clone) {
+            let _ = callback.call1(&JsValue::NULL, &js_obj);
+        }
 
-            // Accumulate bands for final result
-            // Normalize frequencies (divide by 2π)
-            let normalized: Vec<f64> = k_result
-                .omegas
-                .iter()
-                .map(|omega| omega / (2.0 * std::f64::consts::PI))
-                .collect();
-            accumulated_bands.borrow_mut().push(normalized);
-        },
-    );
+        // Accumulate bands for final result
+        // Normalize frequencies (divide by 2π)
+        let normalized: Vec<f64> = k_result
+            .omegas
+            .iter()
+            .map(|omega| omega / (2.0 * std::f64::consts::PI))
+            .collect();
+        accumulated_bands.borrow_mut().push(normalized);
+    });
 
     // Build final CompactBandResult
     let bands: Vec<Vec<f64>> = band_result
@@ -401,23 +444,8 @@ fn k_result_to_js(
     let progress = (result.k_index + 1) as f64 / result.total_k_points as f64;
     Reflect::set(&obj, &"progress".into(), &JsValue::from(progress))?;
 
-    // Parameters for context
-    let params_obj = Object::new();
-    Reflect::set(&params_obj, &"eps_bg".into(), &JsValue::from(params.eps_bg))?;
-    Reflect::set(
-        &params_obj,
-        &"resolution".into(),
-        &JsValue::from(params.resolution as u32),
-    )?;
-    Reflect::set(
-        &params_obj,
-        &"polarization".into(),
-        &JsValue::from_str(&format!("{:?}", params.polarization)),
-    )?;
-    if let Some(ref lt) = params.lattice_type {
-        Reflect::set(&params_obj, &"lattice_type".into(), &JsValue::from_str(lt))?;
-    }
-    Reflect::set(&obj, &"params".into(), &params_obj)?;
+    Reflect::set(&obj, &"params".into(), &params_to_js(params)?.into())?;
+    set_sweep_fields(&obj, params)?;
 
     Ok(obj.into())
 }
@@ -701,45 +729,8 @@ impl WasmBulkDriver {
         for job in self.jobs.iter().take(n) {
             let obj = Object::new();
             Reflect::set(&obj, &"index".into(), &JsValue::from(job.index as u32))?;
-
-            let params = Object::new();
-            Reflect::set(&params, &"eps_bg".into(), &JsValue::from(job.params.eps_bg))?;
-            Reflect::set(
-                &params,
-                &"resolution".into(),
-                &JsValue::from(job.params.resolution as u32),
-            )?;
-            Reflect::set(
-                &params,
-                &"polarization".into(),
-                &JsValue::from_str(&format!("{:?}", job.params.polarization)),
-            )?;
-            if let Some(ref lt) = job.params.lattice_type {
-                Reflect::set(&params, &"lattice_type".into(), &JsValue::from_str(lt))?;
-            }
-
-            let atoms = Array::new();
-            for atom in &job.params.atoms {
-                let atom_obj = Object::new();
-                Reflect::set(
-                    &atom_obj,
-                    &"index".into(),
-                    &JsValue::from(atom.index as u32),
-                )?;
-                let pos = Array::new();
-                pos.push(&JsValue::from(atom.pos[0]));
-                pos.push(&JsValue::from(atom.pos[1]));
-                Reflect::set(&atom_obj, &"pos".into(), &pos)?;
-                Reflect::set(&atom_obj, &"radius".into(), &JsValue::from(atom.radius))?;
-                Reflect::set(
-                    &atom_obj,
-                    &"eps_inside".into(),
-                    &JsValue::from(atom.eps_inside),
-                )?;
-                atoms.push(&atom_obj);
-            }
-            Reflect::set(&params, &"atoms".into(), &atoms)?;
-            Reflect::set(&obj, &"params".into(), &params)?;
+            Reflect::set(&obj, &"params".into(), &params_to_js(&job.params)?.into())?;
+            set_sweep_fields(&obj, &job.params)?;
             result.push(&obj);
         }
 

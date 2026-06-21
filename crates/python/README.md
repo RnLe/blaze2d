@@ -30,6 +30,16 @@ results, stats = driver.run_collect()
 print(f"Completed in {stats['total_time_secs']:.2f}s")
 ```
 
+Configurations can also be embedded directly, which is useful in notebooks and
+documentation examples:
+
+```python
+from blaze import BulkDriver
+
+driver = BulkDriver.from_toml(config_toml, threads=4)
+results, stats = driver.run_collect()
+```
+
 ### EA Mode (Envelope Approximation)
 
 ```python
@@ -182,6 +192,7 @@ directory = "./ea_output"
 
 ```python
 driver = BulkDriver(config_path: str, threads: int = 0)
+driver = BulkDriver.from_toml(config_toml: str, threads: int = 0)
 ```
 
 | Property | Description |
@@ -371,4 +382,3 @@ V.astype(np.float64).tofile('potential.bin')
 ## License
 
 MIT
-

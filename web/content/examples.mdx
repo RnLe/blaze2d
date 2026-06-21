@@ -1,0 +1,415 @@
+import { ExampleLibrary, ExampleCard, EXAMPLE_CONFIGS } from '../components/examples'
+
+<div style={{
+  width: 'min(1280px, calc(100vw - 2rem))',
+  margin: '0 auto 2.5rem',
+}}>
+
+<span className="date" style={{ textAlign: 'left' }}>May 30, 2026</span>
+
+# Blaze Examples
+
+Blaze is a Rust Maxwell solver with a Python interface designed for quick experiments and reproducible research. For simple work, the high-level `blaze.solve(...)` function gives you band diagrams directly in Python. For serious sweeps, shared configurations, and repeatable runs, Blaze uses TOML files through the CLI and `BulkDriver`.
+
+The same split appears in the examples below. The visible snippets are Python-first because that is the fastest way to get started, while every browser run is executed through the aligned WASM bulk driver using the same Maxwell configuration shape that the CLI and Python `BulkDriver` consume.
+
+| Interface | Best for |
+| --- | --- |
+| `blaze.solve(...)` | Fast notebooks and one-off band diagrams |
+| CLI flags | Quick shell runs and scripts |
+| TOML with `BulkDriver` | Reproducible simulations, sweeps, selective output, and version-controlled configs |
+
+<div style={{
+  marginTop: '1.2rem',
+  padding: '0.9rem 1rem',
+  border: '1px solid rgba(87, 199, 177, 0.38)',
+  borderRadius: '8px',
+  background: 'rgba(87, 199, 177, 0.08)',
+  fontSize: '0.92rem',
+  lineHeight: 1.55,
+}}>
+Browser execution is single-worker WASM. Native `threads` settings are shown where they matter for Python or CLI use, but live browser runs ignore parallel worker counts and report the browser runtime explicitly in the returned variables.
+</div>
+
+</div>
+
+<ExampleLibrary>
+  <ExampleCard
+    id="square-tm"
+    category="Basics"
+    title="Single Square-Lattice Band Diagram"
+    description="The smallest useful Blaze calculation: one square lattice, one polarization, one band diagram."
+    tags={["blaze.solve", "TM", "band diagram"]}
+    toml={EXAMPLE_CONFIGS.squareTm}
+    mode="kpoint"
+  >
+
+```python
+import blaze
+
+result = blaze.solve(
+    lattice_type="square",
+    epsilon_background=12.0,
+    epsilon_atoms=1.0,
+    radius_atom=0.2,
+    polarization="TM",
+    resolution=24,
+    n_bands=5,
+    points_per_segment=6,
+)
+
+print(result.freqs.shape)
+print(result.freqs[0, :3])
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="te-tm"
+    category="Basics"
+    title="Compare TM and TE"
+    description="Compute both polarizations from one Python call and inspect how the result list is structured."
+    tags={["polarization", "sweep", "TE/TM"]}
+    toml={EXAMPLE_CONFIGS.teTmCompare}
+    mode="collect"
+  >
+
+```python
+import blaze
+
+results = blaze.solve(
+    lattice_type="square",
+    epsilon_background=12.0,
+    epsilon_atoms=1.0,
+    radius_atom=0.22,
+    polarization=["TM", "TE"],
+    resolution=24,
+    n_bands=5,
+    points_per_segment=5,
+)
+
+for result in results:
+    print(result.polarization, result.freqs.shape)
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="gamma-x"
+    category="Paths"
+    title="Use a Specific K-Path"
+    description="Pass only the k-points you care about instead of using a full high-symmetry preset path."
+    tags={["custom path", "k_path", "Gamma-X"]}
+    toml={EXAMPLE_CONFIGS.gammaToX}
+    mode="kpoint"
+  >
+
+```python
+import blaze
+
+k_path = [
+    [0.0, 0.0],
+    [0.1, 0.0],
+    [0.2, 0.0],
+    [0.3, 0.0],
+    [0.4, 0.0],
+    [0.5, 0.0],
+]
+
+result = blaze.solve(
+    lattice_type="square",
+    epsilon_background=12.0,
+    epsilon_atoms=1.0,
+    radius_atom=0.2,
+    polarization="TM",
+    resolution=24,
+    n_bands=5,
+    k_path=k_path,
+)
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="preset-path"
+    category="Paths"
+    title="Use a Lattice Preset Path"
+    description="Let Blaze choose the standard triangular-lattice path and return distances ready for plotting."
+    tags={["triangular", "preset", "distances"]}
+    toml={EXAMPLE_CONFIGS.presetPath}
+    mode="kpoint"
+  >
+
+```python
+import blaze
+
+result = blaze.solve(
+    lattice_type="triangular",
+    epsilon_background=10.0,
+    epsilon_atoms=1.0,
+    radius_atom=0.18,
+    polarization="TM",
+    resolution=24,
+    n_bands=5,
+    points_per_segment=6,
+)
+
+print(result.k_labels)
+print(result.k_label_distances)
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="radius-sweep"
+    category="Sweeps"
+    title="Sweep a Crystal Radius"
+    description="A compact parameter sweep over the inclusion radius, returning one band structure per radius."
+    tags={["sweep", "radius", "results"]}
+    toml={EXAMPLE_CONFIGS.radiusSweep}
+    mode="collect"
+  >
+
+```python
+import blaze
+
+results = blaze.solve(
+    lattice_type="square",
+    epsilon_background=12.0,
+    epsilon_atoms=1.0,
+    radius_atom=[0.16, 0.28, 0.06],
+    polarization="TM",
+    resolution=20,
+    n_bands=4,
+    points_per_segment=4,
+)
+
+for result in results:
+    print(result.radius_atom, result.freqs[:, 0].max())
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="resolution-epsilon"
+    category="Sweeps"
+    title="Sweep Resolution and Dielectric"
+    description="A native multi-worker sweep where resolution is the outer loop and dielectric contrast is the inner loop."
+    tags={["threads", "resolution", "epsilon"]}
+    runtimeNote="In the browser this runs on one WASM worker; the native `threads=8` setting is preserved in the snippet but ignored live."
+    toml={EXAMPLE_CONFIGS.resolutionEpsilonSweep}
+    mode="collect"
+  >
+
+```python
+import blaze
+
+results = blaze.solve(
+    lattice_type="square",
+    resolution=[16, 20, 4],
+    epsilon_background=[10.0, 12.0, 2.0],
+    epsilon_atoms=1.0,
+    radius_atom=0.22,
+    polarization="TM",
+    n_bands=4,
+    points_per_segment=4,
+    threads=8,
+)
+
+for result in results:
+    print(result.resolution, result.epsilon_background)
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="streaming"
+    category="Streaming"
+    title="Stream Jobs as They Finish"
+    description="Use TOML directly when the configuration is the artifact you want to share and reproduce."
+    tags={["BulkDriver", "TOML", "streaming"]}
+    toml={EXAMPLE_CONFIGS.streaming}
+    mode="job-stream"
+  >
+
+```python
+from blaze import BulkDriver
+
+config_toml = """
+polarization = "TM"
+
+[bulk]
+threads = 4
+
+[solver]
+type = "maxwell"
+
+[geometry]
+eps_bg = 12.0
+
+[geometry.lattice]
+type = "square"
+a = 1.0
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.2
+eps_inside = 1.0
+
+[grid]
+nx = 20
+ny = 20
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "square"
+segments_per_leg = 4
+
+[eigensolver]
+n_bands = 4
+tol = 1e-5
+max_iter = 100
+
+[[sweeps]]
+parameter = "atom0.radius"
+values = [0.18, 0.24, 0.30]
+"""
+
+driver = BulkDriver.from_toml(config_toml, threads=4)
+
+for result in driver.run_streaming():
+    print(result["sweep_values"], result["bands"][0][:3])
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="selective"
+    category="Streaming"
+    title="Collect Selected K-Points and Bands"
+    description="Filter the returned data when you only need a few symmetry points or a small band subset."
+    tags={["selective", "k_indices", "band_indices"]}
+    toml={EXAMPLE_CONFIGS.selective}
+    mode="collect-filtered"
+    kIndices={[0, 5, 10, 15]}
+    bandIndices={[0, 1, 2]}
+  >
+
+```python
+from blaze import BulkDriver
+
+config_toml = """
+polarization = "TM"
+
+[bulk]
+threads = 1
+
+[solver]
+type = "maxwell"
+
+[geometry]
+eps_bg = 12.0
+
+[geometry.lattice]
+type = "square"
+a = 1.0
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.22
+eps_inside = 1.0
+
+[grid]
+nx = 24
+ny = 24
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "square"
+segments_per_leg = 5
+
+[eigensolver]
+n_bands = 6
+tol = 1e-5
+max_iter = 120
+"""
+
+driver = BulkDriver.from_toml(config_toml)
+results, stats = driver.run_collect(
+    k_indices=[0, 5, 10, 15],
+    band_indices=[0, 1, 2],
+)
+
+result = results[0]
+print(result["num_k_points"], result["num_bands"])
+```
+
+  </ExampleCard>
+
+  <ExampleCard
+    id="two-atom"
+    category="Geometry"
+    title="Two-Atom Triangular Basis"
+    description="A honeycomb-style two-atom basis using TOML, ready to expand into geometry sweeps."
+    tags={["two atoms", "triangular", "TOML"]}
+    toml={EXAMPLE_CONFIGS.twoAtom}
+    mode="collect"
+  >
+
+```python
+from blaze import BulkDriver
+
+config_toml = """
+polarization = "TM"
+
+[bulk]
+threads = 1
+
+[solver]
+type = "maxwell"
+
+[geometry]
+eps_bg = 12.0
+
+[geometry.lattice]
+type = "triangular"
+a = 1.0
+
+[[geometry.atoms]]
+pos = [0.0, 0.0]
+radius = 0.14
+eps_inside = 1.0
+
+[[geometry.atoms]]
+pos = [0.333333, 0.333333]
+radius = 0.14
+eps_inside = 1.0
+
+[grid]
+nx = 24
+ny = 24
+lx = 1.0
+ly = 1.0
+
+[path]
+preset = "triangular"
+segments_per_leg = 5
+
+[eigensolver]
+n_bands = 5
+tol = 1e-5
+max_iter = 120
+"""
+
+driver = BulkDriver.from_toml(config_toml)
+results, stats = driver.run_collect()
+
+result = results[0]
+print(result["params"]["atoms"])
+print(result["bands"][0][:4])
+```
+
+  </ExampleCard>
+</ExampleLibrary>
