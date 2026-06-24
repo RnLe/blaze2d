@@ -1,0 +1,105 @@
+import Figure, { FigureRow } from '../components/Figure'
+import HeroImage from '../components/HeroImage'
+
+<HeroImage src="/banners/blaze_thesis.webp" alt="Photonic moiré crystals" cropHeight={0.7} />
+
+<div className="narrow-centered">
+
+<span className="date">Master's Thesis · Condensed Matter Theory, TU Dortmund · 2026</span>
+
+# Why Blaze2D Exists: Photonic Moiré Crystals
+
+*The research Blaze was built to make possible — a two-scale theory of twisted photonic crystals.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+Blaze2D is the computational engine of a master's thesis, *Photonic Band Theory of Moiré
+Crystals: A Two-Scale Approach*. This page is a short tour of that research — what it built,
+and why it forced a new solver into existence. *(A dedicated thesis site follows; this is
+the bridge.)*
+
+## Photonic moiré crystals
+
+Overlay two photonic crystals with a small relative twist and a new, much larger periodic
+pattern emerges — a *moiré* superlattice, the optical cousin of the patterns behind twisted
+bilayer graphene. The physics is richest at small angles, which is exactly where it becomes
+impossible to compute directly:
+
+- At **generic twist angles** the bilayer is *incommensurate*: there is no repeating unit
+  cell at all, so a conventional solver has nothing to operate on.
+- At the special **commensurate angles** where periodicity is restored, the unit cell grows
+  as roughly the inverse of the twist angle — so a brute-force "supercell" calculation
+  explodes precisely where the interesting physics lives.
+
+<Figure src="/figures/thesis/moire-crystals.webp" alt="Photonic moiré lattices formed by twisting two crystals" caption="Twisting two photonic crystals produces an emergent moiré superlattice whose period far exceeds that of the layers it is built from." maxWidth="760px" />
+
+## A two-scale envelope theory
+
+The thesis sidesteps the supercell entirely. Locally, every patch of the twisted bilayer
+looks like an ordinary crystal with a two-atom basis; only the *inter-layer registry*
+drifts slowly from patch to patch. A single dimensionless **quality parameter** decides
+when this picture holds — the twist angle $\theta$ measured against the stop-band width
+$\gamma$:
+
+$$
+\beta := \frac{\theta}{\gamma}.
+$$
+
+When $\beta \ll 1$ the local crystal barely changes over the distance light needs to "feel"
+the lattice, and a two-scale separation is justified. A systematic expansion in the scale
+ratio $\eta = a/L$ (monolayer period over moiré period) then projects the full Maxwell
+operator onto a few retained bands, producing an **effective Hamiltonian** defined on the
+registry domain and *independent of the twist angle*:
+
+$$
+\mathcal{H}_{\text{eff}} = \Lambda + \eta\!\left[\tfrac{1}{2}\!\left(v^{(i)}\Pi_i + \Pi_i v^{(i)}\right) + U^{(1)}_{\text{rem}}\right] + \eta^{2}\!\left[\tfrac{1}{2}\,\Pi_i\,M^{-1}_{ij}\,\Pi_j + U^{(2)}_{\text{rem}}\right] + \mathcal{O}(\eta^{3}).
+$$
+
+Every ingredient is a physical field on the registry: the local band energies $\Lambda$,
+the group velocities $v^{(i)}$, the inverse-mass tensor $M^{-1}$, the covariant momentum
+$\Pi_i$ carrying the **Berry connection**, and the **Born–Huang** leakage potentials
+$U_{\text{rem}}$. The twist angle re-enters only through the single scalar $\eta$.
+
+<FigureRow>
+  <Figure src="/figures/thesis/miniband.svg" alt="Moiré miniband dispersion" caption="Moiré minibands: the slow envelope modulation reorganizes the spectrum into flat, closely spaced bands." maxWidth="380px" />
+  <Figure src="/figures/thesis/bandwidth-scaling.svg" alt="Quadratic bandwidth scaling with twist angle" caption="A θ² bandwidth scaling, predicted by the envelope theory and independently reproduced by the reference solver." maxWidth="380px" />
+</FigureRow>
+
+The headline quantitative result is this **quadratic ($\theta^2$) bandwidth scaling** of the
+lowest minibands — predicted by the envelope theory and independently confirmed by a
+finite-difference (FDFD) reference that is itself checked against MPB.
+
+## The data MPB cannot give
+
+The framework's real payoff is *geometric*. Because it works from full Bloch eigenvectors,
+it produces spatially resolved fields — Berry connection and curvature, the Born–Huang
+potential, velocity and effective-mass maps — that decompose the moiré physics in a way no
+conventional supercell eigenvalue calculation can.
+
+<Figure src="/figures/thesis/geometric-data.webp" alt="Berry curvature and Born–Huang geometric fields on the registry domain" caption="Geometric fields on the registry domain: Berry curvature and the Born–Huang metric. These are the quantities the envelope Hamiltonian is built from — and the reason the solver had to expose eigenvectors, not just eigenvalues." maxWidth="760px" />
+
+## Why this required a new solver
+
+The envelope pipeline asks for the **full Bloch eigenvector** at every point of a dense
+registry sweep — thousands of local eigenproblems per configuration. That specific
+combination of demands is what existing tools could not meet together:
+
+- **Throughput.** Thousands of solves per sweep make solver speed the binding constraint.
+- **Data transparency.** The theory consumes eigenvectors, group velocities, and
+  Berry-phase data directly — operator-level quantities most solvers never expose.
+- **Control and understanding.** Owning the solver meant owning every numerical choice the
+  geometric data depends on: band tracking through avoided crossings, gauge conventions,
+  dielectric smoothing.
+
+[**Blaze2D**](/blaze) was written to fill exactly this gap — fast enough for the dense
+sweep, transparent enough to hand the envelope framework everything it needs, and validated
+against the same FDFD/MPB references used throughout the thesis. The speed and convenience
+were necessary; the *data extraction* was the part that made the research possible at all.
+
+→ [**Technical Report**](/blaze) · [**Architecture**](/architecture)
+
+</div>

@@ -1,0 +1,38 @@
+<div className="narrow-centered">
+
+# Roadmap
+
+*Where Blaze2D is headed.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+> **This page is being written.** A detailed, versioned roadmap is on the way. The summary
+> below captures the direction.
+
+**The vision:** Blaze2D should become a **faithful drop-in replacement for MPB in two
+dimensions** — any 2D periodic photonic-crystal band-structure problem MPB can solve, Blaze
+can solve at comparable or better wall-clock, with a friendlier Python/CLI interface and a
+one-command install. And a **strict superset** wherever operator-level data extraction
+enables physics MPB cannot reach: multi-band envelope models, Berry-curvature
+post-processing, and gauge-aware band derivatives.
+
+Headline directions on the way to parity and beyond:
+
+- **MPB-parity geometry** — ellipses, rectangles, polygons, multi-material inclusions, and
+  imported dielectric maps.
+- **Output parity** — per-band, per-k field export and group velocities in the formats MPB
+  users already script against.
+- **Performance** — symmetry reduction, parameter warm-starts across sweeps, and further
+  memory-layout improvements (see [Optimization Potential](/potential)).
+- **Dispersion & loss** — frequency-dependent and complex dielectric functions.
+
+Explicit non-goals, for now: 3D Maxwell, distributed-memory (MPI), and time-domain
+simulation — those belong to separate projects.
+
+→ [Architecture](/architecture) · [Optimization Potential](/potential)
+
+</div>

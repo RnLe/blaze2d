@@ -3,8 +3,21 @@ export default {
     title: 'Home',
     display: 'hidden',
   },
-  blaze: {
+
+  overviewSep: { type: 'separator', title: 'Overview' },
+  introduction: {
     title: 'Introduction',
+  },
+  thesis: {
+    title: "Master's Thesis",
+  },
+
+  blazeSep: { type: 'separator', title: 'Blaze2D' },
+  blaze: {
+    title: 'Technical Report',
+  },
+  architecture: {
+    title: 'Architecture',
   },
   installation: {
     title: 'Installation',
@@ -12,12 +25,18 @@ export default {
   examples: {
     title: 'Examples',
   },
-  demo: {
-    title: 'Demo',
+  workbench: {
+    title: 'Workbench',
   },
+
+  projectSep: { type: 'separator', title: 'Project' },
   potential: {
     title: 'Optimization Potential',
   },
+  roadmap: {
+    title: 'Roadmap',
+  },
+
   pitch: {
     title: 'Pitch',
     href: '/pitch/',

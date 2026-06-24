@@ -1,0 +1,62 @@
+<div className="narrow-centered">
+
+# Architecture
+
+*How Blaze is built — the hardware and algorithmic decisions behind the speed.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+> **This page is being written.** The short version is on the
+> [Introduction](/introduction); the measured results are in the
+> [Technical Report](/blaze). This page documents the *why* behind them.
+
+Blaze treats photonic band-structure computation as a hardware problem. The cost of a
+plane-wave solve is dominated by Fast Fourier Transforms and the memory traffic they
+generate, so the architecture is organized around keeping data in cache and minimizing the
+bytes moved per iteration. Each section below will get a full treatment.
+
+## Memory layout & cache-awareness
+
+Small-to-medium 2D problems fit inside CPU cache. Fields and operators are laid out so the
+working set stays there, putting the solver in a **memory-bandwidth-bound** regime rather
+than a compute-bound one — which is what makes the remaining optimizations pay off.
+
+## Mixed precision (`f32`/`f64`)
+
+State vectors are carried in single precision where it is numerically safe, roughly halving
+memory traffic, while the eigensolver promotes to double precision at its boundary so band
+tracking and downstream consumers stay precision-agnostic.
+
+## The eigensolver inner loop (LOBPCG)
+
+A locally optimal block preconditioned conjugate gradient (LOBPCG) iteration, tuned for the
+block sizes typical of 2D photonic problems.
+
+## FFT scheduling
+
+TE modes require six FFTs per operator application versus two for TM; planning and
+scheduling are arranged to hide this asymmetry.
+
+## Job-level parallelism
+
+Blaze parallelizes *entire solve jobs* across cores rather than individual operations. This
+avoids the synchronization overhead that penalizes fine-grained threading on cache-resident
+problems — the strategy that pays off for large parameter sweeps.
+
+## Numerical limits & where `f32` is safe
+
+The boundaries of the mixed-precision approach: which quantities tolerate single precision,
+and which must stay in double.
+
+## Backend trait surface
+
+A single spectral-backend abstraction over the CPU and WebAssembly backends (and a future
+GPU backend), so the solver core never branches on the target hardware.
+
+→ [Technical Report](/blaze) · [Optimization Potential](/potential) · [Roadmap](/roadmap)
+
+</div>

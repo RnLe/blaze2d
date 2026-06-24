@@ -1,0 +1,25 @@
+import InteractiveBandDiagram from '../app/pitch/InteractiveBandDiagram';
+
+<div className="narrow-centered">
+
+# Workbench
+
+*Build a crystal and compute its band structure — live in your browser, no install.*
+
+---
+
+> **Being rebuilt.** The Workbench is becoming a full in-browser studio: author and inspect
+> TOML crystal definitions, *see* the geometry you are building, then run band structures
+> and parameter sweeps — no code, no install. Until then, the interactive band diagram below
+> already runs the real Blaze engine, compiled to WebAssembly, right here on this page.
+
+</div>
+
+<div className="w-full mt-8" style={{
+  width: '1200px',
+  maxWidth: '90vw',
+  marginLeft: '50%',
+  transform: 'translateX(-50%)'
+}}>
+  <InteractiveBandDiagram maxWidth="100%" />
+</div>

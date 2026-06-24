@@ -1,0 +1,94 @@
+import Figure, { FigureRow } from '../components/Figure'
+
+<div className="narrow-centered">
+
+# Introduction
+
+*A high-performance solver for photonic crystals — and the research that made it necessary.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+## What is Blaze2D
+
+Blaze2D is a plane-wave eigensolver for two-dimensional photonic crystals, written in
+Rust. It computes photonic band structures — the frequencies at which light is allowed to
+propagate through a periodic dielectric — **faster than
+[MIT Photonic Bands (MPB)](https://mpb.readthedocs.io/), the field's reference solver,
+while matching its accuracy.** Just as importantly, it exposes the full eigenvector-level
+data that downstream theory needs, not only the eigenfrequencies.
+
+## What it solves
+
+A photonic crystal is a periodic arrangement of dielectric material. Its *band structure*
+tells you which frequencies of light can travel through it, and in which directions — the
+optical analogue of the electronic band structure of a semiconductor.
+
+<FigureRow>
+  <Figure src="/figures/intro/crystal.svg" alt="A two-dimensional photonic crystal" caption="A photonic crystal — a periodic dielectric lattice." maxWidth="300px" />
+  <Figure src="/figures/intro/band-structure.svg" alt="A photonic band structure" caption="Its band structure — allowed light frequencies along a path through the Brillouin zone." maxWidth="430px" />
+</FigureRow>
+
+Blaze obtains the right-hand panel from the left by solving the **photonic master
+equation**, an eigenvalue problem for the magnetic field $\mathbf{H}$ in a medium with
+dielectric function $\varepsilon(\mathbf{x})$:
+
+$$
+\nabla \times \left( \frac{1}{\varepsilon(\mathbf{x})}\, \nabla \times \mathbf{H}(\mathbf{x}) \right) = \frac{\omega^2}{c^2}\, \mathbf{H}(\mathbf{x}).
+$$
+
+In two dimensions this separates into two scalar polarizations (TE and TM) and reduces to a
+Hermitian eigenproblem that Blaze solves in reciprocal space. Everything else the solver
+does is in service of this one equation — evaluated quickly and accurately, many thousands
+of times.
+
+## Why Blaze exists
+
+Blaze was not built to win a benchmark. It was built because a master's thesis needed it.
+
+That thesis develops a new theoretical framework for **photonic moiré crystals**: what
+emerges when two photonic crystals are overlaid with a small relative twist. The framework
+turns an otherwise intractable problem into a dense sweep over thousands of *local* crystal
+configurations, and it needs the **full Bloch eigenvectors** at each one — band energies,
+group velocities, effective masses, Berry connections. No existing solver delivered both
+properties at once: MPB is fast and accurate but does not expose this data; the tools that
+do expose it are far too slow for thousands of solves.
+
+So the solver and the theory were built together.
+
+→ [**Why Blaze2D exists: photonic moiré crystals**](/thesis)
+
+## Engineered for the hardware
+
+The speedup is not one trick; it comes from treating the solver as a hardware problem.
+Blaze runs a **mixed-precision (`f32`/`f64`) LOBPCG** eigensolver on a **cache-aware,
+memory-bandwidth-conscious** architecture: memory layouts, FFT scheduling, and the
+eigensolver inner loop are all tuned to the cache and bandwidth limits of the target
+machine, and *entire solve jobs* are parallelized rather than individual operations. The
+result is a **~95% reduction in memory footprint** and roughly a **3× speedup over MPB**,
+with reference accuracy preserved.
+
+This is the part worth reading closely → [**Architecture**](/architecture) ·
+[**Technical Report**](/blaze)
+
+## Where Blaze is today — and where it's going
+
+Blaze is a production-quality CPU solver, cross-validated against an independent
+finite-difference (FDFD) solver that is itself checked against MPB. You can run it without
+installing anything: the engine compiles to WebAssembly, so the [**Examples**](/examples)
+are live and runnable in the browser, and the [**Workbench**](/workbench) computes band
+structures and parameter sweeps interactively — serious exploration with no code and no
+install.
+
+The goal is for Blaze to become a **faithful drop-in replacement for MPB in two dimensions
+first**, and a strict superset wherever operator-level data extraction reaches physics MPB
+cannot. Several optimizations remain on the table — **symmetry reduction, parameter
+warm-starts across sweeps, and further memory-layout improvements** among them.
+
+See the [**Roadmap**](/roadmap) and [**Optimization Potential**](/potential) for what comes
+next.
+
+</div>
