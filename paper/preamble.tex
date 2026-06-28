@@ -1,0 +1,86 @@
+% =====================================================================
+%  Preamble — engine-agnostic where possible; tuned for lualatex/pdflatex.
+% =====================================================================
+
+% --- PDF version (match cairosvg-generated figure PDFs) -------------
+\usepackage{iftex}
+\ifLuaTeX
+  \pdfvariable minorversion 7
+\else\ifPDFTeX
+  \pdfminorversion=7
+\fi\fi
+
+% --- Page geometry ---------------------------------------------------
+\usepackage[a4paper, margin=2.5cm]{geometry}
+
+% --- Encoding & fonts (engine-aware) ---------------------------------
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{lmodern}
+\else
+  % LuaLaTeX / XeLaTeX
+  \usepackage{fontspec}
+\fi
+\usepackage[english]{babel}
+\usepackage{csquotes}
+\usepackage{microtype}
+\setlength{\emergencystretch}{2em}
+\setlength{\parindent}{0pt}
+
+% --- Math ------------------------------------------------------------
+\usepackage{amsmath, amssymb, mathtools, bm}
+
+% --- Graphics / figures ----------------------------------------------
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{wrapfig}
+\usepackage[font=small, labelfont=bf]{caption}
+
+% --- Bibliography (biblatex + biber) ---------------------------------
+\usepackage[
+  backend=biber,
+  style=numeric-comp,
+  sorting=none,
+  giveninits=true,
+  uniquename=init,
+  maxbibnames=99,
+  url=true,
+  doi=true,
+]{biblatex}
+\addbibresource{references.bib}
+
+% --- Hyperlinks & cross-references -----------------------------------
+\usepackage{xcolor}
+\definecolor{linkblue}{RGB}{77,123,158}   % steel-blue, matches the thesis
+\usepackage[
+  colorlinks=true,
+  linkcolor=linkblue,
+  citecolor=linkblue,
+  urlcolor=linkblue,
+  pdfencoding=auto,
+]{hyperref}
+\usepackage[capitalize, noabbrev]{cleveref}
+
+% Cleveref naming
+\crefname{equation}{Eq.}{Eqs.}
+\Crefname{equation}{Equation}{Equations}
+\crefname{figure}{Fig.}{Figs.}
+\Crefname{figure}{Figure}{Figures}
+\crefname{section}{Sec.}{Secs.}
+\Crefname{section}{Section}{Sections}
+
+% --- PDF metadata ----------------------------------------------------
+\hypersetup{
+  pdftitle={\paperTitle},
+  pdfauthor={\paperAuthor; \paperSecondAuthor},
+  pdfkeywords={\paperKeywords},
+}
+
+% --- Convenience macros ----------------------------------------------
+\newcommand{\identity}{\mathbf{1}}
+
+% Inline logo icon at text height, vertically aligned with the baseline.
+\newcommand{\inlineicon}[2][1em]{%
+  \raisebox{-0.15em}{\includegraphics[height=#1]{#2}}%
+}

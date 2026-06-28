@@ -1,0 +1,120 @@
+% =====================================================================
+%  Introduction
+%  -------------------------------------------------------------------
+%  Stand-alone, Blaze-focused framing. Establishes the 2D
+%  photonic-crystal eigenproblem (TE/TM master equations) that Blaze2D
+%  solves.
+% =====================================================================
+
+\section{Introduction}\label{sec:intro}
+
+\begin{wrapfigure}{r}{0.18\linewidth}
+  \vspace{-1em}
+  \centering
+  \includegraphics[width=\linewidth]{blaze}
+  \caption*{Blaze2D logo.}
+  \vspace{-1em}
+\end{wrapfigure}
+%
+Photonic crystals are periodic dielectric structures whose
+wavelength-scale modulation opens frequency gaps for electromagnetic
+waves. They have become a platform for slow light,
+topological photonics, and integrated optical devices. Their design relies almost
+entirely on numerical band-structure calculations, since closed-form
+solutions are restricted to a handful of idealized geometries. Among
+the available techniques, the plane-wave expansion (PWE) method occupies
+a privileged position for two-dimensional problems: it expresses the
+Bloch eigenproblem in a Fourier basis whose convergence is spectral,
+and it returns not only eigenfrequencies but the Bloch coefficients
+themselves, which are the raw data needed for any analysis that
+goes beyond the band diagram (group velocities, mode volumes, coupling
+matrix elements, Berry curvatures, and so on).
+
+\paragraph{The two-dimensional eigenproblem.}
+For a dielectric profile $\epsilon(\bm{r})$ that is periodic in the
+$xy$-plane and invariant along $z$, Maxwell's source-free equations
+decouple into two scalar polarizations. Writing the field as a Bloch
+mode of wavevector $\bm{k}$ and frequency $\omega$, the master
+equations read
+\begin{alignat}{5}
+  \text{TM (}E_z\text{):}\quad & -\nabla^{2} E_{z}(\bm{r})
+  &{}={}& \left(\frac{\omega}{c}\right)^{2} \epsilon(\bm{r})\, E_{z}(\bm{r}),
+  \label{eq:master_tm}\\
+  \text{TE (}H_z\text{):}\quad & -\nabla \cdot \!\left[\epsilon^{-1}(\bm{r})\, \nabla H_{z}(\bm{r})\right]
+  &{}={}& \left(\frac{\omega}{c}\right)^{2} H_{z}(\bm{r}).
+  \label{eq:master_te}
+\end{alignat}
+Both are generalized Hermitian eigenproblems of the form
+$A\,\psi = \lambda\, B\,\psi$ with $\lambda = (\omega/c)^{2}$. Expanding
+the field and the (inverse) permittivity on the reciprocal lattice
+$\{\bm{G}\}$ turns the differential operators into matrices indexed by
+plane-wave labels $\bm{G}, \bm{G}'$; the resulting discrete operators
+are exactly the ones implemented by Blaze2D and listed explicitly in
+\cref{sec:operators}. The TM problem is diagonal in the kinetic block
+and carries the permittivity in $B$, while the TE problem absorbs the
+inverse permittivity into a dense $A$. This asymmetry has direct
+algorithmic consequences that reappear later in the discussion of
+convergence rates and preconditioner design.
+
+\paragraph{What is already available.}
+MPB~\cite{mpb} has been the de-facto reference implementation of PWE
+for photonic crystals for more than two decades. Its accuracy, its
+analytical subpixel smoothing of dielectric interfaces, and its
+block-iterative eigensolver are the standard against which any new
+solver must be measured. The original MPB paper states this explicitly:
+it uses ``preconditioned block-iterative eigensolvers in a planewave
+basis'' and compares preconditioned conjugate-gradient
+Rayleigh--quotient minimization with Davidson's method~\cite{mpb}.
+Among freely available tools, MPB remains the reference solver for
+this specific class of PWE band-diagram and eigenpair calculations.
+Blaze2D targets the same problem class, but is optimized for
+high-throughput two-dimensional parameter sweeps in which a moderate
+plane-wave cutoff is solved thousands of times for slightly varying
+geometry and the Bloch coefficients must be exposed through a Python
+pipeline.
+
+\paragraph{Design intent of Blaze2D.}
+Blaze2D was built to fill this niche. It is a two-dimensional PWE
+eigensolver written in Rust, distributed as open source on
+\href{https://github.com/RnLe/blaze2d}{\inlineicon{github}~GitHub}~\cite{blaze2d_github}
+and as a package on
+\href{https://pypi.org/project/blaze2d/}{\inlineicon{python}~PyPI}~\cite{blaze2d_pypi}.
+Three concerns shape its architecture, each addressed in a later
+section:
+\begin{enumerate}
+  \item \emph{Accuracy on par with MPB.} Analytic subpixel smoothing
+        of the permittivity~\cite{farjadpour2006} and a faithful
+        reimplementation of MPB's preconditioning strategy ensure that
+        Blaze2D reproduces MPB's eigenvalues to within solver
+        tolerance across a broad set of two-dimensional geometries
+        (\cref{sec:validation}).
+  \item \emph{Throughput at moderate resolution.} A mixed-precision
+        arithmetic strategy stores all bulk arrays in
+        single precision while promoting numerically sensitive
+        reductions to double precision, yielding a near-clean
+        $2\times$ speedup with no measurable loss in eigenvalue
+        accuracy (\cref{sec:mixed_precision}). This finding mirrors
+        an independent 2023 study on dynamic-precision LOBPCG for
+        electronic structure~\cite{woo2023}.
+  \item \emph{Direct access to Bloch coefficients.} The TE and TM
+        operators are implemented separately and exposed through a
+        Python interface, so that derived quantities such as matrix
+        elements, mode profiles, and Berry connections can be computed
+        from the same operator objects used by the eigensolve
+        (\cref{sec:pipeline}).
+\end{enumerate}
+
+The remainder of this paper develops these three ideas. Section
+\ref{sec:design} states the high-level design choices.
+Section~\ref{sec:geometry} treats the construction of the Fourier-space
+permittivity matrix.
+Section~\ref{sec:operators} writes the discretized TE and TM operators
+explicitly, building directly on \cref{eq:master_tm,eq:master_te}.
+Sections \ref{sec:preconditioning}--\ref{sec:lobpcg} discuss
+preconditioning and the LOBPCG inner loop.
+Section~\ref{sec:mixed_precision} describes the mixed-precision
+strategy. Section~\ref{sec:validation} compares Blaze2D against MPB on
+spectra, mode profiles, and resolution convergence, while
+section~\ref{sec:benchmarks} reports runtime and memory benchmarks.
+Section~\ref{sec:pipeline} sketches the data-extraction layer that
+connects the solver to subsequent analyses.

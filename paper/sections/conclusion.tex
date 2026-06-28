@@ -1,0 +1,82 @@
+% =====================================================================
+%  Conclusion
+%  -------------------------------------------------------------------
+%  Summarises validation, benchmark outcome, and limitations; outlines
+%  plausible future directions.
+% =====================================================================
+
+\section{Conclusion}\label{sec:conclusion}
+
+Blaze2D is a from-scratch two-dimensional plane-wave eigensolver that
+sets out to deliver MPB-grade accuracy with a workflow tuned for the
+high-throughput regime: many crystal configurations, moderate plane-wave
+cutoffs, and direct access to Bloch coefficients from a Python frontend.
+The construction proceeds along three areas.
+
+\emph{Accuracy}: analytic subpixel smoothing of the
+permittivity reproduces MPB's $\epsilon_{\bm{G},\bm{G}'}$ to within
+$\sim 10^{-4}$ in the mean even at the coarsest grids
+(\cref{fig:material_map_comparison}); eigenvalues then agree to
+$\sim 2 \times 10^{-5}$ at the resolutions relevant for production
+runs (\cref{fig:eigenvalue_comparison}); and both solvers exhibit the
+same convergence rate as the plane-wave cutoff is refined
+(\cref{fig:convergence_study}). The remaining discrepancies are
+localised at degenerate eigenvalues, where any orthonormal basis of
+the degenerate subspace is equally valid, or at dielectric interfaces,
+where the two solvers discretise the boundary slightly differently.
+Neither family is a numerical disagreement; both are explicable from
+solver conventions alone.
+
+\emph{Throughput}: the central performance lever is not
+algorithmic but architectural. Profiling reveals that LOBPCG on PWE
+operators is memory-bandwidth-bound, not compute-bound, so a
+mixed-precision storage strategy yields a near-clean $2\times$
+wall-clock speedup by storing bulk arrays in single precision and
+promoting only numerically sensitive reductions to double precision,
+without altering the eigenvalue trajectory
+(\cref{fig:blaze2d_benchmarks,fig:blaze2d_iterations_memory}). Rust's
+type-safe concurrency keeps multi-core scaling predictable inside
+parameter sweeps, where solves are independent and parallel.
+
+\emph{Accessibility}: implementing the TE and TM operators
+directly, rather than projecting them out of a general
+curl--curl operator, keeps the per-polarization data path short
+and makes operator-level matrix elements available to the Python layer
+through Rust's foreign-function interface. The same operator objects
+that drive the eigensolve are reused downstream, so derived quantities
+(group velocities, Berry connections, effective-mass tensors) are
+computed against exactly the discretization the eigenvalues were
+obtained on.
+
+Several limitations should be acknowledged. Blaze2D is two-dimensional
+by design and currently exposes only the in-plane TE/TM
+decomposition; fully three-dimensional or out-of-plane band
+calculations require the more general curl--curl formulation and are
+left to upstream tools. Band tracking across avoided crossings is not
+attempted: the solver reports the $N$ lowest eigenvalues at each
+$\bm{k}$-point without enforcing adiabatic continuity, which simplifies
+the inner loop but pushes the responsibility for band labelling onto
+the analysis stage. Small but visible asymmetries in degenerate
+mode profiles (\cref{fig:u2_comparison}) have not been quantified
+here; they are expected to be artefacts of the chosen basis within the
+degenerate subspace, but a rigorous gauge-fixing diagnostic remains
+future work.
+
+Natural extensions follow from each of these limits. A
+three-dimensional curl--curl variant, an explicit band-tracking layer
+based on overlap matching across neighbouring $\bm{k}$-points, and a
+GPU back end that exploits the same mixed-precision idea on
+single-precision-favourable hardware are all plausible next steps. On
+the application side, exposing Bloch-level data through a stable
+Python ABI opens the door to coupling Blaze2D with higher-level
+photonic-design frameworks, including inverse design, perturbative
+envelope theories, and topological-invariant computations, in a way that
+treats the solver as a service rather than a monolith.
+
+Within its stated scope of two-dimensional photonic crystals at
+moderate resolution, swept over many configurations, with full
+Bloch-level data exposed, Blaze2D matches MPB on accuracy, exceeds
+it on throughput in the mixed-precision regime, and provides a
+cleaner programming interface for downstream analyses. The solver is
+released under an open-source licence with the intent that other
+groups can re-use it as a drop-in component of their own pipelines.

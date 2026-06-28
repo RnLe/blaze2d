@@ -1,0 +1,461 @@
+% =====================================================================
+%  Blaze2D — paper body (Design Choices … From Solver to Pipeline)
+% =====================================================================
+
+\section{Design Choices}\label{sec:design}
+
+Three foundational choices were made from the start, each driven by a
+concrete requirement of the envelope pipeline.
+
+\paragraph{Method: plane-wave expansion.}
+The PWE method discretizes the Bloch eigenproblem in reciprocal space
+by expanding both the dielectric function and the field in Fourier
+modes on the reciprocal lattice. For a given $\bm{k}$-point and
+resolution (number of retained plane waves $N_{\mathrm{pw}}$), the
+problem becomes a dense $N_{\mathrm{pw}} \times N_{\mathrm{pw}}$ matrix
+eigenproblem. The reason for choosing PWE over real-space methods is
+direct: the envelope framework requires not just eigenvalues but Bloch
+functions and their Fourier coefficients, and the PWE basis delivers
+these natively. Additionally, PWE eigenvalues converge spectrally with
+resolution, providing high accuracy at moderate grid sizes~\cite{mpb}.
+
+\paragraph{Algorithm: LOBPCG.}
+The locally optimal block preconditioned conjugate gradient (LOBPCG)
+method~\cite{knyazev2001} solves for the lowest eigenpairs of a
+Hermitian operator without forming or factorizing the full matrix. It
+is iterative, works in blocks (solving for several eigenpairs
+simultaneously), and accepts a preconditioner. These properties make it
+the natural choice for the photonic PWE problem, where only the lowest
+bands are needed and a good preconditioner is available. MPB uses the
+same algorithmic family~\cite{mpb}.
+
+\paragraph{Language: Rust.}
+The solver must run millions of operator applications across thousands
+of crystal configurations. Rust provides predictable memory layout, no
+garbage-collection pauses, and safe concurrency. These properties
+matter once the solver runs inside a tight parameter-sweep loop. The
+compiled performance is comparable to C/Fortran, while the type system
+eliminates entire classes of memory bugs that would otherwise surface
+only under heavy workloads.
+
+\section{Geometry and the Permittivity Matrix}\label{sec:geometry}
+
+The first module to build is the \emph{geometry}: translating a crystal
+specification (lattice vectors, shapes, dielectric constants) into the
+Fourier-space permittivity matrix $\epsilon_{\bm{G},\bm{G}'}$ processed
+by the PWE operators.
+
+Blaze2D uses the same analytical subpixel smoothing as MPB. Rather than
+sampling $\epsilon(\bm{x})$ on a pixel grid, each geometric primitive
+(cylinder, ellipse, block) is treated as an exact shape whose overlap
+with every grid cell is computed analytically. The smoothed
+$\epsilon^{-1}$ is then obtained via the anisotropic averaging
+procedure of Farjadpour \textit{et~al.}~\cite{farjadpour2006}, which
+avoids the staircasing artifacts that naive pixelization introduces at
+dielectric interfaces.
+
+Validating this module is straightforward: the permittivity matrix can
+be compared element-by-element against MPB for any crystal geometry.
+\Cref{fig:material_map_comparison} shows such a comparison for a square
+lattice of dielectric rods ($\epsilon = 8.9$, $r = 0.45a$) at
+resolutions $N = 8$ to $128$. Only the coarsest grid ($N = 8$) exhibits
+appreciable error (mean $|\Delta\epsilon| \approx 3 \times 10^{-2}$,
+peak $\approx 0.68$); for $N \geq 16$ the mean error drops below
+$8 \times 10^{-3}$ and reaches $\approx 5 \times 10^{-4}$ at $N = 128$.
+The remaining residual peaks of order $0.1$--$0.2$ are localized at the
+rod--air interface, where the two solvers discretize the material
+boundary slightly differently. Agreement to this level at every
+resolution confirms that the geometry pipeline is correct before any
+eigensolve is attempted.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{material_map_comparison}
+  \caption{Smoothed permittivity maps from Blaze2D and MPB at
+    resolutions $N = 8$ to $128$, with the bottom row showing the
+    absolute difference $|\Delta\epsilon|$ on a power-law color scale
+    ($\gamma = 0.3$) to magnify small discrepancies.}
+  \label{fig:material_map_comparison}
+\end{figure}
+
+With the geometry validated, the remaining task is a spectral analysis:
+construct the TE and TM operators on a Fourier basis and solve them
+efficiently.
+
+\section{Eigenvalue Operators and Their Application}\label{sec:operators}
+
+With the permittivity matrix in hand, the next step is to discretize
+the TE and TM master equations of the photonic-crystal eigenproblem
+explicitly. In contrast to MPB, which works from the full curl--curl
+operator and projects onto the relevant polarization, Blaze2D
+implements the TE and TM operators directly:
+\begin{alignat}{7}
+  \text{TE:}\quad & A_{\mathrm{TE}} &{}={}& -(\bm{k} + \bm{G}) \cdot
+  [\epsilon^{-1}]_{\bm{G},\bm{G}'}\,(\bm{k} + \bm{G}'),
+  \qquad & B_{\mathrm{TE}} &{}={}& \identity, \label{eq:op_te}\\
+  \text{TM:}\quad & A_{\mathrm{TM}} &{}={}& |\bm{k} + \bm{G}|^{2}\,\delta_{\bm{G},\bm{G}'},
+  \qquad & B_{\mathrm{TM}} &{}={}& \epsilon_{\bm{G},\bm{G}'}. \label{eq:op_tm}
+\end{alignat}
+The operator classes are implemented generically: the LOBPCG solver
+receives an abstract operator interface, making the TE and TM cases
+interchangeable at the API level.
+
+Operator application proceeds in the standard PWE fashion.
+Multiplication by $\epsilon^{-1}$ in reciprocal space is a dense
+matrix--vector product, while the gradient terms $(\bm{k} + \bm{G})$
+act as diagonal multiplications. In practice, these operations dominate
+the runtime and their memory-access pattern determines performance.
+
+At high dielectric contrast, the Fourier coefficients of $\epsilon^{-1}$
+decay slowly, and individual reciprocal-space components can develop
+large magnitudes that amplify numerical noise. Blaze2D applies the same
+clamping and regularization strategy as MPB to suppress these artifacts
+without distorting the physically relevant low-frequency content.
+This direct TE/TM implementation is also what makes the data extraction
+convenient: the same operator objects used in the eigensolve can later
+be reused to expose explicit matrix elements to the envelope pipeline.
+
+\section{Preconditioning}\label{sec:preconditioning}
+
+The convergence rate of LOBPCG depends critically on the
+preconditioner. Each polarization admits a different strategy.
+
+For TE, the preconditioner is the one described in Ref.~\cite{mpb}: an
+approximation to $A_{\mathrm{TE}}^{-1}$ built from the diagonal kinetic
+term $(|\bm{k} + \bm{G}|^{2})$ and a scalar estimate of
+$\epsilon^{-1}$. This is the same advanced preconditioner used by MPB
+and is the more complex of the two.
+
+For TM, the structure is simpler. Because $A_{\mathrm{TM}}$ is already
+diagonal in the plane-wave basis, its inverse is trivially available
+and serves as an effective preconditioner. The result is that TM
+consistently achieves lower condition numbers and converges in fewer
+iterations than TE, a systematic advantage rooted in operator
+structure.
+
+Tuning the preconditioner accounted for roughly a quarter of the total
+development time. The MPB developers describe the same challenge:
+finding a good preconditioner ``is something of a \emph{black art} with
+lots of trial and error''\footnote{From the MPB developer documentation,
+\href{https://mpb.readthedocs.io/en/latest/Developer_Information/\#the-mathematics-of-mpb}{Developer
+Information: The Mathematics of MPB}.}~\cite{mpb}. Because Blaze2D's
+internal operator layout differs from MPB's, the preconditioner could
+not be ported directly; it had to be re-derived and re-tuned against
+condition-number measurements at each stage.
+
+\section{The LOBPCG Solver}\label{sec:lobpcg}
+
+At the heart of Blaze2D lies the LOBPCG algorithm~\cite{knyazev2001}.
+At each step, the solver maintains three subspaces: the current
+eigenvector candidates $X$ ($N_{\mathrm{band}}$ vectors), the search
+directions $P$ from the previous step, and the preconditioned
+residuals $W$. These are assembled into a trial basis $[X, P, W]$, and
+a small dense eigenproblem (the Rayleigh--Ritz projection) of dimension
+$\dim(X) + \dim(P) + \dim(W)$ is solved exactly. The new $X$ is read
+off from the lowest eigenpairs of this projected problem. The structure
+of this search subspace is sketched in \cref{fig:lobpcg_illustration}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{lobpcg_subspace}
+  \caption{Structure of the LOBPCG search subspace. The trial basis
+    $[X, P, W]$ defines a small, dense projected eigenproblem whose
+    exact solution yields the updated eigenvector approximations.
+    Rather than operating in the full $N_{\mathrm{pw}}$-dimensional
+    Hilbert space, each iteration works in a subspace of dimension
+    $\dim(X) + \dim(P) + \dim(W)$.}
+  \label{fig:lobpcg_illustration}
+\end{figure}
+
+Several implementation details proved decisive for performance and
+stability:
+
+\paragraph{Subspace dimensions.}
+Expanding the candidate space beyond the number of requested bands
+accelerates convergence significantly: adding one or two extra trial
+vectors to $X$ provides the optimizer with additional variational
+freedom at modest cost. Conversely, shrinking or omitting either $P$
+or $W$ degrades convergence severely. The best results were achieved
+when all three subspaces had roughly comparable dimensions.
+
+\paragraph{Orthogonalization.}
+Near-degenerate eigenvectors cause classical Gram--Schmidt
+orthogonalization to lose numerical rank, producing a singular
+Rayleigh--Ritz problem. Blaze2D uses the SVQB procedure~\cite{stathopoulos2002},
+which orthogonalizes via a singular-value decomposition of the Gram
+matrix and is numerically stable even for tightly clustered
+eigenvalues.
+
+\paragraph{Convergence criterion.}
+MPB monitors the residual norm $\|A x - \lambda B x\|$ and declares
+convergence when it falls below a threshold (default $10^{-7}$).
+Blaze2D instead monitors the relative change in eigenvalues between
+iterations. In practice, eigenvalues stabilize well before the residual
+reaches a tight tolerance, so eigenvalue-based convergence requires
+substantially fewer iterations per solve. While residual convergence
+carries a proven convergence-rate guarantee~\cite{knyazev2001},
+eigenvalue convergence proved completely stable across all tested
+configurations, including difficult cases with accidental degeneracies
+at high-symmetry $\bm{k}$-points.
+
+\paragraph{Warm-starting.}
+The single largest lever for performance is also the simplest:
+initializing each $\bm{k}$-point solve with the converged eigenvectors
+of the previous $\bm{k}$-point. This adds no algorithmic complexity,
+yet it typically reduces the iteration count by an order of magnitude
+compared to a random initialization. MPB uses the same strategy.
+
+\paragraph{Deflation strategy.}
+Once a band converges, the solver must avoid rediscovering it. Because
+distinct Bloch modes are mathematically orthogonal, we can explicitly
+project all new search directions away from the already-converged
+states, a technique known as deflation. While solvers can
+\emph{hard-lock} these converged bands by removing them from the active
+problem entirely, Blaze2D relies on \emph{soft-locking}. Converged
+bands remain part of the small Rayleigh--Ritz projection, but the
+solver stops calculating new, computationally expensive search
+directions for them. This halts their active optimization, yet allows
+the converged states to mix with the active subspace to maintain
+strict orthogonality as the remaining bands settle. In practice,
+soft-locking proved far more numerically stable than hard-locking,
+especially near accidental degeneracies where bands must be handled
+carefully as a collective cluster rather than frozen one by one.
+
+\section{Mixed Precision}\label{sec:mixed_precision}
+
+Modern eigensolvers are not compute-bound but memory-bandwidth-bound.
+Profiling both MPB and Blaze2D shows that actual floating-point
+arithmetic accounts for as little as 10\% of CPU time; the remainder
+is spent moving data between memory and cache. This observation
+motivates a mixed-precision strategy: store all large arrays
+(eigenvectors, operator matrices, intermediate products) in single
+precision (\texttt{f32}) to halve the memory traffic, but promote to
+double precision (\texttt{f64}) on the fly for numerically sensitive
+operations (inner products, Rayleigh--Ritz projections, and
+orthogonalization steps) before rounding the result back to
+\texttt{f32} for storage.
+
+The natural objection is: if the result is rounded back to \texttt{f32},
+what is gained by computing in \texttt{f64}? The answer is that certain
+intermediate accumulations require \texttt{f64} for numerical stability
+(a dot product of $10^{4}$ terms, for instance, can lose several
+significant digits in \texttt{f32}), while the \emph{result} of that
+dot product (a single scalar or a small matrix) is representable in
+\texttt{f32} without meaningful loss. The precision is needed
+transiently, not persistently.
+
+This mixed-precision approach yields a nearly clean $2\times$ speedup
+with no significant loss in eigenvalue accuracy. The same conclusion
+was reached independently in a 2023 study of mixed-precision LOBPCG for
+electronic-structure calculations~\cite{woo2023}, a paper discovered
+only after the approach had already been implemented in Blaze2D. The
+strategy itself is standard in modern data science and
+high-performance computing.
+
+\section{Validation}\label{sec:validation}
+
+Blaze2D was validated against MPB across a representative set of
+two-dimensional photonic crystals by comparing full band diagrams,
+$|\bm{u}|^{2}$ mode profiles, and convergence behavior. The validation
+process was the most time-consuming part of the project. MPB uses
+several nonstandard coordinate conventions, most notably a
+half-pixel-shifted grid center, which produced false discrepancies
+that had to be identified and accounted for one by one.
+
+The validation narrative follows the same logic as the solver itself.
+First, the global spectral output must agree. Second, the eigenvectors
+must represent the same physical modes. Third, both solvers must
+converge in the same way as the discretization is refined. The
+following subsections address these three checks in turn.
+
+\subsection{Band-Diagram Agreement}\label{sec:band_agreement}
+
+The primary metric is the relative eigenvalue error across all
+$\bm{k}$-points and bands. Bloch-function phases were not compared
+directly, because MPB's phase conventions differ from Blaze2D's in
+ways that scramble the complex phases without affecting physically
+observable quantities. However, the squared modulus
+$|u_{n\bm{k}}(\bm{r})|^{2}$ was compared and found to agree, and
+improvements in mode-profile agreement tracked improvements in
+eigenvalue accuracy, confirming that the band diagram is a sufficient
+validation metric.
+
+One systematic difference remains: when tracking bands across avoided
+crossings, MPB tends to follow a given band adiabatically to higher
+eigenvalues, while Blaze2D reports the true $N$ lowest eigenvalues at
+each $\bm{k}$-point and does not track crossings. For isolated bands
+away from topmost-band crossings, both solvers agree to high
+precision. This behavior is visible in \cref{fig:band_diagram_agreement}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{band_diagrams}
+  \caption{Band-diagram comparison for a square lattice
+    ($\epsilon = 8.9$ rods, $r = 0.2a$), showing the 10 lowest bands.
+    \textit{Left}: TM polarization; \textit{right}: TE polarization.
+    Both solvers show near-perfect agreement, with small deviations
+    visible only in the topmost TE band due to differing band-tracking
+    behavior across avoided crossings.}
+  \label{fig:band_diagram_agreement}
+\end{figure}
+
+To quantify the agreement beyond the visual overlap of
+\cref{fig:band_diagram_agreement}, \cref{fig:eigenvalue_comparison}
+shows the RMS relative eigenvalue difference between the two solvers
+for the lowest eight bands, evaluated over 61 $\bm{k}$-points along
+$\Gamma \to X \to M \to \Gamma$, as a function of resolution. At
+$N = 128$, relative differences reach $\approx 2 \times 10^{-5}$ on
+average, with per-band maxima below $10^{-4}$. This is consistent with
+Blaze2D's internal eigenvalue convergence tolerance of $10^{-5}$ in
+mixed-precision mode; the residual plateau beyond $N \approx 48$
+reflects that tolerance floor rather than a systematic discrepancy
+between the two solvers.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{eigenvalue_comparison}
+  \caption{RMS relative eigenvalue difference between Blaze2D and MPB
+    for the eight lowest bands of a square lattice ($\epsilon = 8.9$
+    rods, $r = 0.2a$). TM (left) and TE (right) polarizations.}
+  \label{fig:eigenvalue_comparison}
+\end{figure}
+
+Taken together, \cref{fig:band_diagram_agreement} and
+\cref{fig:eigenvalue_comparison} establish a precise agreement: at the
+resolutions relevant for the registry sweep, Blaze2D reproduces MPB's
+eigenvalues to within the mixed-precision solver tolerance.
+
+\subsection{Mode Profiles}\label{sec:mode_profiles}
+
+Eigenvalue agreement alone is not sufficient: the envelope pipeline
+ultimately processes eigenvectors and matrix elements built from them.
+For that reason, representative real-space mode profiles were compared
+as well. \Cref{fig:u2_comparison} shows the squared Bloch amplitude
+$|\bm{u}|^{2}$ for several bands and $\bm{k}$-points.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{u2_mode_comparison}
+  \caption{Comparison of $|\bm{u}|^{2}$ mode profiles from Blaze2D and
+    MPB for a representative set of bands, $\bm{k}$-points and a
+    resolution of 64\,px/$a$. The spatial intensity distributions
+    agree well for non-degenerate frequencies; at degenerate
+    frequencies, the modes may be superposed or swapped, leading to
+    expected visual discrepancies.}
+  \label{fig:u2_comparison}
+\end{figure}
+
+The agreement is strong wherever the eigenvalue is non-degenerate:
+nodal structure, localization, and symmetry match visually across the
+unit cell. The only clearly visible mismatches occur at or near
+degeneracies, where any orthonormal basis of the degenerate subspace
+is equally valid. In those cases MPB and Blaze2D may return rotated or
+swapped representatives of the same physical subspace, which changes
+the plotted pattern without indicating a physical disagreement. This
+is precisely why the comparison is carried out on $|\bm{u}|^{2}$
+rather than on the complex Bloch phase itself.
+
+Despite the strong agreement, small yet visual mismatches for bands 2
+and 3 can be seen in \cref{fig:u2_comparison}. The spatial modes do
+not appear perfectly symmetric; these are deviations from MPB that
+have not been investigated or quantified here. Because the envelope
+pipeline is built from Bloch-function data, these deviations should be
+kept in mind when judging how reliable downstream envelope results
+are.
+
+\subsection{Convergence with Resolution}\label{sec:convergence}
+
+Agreement at a single resolution could still be accidental. A stronger
+test is whether both solvers approach the continuum limit at the same
+rate as the plane-wave cutoff is increased. That comparison is shown
+in \cref{fig:convergence_study}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{convergence_study}
+  \caption{Eigenvalue convergence for a square lattice
+    ($\epsilon = 8.9$ rods, $r = 0.2a$). Solid lines: RMS deviation
+    $\Delta\omega_{\mathrm{RMS}}$ of the four lowest bands along
+    $\Gamma \to X \to M \to \Gamma$; dashed lines: worst-case
+    deviation $\max|\Delta\omega|$. All deviations are measured
+    against a higher resolution $N = 192$ reference. Both solvers
+    converge at comparable rates.}
+  \label{fig:convergence_study}
+\end{figure}
+
+The two curves track each other closely in both polarizations, for
+both RMS and worst-case errors. This matters because it rules out a
+hidden cancellation in the direct MPB comparison: Blaze2D does not
+merely match one reference calculation, but exhibits the same
+resolution dependence as an established solver. For the purposes of
+the envelope pipeline, this is the relevant notion of correctness,
+since all extracted matrix elements are ultimately built on these
+converged Bloch states.
+
+\section{Benchmarks}\label{sec:benchmarks}
+
+Accuracy alone would not justify a new solver. The point of Blaze2D is
+that it must also execute the dense registry sweep motivating it in
+reasonable time. The runtime comparison is shown in
+\cref{fig:blaze2d_benchmarks}, while the iteration counts,
+per-iteration costs, and memory footprint are broken down in
+\cref{fig:blaze2d_iterations_memory}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{benchmarks}
+  \caption{Single-core and multi-core wall-clock comparison of MPB and
+    Blaze2D in mixed and full precision.}
+  \label{fig:blaze2d_benchmarks}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{iterations_memory}
+  \caption{Iteration count per $\bm{k}$-point, time per iteration,
+    and peak memory footprint for MPB vs.\ Blaze2D.}
+  \label{fig:blaze2d_iterations_memory}
+\end{figure}
+
+A few observations from these benchmarks deserve comment. The TM
+polarization converges in fewer iterations than TE for both solvers,
+consistent with the simpler preconditioner structure discussed above.
+Mixed precision does not increase the iteration count; the eigenvalue
+trajectory is indistinguishable from the full-precision run. The
+speedup seen in \cref{fig:blaze2d_benchmarks} therefore comes almost
+entirely from reduced memory traffic rather than from altered
+convergence behavior.
+
+The decomposition in \cref{fig:blaze2d_iterations_memory} makes this
+interpretation more concrete. Time per iteration falls under mixed
+precision, while memory consumption scales predictably with
+$N_{\mathrm{pw}}^{2}$ for the stored matrices and
+$N_{\mathrm{pw}} \times N_{\mathrm{band}}$ for the eigenvector block,
+with \texttt{f32} storage halving both contributions relative to
+\texttt{f64}. For the registry sweep, this reduction matters twice: it
+shortens each individual solve and increases the number of
+configurations that can be processed concurrently.
+
+\section{From Solver to Pipeline}\label{sec:pipeline}
+
+With the eigensolver validated, the remaining task is to extract the
+matrix elements required by the envelope effective Hamiltonian and
+export them to the Python layer where the moir\'e-scale problem is
+assembled and solved.
+
+The extraction module computes, for each crystal configuration
+$\bm{\delta}$ on the moir\'e grid, the local eigenvalues
+$\lambda_{n}(\bm{\delta}, \bm{k}_{0})$, the Bloch functions
+$u_{n\bm{k}_{0}}(\bm{r}; \bm{\delta})$, and the derived operator
+matrix elements (Berry connections, effective-mass tensors, and the
+coupling terms entering the envelope effective Hamiltonian). These are
+written as structured arrays and exposed through Python bindings
+generated via Rust's foreign-function interface.
+
+Basic sanity checks on the extracted data (Hermiticity of the
+effective Hamiltonian blocks, expected magnitudes of the
+Berry-connection components, correct symmetry under lattice
+operations) confirm that the plumbing between solver and pipeline
+introduces no artifacts. At this point the narrative closes back onto
+the envelope construction: the effective theory has been reduced to
+computable local data, and Blaze2D is the tool that provides it.
