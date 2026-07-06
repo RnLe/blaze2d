@@ -1,0 +1,59 @@
+import { IterationBarChart, IterationDistributionChart, IterationTimeChart } from '../../components/charts'
+
+<div className="narrow-centered">
+
+# The Eigensolver (LOBPCG)
+
+*One iteration around the ring: recompute nothing you can cache, move nothing you can reuse.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+## The ring
+
+The [board's LOBPCG group](/architecture/?node=grp.lobpcg) draws one iteration as a ring,
+and the stage names there match this walkthrough exactly. The state is a block of
+`BlockEntry { X, B·X, A·X }`: three buffers per band, because caching the mass and
+operator images alongside the eigenvector block is what makes the rest cheap.
+
+1. **Residuals** R = A·X − B·X·Λ come entirely from cached blocks: zero operator applies.
+2. **Lazy residual norms.** Convergence is judged by eigenvalue movement, so the residual
+   B-norms (which cost a block of mass applies) are computed only when a log line needs
+   them. They are skipped on roughly 90% of iterations.
+3. **Deflation and soft locking** project out converged bands and freeze them.
+4. **Preconditioning** P = M⁻¹R: two or six FFTs per active band
+   ([operators](/architecture/operators)).
+5. **Subspace assembly** Z = [X, P, W]: current block, preconditioned residuals, and the
+   previous search directions. Subspace dimension r ≈ 3 · bands.
+6. **SVQB B-orthonormalization**: one Gram matrix and one dense eigendecomposition
+   orthonormalize the whole subspace in a single shot. Near-dependent directions are
+   rank-dropped, and the condition number is monitored (warnings at κ > 10¹⁰).
+7. **Batched A·Q**: one operator apply per subspace vector. The FFT-heavy step.
+8. **Rayleigh-Ritz**: form Aₛ = Qᴴ(AQ) by GEMM, solve the r×r Hermitian eigenproblem in
+   f64. Both cross the precision boundary described in
+   [Precision & Memory](/architecture/precision-and-memory).
+9. **Ritz update**: X = Q·Y, B·X = BQ·Y, and crucially **A·X = AQ·Y**. Reusing the A·Q
+   block from step 7 rebuilds the operator image by GEMM instead of a fresh block of
+   operator applies. This one reuse pays for the entire caching scheme.
+
+## Warm starts collapse the iteration count
+
+Within one band structure, k-points are solved in path order and each solve starts from
+the previous k-point's eigenvectors, gauge-aligned by polar-decomposition parallel
+transport. The measured effect on this site's own benchmark data: the first k-point needs
+around a dozen iterations, and warm-started k-points settle to a handful.
+
+<IterationBarChart width={1000} height={380} />
+
+<IterationDistributionChart width={1000} height={380} />
+
+<IterationTimeChart width={1000} height={380} />
+
+Press **Run** on [the board](/architecture/?view=run) to watch these numbers play out: the
+first k-point's iterations are expanded stage by stage, and the remaining sweep runs at
+the real measured per-k wall times.
+
+</div>

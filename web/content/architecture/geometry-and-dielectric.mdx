@@ -1,0 +1,61 @@
+import { EpsilonGridViewer, EpsilonBarChart } from '../../components/charts'
+
+<div className="narrow-centered">
+
+# Geometry & Dielectric
+
+*From a lattice definition to the ε arrays every operator consumes.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+## Typed lattices, fractional atoms
+
+A crystal enters the solver as a typed lattice (square, rectangular, triangular,
+hexagonal, or oblique, or explicit `a1`/`a2` vectors) plus a list of basis atoms with
+fractional positions, radii, and per-atom permittivity. The reciprocal basis and the
+Brillouin-zone path presets (Γ-X-M-Γ and friends) derive from the same lattice object, so
+geometry and k-space can never disagree.
+
+On [the board](/architecture/?node=grp.geometry), this is the gray control column on the
+left: it decides everything and moves almost no data.
+
+## Analytic subpixel smoothing
+
+The dielectric build is where accuracy is won. Instead of sampling ε on a grid (staircase
+artifacts) or averaging over a sub-mesh (slow convergence), Blaze computes the **exact
+circle-pixel intersection** for every boundary pixel: filling fraction, interface normal,
+and interface length. Boundary pixels get the MPB-style anisotropic average
+
+$$
+\tilde\varepsilon^{-1} = P\,\langle \varepsilon^{-1} \rangle + (1 - P)\,\langle \varepsilon \rangle^{-1},
+\qquad P = \mathbf{n}\otimes\mathbf{n},
+$$
+
+which is the physically correct mixing rule for fields parallel and perpendicular to the
+interface. This single kernel is why a 32×32 Blaze grid tracks MPB rather than lagging it.
+
+Explore the result at every resolution the site ships (these are real solver outputs):
+
+<EpsilonGridViewer initialResolution={64} size={400} />
+
+## What it costs
+
+The build is O(N · atoms) and runs **once per job**. The output is three real-space arrays
+of length N = nx·ny: ε(r), ε⁻¹(r), and a 2×2 inverse-tensor field for boundary pixels.
+There is no dense G-space matrix anywhere; the plane-wave basis is the FFT grid itself.
+
+One honest data-movement note, visible on the board as a blue node: the driver currently
+**clones the ε arrays for every k-point** ([board](/architecture/?node=drv.epsclone)).
+That is an O(N) copy repeated k times where a shared reference would do. It is cheap
+relative to the solve, but it is exactly the kind of copy the board exists to make visible.
+
+<EpsilonBarChart width={1000} height={380} />
+
+→ Continue with [Matrix-Free Operators](/architecture/operators), which consume these
+arrays on every application.
+
+</div>

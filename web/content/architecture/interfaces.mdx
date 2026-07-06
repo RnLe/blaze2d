@@ -1,0 +1,63 @@
+<div className="narrow-centered">
+
+# Interfaces
+
+*One TOML in; CSV, Python, and the browser out. The same core behind every door.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+## TOML: the single source of truth
+
+Every front-end consumes the same config format: `[geometry]` (typed lattice plus basis
+atoms), `[grid]`, `[path]` (presets or explicit k-points), ordered `[[sweeps]]`,
+`[eigensolver]`, `[solver]` (including `precision`), and `[output]`. One file describes a
+single solve or a ten-thousand-job sweep.
+
+## CLI
+
+`blaze` runs one band structure; `blaze-bulk` runs sweeps with fixed or adaptive
+threading. Output is CSV band tables (`k_index, kx, ky, k_distance, band1..bandN`), plus
+optional dielectric dumps and per-iteration convergence diagnostics as JSON.
+
+## Python: streaming without holding the GIL
+
+The `blaze2d` package exposes the PyO3 module `blaze._native`. Its central design point:
+`BulkDriver.run_streaming()` spawns a **Rust worker thread** and releases the GIL while
+compute runs. Results flow over a **crossbeam channel** to a lazy `BandResultIterator`, so
+Python iterates finished band structures while the sweep is still running, and memory
+stays flat regardless of sweep size:
+
+```python
+from blaze import BulkDriver
+
+driver = BulkDriver("sweep.toml", threads=0)   # 0 = all cores
+for result in driver.run_streaming():
+    bands = result["bands"]                    # bands[k][band], already tracked
+```
+
+The marshaling into Python dicts happens per result at the boundary: bounded, visible data
+movement ([board](/architecture/?node=if.py.channel)). A separate
+`OperatorDataExtractor` exposes the eigenvector-level quantities (velocity matrices,
+inverse-mass tensors, Born-Huang potentials) that the envelope-approximation research
+consumes.
+
+## WebAssembly: this site runs the real engine
+
+The same core compiles to wasm32 (`CpuBackend<f64>`; rustfft works unchanged, nalgebra
+replaces faer for the dense step). `WasmBulkDriver` accepts the identical TOML string and
+streams one callback per solved k-point. The [Examples](/examples) and
+[Workbench](/workbench) pages run it inside a Web Worker: every band diagram you compute
+in this browser is the production solver, not a demo.
+
+## The boundary rule
+
+All three doors obey the same discipline you can trace on
+[the board](/architecture/?node=grp.interfaces): compute stays inside Rust; boundaries
+move **results**, row by row, never intermediate state. The expensive data (eigenvector
+blocks, ε fields, scratch) never crosses a language boundary at all.
+
+</div>

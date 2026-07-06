@@ -1,0 +1,70 @@
+import { SingleCorePerformanceChart, ResolutionScalingChart } from '../../components/charts'
+
+<div className="narrow-centered">
+
+# Matrix-Free Operators
+
+*The Maxwell operator is never a matrix. Applying it IS a handful of FFTs.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+## The plane-wave basis is the FFT grid
+
+For a grid of N = nx·ny points, the eigenvector has length N and the operator would be an
+N×N dense matrix if it were ever formed. It never is. Every operator application is a
+short pipeline of FFTs and pointwise multiplications, O(N log N) instead of O(N²), and the
+only persistent state is a set of precomputed k+G tables rebuilt per k-point.
+
+## TM: two FFTs
+
+The TM operator is −∇² acting on E_z, with the permittivity on the mass side of the
+generalized problem A x = λ B x:
+
+1. forward FFT into G-space,
+2. multiply by |k+G|² in place,
+3. inverse FFT back.
+
+The mass apply B = ε is a pointwise multiply in real space. That is the entire operator.
+
+## TE: six FFTs and a tensor contraction
+
+The TE operator −∇·(ε⁻¹∇) needs the gradient, the anisotropic ε⁻¹ contraction, and the
+divergence:
+
+1. forward FFT of the potential,
+2. multiply by i(k+G) for both gradient components, two inverse FFTs,
+3. contract with the 2×2 ε⁻¹ tensor field in real space (this is where the
+   [subpixel-smoothed boundary tensors](/architecture/geometry-and-dielectric) act),
+4. two forward FFTs of the flux components,
+5. assemble the divergence in G-space, one inverse FFT.
+
+Six FFTs per application. The gradient scratch buffers (`scratch`, `grad_x`, `grad_y`) are
+**allocated once when the operator is built and reused on every apply**; the batched apply
+deliberately loops vector by vector so those buffers stay hot in L2 instead of streaming
+through a larger batch footprint. See it on
+[the board](/architecture/?node=theta.te).
+
+## Preconditioners share the machinery
+
+The TM preconditioner is a Fourier-space diagonal, 1/(|k+G|² + σ): two more FFTs. The TE
+preconditioner is the MPB-style transverse projection: six. An adaptive shift blends a
+geometric floor with a band-window estimate from the live eigenvalues, so the
+preconditioner tightens as the spectrum comes into focus.
+
+## What this buys
+
+Operator applies dominate each LOBPCG iteration (the batched A·Q step applies the operator
+to every subspace vector). Making each apply cheap, allocation-free, and cache-resident is
+the single biggest reason for the single-core numbers below.
+
+<SingleCorePerformanceChart width={650} height={420} />
+
+<ResolutionScalingChart width={1000} height={380} />
+
+→ Continue with [the eigensolver](/architecture/eigensolver) that drives these applies.
+
+</div>
