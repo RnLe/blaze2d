@@ -22,5 +22,10 @@
 **/thesis/
 /archive/
 
+# ...but the website's thesis-page figures ARE for git. The directory must
+# be un-ignored before its contents can be (git stops descending otherwise).
+!web/public/figures/thesis/
+!web/public/figures/thesis/**
+
 # Ignore verbose docs
 docs/
