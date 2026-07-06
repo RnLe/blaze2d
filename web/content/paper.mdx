@@ -1,0 +1,26 @@
+import PdfViewer from '../components/PdfViewer'
+import { getAssetPath } from '../lib/paths'
+
+<div className="narrow-centered">
+
+<span className="date">Standalone manuscript · TU Dortmund University · July 2026</span>
+
+# Blaze2D: A Custom Plane-Wave Eigensolver for Photonic Crystals
+
+*The paper — design choices, operator construction, MPB validation, and
+mixed-precision benchmarks in one self-contained manuscript.*
+
+<a href={getAssetPath('/paper/blaze2d.pdf')} target="_blank" rel="noreferrer">Download the PDF ↗</a>
+
+---
+
+</div>
+
+<div className="w-full mt-8" style={{
+  width: '1000px',
+  maxWidth: '90vw',
+  marginLeft: '50%',
+  transform: 'translateX(-50%)'
+}}>
+  <PdfViewer src="/paper/blaze2d.pdf" height="85vh" />
+</div>

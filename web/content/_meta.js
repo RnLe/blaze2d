@@ -16,6 +16,9 @@ export default {
   blaze: {
     title: 'Technical Report',
   },
+  paper: {
+    title: 'Paper',
+  },
   architecture: {
     title: 'Architecture',
   },
