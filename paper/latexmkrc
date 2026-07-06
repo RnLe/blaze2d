@@ -1,0 +1,11 @@
+# latexmk configuration — lualatex + biber, output to ./build
+$pdf_mode      = 4;       # lualatex
+$bibtex_use    = 2;       # always run biber when needed
+$out_dir       = 'build';
+$aux_dir       = 'build';
+$pdflatex      = 'lualatex %O %S';
+$lualatex      = 'lualatex %O %S';
+$biber         = 'biber %O %S';
+
+# Clean rules for `latexmk -C`
+$clean_ext  = 'bbl run.xml synctex.gz';

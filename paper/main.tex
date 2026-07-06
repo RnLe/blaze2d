@@ -1,0 +1,43 @@
+\documentclass[11pt, a4paper]{article}
+
+\input{metadata}
+\input{preamble}
+
+\title{\paperTitle}
+\author{%
+  \paperAuthor, \paperSecondAuthor \\
+  \small \paperAffiliation \\
+  \small \texttt{\paperEmail}, \texttt{\paperSecondEmail}%
+}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  Blaze2D is a two-dimensional plane-wave expansion eigensolver written
+  in Rust, developed to provide high-throughput Bloch-level data for
+  envelope-approximation studies of photonic moir{\'e} crystals.
+  As an alternative to MPB, it reproduces MPB's eigenvalues to within
+  mixed-precision solver tolerance while reducing runtime by roughly a
+  factor of two through mixed-precision arithmetic. The solver combines
+  a locally optimal block preconditioned conjugate gradient (LOBPCG)
+  eigensolver with analytic subpixel smoothing and direct TE/TM
+  operator implementations, and it exposes Bloch coefficients and
+  derived operator matrix elements directly to a Python pipeline. This
+  paper summarizes the design, validation against MPB, and benchmarks
+  of Blaze2D.
+\end{abstract}
+
+\noindent\textbf{Keywords:} \paperKeywords
+
+\vspace{1em}
+
+\input{sections/introduction}
+\input{sections/blaze2d}
+\input{sections/conclusion}
+
+\printbibliography
+
+\end{document}
