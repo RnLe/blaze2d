@@ -4,7 +4,6 @@ export default {
     display: 'hidden',
   },
 
-  overviewSep: { type: 'separator', title: 'Overview' },
   introduction: {
     title: 'Introduction',
   },
@@ -12,7 +11,7 @@ export default {
     title: "Master's Thesis",
   },
 
-  blazeSep: { type: 'separator', title: 'Blaze2D' },
+  blazeSep: { type: 'separator' },
   blaze: {
     title: 'Technical Report',
   },
@@ -32,7 +31,7 @@ export default {
     title: 'Workbench',
   },
 
-  projectSep: { type: 'separator', title: 'Project' },
+  projectSep: { type: 'separator' },
   potential: {
     title: 'Optimization Potential',
   },

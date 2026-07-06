@@ -793,9 +793,18 @@ body:not(:has(.blaze-layout)) .nextra-sidebar-container hr {
   display: none !important;
 }
 
-body:not(:has(.blaze-layout)) aside [class*="x:border-t"],
-body:not(:has(.blaze-layout)) aside [class*="border-t"],
-body:not(:has(.blaze-layout)) .nextra-sidebar [class*="border-t"],
+/* ...except the nav-menu group separators (hr inside li): light rules */
+body:not(:has(.blaze-layout)) aside li hr,
+body:not(:has(.blaze-layout)) .nextra-sidebar li hr {
+  display: block !important;
+  border: 0 !important;
+  border-top: 1px solid rgba(128, 128, 128, 0.25) !important;
+  margin: 0.625rem 0.75rem !important;
+}
+
+body:not(:has(.blaze-layout)) aside [class*="x:border-t"]:not(hr),
+body:not(:has(.blaze-layout)) aside [class*="border-t"]:not(hr),
+body:not(:has(.blaze-layout)) .nextra-sidebar [class*="border-t"]:not(hr),
 body:not(:has(.blaze-layout)) aside > div:last-child,
 body:not(:has(.blaze-layout)) aside > div {
   border-top: none !important;
