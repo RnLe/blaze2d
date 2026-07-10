@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import { FileCode2, Copy, Download, RotateCcw } from 'lucide-react';
 import { useStudioStore } from '../../../lib/studio/store';
 import { serializeConfig } from '../../../lib/studio/tomlSerialize';
-import { estimateRun, formatBytes, formatDuration } from '../../../lib/studio/estimate';
 import { copyText, downloadText } from '../../../lib/util/download';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 
@@ -29,7 +28,6 @@ export function TomlPane() {
   const setTomlFocused = useStudioStore((s) => s.setTomlFocused);
 
   const fileBase = projectName.trim().replace(/[^\w-]+/g, '_').toLowerCase() || 'crystal';
-  const estimate = useMemo(() => estimateRun(summary), [summary]);
 
   const revert = () => {
     // Discard invalid text by re-deriving from the last-good config.
@@ -89,6 +87,7 @@ export function TomlPane() {
         </div>
       ) : null}
 
+      {/* Estimates live in the status strip now; this footer stays minimal. */}
       <div className="studio__toml-footer">
         <span className="studio__toml-footer-item">
           {invalid ? (
@@ -98,34 +97,9 @@ export function TomlPane() {
           )}
         </span>
         {summary ? (
-          <>
-            <span className="studio__toml-footer-item">
-              jobs <b>{summary.jobs}</b>
-            </span>
-            <span className="studio__toml-footer-item">
-              grid <b>{summary.nx}×{summary.ny}</b>
-            </span>
-            <span className="studio__toml-footer-item">
-              bands <b>{summary.n_bands}</b>
-            </span>
-            <span className="studio__toml-footer-item">
-              k-points <b>{summary.k_points}</b>
-            </span>
-            <span className="studio__toml-footer-item">
-              precision <b>{summary.precision}</b>
-            </span>
-            {estimate ? (
-              <>
-                <span className="studio__toml-footer-item">
-                  mem <b>{formatBytes(estimate.bytesPerSolve)}</b>
-                </span>
-                <span className="studio__toml-footer-item">
-                  est <b>{formatDuration(estimate.modeledSeconds)}</b>
-                  <span style={{ color: '#5c5c5c' }}>modeled</span>
-                </span>
-              </>
-            ) : null}
-          </>
+          <span className="studio__toml-footer-item">
+            grid <b>{summary.nx}×{summary.ny}</b> · bands <b>{summary.n_bands}</b> · <b>{summary.precision}</b>
+          </span>
         ) : null}
       </div>
     </div>

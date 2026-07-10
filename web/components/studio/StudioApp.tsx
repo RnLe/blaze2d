@@ -5,6 +5,7 @@ import './studio.css';
 
 import { useStudioStore } from '../../lib/studio/store';
 import { useStudioRunner } from '../../lib/studio/useStudioRunner';
+import { useLayoutMode } from '../../lib/studio/useLayoutMode';
 import { serializeConfig } from '../../lib/studio/tomlSerialize';
 import { parseToml } from '../../lib/studio/tomlParse';
 import { loadLastOpen, saveLastOpen } from '../../lib/studio/projects';
@@ -36,6 +37,10 @@ export default function StudioApp() {
 
   const { run, abort, validate } = useStudioRunner();
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const mode = useLayoutMode();
+  const leftDrawerOpen = useStudioStore((s) => s.ui.leftDrawerOpen);
+  const setLeftDrawerOpen = useStudioStore((s) => s.setLeftDrawerOpen);
+  const setTomlVisible = useStudioStore((s) => s.setTomlVisible);
 
   // --- restore last-open project on mount ---
   useEffect(() => {
@@ -68,14 +73,18 @@ export default function StudioApp() {
   }, [tomlText, validate, applyParsedConfig]);
 
   // --- debounced autosave (name + toml) ---
-  const nameRef = useRef('');
-  nameRef.current = useStudioStore((s) => s.project.name);
+  const projectNameLive = useStudioStore((s) => s.project.name);
   useEffect(() => {
     const id = setTimeout(() => {
-      saveLastOpen({ name: nameRef.current, toml: tomlText });
+      saveLastOpen({ name: projectNameLive, toml: tomlText });
     }, 800);
     return () => clearTimeout(id);
-  }, [tomlText]);
+  }, [tomlText, projectNameLive]);
+
+  // In overlay-drawer layouts the TOML pane starts closed (it covers content).
+  useEffect(() => {
+    if (mode !== 'wide') setTomlVisible(false);
+  }, [mode, setTomlVisible]);
 
   // --- fullscreen ---
   const toggleFullscreen = useCallback(() => {
@@ -178,12 +187,15 @@ export default function StudioApp() {
         }}
         onPointerUp={onHUp}
       >
-        {/* Left: config editor */}
-        <div className="studio__col studio__col--left" style={{ flex: `0 0 ${leftFrac * 100}%` }}>
-          <ConfigPanel />
-        </div>
-
-        <div className="studio__divider" onPointerDown={onHDown('left')} onPointerUp={onHUp} />
+        {/* Left: config editor (column when wide/mid, drawer when narrow) */}
+        {mode !== 'narrow' ? (
+          <>
+            <div className="studio__col studio__col--left" style={{ flex: `0 0 ${leftFrac * 100}%` }}>
+              <ConfigPanel />
+            </div>
+            <div className="studio__divider" onPointerDown={onHDown('left')} onPointerUp={onHUp} />
+          </>
+        ) : null}
 
         {/* Center: full-height tab views over the status strip */}
         <div className="studio__col studio__col--center" style={{ flex: 1 }}>
@@ -197,7 +209,8 @@ export default function StudioApp() {
           <StatusStrip />
         </div>
 
-        {tomlVisible ? (
+        {/* Right: TOML pane (column when wide, drawer otherwise) */}
+        {mode === 'wide' && tomlVisible ? (
           <>
             <div className="studio__divider" onPointerDown={onHDown('right')} onPointerUp={onHUp} />
             <div
@@ -209,6 +222,24 @@ export default function StudioApp() {
           </>
         ) : null}
       </div>
+
+      {/* Overlay drawers for narrow layouts */}
+      {mode !== 'wide' && tomlVisible ? (
+        <>
+          <div className="studio__scrim" onClick={() => setTomlVisible(false)} />
+          <div className="studio__drawer studio__drawer--right">
+            <TomlPane />
+          </div>
+        </>
+      ) : null}
+      {mode === 'narrow' && leftDrawerOpen ? (
+        <>
+          <div className="studio__scrim" onClick={() => setLeftDrawerOpen(false)} />
+          <div className="studio__drawer studio__drawer--left">
+            <ConfigPanel />
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
