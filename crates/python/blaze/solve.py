@@ -220,21 +220,53 @@ def _generate_sweep_toml(
     k_path: list[list[float]] | None,
     threads: int,
 ) -> str:
-    """Build a TOML config string for the bulk driver."""
+    """Build a schema v2 TOML config string for the bulk driver.
+
+    Base values for non-swept parameters live in the main sections
+    (eps_bg in [geometry], resolution in [grid], polarization in [solver]);
+    v2 has no [defaults] section.
+    """
     lines = [
-        '[bulk]',
+        'schema = 2',
+        '',
+        '[run]',
         f'threads = {threads}',
         'verbose = false',
         '',
         '[solver]',
         'type = "maxwell"',
-        '',
-        '[defaults]',
-        f'eps_bg = {base_eps_bg}',
-        f'resolution = {resolution}',
         f'polarization = "{base_pol}"',
         '',
+        '[geometry]',
+        f'eps_bg = {base_eps_bg}',
+        '',
+        '[geometry.lattice]',
+        f'type = "{lattice}"',
+        'a = 1.0',
+        # v2 requires b explicitly for rectangular lattices.
+        *(['b = 1.5'] if lattice == "rectangular" else []),
+        '',
+        '[[geometry.atoms]]',
+        'pos = [0.0, 0.0]',
+        f'radius = {base_radius}',
+        f'eps_inside = {base_eps_atom}',
+        '',
+        '[grid]',
+        f'nx = {resolution}',
+        '',
+        '[path]',
     ]
+
+    if k_path is not None:
+        # Custom k-path: write explicit points
+        pts_str = ", ".join(f"[{p[0]}, {p[1]}]" for p in k_path)
+        lines.append(f'points = [{pts_str}]')
+    else:
+        # "auto" resolves per job, which also does the right thing when
+        # lattice_type is swept.
+        lines.append('preset = "auto"')
+        lines.append(f'points_per_segment = {points_per_segment}')
+    lines.append('')
 
     # Sweeps
     for sw in sweeps:
@@ -252,39 +284,6 @@ def _generate_sweep_toml(
             lines.append(f'max = {sw["max"]}')
             lines.append(f'step = {sw["step"]}')
         lines.append('')
-
-    # Geometry
-    lines.append('[geometry]')
-    lines.append(f'eps_bg = {base_eps_bg}')
-    lines.append('')
-    lines.append('[geometry.lattice]')
-    lines.append(f'type = "{lattice}"')
-    lines.append('a = 1.0')
-    lines.append('')
-    lines.append('[[geometry.atoms]]')
-    lines.append('pos = [0.0, 0.0]')
-    lines.append(f'radius = {base_radius}')
-    lines.append(f'eps_inside = {base_eps_atom}')
-    lines.append('')
-
-    # Grid
-    lines.append('[grid]')
-    lines.append(f'nx = {resolution}')
-    lines.append(f'ny = {resolution}')
-    lines.append('lx = 1.0')
-    lines.append('ly = 1.0')
-    lines.append('')
-
-    # Path
-    lines.append('[path]')
-    if k_path is not None:
-        # Custom k-path: write explicit points
-        pts_str = ", ".join(f"[{p[0]}, {p[1]}]" for p in k_path)
-        lines.append(f'points = [{pts_str}]')
-    else:
-        lines.append(f'preset = "{_PATH_PRESETS[lattice]}"')
-        lines.append(f'segments_per_leg = {points_per_segment}')
-    lines.append('')
 
     # Eigensolver
     lines.append('[eigensolver]')

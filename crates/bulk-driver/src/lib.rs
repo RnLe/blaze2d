@@ -79,9 +79,8 @@ pub use channel::{
 
 // Re-export configuration
 pub use config::{
-    BatchSettings, BulkConfig, BulkConfigNativeExt, IoMode, OutputConfig, OutputMode,
-    ParameterRange, Precision, RangeSpec, SelectiveSpec, SolverSection, SolverType, SweepSpec,
-    SweepValue,
+    BulkConfig, BulkConfigNativeExt, Config, Diagnostic, OutputConfig, OutputMode, Precision,
+    SelectiveSpec, SolverSection, SolverType, SweepSpec, SweepValue, parse_and_validate,
 };
 
 // Re-export driver

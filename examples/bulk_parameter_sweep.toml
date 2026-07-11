@@ -1,23 +1,38 @@
-# Bulk parameter sweep example using ordered [[sweeps]] syntax
-# Sweeps execute in TOML order: radius (outer) → eps_bg → polarization (inner)
-# Total: 5 radii × 5 eps × 2 pol = 50 jobs
+# Bulk parameter sweep example (config schema v2)
+# Sweeps execute in TOML order: radius (outer) -> eps_bg -> polarization (inner)
+# Total: 5 radii x 5 eps x 2 pol = 50 jobs
+#
+# Base values for non-swept parameters come from the main sections:
+# eps_bg from [geometry], resolution from [grid].nx, polarization from [solver].
 
-[bulk]
+schema = 2
+
+[run]
 threads = 8
 verbose = true
 
 [solver]
 type = "maxwell"
-
-# =============================================================================
-# DEFAULTS - Base values used when parameter is NOT being swept
-# =============================================================================
-
-[defaults]
-eps_bg = 12.0
-resolution = 32
 polarization = "TM"
-lattice_type = "square"
+
+[geometry]
+eps_bg = 12.0
+
+[geometry.lattice]
+type = "square"
+a = 1.0
+
+[[geometry.atoms]]
+pos = [0.5, 0.5]
+radius = 0.3
+eps_inside = 1.0
+
+[grid]
+nx = 32
+
+[path]
+preset = "auto"
+points_per_segment = 12
 
 # =============================================================================
 # ORDERED SWEEPS - First sweep = outermost loop
@@ -39,37 +54,13 @@ step = 1.0
 parameter = "polarization"
 values = ["TM", "TE"]
 
-# =============================================================================
-# GEOMETRY - Static structure (swept params use defaults)
-# =============================================================================
-
-[geometry]
-[geometry.lattice]
-type = "square"
-a = 1.0
-
-[[geometry.atoms]]
-pos = [0.5, 0.5]
-radius = 0.3
-eps_inside = 1.0
-
-[grid]
-nx = 32
-ny = 32
-lx = 1.0
-ly = 1.0
-
-[path]
-preset = "square"
-segments_per_leg = 12
-
 [eigensolver]
 n_bands = 8
 max_iter = 200
 tol = 1e-4
 
-[dielectric.smoothing]
-mesh_size = 4
+[dielectric]
+smoothing = "analytic"
 
 [output]
 mode = "full"

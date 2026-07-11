@@ -1,62 +1,56 @@
 # ============================================================================
-# MPB2D Bulk Driver - Streaming Mode Example
+# Blaze2D Bulk Driver - Streaming Mode Example (config schema v2)
 # ============================================================================
 #
-# Demonstrates real-time streaming output for Python/WASM consumers.
-# Results are emitted as computed, enabling live plotting and progressive UI.
-#
-# TOML RULE: Fields without [section] must appear at the very top.
+# Demonstrates selective output for Python/WASM consumers. Results are
+# emitted as computed, enabling live plotting and progressive UI.
 # ============================================================================
 
-polarization = "TM"
+schema = 2
 
 # ----------------------------------------------------------------------------
 # DRIVER
 # ----------------------------------------------------------------------------
-[bulk]
-threads = 4          # Workers (null = all cores, 1 for WASM)
+[run]
+threads = 4          # omit for all physical cores; ignored in WASM
 verbose = false
-dry_run = false
 
 [solver]
-type = "maxwell"     # "maxwell" (photonic) or "ea" (envelope approx)
+type = "maxwell"     # "maxwell" (photonic) or "operator_data" (alias "ea")
+polarization = "TM"
 
 # ----------------------------------------------------------------------------
 # GEOMETRY
 # ----------------------------------------------------------------------------
 [geometry]
-eps_bg = 12.0        # Background ε (1.0=air, 12.0=Si/GaAs)
+eps_bg = 12.0        # Background eps (1.0 = air, 12.0 = Si/GaAs)
 
 [geometry.lattice]
-type = "square"      # "square", "rectangular", "triangular", "hexagonal"
+type = "square"      # square | rectangular | triangular | oblique | custom
 a = 1.0
 
 [[geometry.atoms]]
-pos = [0.5, 0.5]     # Fractional coords [0,1)
-radius = 0.2         # In units of lattice constant a
+pos = [0.5, 0.5]     # Fractional coords, each in [0, 1)
+radius = 0.2         # In units of lattice constant a, in (0, 0.5)
 eps_inside = 1.0     # Air hole in dielectric
 
 # ----------------------------------------------------------------------------
 # COMPUTATIONAL SETTINGS
 # ----------------------------------------------------------------------------
 [grid]
-nx = 32
-ny = 32
-lx = 1.0
-ly = 1.0
+nx = 32              # ny defaults to nx
 
 [path]
-preset = "square"       # Γ→X→M→Γ (matches lattice)
-segments_per_leg = 12   # k-points per segment
+preset = "auto"          # resolves from the lattice type
+points_per_segment = 12  # k-points per segment
 
 [eigensolver]
 n_bands = 8
 tol = 1e-8
 max_iter = 200
 
-[dielectric.smoothing]
-mesh_size = 3  # Subgrid mesh size (1=no smoothing, 3=default)
-method = "analytic"  # MPB-style analytic smoothing
+[dielectric]
+smoothing = "analytic"   # analytic (default) | subgrid | none
 
 # ----------------------------------------------------------------------------
 # SWEEPS - Ordered parameter variations
@@ -75,12 +69,11 @@ step = 0.05            # 5 values: 0.15, 0.20, 0.25, 0.30, 0.35
 # ----------------------------------------------------------------------------
 [output]
 mode = "selective"     # "full" (1 CSV/job) or "selective" (merged CSV)
-io_mode = "stream"     # "sync", "batch", or "stream"
 directory = "./sweep_output"
 filename = "./sweep_results.csv"
 
 [output.selective]
-k_indices = [0, 12, 24, 36]   # Γ, X, M, Γ (0-based)
+k_indices = [0, 12, 24, 36]   # Gamma, X, M, Gamma (0-based)
 k_labels = ["Γ", "X", "M", "Γ"]
 bands = [1, 2, 3, 4]          # 1-based band indices
 
@@ -91,12 +84,12 @@ bands = [1, 2, 3, 4]          # 1-based band indices
 # Each streamed result dict contains:
 #
 #   job_index     : int           - Job number (completion order, not sweep order)
-#   result_type   : str           - "maxwell" or "ea"
+#   result_type   : str           - "maxwell"
 #   num_k_points  : int           - Length of k_path
 #   num_bands     : int           - Number of bands computed
-#   k_path        : [[kx,ky],...]  - K-points in fractional coords
+#   k_path        : [[kx,ky],...] - K-points in fractional coords
 #   distances     : [float,...]   - Cumulative path distance for plotting
-#   bands         : [[ω₁,ω₂,...],...]  - Frequencies at each k-point (ω/2π normalized)
+#   bands         : [[w1,w2,...],...] - Frequencies at each k-point (w/2pi normalized)
 #
 #   params        : dict          - Full configuration for this job
 #     eps_bg, resolution, polarization, lattice_type, atoms: [...]

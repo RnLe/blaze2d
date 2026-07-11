@@ -131,7 +131,7 @@ impl ProgressInfo {
 
 /// Main configuration for the eigensolver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct EigensolverConfig {
     /// Number of eigenvalues/eigenvectors to compute.
     pub n_bands: usize,

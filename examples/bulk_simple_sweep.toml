@@ -1,26 +1,17 @@
-# Minimal bulk sweep: radius × polarization = 10 jobs
+# Minimal bulk sweep (config schema v2): radius x polarization = 10 jobs
 
-[bulk]
+schema = 2
+
+[run]
 verbose = true
 
 [solver]
 type = "maxwell"
-
-[defaults]
-eps_bg = 13.0
-resolution = 32
-
-[[sweeps]]
-parameter = "atom0.radius"
-min = 0.2
-max = 0.4
-step = 0.05
-
-[[sweeps]]
-parameter = "polarization"
-values = ["TM", "TE"]
+polarization = "TM"
 
 [geometry]
+eps_bg = 13.0
+
 [geometry.lattice]
 type = "square"
 a = 1.0
@@ -32,13 +23,20 @@ eps_inside = 1.0
 
 [grid]
 nx = 32
-ny = 32
-lx = 1.0
-ly = 1.0
 
 [path]
-preset = "square"
-segments_per_leg = 10
+preset = "auto"
+points_per_segment = 10
+
+[[sweeps]]
+parameter = "atom0.radius"
+min = 0.2
+max = 0.4
+step = 0.05
+
+[[sweeps]]
+parameter = "polarization"
+values = ["TM", "TE"]
 
 [eigensolver]
 n_bands = 8
