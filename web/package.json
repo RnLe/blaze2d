@@ -18,6 +18,7 @@
     "clean:wasm": "rm -rf public/wasm-blaze/*",
     "deploy": "pnpm run build",
     "dev": "next dev",
+    "go": "pnpm run build:local && pnpm run serve:out",
     "hoist:benchmarks": "node scripts/hoist-benchmark-data.js",
     "serve:out": "serve out -l 3001",
     "start": "next start",
@@ -26,6 +27,7 @@
   },
   "packageManager": "pnpm@10.10.0",
   "dependencies": {
+    "@embedpdf/react-pdf-viewer": "2.14.4",
     "@mdx-js/loader": "^3.1.0",
     "@mdx-js/react": "^3.1.0",
     "@next/mdx": "^15.3.2",
