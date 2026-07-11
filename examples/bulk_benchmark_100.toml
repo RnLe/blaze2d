@@ -1,30 +1,14 @@
-# Benchmark: ~100 jobs for quick performance tests (config schema v2)
-# 2 lattices x 2 pol x 5 eps x 5 radii = 100 jobs
-# preset = "auto" resolves the k-path per job from the swept lattice type.
+# Benchmark: ~100 jobs for quick performance tests
+# 2 lattices × 2 pol × 5 eps × 5 radii = 100 jobs
 
-schema = 2
+[bulk]
 
 [solver]
 type = "maxwell"
-polarization = "TM"
 
-[geometry]
+[defaults]
 eps_bg = 8.0
-
-[geometry.lattice]
-type = "square"
-a = 1.0
-
-[[geometry.atoms]]
-pos = [0.0, 0.0]
-radius = 0.30
-eps_inside = 1.0
-
-[grid]
-nx = 32
-
-[path]
-preset = "auto"
+resolution = 32
 
 [[sweeps]]
 parameter = "lattice_type"
@@ -45,6 +29,22 @@ parameter = "atom0.radius"
 min = 0.10
 max = 0.30
 step = 0.05
+
+[geometry]
+[geometry.lattice]
+type = "square"
+a = 1.0
+
+[[geometry.atoms]]
+pos = [0.0, 0.0]
+radius = 0.30
+eps_inside = 1.0
+
+[grid]
+nx = 32
+ny = 32
+lx = 1.0
+ly = 1.0
 
 [eigensolver]
 n_bands = 10

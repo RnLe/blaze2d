@@ -176,7 +176,10 @@ fn main() {
 
     // Apply CLI overrides
     if cli.verbose {
-        config.run.verbose = true;
+        config.bulk.verbose = true;
+    }
+    if cli.dry_run && !cli.stress_test {
+        config.bulk.dry_run = true;
     }
     if let Some(ref output) = cli.output {
         config.output.directory = output.clone();
@@ -192,7 +195,7 @@ fn main() {
     // Determine thread mode from CLI
     let requested_threads = if cli.threads == 0 {
         // 0 means use default from config, or all cores
-        config.run.threads.map(|t| t as i32)
+        config.bulk.threads.map(|t| t as i32)
     } else {
         Some(cli.threads)
     };

@@ -1,8 +1,5 @@
 # Square lattice, eps=13, r=0.3, TE, 24×24 grid
 
-schema = 2
-
-[solver]
 polarization = "TE"
 
 [geometry]
@@ -25,7 +22,7 @@ ly = 1.0
 
 [path]
 preset = "square"
-points_per_segment = 4
+segments_per_leg = 4
 
 [eigensolver]
 n_bands = 8

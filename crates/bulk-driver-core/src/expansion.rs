@@ -1,39 +1,52 @@
-//! Job expansion from schema v2 configurations.
+//! Job expansion from parameter ranges.
 //!
-//! Takes a validated [`Config`] and expands its `[[sweeps]]` axes into a list
-//! of concrete [`ExpandedJob`]s ready for execution.
+//! This module takes a `BulkConfig` and expands all parameter ranges into
+//! a list of individual `ExpandedJob` configurations ready for execution.
 //!
-//! Sweeps form nested loops in TOML order; the first entry is the outermost
-//! loop (changes slowest):
+//! # Expansion Modes
+//!
+//! ## Ordered Sweeps (New Format)
+//!
+//! When using `[[sweeps]]` arrays, jobs are expanded in **TOML order**.
+//! The first sweep is the outermost loop, the last is the innermost.
 //!
 //! ```text
-//! [[sweeps]] parameter = "atom0.radius"   # outer loop
-//! [[sweeps]] parameter = "eps_bg"         # inner loop
+//! [[sweeps]] parameter = "radius"    # outer loop (changes slowest)
+//! [[sweeps]] parameter = "eps_bg"    # inner loop (changes fastest)
 //!
-//! job 0: radius=0.2, eps=10
-//! job 1: radius=0.2, eps=11
-//! job 2: radius=0.2, eps=12
-//! job 3: radius=0.3, eps=10
-//! ...
+//! Result order:
+//!   job 0: radius=0.2, eps=10
+//!   job 1: radius=0.2, eps=11
+//!   job 2: radius=0.2, eps=12
+//!   job 3: radius=0.3, eps=10
+//!   job 4: radius=0.3, eps=11
+//!   ...
 //! ```
 //!
-//! Base values come from the main sections: `eps_bg` from `[geometry]`,
-//! `resolution` from `[grid].nx`, `polarization` from `[solver]`, the lattice
-//! type from `[geometry.lattice]`, and atom parameters from
-//! `[[geometry.atoms]]`. All values (base and swept) were already validated at
-//! parse time, so expansion cannot fail on a validated config.
+//! ## Legacy Ranges
+//!
+//! The old `[ranges]` format uses a hardcoded loop order:
+//! eps_bg → resolution → polarization → lattice_type → atoms
+//!
+//! # Solver Types
+//!
+//! - **Maxwell**: Expands over eps_bg, resolution, polarization, lattice_type, atoms.
+//! - **OperatorData**: Operator-data extraction — currently a single job (k₀, registry).
+
+use std::collections::HashMap;
 
 use blaze2d_core::{
     bandstructure::BandStructureJob,
-    brillouin::generate_path,
     geometry::{BasisAtom, Geometry2D},
     grid::Grid2D,
+    lattice::Lattice2D,
     polarization::Polarization,
+    symmetry::{self, PathType},
 };
 
 use crate::config::{
-    BaseAtom, Config, LatticeKind, SolverType, SweepDimension, SweepValue, parse_atom_path,
-    parse_swept_lattice_kind,
+    AtomRanges, BaseAtom, BulkConfig, LatticeTypeSpec, SolverType, SweepDimension, SweepValue,
+    parse_atom_path,
 };
 
 // ============================================================================
@@ -41,15 +54,18 @@ use crate::config::{
 // ============================================================================
 
 /// A single expanded job with all parameters resolved to concrete values.
+///
+/// This includes metadata about which parameter values were used, enabling
+/// proper labeling in output files.
 #[derive(Debug, Clone)]
 pub struct ExpandedJob {
-    /// Unique job index (0-based).
+    /// Unique job index (0-based)
     pub index: usize,
 
-    /// The job to execute.
+    /// The job to execute (either Maxwell or EA)
     pub job_type: ExpandedJobType,
 
-    /// Parameter values used for this job (for output columns).
+    /// Parameter values used for this job (for output columns)
     pub params: JobParams,
 }
 
@@ -66,19 +82,19 @@ impl ExpandedJob {
 /// Type of job to execute.
 #[derive(Debug, Clone)]
 pub enum ExpandedJobType {
-    /// Maxwell band structure job (photonic crystals).
+    /// Maxwell band structure job (photonic crystals)
     Maxwell(BandStructureJob),
-    /// Operator-data extraction job.
+    /// Operator-data extraction job (Maxwell → multi-band ingredients)
     OperatorData(OperatorDataJobSpec),
 }
 
-/// Operator-data extraction job specification.
+/// EA Hamiltonian extraction job specification.
 ///
-/// Everything needed to run the Maxwell eigenproblem at one (R, k₀) point and
-/// extract the multi-band operator-data ingredients.
+/// Defines everything needed to run the Maxwell eigenproblem at one (R, k₀) point
+/// and extract the multi-band EA Hamiltonian ingredients.
 #[derive(Debug, Clone)]
 pub struct OperatorDataJobSpec {
-    /// The 2D photonic crystal geometry.
+    /// The 2D photonic crystal geometry (atoms at the registry position).
     pub geom: Geometry2D,
     /// Computational grid.
     pub grid: Grid2D,
@@ -92,9 +108,9 @@ pub struct OperatorDataJobSpec {
     pub n_retained: usize,
     /// Number of remote bands.
     pub n_remote: usize,
-    /// Whether to compute the mass tensor.
+    /// Whether to compute mass tensor.
     pub compute_mass_tensor: bool,
-    /// Whether to compute the Born-Huang potential.
+    /// Whether to compute Born–Huang potential.
     pub compute_born_huang: bool,
     /// Whether to compute the slow-coefficient potential.
     pub compute_slow_coefficient: bool,
@@ -110,46 +126,52 @@ pub struct OperatorDataJobSpec {
     pub max_iterations: usize,
 }
 
-/// Concrete parameter values for a job (for output labeling).
+/// Concrete parameter values for a job.
+///
+/// These are stored for inclusion in output files, allowing easy identification
+/// of which configuration produced which results.
 #[derive(Debug, Clone)]
 pub struct JobParams {
-    /// Background epsilon.
+    /// Background epsilon
     pub eps_bg: f64,
 
-    /// Resolution (nx = ny for swept resolutions; nx otherwise).
+    /// Resolution (nx = ny)
     pub resolution: usize,
 
-    /// Polarization.
+    /// Polarization
     pub polarization: Polarization,
 
-    /// Lattice type name.
+    /// Lattice type (if from range)
     pub lattice_type: Option<String>,
 
-    /// Per-atom parameters.
+    /// Per-atom parameters
     pub atoms: Vec<AtomParams>,
 
-    /// Sweep values in loop order: (parameter_name, value).
+    /// Sweep values in order (for new format).
+    /// Each entry is (parameter_name, value_string).
+    /// Order matches the sweep order from config.
+    #[allow(dead_code)]
     pub sweep_values: Vec<(String, SweepValue)>,
 }
 
 /// Parameters for a single atom.
 #[derive(Debug, Clone)]
 pub struct AtomParams {
-    /// Atom index (0-based).
+    /// Atom index (0-based)
     pub index: usize,
 
-    /// Position (fractional coordinates).
+    /// Position (fractional coordinates)
     pub pos: [f64; 2],
 
-    /// Radius (units of the lattice constant).
+    /// Radius
     pub radius: f64,
 
-    /// Epsilon inside.
+    /// Epsilon inside
     pub eps_inside: f64,
 }
 
 impl JobParams {
-    /// Flat list of (name, value) pairs for CSV headers.
+    /// Get a flat list of (name, value) pairs for CSV headers.
     pub fn to_columns(&self) -> Vec<(&'static str, String)> {
         let mut cols = vec![
             ("eps_bg", format!("{:.6}", self.eps_bg)),
@@ -184,7 +206,7 @@ impl JobParams {
         cols
     }
 
-    /// Sweep order string for output (e.g. `"atom0.radius=0.2|eps_bg=10"`).
+    /// Get sweep order string for output (e.g., "atom0.radius=0.2|eps_bg=10.0")
     pub fn sweep_order_string(&self) -> String {
         self.sweep_values
             .iter()
@@ -195,42 +217,80 @@ impl JobParams {
 }
 
 // ============================================================================
-// Expansion
+// Expansion Logic
 // ============================================================================
 
-/// Expand a validated configuration into individual jobs.
-pub fn expand_jobs(config: &Config) -> Vec<ExpandedJob> {
+/// Expand a bulk configuration into individual jobs.
+///
+/// This function dispatches based on configuration format and solver type:
+///
+/// - **New format** (`[[sweeps]]`): Uses `expand_ordered_jobs` for user-defined loop order
+/// - **Legacy format** (`[ranges]`): Uses `expand_maxwell_jobs` with hardcoded order
+/// - **OperatorData solver**: Single job per (R, k₀) point.
+pub fn expand_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
     match config.solver_type() {
-        SolverType::Maxwell => expand_maxwell_jobs(config),
+        SolverType::Maxwell => {
+            if config.uses_ordered_sweeps() {
+                expand_ordered_jobs(config)
+            } else {
+                expand_maxwell_jobs_legacy(config)
+            }
+        }
         SolverType::OperatorData => expand_operator_data_jobs(config),
     }
 }
 
-fn expand_maxwell_jobs(config: &Config) -> Vec<ExpandedJob> {
-    let dimensions: Vec<SweepDimension> = config
-        .build_sweep_dimensions()
-        .expect("sweeps were validated at parse time");
+// ============================================================================
+// Ordered Expansion (New Format)
+// ============================================================================
 
+/// Expand jobs using ordered sweeps from `[[sweeps]]` array.
+///
+/// Jobs are generated with the first sweep as outermost loop and last as innermost.
+/// This gives users full control over the parameter variation order.
+fn expand_ordered_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
+    // Build sweep dimensions in order
+    let dimensions: Vec<SweepDimension> = match config.build_sweep_dimensions() {
+        Ok(dims) => dims,
+        Err(e) => {
+            eprintln!("Warning: failed to build sweep dimensions: {}", e);
+            return vec![];
+        }
+    };
+
+    // If no sweeps, return single job with defaults
     if dimensions.is_empty() {
-        return vec![create_job_from_sweep_values(config, &[], 0)];
+        return vec![create_single_default_job(config)];
     }
 
+    // Calculate total number of combinations
     let total: usize = dimensions.iter().map(|d| d.len().max(1)).product();
+
+    // Generate all index combinations
     let combinations = generate_ordered_indices(&dimensions);
 
     let mut jobs = Vec::with_capacity(total);
+
     for (job_index, indices) in combinations.into_iter().enumerate() {
+        // Build sweep values for this combination
         let sweep_values: Vec<(String, SweepValue)> = dimensions
             .iter()
             .zip(indices.iter())
             .map(|(dim, &idx)| (dim.name.clone(), dim.values[idx].clone()))
             .collect();
-        jobs.push(create_job_from_sweep_values(config, &sweep_values, job_index));
+
+        // Create the job
+        let job = create_job_from_sweep_values(config, &sweep_values, job_index);
+        jobs.push(job);
     }
+
     jobs
 }
 
-/// Generate all index combinations, first dimension outermost.
+/// Generate all index combinations for the given dimensions.
+///
+/// The first dimension is the outermost loop (changes slowest),
+/// the last dimension is the innermost loop (changes fastest).
 fn generate_ordered_indices(dimensions: &[SweepDimension]) -> Vec<Vec<usize>> {
     if dimensions.is_empty() {
         return vec![vec![]];
@@ -238,11 +298,14 @@ fn generate_ordered_indices(dimensions: &[SweepDimension]) -> Vec<Vec<usize>> {
 
     let total: usize = dimensions.iter().map(|d| d.len().max(1)).product();
     let mut result = Vec::with_capacity(total);
+
+    // Start with all zeros
     let mut indices: Vec<usize> = vec![0; dimensions.len()];
 
     loop {
         result.push(indices.clone());
 
+        // Increment indices from right to left (innermost to outermost)
         let mut carry = true;
         for i in (0..dimensions.len()).rev() {
             if carry {
@@ -255,6 +318,8 @@ fn generate_ordered_indices(dimensions: &[SweepDimension]) -> Vec<Vec<usize>> {
                 }
             }
         }
+
+        // If we carried all the way through, we're done
         if carry {
             break;
         }
@@ -263,20 +328,30 @@ fn generate_ordered_indices(dimensions: &[SweepDimension]) -> Vec<Vec<usize>> {
     result
 }
 
-/// Create one job from base values plus the given sweep overrides.
+/// Create a single job from sweep values.
 fn create_job_from_sweep_values(
-    config: &Config,
+    config: &BulkConfig,
     sweep_values: &[(String, SweepValue)],
     job_index: usize,
 ) -> ExpandedJob {
-    // Base values from the main sections.
-    let mut eps_bg = config.geometry.eps_bg;
-    let mut resolution_override: Option<usize> = None;
-    let mut polarization = config.solver.polarization;
-    let mut lattice_kind = config.geometry.lattice.kind;
-    let mut atoms: Vec<BaseAtom> = config.geometry.atoms.clone();
+    // Get base values from defaults or geometry
+    let geometry = config.effective_geometry();
 
-    // Apply sweep overrides (all values pre-validated at parse time).
+    let mut eps_bg = geometry.map(|g| g.eps_bg).unwrap_or(12.0);
+    let mut resolution = config.effective_resolution();
+    let mut polarization = config.effective_polarization();
+    let mut lattice_type: Option<LatticeTypeSpec> =
+        geometry.and_then(|g| g.lattice.lattice_type.clone());
+
+    // Build atom parameters from base
+    let base_atoms = geometry.map(|g| g.atoms.clone()).unwrap_or_default();
+    let mut atom_params: HashMap<usize, (f64, f64, f64, f64)> = base_atoms
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (i, (a.pos[0], a.pos[1], a.radius, a.eps_inside)))
+        .collect();
+
+    // Apply sweep values
     for (param, value) in sweep_values {
         match param.as_str() {
             "eps_bg" => {
@@ -286,68 +361,110 @@ fn create_job_from_sweep_values(
             }
             "resolution" => {
                 if let Some(v) = value.as_i64() {
-                    resolution_override = Some(v as usize);
+                    resolution = v as usize;
                 }
             }
             "polarization" => {
                 if let Some(s) = value.as_str() {
                     polarization = match s.to_uppercase().as_str() {
+                        "TM" => Polarization::TM,
                         "TE" => Polarization::TE,
-                        _ => Polarization::TM,
+                        _ => polarization,
                     };
                 }
             }
             "lattice_type" => {
-                if let Some(kind) = value.as_str().and_then(parse_swept_lattice_kind) {
-                    lattice_kind = kind;
+                if let Some(s) = value.as_str() {
+                    lattice_type = Some(match s.to_lowercase().as_str() {
+                        "square" => LatticeTypeSpec::Square,
+                        "rectangular" => LatticeTypeSpec::Rectangular,
+                        "triangular" => LatticeTypeSpec::Triangular,
+                        "hexagonal" => LatticeTypeSpec::Hexagonal,
+                        _ => LatticeTypeSpec::Square,
+                    });
                 }
             }
-            _ => {
+            _ if param.starts_with("atom") => {
                 if let Some((atom_idx, prop)) = parse_atom_path(param) {
-                    let atom = atoms
-                        .get_mut(atom_idx)
-                        .expect("atom references were validated at parse time");
+                    let entry = atom_params.entry(atom_idx).or_insert((0.5, 0.5, 0.3, 1.0));
                     if let Some(v) = value.as_f64() {
                         match prop {
-                            "pos_x" => atom.pos[0] = v,
-                            "pos_y" => atom.pos[1] = v,
-                            "radius" => atom.radius = v,
-                            "eps_inside" => atom.eps_inside = v,
+                            "pos_x" => entry.0 = v,
+                            "pos_y" => entry.1 = v,
+                            "radius" => entry.2 = v,
+                            "eps_inside" => entry.3 = v,
                             _ => {}
                         }
                     }
                 }
             }
+            _ => {}
         }
     }
 
-    // Build the runtime pieces.
-    let kind_override = (lattice_kind != config.geometry.lattice.kind).then_some(lattice_kind);
-    let lattice = config.geometry.lattice.build(kind_override);
-    let basis_atoms: Vec<BasisAtom> = atoms
+    // Build atoms list
+    let max_atom_idx = atom_params.keys().max().copied().unwrap_or(0);
+    let atoms: Vec<AtomParams> = (0..=max_atom_idx)
+        .map(|i| {
+            let (px, py, r, eps) = atom_params.get(&i).copied().unwrap_or((0.5, 0.5, 0.3, 1.0));
+            AtomParams {
+                index: i,
+                pos: [px, py],
+                radius: r,
+                eps_inside: eps,
+            }
+        })
+        .collect();
+
+    // Build BaseAtom list for job creation
+    let base_atom_list: Vec<BaseAtom> = atoms
         .iter()
-        .map(|a| BasisAtom {
+        .map(|a| BaseAtom {
             pos: a.pos,
             radius: a.radius,
             eps_inside: a.eps_inside,
         })
         .collect();
-    let geometry = Geometry2D {
-        lattice,
-        eps_bg,
-        atoms: basis_atoms,
-    };
-    let grid = config.grid.to_grid(resolution_override);
-    let k_path = resolve_k_path(config, lattice_kind);
 
-    let job = BandStructureJob {
-        geom: geometry,
-        grid,
-        pol: polarization,
-        k_path,
-        eigensolver: config.eigensolver.clone(),
-        dielectric: config.dielectric.to_options(),
+    // Create the Maxwell job
+    let job = create_maxwell_job(
+        config,
+        eps_bg,
+        resolution,
+        polarization,
+        lattice_type.as_ref(),
+        &base_atom_list,
+    );
+
+    let params = JobParams {
+        eps_bg,
+        resolution,
+        polarization,
+        lattice_type: lattice_type.map(|lt| lt.to_string()),
+        atoms,
+        sweep_values: sweep_values.to_vec(),
     };
+
+    ExpandedJob {
+        index: job_index,
+        job_type: ExpandedJobType::Maxwell(job),
+        params,
+    }
+}
+
+/// Create a single job with default parameters (no sweeps).
+fn create_single_default_job(config: &BulkConfig) -> ExpandedJob {
+    let geometry = config.effective_geometry().expect("geometry required");
+    let atoms: Vec<BaseAtom> = geometry.atoms.clone();
+
+    let job = create_maxwell_job(
+        config,
+        geometry.eps_bg,
+        config.effective_resolution(),
+        config.effective_polarization(),
+        geometry.lattice.lattice_type.as_ref(),
+        &atoms,
+    );
 
     let atom_params: Vec<AtomParams> = atoms
         .iter()
@@ -361,52 +478,143 @@ fn create_job_from_sweep_values(
         .collect();
 
     let params = JobParams {
-        eps_bg,
-        resolution: grid_resolution(&job.grid),
-        polarization,
-        lattice_type: Some(lattice_kind.to_string()),
+        eps_bg: geometry.eps_bg,
+        resolution: config.effective_resolution(),
+        polarization: config.effective_polarization(),
+        lattice_type: geometry
+            .lattice
+            .lattice_type
+            .as_ref()
+            .map(|lt| lt.to_string()),
         atoms: atom_params,
-        sweep_values: sweep_values.to_vec(),
+        sweep_values: vec![],
     };
 
     ExpandedJob {
-        index: job_index,
+        index: 0,
         job_type: ExpandedJobType::Maxwell(job),
         params,
     }
 }
 
-fn grid_resolution(grid: &Grid2D) -> usize {
-    grid.nx
-}
+// ============================================================================
+// Legacy Expansion
+// ============================================================================
 
-/// Resolve the k-path for a job's effective lattice kind.
-fn resolve_k_path(config: &Config, lattice_kind: LatticeKind) -> Vec<[f64; 2]> {
-    let path = config
-        .path
+/// Expand Maxwell solver jobs over all parameter combinations (legacy format).
+///
+/// Uses hardcoded loop order: eps_bg → resolution → polarization → lattice_type → atoms
+fn expand_maxwell_jobs_legacy(config: &BulkConfig) -> Vec<ExpandedJob> {
+    let ranges = &config.ranges;
+
+    // Geometry is required for Maxwell
+    let geometry = config
+        .geometry
         .as_ref()
-        .expect("validated: Maxwell solver requires [path]");
+        .expect("Maxwell solver requires geometry");
 
-    if !path.points.is_empty() {
-        return path.points.clone();
+    // Collect all parameter axes
+    let eps_bg_values = ranges
+        .eps_bg
+        .as_ref()
+        .map(|r| r.values())
+        .unwrap_or_else(|| vec![geometry.eps_bg]);
+
+    let resolution_values: Vec<usize> = ranges
+        .resolution
+        .as_ref()
+        .map(|r| r.values().into_iter().map(|v| v.round() as usize).collect())
+        .unwrap_or_else(|| vec![config.grid.nx]);
+
+    let polarization_values = ranges
+        .polarization
+        .clone()
+        .unwrap_or_else(|| vec![config.polarization]);
+
+    let lattice_type_values = ranges.lattice_type.clone();
+
+    // Collect atom parameter axes
+    let atom_configs = collect_atom_configs_legacy(config);
+
+    // Calculate total combinations
+    let total = eps_bg_values.len()
+        * resolution_values.len()
+        * polarization_values.len()
+        * lattice_type_values.as_ref().map(|v| v.len()).unwrap_or(1)
+        * atom_configs
+            .iter()
+            .map(|a| a.len())
+            .product::<usize>()
+            .max(1);
+
+    let mut jobs = Vec::with_capacity(total);
+    let mut index = 0;
+
+    // Iterate over all combinations (hardcoded order)
+    for &eps_bg in &eps_bg_values {
+        for &resolution in &resolution_values {
+            for &pol in &polarization_values {
+                let lattice_iter: Box<dyn Iterator<Item = Option<&LatticeTypeSpec>>> =
+                    if let Some(ref types) = lattice_type_values {
+                        Box::new(types.iter().map(Some))
+                    } else {
+                        Box::new(std::iter::once(None))
+                    };
+
+                for lattice_type in lattice_iter {
+                    // Iterate over atom parameter combinations
+                    for atom_combo in atom_combinations(&atom_configs) {
+                        let job = create_maxwell_job(
+                            config,
+                            eps_bg,
+                            resolution,
+                            pol,
+                            lattice_type,
+                            &atom_combo,
+                        );
+
+                        let params = JobParams {
+                            eps_bg,
+                            resolution,
+                            polarization: pol,
+                            lattice_type: lattice_type.map(|lt| lt.to_string()),
+                            atoms: atom_combo
+                                .iter()
+                                .enumerate()
+                                .map(|(i, a)| AtomParams {
+                                    index: i,
+                                    pos: a.pos,
+                                    radius: a.radius,
+                                    eps_inside: a.eps_inside,
+                                })
+                                .collect(),
+                            sweep_values: vec![], // Legacy format doesn't track sweep order
+                        };
+
+                        jobs.push(ExpandedJob {
+                            index,
+                            job_type: ExpandedJobType::Maxwell(job),
+                            params,
+                        });
+                        index += 1;
+                    }
+                }
+            }
+        }
     }
 
-    let preset = path
-        .preset
-        .expect("validated: [path] has preset or points");
-    let brillouin = preset
-        .resolve(lattice_kind)
-        .expect("validated: presets require a named lattice type");
-    generate_path(&brillouin, path.points_per_segment())
+    jobs
 }
 
-/// Expand operator-data extraction jobs (single job at the origin registry).
-fn expand_operator_data_jobs(config: &Config) -> Vec<ExpandedJob> {
-    let od = &config.operator_data;
+/// Expand operator-data extraction jobs.
+fn expand_operator_data_jobs(config: &BulkConfig) -> Vec<ExpandedJob> {
+    let ea_ham = &config.operator_data;
+    let geometry_config = config.geometry.as_ref().expect(
+        "geometry section required for ea_hamiltonian solver",
+    );
 
-    let lattice = config.geometry.lattice.build(None);
-    let basis_atoms: Vec<BasisAtom> = config
-        .geometry
+    let lattice = build_lattice(&geometry_config.lattice, None);
+    let basis_atoms: Vec<BasisAtom> = geometry_config
         .atoms
         .iter()
         .map(|a| BasisAtom {
@@ -418,49 +626,41 @@ fn expand_operator_data_jobs(config: &Config) -> Vec<ExpandedJob> {
 
     let geom = Geometry2D {
         lattice,
-        eps_bg: config.geometry.eps_bg,
+        eps_bg: geometry_config.eps_bg,
         atoms: basis_atoms,
     };
-    let grid = config.grid.to_grid(None);
-    let pol = config.solver.polarization;
+
+    let grid = Grid2D::new(config.grid.nx, config.grid.ny, config.grid.lx, config.grid.ly);
+
+    let pol = config
+        .defaults
+        .polarization
+        .unwrap_or(Polarization::TE);
 
     let job_spec = OperatorDataJobSpec {
         geom,
         grid,
         pol,
-        k0: od.k0,
-        registry: [0.0, 0.0],
-        n_retained: od.n_retained,
-        n_remote: od.n_remote,
-        compute_mass_tensor: od.compute_mass_tensor,
-        compute_born_huang: od.compute_born_huang,
-        compute_slow_coefficient: od.compute_slow_coefficient,
-        compute_r_derivatives: od.compute_r_derivatives,
-        atom_index: od.atom_index,
-        fd_step: od.fd_step,
+        k0: ea_ham.k0,
+        registry: [0.0, 0.0], // single job at origin
+        n_retained: ea_ham.n_retained,
+        n_remote: ea_ham.n_remote,
+        compute_mass_tensor: ea_ham.compute_mass_tensor,
+        compute_born_huang: ea_ham.compute_born_huang,
+        compute_slow_coefficient: ea_ham.compute_slow_coefficient,
+        compute_r_derivatives: ea_ham.compute_r_derivatives,
+        atom_index: ea_ham.atom_index,
+        fd_step: ea_ham.fd_step,
         tolerance: config.eigensolver.tol,
         max_iterations: config.eigensolver.max_iter,
     };
 
-    let atom_params: Vec<AtomParams> = config
-        .geometry
-        .atoms
-        .iter()
-        .enumerate()
-        .map(|(i, a)| AtomParams {
-            index: i,
-            pos: a.pos,
-            radius: a.radius,
-            eps_inside: a.eps_inside,
-        })
-        .collect();
-
     let params = JobParams {
-        eps_bg: config.geometry.eps_bg,
+        eps_bg: geometry_config.eps_bg,
         resolution: config.grid.nx,
         polarization: pol,
-        lattice_type: Some(config.geometry.lattice.kind.to_string()),
-        atoms: atom_params,
+        lattice_type: None,
+        atoms: vec![],
         sweep_values: vec![],
     };
 
@@ -472,127 +672,379 @@ fn expand_operator_data_jobs(config: &Config) -> Vec<ExpandedJob> {
 }
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Collect possible configurations for each atom (legacy format).
+fn collect_atom_configs_legacy(config: &BulkConfig) -> Vec<Vec<BaseAtom>> {
+    let geometry = match &config.geometry {
+        Some(g) => g,
+        None => return vec![vec![]],
+    };
+
+    let base_atoms = &geometry.atoms;
+    let atom_ranges = &config.ranges.atoms;
+
+    if base_atoms.is_empty() {
+        return vec![vec![]];
+    }
+
+    base_atoms
+        .iter()
+        .enumerate()
+        .map(|(i, base)| {
+            let ranges = atom_ranges.get(i);
+            expand_atom_params(base, ranges)
+        })
+        .collect()
+}
+
+/// Expand a single atom's parameters based on ranges.
+fn expand_atom_params(base: &BaseAtom, ranges: Option<&AtomRanges>) -> Vec<BaseAtom> {
+    let ranges = match ranges {
+        Some(r) => r,
+        None => return vec![base.clone()],
+    };
+
+    let radius_values = ranges
+        .radius
+        .as_ref()
+        .map(|r| r.values())
+        .unwrap_or_else(|| vec![base.radius]);
+
+    let pos_x_values = ranges
+        .pos_x
+        .as_ref()
+        .map(|r| r.values())
+        .unwrap_or_else(|| vec![base.pos[0]]);
+
+    let pos_y_values = ranges
+        .pos_y
+        .as_ref()
+        .map(|r| r.values())
+        .unwrap_or_else(|| vec![base.pos[1]]);
+
+    let eps_values = ranges
+        .eps_inside
+        .as_ref()
+        .map(|r| r.values())
+        .unwrap_or_else(|| vec![base.eps_inside]);
+
+    let mut atoms = Vec::new();
+
+    for &radius in &radius_values {
+        for &pos_x in &pos_x_values {
+            for &pos_y in &pos_y_values {
+                for &eps in &eps_values {
+                    atoms.push(BaseAtom {
+                        pos: [pos_x, pos_y],
+                        radius,
+                        eps_inside: eps,
+                    });
+                }
+            }
+        }
+    }
+
+    atoms
+}
+
+/// Generate all combinations of atom configurations.
+fn atom_combinations(atom_configs: &[Vec<BaseAtom>]) -> Vec<Vec<BaseAtom>> {
+    if atom_configs.is_empty() {
+        return vec![vec![]];
+    }
+
+    let mut result = vec![vec![]];
+
+    for configs in atom_configs {
+        let mut new_result = Vec::new();
+        for existing in &result {
+            for config in configs {
+                let mut combo = existing.clone();
+                combo.push(config.clone());
+                new_result.push(combo);
+            }
+        }
+        result = new_result;
+    }
+
+    result
+}
+
+/// Create a BandStructureJob from resolved parameters.
+fn create_maxwell_job(
+    config: &BulkConfig,
+    eps_bg: f64,
+    resolution: usize,
+    polarization: Polarization,
+    lattice_type: Option<&LatticeTypeSpec>,
+    atoms: &[BaseAtom],
+) -> BandStructureJob {
+    let geometry_config = config
+        .geometry
+        .as_ref()
+        .expect("geometry required for Maxwell solver");
+
+    // Build lattice
+    let lattice = build_lattice(&geometry_config.lattice, lattice_type);
+
+    // Build atoms
+    let basis_atoms: Vec<BasisAtom> = atoms
+        .iter()
+        .map(|a| BasisAtom {
+            pos: a.pos,
+            radius: a.radius,
+            eps_inside: a.eps_inside,
+        })
+        .collect();
+
+    // Build geometry
+    let geometry = Geometry2D {
+        lattice,
+        eps_bg,
+        atoms: basis_atoms,
+    };
+
+    // Build grid
+    let grid = Grid2D::new(resolution, resolution, config.grid.lx, config.grid.ly);
+
+    // Build k-path
+    let k_path = if !config.k_path.is_empty() {
+        config.k_path.clone()
+    } else if let Some(ref spec) = config.path {
+        // First check for explicit k_path in path spec
+        if !spec.k_path.is_empty() {
+            spec.k_path.clone()
+        } else if let Some(ref preset) = spec.preset {
+            // Use path preset with appropriate mapping for lattice type
+            let path_type = match preset {
+                blaze2d_core::io::PathPreset::Square => PathType::Square,
+                blaze2d_core::io::PathPreset::Hexagonal
+                | blaze2d_core::io::PathPreset::Triangular => PathType::Hexagonal,
+                blaze2d_core::io::PathPreset::Rectangular => PathType::Custom(
+                    blaze2d_core::brillouin::BrillouinPath::Rectangular.raw_k_points(),
+                ),
+            };
+            symmetry::standard_path(&geometry.lattice, path_type, spec.segments_per_leg)
+        } else {
+            // No preset specified in path spec, use default square path
+            symmetry::standard_path(&geometry.lattice, PathType::Square, 12)
+        }
+    } else {
+        // Default: use square path
+        symmetry::standard_path(&geometry.lattice, PathType::Square, 12)
+    };
+
+    BandStructureJob {
+        geom: geometry,
+        grid,
+        pol: polarization,
+        k_path,
+        eigensolver: config.eigensolver.clone(),
+        dielectric: config.dielectric.clone(),
+    }
+}
+
+/// Build a Lattice2D from base configuration and optional type override.
+fn build_lattice(
+    base: &crate::config::BaseLattice,
+    type_override: Option<&LatticeTypeSpec>,
+) -> Lattice2D {
+    // If explicit vectors are given, use them
+    if let (Some(a1), Some(a2)) = (base.a1, base.a2) {
+        return Lattice2D::oblique(a1, a2);
+    }
+
+    // Determine lattice type
+    let lattice_type = type_override
+        .or(base.lattice_type.as_ref())
+        .unwrap_or(&LatticeTypeSpec::Square);
+
+    match lattice_type {
+        LatticeTypeSpec::Square => Lattice2D::square(base.a),
+        LatticeTypeSpec::Rectangular => {
+            Lattice2D::rectangular(base.a, base.b.unwrap_or(base.a * 1.5))
+        }
+        LatticeTypeSpec::Triangular | LatticeTypeSpec::Hexagonal => Lattice2D::hexagonal(base.a),
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{
+        BaseGeometry, BulkSection, DefaultsConfig, OperatorDataDriverConfig,
+        OutputConfig, ParameterRange, RangeSpec, SolverSection, SweepSpec,
+    };
+    use blaze2d_core::{
+        dielectric::DielectricOptions, eigensolver::EigensolverConfig, io::PathSpec,
+    };
 
-    const BASE: &str = r#"
-schema = 2
-
-[geometry]
-eps_bg = 12.0
-
-[geometry.lattice]
-type = "square"
-
-[[geometry.atoms]]
-pos = [0.5, 0.5]
-radius = 0.3
-
-[grid]
-nx = 32
-
-[path]
-preset = "auto"
-"#;
-
-    fn config(extra: &str) -> Config {
-        Config::from_str(&format!("{}\n{}", BASE, extra)).expect("test config must parse")
+    fn make_test_config() -> BulkConfig {
+        BulkConfig {
+            bulk: BulkSection::default(),
+            solver: SolverSection::default(),
+            operator_data: OperatorDataDriverConfig::default(),
+            sweeps: vec![],
+            defaults: DefaultsConfig::default(),
+            geometry: Some(BaseGeometry {
+                eps_bg: 12.0,
+                lattice: crate::config::BaseLattice {
+                    a1: None,
+                    a2: None,
+                    lattice_type: Some(LatticeTypeSpec::Square),
+                    a: 1.0,
+                    b: None,
+                    alpha: None,
+                },
+                atoms: vec![BaseAtom {
+                    pos: [0.5, 0.5],
+                    radius: 0.3,
+                    eps_inside: 1.0,
+                }],
+            }),
+            grid: Grid2D::new(32, 32, 1.0, 1.0),
+            polarization: Polarization::TM,
+            path: Some(PathSpec {
+                preset: Some(blaze2d_core::io::PathPreset::Square),
+                segments_per_leg: 12,
+                k_path: vec![],
+            }),
+            k_path: vec![],
+            eigensolver: EigensolverConfig::default(),
+            dielectric: DielectricOptions::default(),
+            ranges: ParameterRange::default(),
+            output: OutputConfig::default(),
+        }
     }
 
     #[test]
     fn expand_single_job() {
-        let jobs = expand_jobs(&config(""));
+        let config = make_test_config();
+        let jobs = expand_jobs(&config);
         assert_eq!(jobs.len(), 1);
         assert!(matches!(jobs[0].job_type, ExpandedJobType::Maxwell(_)));
-        assert_eq!(jobs[0].params.lattice_type.as_deref(), Some("square"));
+    }
+
+    #[test]
+    fn expand_eps_range_legacy() {
+        let mut config = make_test_config();
+        config.ranges.eps_bg = Some(RangeSpec {
+            min: 10.0,
+            max: 12.0,
+            step: 1.0,
+        });
+        let jobs = expand_jobs(&config);
+        assert_eq!(jobs.len(), 3);
+    }
+
+    #[test]
+    fn expand_multiple_ranges_legacy() {
+        let mut config = make_test_config();
+        config.ranges.eps_bg = Some(RangeSpec {
+            min: 10.0,
+            max: 12.0,
+            step: 1.0,
+        });
+        config.ranges.polarization = Some(vec![Polarization::TM, Polarization::TE]);
+        let jobs = expand_jobs(&config);
+        assert_eq!(jobs.len(), 6); // 3 eps * 2 pol
     }
 
     #[test]
     fn expand_ordered_sweeps() {
-        let cfg = config(
-            "[[sweeps]]\nparameter = \"atom0.radius\"\nmin = 0.2\nmax = 0.3\nstep = 0.1\n\
-             [[sweeps]]\nparameter = \"eps_bg\"\nmin = 10.0\nmax = 12.0\nstep = 1.0\n",
-        );
-        let jobs = expand_jobs(&cfg);
+        let mut config = make_test_config();
 
-        // 2 radius values (outer) x 3 eps values (inner).
+        // Define sweeps: radius (outer) -> eps_bg (inner)
+        config.sweeps = vec![
+            SweepSpec {
+                parameter: "atom0.radius".to_string(),
+                min: Some(0.2),
+                max: Some(0.3),
+                step: Some(0.1),
+                values: None,
+            },
+            SweepSpec {
+                parameter: "eps_bg".to_string(),
+                min: Some(10.0),
+                max: Some(12.0),
+                step: Some(1.0),
+                values: None,
+            },
+        ];
+
+        let jobs = expand_jobs(&config);
+
+        // Should have 2 radius * 3 eps = 6 jobs
         assert_eq!(jobs.len(), 6);
+
+        // Verify order: radius is outer loop, eps is inner
+        // Job 0: radius=0.2, eps=10
+        // Job 1: radius=0.2, eps=11
+        // Job 2: radius=0.2, eps=12
+        // Job 3: radius=0.3, eps=10
+        // ...
+
+        // Use approximate comparison for floating point
         let eps = 1e-9;
+
         assert!((jobs[0].params.atoms[0].radius - 0.2).abs() < eps);
         assert!((jobs[0].params.eps_bg - 10.0).abs() < eps);
+
         assert!((jobs[1].params.atoms[0].radius - 0.2).abs() < eps);
         assert!((jobs[1].params.eps_bg - 11.0).abs() < eps);
+
+        assert!((jobs[2].params.atoms[0].radius - 0.2).abs() < eps);
+        assert!((jobs[2].params.eps_bg - 12.0).abs() < eps);
+
         assert!((jobs[3].params.atoms[0].radius - 0.3).abs() < eps);
         assert!((jobs[3].params.eps_bg - 10.0).abs() < eps);
     }
 
     #[test]
-    fn expand_discrete_values() {
-        let cfg = config(
-            "[[sweeps]]\nparameter = \"polarization\"\nvalues = [\"TM\", \"TE\"]\n\
-             [[sweeps]]\nparameter = \"eps_bg\"\nmin = 10.0\nmax = 11.0\nstep = 1.0\n",
-        );
-        let jobs = expand_jobs(&cfg);
+    fn expand_ordered_discrete_values() {
+        let mut config = make_test_config();
+
+        // Define sweeps with discrete values
+        config.sweeps = vec![
+            SweepSpec {
+                parameter: "polarization".to_string(),
+                min: None,
+                max: None,
+                step: None,
+                values: Some(vec![
+                    toml::Value::String("TM".to_string()),
+                    toml::Value::String("TE".to_string()),
+                ]),
+            },
+            SweepSpec {
+                parameter: "eps_bg".to_string(),
+                min: Some(10.0),
+                max: Some(11.0),
+                step: Some(1.0),
+                values: None,
+            },
+        ];
+
+        let jobs = expand_jobs(&config);
+
+        // Should have 2 pol * 2 eps = 4 jobs
         assert_eq!(jobs.len(), 4);
+
+        // Verify order: pol is outer, eps is inner
         assert_eq!(jobs[0].params.polarization, Polarization::TM);
         assert_eq!(jobs[0].params.eps_bg, 10.0);
+
+        assert_eq!(jobs[1].params.polarization, Polarization::TM);
+        assert_eq!(jobs[1].params.eps_bg, 11.0);
+
         assert_eq!(jobs[2].params.polarization, Polarization::TE);
         assert_eq!(jobs[2].params.eps_bg, 10.0);
-    }
-
-    #[test]
-    fn resolution_sweep_scales_grid() {
-        let cfg = config("[[sweeps]]\nparameter = \"resolution\"\nvalues = [16, 64]\n");
-        let jobs = expand_jobs(&cfg);
-        assert_eq!(jobs.len(), 2);
-        let g0 = jobs[0].maxwell_job().unwrap().grid;
-        let g1 = jobs[1].maxwell_job().unwrap().grid;
-        assert_eq!((g0.nx, g0.ny), (16, 16));
-        assert_eq!((g1.nx, g1.ny), (64, 64));
-        assert_eq!(jobs[1].params.resolution, 64);
-    }
-
-    #[test]
-    fn auto_preset_follows_lattice_type_sweep() {
-        let cfg = config(
-            "[[sweeps]]\nparameter = \"lattice_type\"\nvalues = [\"square\", \"rectangular\"]\n",
-        );
-        let jobs = expand_jobs(&cfg);
-        assert_eq!(jobs.len(), 2);
-        let square_len = jobs[0].maxwell_job().unwrap().k_path.len();
-        let rect_len = jobs[1].maxwell_job().unwrap().k_path.len();
-        // Square path has 3 legs, rectangular has 4: the rectangular path
-        // must be strictly longer at equal points_per_segment.
-        assert!(
-            rect_len > square_len,
-            "expected rectangular path ({}) longer than square ({})",
-            rect_len,
-            square_len
-        );
-    }
-
-    #[test]
-    fn explicit_points_used_verbatim() {
-        let toml = BASE.replace(
-            "preset = \"auto\"",
-            "points = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]]",
-        );
-        let cfg = Config::from_str(&toml).unwrap();
-        let jobs = expand_jobs(&cfg);
-        assert_eq!(jobs[0].maxwell_job().unwrap().k_path.len(), 3);
-    }
-
-    #[test]
-    fn dielectric_none_reaches_job() {
-        let cfg = config("[dielectric]\nsmoothing = \"none\"\n");
-        let jobs = expand_jobs(&cfg);
-        let job = jobs[0].maxwell_job().unwrap();
-        assert!(!job.dielectric.smoothing_enabled());
     }
 
     #[test]
@@ -608,6 +1060,7 @@ preset = "auto"
                 ("eps_bg".to_string(), SweepValue::Float(12.0)),
             ],
         };
+
         assert_eq!(params.sweep_order_string(), "atom0.radius=0.3|eps_bg=12");
     }
 }

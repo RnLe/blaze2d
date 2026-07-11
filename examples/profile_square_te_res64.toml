@@ -2,9 +2,6 @@
 # eps=13, r=0.3, 64×64 grid, 12 bands
 # Designed for stable profiling with low variance
 
-schema = 2
-
-[solver]
 polarization = "TE"
 
 [geometry]
@@ -27,7 +24,7 @@ ly = 1.0
 
 [path]
 preset = "square"
-points_per_segment = 10
+segments_per_leg = 10
 
 [eigensolver]
 n_bands = 12

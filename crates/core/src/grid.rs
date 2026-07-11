@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Grid2D {
     pub nx: usize,
     pub ny: usize,

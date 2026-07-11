@@ -54,13 +54,12 @@ use js_sys::{Array, Date, Function, Object, Reflect};
 use wasm_bindgen::prelude::*;
 
 use blaze2d_bulk_driver_core::{
-    config::{BulkConfig, Config, Precision, SolverType, SweepValue, parse_and_validate},
+    config::{BulkConfig, SolverType, SweepValue},
     expansion::{ExpandedJob, ExpandedJobType, expand_jobs},
     filter::SelectiveFilter,
     result::{CompactBandResult, CompactResultType, MaxwellResult},
 };
 
-use blaze2d_core::backend::SpectralBackend;
 use blaze2d_core::drivers::bandstructure::{self, RunOptions};
 
 use blaze2d_backend_cpu::CpuBackend;
@@ -260,16 +259,13 @@ fn stats_to_js(stats: &WasmDriverStats) -> Result<JsValue, JsValue> {
 // ============================================================================
 
 /// Run a single Maxwell job and convert to CompactBandResult.
-///
-/// Generic over the backend so the same code serves `CpuBackend<f32>` and
-/// `CpuBackend<f64>`; the `[solver].precision` dispatch happens at the call
-/// site (results are always f64 regardless of storage precision).
-fn run_maxwell_job<B: SpectralBackend + Clone>(
-    backend: B,
+fn run_maxwell_job(
     job: &blaze2d_core::bandstructure::BandStructureJob,
     params: &blaze2d_bulk_driver_core::expansion::JobParams,
     job_index: usize,
 ) -> Result<CompactBandResult, String> {
+    let backend = CpuBackend::<f64>::new();
+
     let band_result = bandstructure::run_with_options(backend, job, RunOptions::default());
 
     // Normalize frequencies (divide by 2π)
@@ -296,14 +292,15 @@ fn run_maxwell_job<B: SpectralBackend + Clone>(
 }
 
 /// Run a single Maxwell job with k-point streaming, calling callback for each k-point.
-fn run_maxwell_job_with_k_streaming<B: SpectralBackend + Clone>(
-    backend: B,
+fn run_maxwell_job_with_k_streaming(
     job: &blaze2d_core::bandstructure::BandStructureJob,
     params: &blaze2d_bulk_driver_core::expansion::JobParams,
     job_index: usize,
     callback: &Function,
 ) -> Result<CompactBandResult, String> {
     use blaze2d_core::drivers::bandstructure::{KPointResult, RunOptions, run_with_k_streaming};
+
+    let backend = CpuBackend::<f64>::new();
 
     // Clone params for use in closure
     let params_clone = params.clone();
@@ -518,19 +515,13 @@ impl WasmBulkDriver {
         self.jobs.len()
     }
 
-    /// Get the solver type ("maxwell" or "operator_data").
+    /// Get the solver type ("maxwell" or "ea_hamiltonian").
     #[wasm_bindgen(getter, js_name = "solverType")]
     pub fn solver_type(&self) -> String {
         match self.config.solver.solver_type {
             SolverType::Maxwell => "maxwell".to_string(),
-            SolverType::OperatorData => "operator_data".to_string(),
+            SolverType::OperatorData => "ea_hamiltonian".to_string(),
         }
-    }
-
-    /// Get the storage precision ("f32" or "f64").
-    #[wasm_bindgen(getter, js_name = "precision")]
-    pub fn precision(&self) -> String {
-        self.config.precision().to_string()
     }
 
     /// Check if this is an operator-data extraction solver.
@@ -550,7 +541,7 @@ impl WasmBulkDriver {
     pub fn grid_size(&self) -> Array {
         let arr = Array::new();
         arr.push(&JsValue::from(self.config.grid.nx as u32));
-        arr.push(&JsValue::from(self.config.grid.ny() as u32));
+        arr.push(&JsValue::from(self.config.grid.ny as u32));
         arr
     }
 
@@ -848,23 +839,12 @@ impl WasmBulkDriver {
         stats_to_js(&stats)
     }
 
-    /// Execute a single expanded job on the precision-correct backend.
+    /// Execute a single expanded job.
     fn execute_job(&self, job: &ExpandedJob) -> Result<CompactBandResult, String> {
         match &job.job_type {
-            ExpandedJobType::Maxwell(maxwell_job) => match self.config.precision() {
-                Precision::F32 => run_maxwell_job(
-                    CpuBackend::<f32>::new(),
-                    maxwell_job,
-                    &job.params,
-                    job.index,
-                ),
-                Precision::F64 => run_maxwell_job(
-                    CpuBackend::<f64>::new(),
-                    maxwell_job,
-                    &job.params,
-                    job.index,
-                ),
-            },
+            ExpandedJobType::Maxwell(maxwell_job) => {
+                run_maxwell_job(maxwell_job, &job.params, job.index)
+            }
             _ => Err("Job type not supported on wasm backend".to_string()),
         }
     }
@@ -876,22 +856,9 @@ impl WasmBulkDriver {
         callback: &Function,
     ) -> Result<CompactBandResult, String> {
         match &job.job_type {
-            ExpandedJobType::Maxwell(maxwell_job) => match self.config.precision() {
-                Precision::F32 => run_maxwell_job_with_k_streaming(
-                    CpuBackend::<f32>::new(),
-                    maxwell_job,
-                    &job.params,
-                    job.index,
-                    callback,
-                ),
-                Precision::F64 => run_maxwell_job_with_k_streaming(
-                    CpuBackend::<f64>::new(),
-                    maxwell_job,
-                    &job.params,
-                    job.index,
-                    callback,
-                ),
-            },
+            ExpandedJobType::Maxwell(maxwell_job) => {
+                run_maxwell_job_with_k_streaming(maxwell_job, &job.params, job.index, callback)
+            }
             _ => Err("Job type not supported on wasm backend".to_string()),
         }
     }
@@ -1020,119 +987,6 @@ pub fn is_selective_supported() -> bool {
 pub fn get_supported_solvers() -> Array {
     let arr = Array::new();
     arr.push(&JsValue::from_str("maxwell"));
-    arr.push(&JsValue::from_str("operator_data"));
+    arr.push(&JsValue::from_str("ea"));
     arr
-}
-
-// ============================================================================
-// Configuration Validation
-// ============================================================================
-
-/// Number of k-points the config's path resolves to (0 if not resolvable).
-fn count_k_points(config: &Config) -> u32 {
-    match &config.path {
-        Some(p) if !p.points.is_empty() => p.points.len() as u32,
-        Some(p) => p
-            .preset
-            .and_then(|preset| preset.resolve(config.geometry.lattice.kind))
-            .map(|bp| {
-                blaze2d_core::brillouin::generate_path(&bp, p.points_per_segment()).len() as u32
-            })
-            .unwrap_or(0),
-        None => 0,
-    }
-}
-
-/// Validate a schema v2 TOML configuration without running anything.
-///
-/// This runs THE parser: the exact same `parse_and_validate` the native
-/// drivers use, so web editors get zero-drift validation. Returns:
-///
-/// ```text
-/// {
-///   ok: boolean,
-///   errors: [{ path: string, message: string, span: [start, end] | null }],
-///   summary?: {                     // present when ok
-///     jobs, nx, ny, n_bands, k_points,
-///     precision, solver_type, polarization,
-///   }
-/// }
-/// ```
-#[wasm_bindgen(js_name = "validateConfig")]
-pub fn validate_config(config_str: &str) -> Result<JsValue, JsValue> {
-    let out = Object::new();
-
-    match parse_and_validate(config_str) {
-        Ok(config) => {
-            Reflect::set(&out, &"ok".into(), &JsValue::TRUE)?;
-            Reflect::set(&out, &"errors".into(), &Array::new())?;
-
-            let summary = Object::new();
-            Reflect::set(
-                &summary,
-                &"jobs".into(),
-                &JsValue::from(config.total_jobs() as u32),
-            )?;
-            Reflect::set(
-                &summary,
-                &"nx".into(),
-                &JsValue::from(config.grid.nx as u32),
-            )?;
-            Reflect::set(
-                &summary,
-                &"ny".into(),
-                &JsValue::from(config.grid.ny() as u32),
-            )?;
-            Reflect::set(
-                &summary,
-                &"n_bands".into(),
-                &JsValue::from(config.eigensolver.n_bands as u32),
-            )?;
-            Reflect::set(
-                &summary,
-                &"k_points".into(),
-                &JsValue::from(count_k_points(&config)),
-            )?;
-            Reflect::set(
-                &summary,
-                &"precision".into(),
-                &JsValue::from_str(&config.precision().to_string()),
-            )?;
-            let solver_type = match config.solver_type() {
-                SolverType::Maxwell => "maxwell",
-                SolverType::OperatorData => "operator_data",
-            };
-            Reflect::set(&summary, &"solver_type".into(), &JsValue::from_str(solver_type))?;
-            Reflect::set(
-                &summary,
-                &"polarization".into(),
-                &JsValue::from_str(&format!("{:?}", config.solver.polarization)),
-            )?;
-            Reflect::set(&out, &"summary".into(), &summary)?;
-        }
-        Err(diags) => {
-            Reflect::set(&out, &"ok".into(), &JsValue::FALSE)?;
-            let errors = Array::new();
-            for d in &diags {
-                let err = Object::new();
-                Reflect::set(&err, &"path".into(), &JsValue::from_str(&d.path))?;
-                Reflect::set(&err, &"message".into(), &JsValue::from_str(&d.message))?;
-                match d.span {
-                    Some((start, end)) => {
-                        let span = Array::new();
-                        span.push(&JsValue::from(start as u32));
-                        span.push(&JsValue::from(end as u32));
-                        Reflect::set(&err, &"span".into(), &span)?;
-                    }
-                    None => {
-                        Reflect::set(&err, &"span".into(), &JsValue::NULL)?;
-                    }
-                }
-                errors.push(&err);
-            }
-            Reflect::set(&out, &"errors".into(), &errors)?;
-        }
-    }
-
-    Ok(out.into())
 }

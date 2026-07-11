@@ -7,14 +7,12 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use blaze2d_bulk_driver_core::{
-    Config, ExpandedJobType, PathPresetSpec, PathSection, Precision, SmoothingKind, expand_jobs,
-};
 use blaze2d_core::{
-    brillouin::BrillouinPath,
+    brillouin::{BrillouinPath, generate_path},
     diagnostics::{ConvergenceStudy, PreconditionerType},
     dielectric::Dielectric2D,
     drivers::bandstructure::{self, BandStructureJob, BandStructureResult, RunOptions},
+    io::{JobConfig, PathPreset},
 };
 use clap::{Parser, ValueEnum};
 use env_logger::Builder;
@@ -76,14 +74,14 @@ struct Cli {
     #[arg(long, value_enum, default_value = "auto")]
     preconditioner: PrecondArg,
 
-    /// Storage precision override: f64 or f32.
+    /// Storage precision: f64 (default) or f32.
     ///
     /// `f32` uses single-precision Complex<f32> field storage and FFTs with
     /// f64 accumulation in dot products and Rayleigh–Ritz (the standard HPC
-    /// mixed-precision pattern); eigenvalues remain f64 either way. When not
-    /// given, the `[solver].precision` TOML key decides.
-    #[arg(long, value_enum)]
-    precision: Option<PrecisionArg>,
+    /// mixed-precision pattern); eigenvalues remain f64 either way. Independent
+    /// of the bulk driver's `[solver].precision` TOML key.
+    #[arg(long, value_enum, default_value = "f64")]
+    precision: PrecisionArg,
 
     /// Write logs to a file instead of stderr
     ///
@@ -215,13 +213,13 @@ enum PathArg {
     Hexagonal,
 }
 
-impl From<PathArg> for PathPresetSpec {
+impl From<PathArg> for PathPreset {
     fn from(value: PathArg) -> Self {
         match value {
-            PathArg::Square => PathPresetSpec::Square,
-            PathArg::Rectangular => PathPresetSpec::Rectangular,
-            PathArg::Triangular => PathPresetSpec::Triangular,
-            PathArg::Hexagonal => PathPresetSpec::Hexagonal,
+            PathArg::Square => PathPreset::Square,
+            PathArg::Rectangular => PathPreset::Rectangular,
+            PathArg::Triangular => PathPreset::Triangular,
+            PathArg::Hexagonal => PathPreset::Hexagonal,
         }
     }
 }
@@ -415,22 +413,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("loading config {}", cli.config.display());
     }
     let raw = fs::read_to_string(&cli.config)?;
-    let mut config = Config::from_str(&raw).map_err(|e| {
-        error!("{}", e);
-        e
-    })?;
+    let mut config: JobConfig = toml::from_str(&raw)?;
 
     // Apply k-path override if specified
     if let Some(preset) = cli.path.clone() {
         let brillouin_path = BrillouinPath::from(preset.clone());
-        config.path = Some(PathSection {
-            preset: Some(PathPresetSpec::from(preset.clone())),
-            points_per_segment: Some(cli.segments_per_leg),
-            points: vec![],
-        });
+        let samples = generate_path(&brillouin_path, cli.segments_per_leg);
+        config.k_path = samples;
+        config.path = None;
         if !cli.quiet {
             info!(
-                "overriding k-path via preset {:?} ({}) with {} points/segment",
+                "overriding k-path via preset {:?} ({}) with {} segments/leg",
                 preset,
                 brillouin_path.name(),
                 cli.segments_per_leg
@@ -441,14 +434,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply dielectric smoothing overrides
     if let Some(mesh_size) = cli.mesh_size {
         let clamped = mesh_size.max(1);
-        if clamped == 1 {
-            config.dielectric.smoothing = SmoothingKind::Disabled;
-        } else {
-            config.dielectric.mesh_size = clamped;
-            if config.dielectric.smoothing == SmoothingKind::Disabled {
-                config.dielectric.smoothing = SmoothingKind::Analytic;
-            }
-        }
+        config.dielectric.smoothing.mesh_size = clamped;
         if !cli.quiet {
             info!(
                 "overriding dielectric mesh_size -> {}{}",
@@ -462,23 +448,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Expand the (single) job. Sweeps and operator-data extraction run via
-    // the bulk driver, not this CLI.
-    let jobs = expand_jobs(&config);
-    if jobs.len() > 1 {
-        error!(
-            "this config expands to {} jobs; parameter sweeps run via the blaze2d-bulk driver",
-            jobs.len()
-        );
-        std::process::exit(1);
-    }
-    let job: BandStructureJob = match jobs.into_iter().next().map(|j| j.job_type) {
-        Some(ExpandedJobType::Maxwell(job)) => job,
-        _ => {
-            error!("solver.type = \"operator_data\" runs via the blaze2d-bulk driver");
-            std::process::exit(1);
-        }
-    };
+    // Create the job
+    let job = bandstructure::BandStructureJob::from(config.clone());
 
     // Export epsilon data if requested (before solver runs)
     if cli.export_epsilon.is_some() || cli.export_epsilon_tensor.is_some() {
@@ -548,7 +519,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_band_window_shift(cli.band_window_shift)
         .with_band_window_blend(cli.band_window_blend)
         .with_band_window_scale(cli.band_window_scale)
-        .with_disable_band_tracking(cli.no_band_tracking || config.run.disable_band_tracking);
+        .with_disable_band_tracking(cli.no_band_tracking);
 
     if !cli.quiet && use_subspace_pred {
         if use_extrapolation {
@@ -574,15 +545,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         String::new()
     };
 
-    // CLI --precision overrides [solver].precision from the TOML.
-    let precision = match cli.precision {
-        Some(PrecisionArg::F32) => Precision::F32,
-        Some(PrecisionArg::F64) => Precision::F64,
-        None => config.precision(),
-    };
-
     if !cli.quiet {
-        info!("using CPU backend (precision={})", precision);
+        info!("using CPU backend (precision={:?})", cli.precision);
         if cli.record_diagnostics {
             info!(
                 "recording diagnostics: study={} preconditioner={:?}",
@@ -593,15 +557,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run the solver on the precision-correct backend monomorphisation.
     // The result is always f64 regardless of storage precision.
-    let (result, study) = match precision {
-        Precision::F32 => run_solver(
+    let (result, study) = match cli.precision {
+        PrecisionArg::F32 => run_solver(
             CpuBackend::<f32>::new(),
             &job,
             run_options,
             cli.record_diagnostics,
             &study_name,
         ),
-        Precision::F64 => run_solver(
+        PrecisionArg::F64 => run_solver(
             CpuBackend::<f64>::new(),
             &job,
             run_options,
