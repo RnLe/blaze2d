@@ -21,6 +21,7 @@ export { default as EpsilonGrid } from './EpsilonGrid';
 export { default as EpsilonGridViewer } from './EpsilonGridViewer';
 export { default as BandComparisonChart } from './BandComparisonChart';
 export { default as DeviationBoxPlotChart } from './DeviationBoxPlotChart';
+export { default as ChartRow } from './ChartRow';
 export type { BarDataPoint, BarChartProps } from './BarChart';
 export type { LineDataPoint, LineSeries, LineChartProps } from './LineChart';
 export type { BoxPlotDataPoint, BoxPlotProps } from './BoxPlot';

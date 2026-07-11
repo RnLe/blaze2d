@@ -7,7 +7,7 @@
 import { Container, Graphics, RenderTexture, Sprite, type Renderer } from 'pixi.js';
 import type { ResolvedEdge, SolveParams } from '../../lib/archboard/types';
 import { pointAt } from '../../lib/archboard/layout';
-import { PACKET_COLORS } from '../../lib/archboard/palette';
+import { PACKET_COLORS, PACKET_PRECISION_COLORS } from '../../lib/archboard/palette';
 
 const MAX_PACKETS = 600;
 const MIN_RATE = 2; // packets/s on an active edge
@@ -90,7 +90,8 @@ export class PacketSystem {
     packet.speed = 1 / (TRAVEL_MS * (0.85 + Math.random() * 0.3));
     packet.active = true;
     packet.sprite.visible = true;
-    packet.sprite.tint = PACKET_COLORS[edge.edge.kind];
+    const precision = edge.edge.kind === 'data' ? edge.edge.payloadPrecision : undefined;
+    packet.sprite.tint = precision ? PACKET_PRECISION_COLORS[precision] : PACKET_COLORS[edge.edge.kind];
     packet.sprite.alpha = 0.95;
     const scale = 0.5 + Math.random() * 0.3;
     packet.sprite.scale.set(scale);
