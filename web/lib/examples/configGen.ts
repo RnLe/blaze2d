@@ -34,6 +34,12 @@ export const K_PATH_LABELS: Record<string, string[]> = {
   rectangular: ['Γ', 'X', 'S', 'Y', 'Γ'],
 };
 
+const PATH_PRESETS: Record<string, string> = {
+  square: 'square',
+  hexagonal: 'hexagonal',
+  rectangular: 'rectangular',
+};
+
 const LATTICE_ALIASES: Record<string, string> = {
   square: 'square',
   hex: 'hexagonal',
@@ -237,21 +243,32 @@ function fmtNum(v: number): string {
 }
 
 export function generateSweepToml(opts: TomlOptions): string {
-  // Schema v2: base values for non-swept parameters live in the main
-  // sections (eps_bg in [geometry], resolution in [grid], polarization in
-  // [solver]); there is no [defaults] section.
   const lines: string[] = [
-    'schema = 2',
-    '',
-    '[run]',
+    '[bulk]',
     `threads = ${opts.threads}`,
     'verbose = false',
     '',
     '[solver]',
     'type = "maxwell"',
+    '',
+    '[defaults]',
+    `eps_bg = ${opts.baseEpsBg}`,
+    `resolution = ${opts.resolution}`,
     `polarization = "${opts.basePol}"`,
     '',
   ];
+
+  for (const sw of opts.sweeps) {
+    lines.push('[[sweeps]]');
+    lines.push(`parameter = "${sw.parameter}"`);
+    const vals = sw.values;
+    const valsStr =
+      typeof vals[0] === 'string'
+        ? vals.map((v) => `"${v}"`).join(', ')
+        : vals.map((v) => `${v}`).join(', ');
+    lines.push(`values = [${valsStr}]`);
+    lines.push('');
+  }
 
   lines.push('[geometry]');
   lines.push(`eps_bg = ${opts.baseEpsBg}`);
@@ -259,10 +276,6 @@ export function generateSweepToml(opts: TomlOptions): string {
   lines.push('[geometry.lattice]');
   lines.push(`type = "${opts.lattice}"`);
   lines.push('a = 1.0');
-  if (opts.lattice === 'rectangular') {
-    // v2 requires b explicitly for rectangular lattices.
-    lines.push('b = 1.5');
-  }
   lines.push('');
 
   const atoms = opts.atoms ?? [
@@ -278,6 +291,9 @@ export function generateSweepToml(opts: TomlOptions): string {
 
   lines.push('[grid]');
   lines.push(`nx = ${opts.resolution}`);
+  lines.push(`ny = ${opts.resolution}`);
+  lines.push('lx = 1.0');
+  lines.push('ly = 1.0');
   lines.push('');
 
   lines.push('[path]');
@@ -285,22 +301,10 @@ export function generateSweepToml(opts: TomlOptions): string {
     const ptsStr = opts.kPath.map((p) => `[${p[0]}, ${p[1]}]`).join(', ');
     lines.push(`points = [${ptsStr}]`);
   } else {
-    lines.push('preset = "auto"');
-    lines.push(`points_per_segment = ${opts.pointsPerSegment}`);
+    lines.push(`preset = "${PATH_PRESETS[opts.lattice]}"`);
+    lines.push(`segments_per_leg = ${opts.pointsPerSegment}`);
   }
   lines.push('');
-
-  for (const sw of opts.sweeps) {
-    lines.push('[[sweeps]]');
-    lines.push(`parameter = "${sw.parameter}"`);
-    const vals = sw.values;
-    const valsStr =
-      typeof vals[0] === 'string'
-        ? vals.map((v) => `"${v}"`).join(', ')
-        : vals.map((v) => `${v}`).join(', ');
-    lines.push(`values = [${valsStr}]`);
-    lines.push('');
-  }
 
   lines.push('[eigensolver]');
   lines.push(`n_bands = ${opts.nBands}`);

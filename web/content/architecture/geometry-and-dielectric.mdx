@@ -1,5 +1,4 @@
-import { EpsilonGridViewer, EpsilonBarChart, ChartRow } from '../../components/charts'
-import Figure from '../../components/Figure'
+import { EpsilonGridViewer, EpsilonBarChart } from '../../components/charts'
 
 <div className="narrow-centered">
 
@@ -43,18 +42,6 @@ Explore the result at every resolution the site ships (these are real solver out
 
 <EpsilonGridViewer initialResolution={64} size={400} />
 
-How close this gets to the reference implementation is easiest to see side by side. The
-smoothed permittivity maps below compare Blaze2D against MPB across resolutions, with the
-absolute difference in the bottom row:
-
-<ChartRow width={860}>
-  <Figure
-    src="/figures/architecture/material_map_comparison.svg"
-    alt="Smoothed permittivity maps for Blaze2D and MPB at increasing resolutions, with absolute difference maps"
-    caption="Smoothed ε maps, Blaze2D vs. MPB, at N = 8 to 128. The |Δε| row shows the disagreement is confined to boundary pixels and shrinks with resolution."
-  />
-</ChartRow>
-
 ## What it costs
 
 The build is O(N · atoms) and runs **once per job**. The output is three real-space arrays
@@ -66,9 +53,7 @@ One honest data-movement note, visible on the board as a blue node: the driver c
 That is an O(N) copy repeated k times where a shared reference would do. It is cheap
 relative to the solve, but it is exactly the kind of copy the board exists to make visible.
 
-<ChartRow>
-  <EpsilonBarChart width={1000} height={380} />
-</ChartRow>
+<EpsilonBarChart width={1000} height={380} />
 
 → Continue with [Matrix-Free Operators](/architecture/operators), which consume these
 arrays on every application.

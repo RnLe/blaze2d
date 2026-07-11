@@ -1,5 +1,4 @@
-import { MemoryUsageChart, MemoryRatioChart, MemoryScalingChart, ChartRow } from '../../components/charts'
-import MemoryHierarchy from '../../components/architecture/MemoryHierarchy'
+import { MemoryUsageChart, MemoryRatioChart, MemoryScalingChart } from '../../components/charts'
 
 <div className="narrow-centered">
 
@@ -46,35 +45,14 @@ boundary copies, and the benchmarks agree.
 
 Profiling shows LOBPCG on plane-wave operators is **memory-bandwidth-bound**. Halving the
 storage width nearly halves the traffic of every operator apply, which is why f32 mode
-approaches a clean 2× wall-clock speedup with no measurable eigenvalue loss. The hierarchy
-below makes the mechanism concrete: every lane between DRAM and the FPU is slower than the
-one after it, and f32 storage doubles how many elements each of those lanes delivers.
+approaches a clean 2× wall-clock speedup with no measurable eigenvalue loss. The same
+logic explains the memory footprint numbers:
 
-</div>
+<MemoryUsageChart width={1000} height={380} sweep="resolution" />
 
-<div style={{
-  width: '1080px',
-  maxWidth: '92vw',
-  marginLeft: '50%',
-  transform: 'translateX(-50%)',
-  marginTop: '1.5rem',
-  marginBottom: '1.5rem'
-}}>
-  <MemoryHierarchy />
-</div>
+<MemoryRatioChart width={1000} height={380} />
 
-<div className="narrow">
-
-The same logic explains the memory footprint numbers:
-
-<ChartRow>
-  <MemoryUsageChart width={1000} height={380} sweep="resolution" />
-</ChartRow>
-
-<ChartRow>
-  <MemoryRatioChart width={540} height={380} />
-  <MemoryScalingChart width={540} height={380} />
-</ChartRow>
+<MemoryScalingChart width={1000} height={380} />
 
 ## Layout notes
 

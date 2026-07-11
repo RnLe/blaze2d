@@ -877,20 +877,14 @@ export default function InteractiveBandDiagram({ maxWidth = '1100px' }: { maxWid
       tomlLatticeType = 'rectangular';
     }
 
-    // Wrap into [0, 1): schema v2 validates fractional positions strictly.
-    const frac = (v: number) => {
-      const w = ((v % 1) + 1) % 1;
-      return w.toFixed(4);
-    };
-
     // Generate atoms section
-    const atoms = lattice.atomPositions.map(([fx, fy]) => {
+    const atoms = lattice.atomPositions.map(([fx, fy], idx) => {
       // Convert fractional to absolute position within unit cell
       const posX = fx * a1[0] + fy * a2[0];
       const posY = fx * a1[1] + fy * a2[1];
-      // Normalize (add 0.5 to center in cell), then wrap into [0, 1)
+      // Normalize to [0, 1] range for the solver (add 0.5 to center in cell)
       return `[[geometry.atoms]]
-pos = [${frac(posX + 0.5)}, ${frac(posY + 0.5)}]
+pos = [${(posX + 0.5).toFixed(4)}, ${(posY + 0.5).toFixed(4)}]
 radius = ${radius.toFixed(4)}
 eps_inside = ${circleEpsilon.toFixed(1)}`;
     }).join('\n\n');
@@ -899,18 +893,19 @@ eps_inside = ${circleEpsilon.toFixed(1)}`;
     const lx = Math.sqrt(a1[0] * a1[0] + a1[1] * a1[1]);
     const ly = Math.sqrt(a2[0] * a2[0] + a2[1] * a2[1]);
 
-    const config = `schema = 2
+    const config = `polarization = "TM"
+
+[bulk]
 
 [solver]
 type = "maxwell"
-polarization = "TM"
 
 [geometry]
 eps_bg = ${backgroundEpsilon.toFixed(1)}
 
 [geometry.lattice]
 type = "${tomlLatticeType}"
-a = 1.0${tomlLatticeType === 'rectangular' ? `\nb = ${ly.toFixed(4)}` : ''}
+a = 1.0
 
 ${atoms}
 
@@ -921,8 +916,8 @@ lx = ${lx.toFixed(4)}
 ly = ${ly.toFixed(4)}
 
 [path]
-preset = "auto"
-points_per_segment = 15
+preset = "${lattice.pathPreset}"
+segments_per_leg = 15
 
 [eigensolver]
 n_bands = ${nBands}

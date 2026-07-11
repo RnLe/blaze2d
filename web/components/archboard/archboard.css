@@ -181,14 +181,6 @@
   flex-shrink: 0;
 }
 
-.archboard__swatch--dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: none;
-  flex-shrink: 0;
-}
-
 .archboard__caption {
   position: absolute;
   left: 50%;

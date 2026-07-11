@@ -84,8 +84,6 @@ export interface ArchEdge {
   bytes?: (p: SolveParams) => number;
   /** Marks an f32<->f64 boundary for the precision overlay. */
   precisionChange?: 'upcast' | 'downcast';
-  /** Numeric precision of the payload; tints Run-view packets (f32 amber, f64 blue). */
-  payloadPrecision?: 'f32' | 'f64';
   bidirectional?: boolean;
   /** Hand-tuned waypoints in WORLD grid units (overrides the auto-router). */
   route?: [number, number][];
