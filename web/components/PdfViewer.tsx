@@ -59,9 +59,51 @@ export default function PdfViewer({ src, height = '85vh' }: PdfViewerProps) {
             // immune to bundler/base-path asset resolution surprises.
             wasmUrl: origin + getAssetPath('/paper/pdfium.wasm'),
             theme: { preference: 'system' },
-            // Read-only document: annotation/redaction tools would only
-            // clutter the toolbar (nothing can be persisted on a static site).
-            disabledCategories: ['annotation', 'redaction'],
+            // Read-only document: annotation/redaction/mode/comment tools
+            // would only clutter the toolbar (nothing can be persisted on a
+            // static site). Disabling a category hides its UI items AND
+            // disables the underlying commands/shortcuts.
+            disabledCategories: [
+              'annotation',
+              'redaction',
+              'mode',
+              'insert',
+              'form',
+              'panel-comment',
+            ],
+          }}
+          onReady={(registry: unknown) => {
+            // Hoist fit-width / fit-page / fullscreen out of the zoom
+            // dropdown into the main toolbar. The UI schema cannot be set
+            // statically (config.ui.schema replaces the default wholesale),
+            // so mutate it at runtime instead.
+            /* eslint-disable @typescript-eslint/no-explicit-any */
+            const reg = registry as any;
+            const ui = reg?.getPlugin?.('ui')?.provides?.();
+            const bar = ui?.getSchema?.()?.toolbars?.['main-toolbar'];
+            if (!ui || !bar) return;
+            const stripped = new Set(['mode-tabs', 'mode-select-button', 'comment-button']);
+            const extraButtons = [
+              { type: 'command-button', id: 'fit-width-btn', commandId: 'zoom:fit-width', variant: 'icon', categories: ['zoom'] },
+              { type: 'command-button', id: 'fit-page-btn', commandId: 'zoom:fit-page', variant: 'icon', categories: ['zoom'] },
+              { type: 'command-button', id: 'fullscreen-btn', commandId: 'document:fullscreen', variant: 'icon', categories: ['document'] },
+            ];
+            const items = bar.items
+              .filter((item: any) => !stripped.has(item.id))
+              .map((item: any) => {
+                if (item.id === 'center-group' && Array.isArray(item.items)) {
+                  return { ...item, items: [...item.items, ...extraButtons.slice(0, 2)] };
+                }
+                if (item.id === 'right-group' && Array.isArray(item.items)) {
+                  return {
+                    ...item,
+                    items: [...item.items.filter((c: any) => !stripped.has(c.id)), extraButtons[2]],
+                  };
+                }
+                return item;
+              });
+            ui.mergeSchema({ toolbars: { 'main-toolbar': { items } } });
+            /* eslint-enable @typescript-eslint/no-explicit-any */
           }}
           style={{ width: '100%', height: '100%' }}
         />
