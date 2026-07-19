@@ -1,0 +1,68 @@
+import { MemoryUsageChart, MemoryRatioChart, MemoryScalingChart } from '../../components/charts'
+
+<div className="narrow-centered">
+
+# Precision & Memory
+
+*f32 bandwidth with f64 trustworthiness, and the copies that buy it.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+## The mixed-precision contract
+
+Every bulk array in the solver is generic over the storage scalar R ∈ \{f32, f64\},
+monomorphized at compile time and selected at runtime (`precision = "f32"` in the TOML).
+The contract that makes f32 storage safe has three clauses:
+
+1. **Inner products always accumulate in Complex64.** Summing a million f32 products in
+   f32 causes catastrophic cancellation exactly where the algorithm is most sensitive:
+   orthogonalization. Every summand is promoted; the accumulator never lives in storage
+   precision.
+2. **Every GEMM runs in f64.** Before any projection or Ritz update, the storage-precision
+   blocks are materialized as f64 matrices (the `upcast` node on the board), and the
+   results are cast back afterwards (`downcast`). Gram matrices, the projected operator,
+   and the r×r eigensolve never see f32.
+3. **Eigenvalues are always `Vec<f64>`.** By the variational principle, an O(ε) error in
+   the eigenvector costs only O(ε²) in the eigenvalue, so f32 storage does not degrade the
+   spectrum in practice.
+
+Switch the board to the [Precision view](/architecture/?view=precision) to see the
+boundary: white diamonds mark every edge where bytes change width.
+
+## What the casts cost
+
+The upcast is not free: it materializes an N×r Complex64 copy before every GEMM, roughly
+N·r·16 bytes of pure data movement per projection. That cost is deliberate and visible
+(it is a blue node on the board, not hidden inside a kernel). The bet is that halving the
+bandwidth of every FFT, axpy, and dot in the hot loop is worth a bounded number of
+boundary copies, and the benchmarks agree.
+
+## Why this is a memory story, not a FLOP story
+
+Profiling shows LOBPCG on plane-wave operators is **memory-bandwidth-bound**. Halving the
+storage width nearly halves the traffic of every operator apply, which is why f32 mode
+approaches a clean 2× wall-clock speedup with no measurable eigenvalue loss. The same
+logic explains the memory footprint numbers:
+
+<MemoryUsageChart width={1000} height={380} sweep="resolution" />
+
+<MemoryRatioChart width={1000} height={380} />
+
+<MemoryScalingChart width={1000} height={380} />
+
+## Layout notes
+
+Fields are interleaved `Complex<R>` in row-major order (`idx = iy·nx + ix`); dense
+matrices cross to the f64 world in column-major order for the GEMM backend. Operator
+scratch is preallocated and reused, the FFT plan cache is shared across all job threads
+behind a mutex, and the block state carries its own mass and operator images so nothing
+is recomputed that can be cached.
+
+→ Continue with [Parallelism & Drivers](/architecture/parallelism-and-drivers) for where
+the threads are, and pointedly are not.
+
+</div>

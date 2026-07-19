@@ -122,6 +122,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           docsRepositoryBase="https://github.com/RnLe/blaze2d/tree/main/web/content"
           footer={footer}
           darkMode={false}
+          sidebar={{ defaultMenuCollapseLevel: 1 }}
         >
           {children}
         </Layout>

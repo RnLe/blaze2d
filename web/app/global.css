@@ -141,6 +141,21 @@ body:not(:has(.blaze-layout)) .nextra-sidebar a {
   margin-bottom: 0.125rem !important;
 }
 
+/* Folder toggles (collapsible groups) are buttons, not links - match them */
+body:not(:has(.blaze-layout)) aside li > button,
+body:not(:has(.blaze-layout)) .nextra-sidebar li > button {
+  color: #ffffff !important;
+  transition: all 0.15s ease !important;
+  border-radius: 6px !important;
+  background-color: transparent !important;
+  padding: 0.5rem 0.75rem !important;
+}
+
+body:not(:has(.blaze-layout)) aside li > button:hover,
+body:not(:has(.blaze-layout)) .nextra-sidebar li > button:hover {
+  background-color: #151515 !important;
+}
+
 /* Sidebar list items - moderate spacing */
 body:not(:has(.blaze-layout)) aside li,
 body:not(:has(.blaze-layout)) .nextra-sidebar li {

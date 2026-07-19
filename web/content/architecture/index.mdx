@@ -1,0 +1,84 @@
+import ArchBoard from '../../components/archboard/ArchBoard'
+
+<div className="narrow-centered">
+
+# Architecture
+
+*The whole solver on one board: every layer, every kernel, every byte that moves.*
+
+---
+
+</div>
+
+<div className="w-full mt-8" style={{
+  width: '1200px',
+  maxWidth: '90vw',
+  marginLeft: '50%',
+  transform: 'translateX(-50%)'
+}}>
+  <ArchBoard height="76vh" />
+</div>
+
+<div className="narrow" style={{ marginTop: '2.5rem' }}>
+
+## How to read the board
+
+Every element is one of five things, and the color tells you which: **computation**
+(orange) burns FLOPs, **data movement** (blue) burns memory bandwidth, **memory** (magenta)
+is long-lived state, **interfaces** (green) are the boundaries where config enters and
+results leave, and **control** (gray, dashed) orchestrates without touching bulk data.
+Click any element for its details, real file path, and cost; press **Run** to watch a
+measured solve propagate through the entire system.
+
+The distinction between orange and blue is the whole point. On modern hardware this solver
+is **memory-bandwidth-bound, not compute-bound**: the design decisions worth studying are
+the blue ones.
+
+## Three punchlines
+
+1. **Every GEMM crosses a precision boundary.** Bulk storage can be `f32`, but every Gram
+   matrix, projection, and eigensolve accumulates in `f64`. The upcast materializes an
+   N×r copy before each GEMM, and the results are cast back after. Switch the board to the
+   **Precision** view to see exactly where the casts live.
+2. **Parallelism at job granularity, and deliberately OFF inside the GEMM.** Sweep jobs run
+   data-parallel under rayon, while inside one solve the dense algebra runs sequentially
+   (`Par::Seq`): at 64×64 grids, thread synchronization made parallel GEMM 5 to 10 times
+   slower. Knowing where parallelism does NOT pay is the harder half of the discipline.
+3. **The operator is not a matrix.** Applying the TE Maxwell operator IS six FFTs plus a
+   real-space tensor contraction, working in preallocated scratch that stays hot in L2.
+   No N²-sized object ever exists.
+
+## Deep dives
+
+Each layer of the board has its own page:
+
+- [**Geometry & Dielectric**](/architecture/geometry-and-dielectric): typed lattices,
+  analytic subpixel smoothing, and the O(N) ε arrays everything else consumes.
+- [**Matrix-Free Operators**](/architecture/operators): the TM 2-FFT and TE 6-FFT apply
+  pipelines, scratch reuse, preconditioners.
+- [**Eigensolver (LOBPCG)**](/architecture/eigensolver): the iteration ring, cached
+  blocks, lazy residual norms, SVQB, and the A·Q reuse trick.
+- [**Precision & Memory**](/architecture/precision-and-memory): the f32/f64 contract,
+  what the casts cost, and why this is a bandwidth story.
+- [**Parallelism & Drivers**](/architecture/parallelism-and-drivers): jobs-not-kernels,
+  adaptive threading, the sequential k-loop, band tracking.
+- [**Interfaces**](/architecture/interfaces): CLI, streaming Python (GIL released), and
+  the WebAssembly build this site runs.
+
+## Codebase map
+
+| Layer | Crate / module | Size | Source |
+|---|---|---|---|
+| Storage & precision | `core::field`, `core::backend` | traits + `Field2D<R>` | [field.rs](https://github.com/RnLe/blaze2d/blob/main/crates/core/src/field.rs) |
+| FFT backend | `backend-cpu` | 1.1k LOC | [lib.rs](https://github.com/RnLe/blaze2d/blob/main/crates/backend-cpu/src/lib.rs) |
+| Geometry | `core::{lattice, crystal, brillouin}` | typed lattices, k-paths | [lattice.rs](https://github.com/RnLe/blaze2d/blob/main/crates/core/src/lattice.rs) |
+| Physics | `core::{dielectric, operators}` | ε build + matrix-free Θ | [maxwell.rs](https://github.com/RnLe/blaze2d/blob/main/crates/core/src/operators/maxwell.rs) |
+| Solver | `core::eigensolver` | LOBPCG, SVQB, deflation | [eigensolver.rs](https://github.com/RnLe/blaze2d/blob/main/crates/core/src/eigensolver.rs) |
+| Drivers | `core::drivers`, `core::band_tracking` | k-loop, warm starts | [bandstructure.rs](https://github.com/RnLe/blaze2d/blob/main/crates/core/src/drivers/bandstructure.rs) |
+| Orchestration | `bulk-driver` (+`-core`) | 8.3k LOC | [driver.rs](https://github.com/RnLe/blaze2d/blob/main/crates/bulk-driver/src/driver.rs) |
+| Python | `python` (PyO3) | 3.4k LOC | [streaming.rs](https://github.com/RnLe/blaze2d/blob/main/crates/python/src/streaming.rs) |
+| Browser | `backend-wasm` | 1.2k LOC | [streaming.rs](https://github.com/RnLe/blaze2d/blob/main/crates/backend-wasm/src/streaming.rs) |
+
+The whole workspace is about 42k lines of Rust across 8 crates.
+
+</div>

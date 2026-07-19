@@ -1,0 +1,60 @@
+import { ThroughputScalingChart, SpeedupScalingChart, MultiCorePerformanceChart } from '../../components/charts'
+
+<div className="narrow-centered">
+
+# Parallelism & Drivers
+
+*Jobs, not kernels. Knowing where parallelism does NOT pay is the harder half.*
+
+---
+
+</div>
+
+<div className="narrow">
+
+## One parallelism level, chosen deliberately
+
+Blaze parallelizes **whole solve jobs**, nothing else. A parameter sweep expands into
+independent jobs; rayon runs them data-parallel on a dedicated thread pool; the only
+shared state is the FFT plan cache and a mutex-guarded output writer. Inside one job,
+everything is single-threaded.
+
+Two decisions the board makes visible:
+
+- **The k-point loop is sequential by design** ([board](/architecture/?node=drv.kloop)).
+  Each k-point warm-starts from the previous solution, with the subspace gauge-aligned by
+  polar-decomposition parallel transport. That chaining collapses iteration counts (see
+  [the eigensolver](/architecture/eigensolver)) but makes k-points a dependency chain, so
+  the parallel unit has to be the job.
+- **Dense-algebra parallelism is switched OFF** (`Par::Seq`, the badge on the GEMM node).
+  At production grid sizes (≤64²), thread synchronization inside the GEMM made it 5 to 10
+  times *slower* than sequential. There is not enough work per GEMM to amortize a fork.
+  The parallelism budget is spent where the work is: across jobs.
+
+## Adaptive threading
+
+Job wall-times vary with sweep parameters, so a fixed thread count is rarely optimal. The
+adaptive thread manager watches live job timings and tunes the pool. With `--threads -1`
+the driver manages itself.
+
+<ThroughputScalingChart width={1000} height={380} />
+
+<SpeedupScalingChart width={1000} height={380} />
+
+<MultiCorePerformanceChart width={650} height={420} />
+
+## The driver around one job
+
+Per job, the band-structure driver owns the k-loop: clone the dielectric, rebuild the k+G
+tables, warm-start the block, solve, hand eigenvalues to band tracking. Band indices are
+matched across k by overlap (polar decomposition plus Hungarian assignment) so bands stay
+physically continuous through crossings instead of being sorted by value.
+
+Streaming is part of the same story: results leave through a mutex-guarded CSV writer, a
+crossbeam channel to Python, or per-k callbacks to the browser, so a ten-thousand-job
+sweep never accumulates in memory.
+
+→ Continue with [Interfaces](/architecture/interfaces) for how those results cross the
+language boundaries.
+
+</div>
