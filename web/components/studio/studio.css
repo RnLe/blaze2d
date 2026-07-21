@@ -1047,3 +1047,13 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
+
+.studio__canvas-reset {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 14px;
+  background: rgba(20, 20, 20, 0.9);
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+}
