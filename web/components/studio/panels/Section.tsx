@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { useStudioStore } from '../../../lib/studio/store';
 
@@ -18,10 +18,22 @@ export function Section({
 }) {
   const open = useStudioStore((s) => s.ui.accordionOpen[id] ?? false);
   const toggle = useStudioStore((s) => s.toggleAccordion);
+  const headRef = useRef<HTMLButtonElement | null>(null);
+  const wasOpen = useRef(open);
+
+  // When a section opens (click or programmatically), keep it in view.
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      requestAnimationFrame(() => {
+        headRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    }
+    wasOpen.current = open;
+  }, [open]);
 
   return (
-    <div className="studio__section">
-      <button type="button" className="studio__section-head" onClick={() => toggle(id)}>
+    <div className="studio__section" data-section={id}>
+      <button ref={headRef} type="button" className="studio__section-head" onClick={() => toggle(id)}>
         <span className={`studio__section-chevron${open ? ' studio__section-chevron--open' : ''}`}>
           <ChevronRight size={14} />
         </span>

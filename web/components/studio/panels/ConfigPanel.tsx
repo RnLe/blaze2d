@@ -14,7 +14,7 @@ import { OutputSection } from './sections/OutputSection';
 import { AdvancedSection } from './sections/AdvancedSection';
 
 /** Map a diagnostic path prefix to the accordion section it belongs to. */
-function sectionOf(path: string): string | null {
+export function sectionOf(path: string): string | null {
   if (path.startsWith('geometry')) return 'geometry';
   if (path.startsWith('grid')) return 'grid';
   if (path.startsWith('solver')) return 'solver';
@@ -45,11 +45,13 @@ export function ConfigPanel() {
         <Sliders size={13} /> Configuration
       </div>
       <div className="studio__panel-scroll subtle-scroll">
+        <div className="studio__panel-subhead">Model</div>
         <GeometrySection hasError={sectionErrors.has('geometry')} />
         <GridSection hasError={sectionErrors.has('grid')} />
         <SolverSection />
         <PathSection hasError={sectionErrors.has('path')} />
         <SweepsSection hasError={sectionErrors.has('sweeps')} />
+        <div className="studio__panel-subhead">Numerics &amp; output</div>
         <EigensolverSection hasError={sectionErrors.has('eigensolver')} />
         <DielectricSection hasError={sectionErrors.has('dielectric')} />
         <OutputSection hasError={sectionErrors.has('output')} />
