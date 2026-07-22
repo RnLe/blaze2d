@@ -44,6 +44,8 @@ export default function StudioApp() {
       setConfig(last.config, { markClean: true });
       setProjectName(last.name);
     }
+    // Debug/testing affordance: the store is reachable from the console.
+    (window as unknown as Record<string, unknown>).__studio = useStudioStore;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

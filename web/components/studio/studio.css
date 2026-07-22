@@ -1057,3 +1057,249 @@
   border: 1px solid rgba(128, 128, 128, 0.3);
   border-radius: 6px;
 }
+
+/* ---- plot cards: controls, chips, export ---- */
+.studio__plotcard-name {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #d6d6d6;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 3px 6px;
+  min-width: 60px;
+  max-width: 220px;
+}
+
+.studio__plotcard-name:hover,
+.studio__plotcard-name:focus {
+  border-color: rgba(128, 128, 128, 0.3);
+  outline: none;
+}
+
+.studio__plotcard-extra {
+  font-size: 11px;
+  color: #7c7c7c;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio__plotcard-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+.studio__input--tiny {
+  width: 44px;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.studio__plotcard-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.studio__plotcard-hint {
+  font-size: 10.5px;
+  color: #6c6c6c;
+  letter-spacing: 0.05em;
+  margin-right: 2px;
+}
+
+.studio__btn--mini {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+/* ---- series / sweep chips ---- */
+.studio__chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.studio__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  color: #c9c9c9;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.studio__chip--plain {
+  background: rgba(128, 128, 128, 0.1);
+  border-color: transparent;
+  color: #a8a8a8;
+}
+
+.studio__chip-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.studio__chip-x {
+  border: none;
+  background: transparent;
+  color: #8a8a8a;
+  cursor: pointer;
+  display: inline-flex;
+  padding: 1px;
+  border-radius: 3px;
+}
+
+.studio__chip-x:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ---- data tab ---- */
+.studio__datatoolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.14);
+}
+
+.studio__datacount {
+  font-size: 11.5px;
+  color: #8a8a8a;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio__addmenu-wrap {
+  position: relative;
+}
+
+.studio__addmenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  background: #161616;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.studio__addmenu button {
+  border: none;
+  background: transparent;
+  color: #c9c9c9;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.studio__addmenu button:hover {
+  background: rgba(57, 135, 229, 0.15);
+  color: #fff;
+}
+
+.studio__datalist {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.studio__datarun {
+  border: 1px solid rgba(128, 128, 128, 0.16);
+  border-radius: 10px;
+  background: #0c0c0c;
+  overflow: hidden;
+}
+
+.studio__datarun-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(128, 128, 128, 0.05);
+}
+
+.studio__datarun-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #d6d6d6;
+  white-space: nowrap;
+}
+
+.studio__datarun-meta {
+  font-size: 11px;
+  color: #7c7c7c;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.studio__datajob {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 34px;
+  border-top: 1px solid rgba(128, 128, 128, 0.08);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.studio__datajob:hover {
+  background: rgba(57, 135, 229, 0.06);
+}
+
+.studio__datajob--active {
+  background: rgba(57, 135, 229, 0.12);
+}
+
+.studio__datajob-idx {
+  font-size: 11.5px;
+  color: #8a8a8a;
+  font-variant-numeric: tabular-nums;
+  min-width: 26px;
+}
+
+.studio__datajob-meta {
+  font-size: 11px;
+  color: #7c7c7c;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.studio__datadock {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(128, 128, 128, 0.18);
+  padding: 8px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #0c0c0c;
+}
+
+.studio__datadock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
