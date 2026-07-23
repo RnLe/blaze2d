@@ -1,4 +1,5 @@
 import ArchBoard from '../../components/archboard/ArchBoard'
+import MemoryHierarchy from '../../components/architecture/MemoryHierarchy'
 
 <div className="narrow-centered">
 
@@ -48,6 +49,35 @@ the blue ones.
    real-space tensor contraction, working in preallocated scratch that stays hot in L2.
    No N²-sized object ever exists.
 
+## What mixed precision buys on real hardware
+
+The first punchline deserves to be seen, not read. Below is the path every field element
+takes on a real desktop CPU: out of DRAM over a dual-channel bus, through three cache
+levels, into the FPU. Every lane moves its dots at the (damped) relative speed of the real
+thing, so you can watch the DRAM bus crawl while the L1 lane flies. Fields stay amber f32
+all the way through storage and only widen to f64 at the white cast diamond; flip the
+storage toggle to f64 and every lane delivers half the elements:
+
+</div>
+
+<div style={{
+  width: '1080px',
+  maxWidth: '92vw',
+  marginLeft: '50%',
+  transform: 'translateX(-50%)',
+  marginTop: '1.5rem',
+  marginBottom: '1.5rem'
+}}>
+  <MemoryHierarchy />
+</div>
+
+<div className="narrow">
+
+In the real solver the gap is even wider than this schematic suggests: the FLOP phases
+(FFTs, axpys, dots) are themselves memory-bound, so halving the storage width pushes the
+end-to-end speedup toward a clean 2×.
+[Precision & Memory](/architecture/precision-and-memory) has the contract and the numbers.
+
 ## Deep dives
 
 Each layer of the board has its own page:
@@ -67,6 +97,15 @@ Each layer of the board has its own page:
 
 ## Codebase map
 
+</div>
+
+<div style={{
+  width: 'fit-content',
+  maxWidth: 'min(1000px, 92vw)',
+  marginLeft: '50%',
+  transform: 'translateX(-50%)'
+}}>
+
 | Layer | Crate / module | Size | Source |
 |---|---|---|---|
 | Storage & precision | `core::field`, `core::backend` | traits + `Field2D<R>` | [field.rs](https://github.com/RnLe/blaze2d/blob/main/crates/core/src/field.rs) |
@@ -78,6 +117,10 @@ Each layer of the board has its own page:
 | Orchestration | `bulk-driver` (+`-core`) | 8.3k LOC | [driver.rs](https://github.com/RnLe/blaze2d/blob/main/crates/bulk-driver/src/driver.rs) |
 | Python | `python` (PyO3) | 3.4k LOC | [streaming.rs](https://github.com/RnLe/blaze2d/blob/main/crates/python/src/streaming.rs) |
 | Browser | `backend-wasm` | 1.2k LOC | [streaming.rs](https://github.com/RnLe/blaze2d/blob/main/crates/backend-wasm/src/streaming.rs) |
+
+</div>
+
+<div className="narrow">
 
 The whole workspace is about 42k lines of Rust across 8 crates.
 

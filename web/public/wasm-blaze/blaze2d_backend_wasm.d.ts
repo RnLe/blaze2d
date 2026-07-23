@@ -80,7 +80,7 @@ export class WasmBulkDriver {
    */
   readonly isMaxwell: boolean;
   /**
-   * Get the solver type ("maxwell" or "ea_hamiltonian").
+   * Get the solver type ("maxwell" or "operator_data").
    */
   readonly solverType: string;
   /**
@@ -99,6 +99,10 @@ export class WasmBulkDriver {
    * Get the number of bands being computed.
    */
   readonly numBands: number;
+  /**
+   * Get the storage precision ("f32" or "f64").
+   */
+  readonly precision: string;
 }
 
 export class WasmSelectiveFilter {
@@ -172,6 +176,25 @@ export function isSelectiveSupported(): boolean;
  */
 export function isStreamingSupported(): boolean;
 
+/**
+ * Validate a schema v2 TOML configuration without running anything.
+ *
+ * This runs THE parser: the exact same `parse_and_validate` the native
+ * drivers use, so web editors get zero-drift validation. Returns:
+ *
+ * ```text
+ * {
+ *   ok: boolean,
+ *   errors: [{ path: string, message: string, span: [start, end] | null }],
+ *   summary?: {                     // present when ok
+ *     jobs, nx, ny, n_bands, k_points,
+ *     precision, solver_type, polarization,
+ *   }
+ * }
+ * ```
+ */
+export function validateConfig(config_str: string): any;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -182,6 +205,7 @@ export interface InitOutput {
   readonly getSupportedSolvers: () => any;
   readonly getVersion: () => [number, number];
   readonly isSelectiveSupported: () => number;
+  readonly validateConfig: (a: number, b: number) => [number, number, number];
   readonly wasmbulkdriver_dryRun: (a: number) => [number, number, number];
   readonly wasmbulkdriver_getJobConfigs: (a: number, b: number) => [number, number, number];
   readonly wasmbulkdriver_gridSize: (a: number) => any;
@@ -190,6 +214,7 @@ export interface InitOutput {
   readonly wasmbulkdriver_jobCount: (a: number) => number;
   readonly wasmbulkdriver_new: (a: number, b: number) => [number, number, number];
   readonly wasmbulkdriver_numBands: (a: number) => number;
+  readonly wasmbulkdriver_precision: (a: number) => [number, number];
   readonly wasmbulkdriver_runCollect: (a: number) => [number, number, number];
   readonly wasmbulkdriver_runCollectFiltered: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
   readonly wasmbulkdriver_runStreamingFiltered: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];

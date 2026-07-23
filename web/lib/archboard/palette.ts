@@ -27,15 +27,21 @@ export const KIND_COLORS: Record<NodeKind, number> = {
 export const ACCENT = 0xeb7929;
 
 export const PRECISION_COLORS: Record<Precision, number> = {
-  f32: 0x1893a3, // teal
-  f64: 0xc98500, // gold
-  mixed: 0xc98500, // mixed renders as split fill f32|f64; this is the fallback
+  f32: 0xd9a13b, // amber: storage / half precision
+  f64: 0x4a9eff, // blue: accumulate / full precision
+  mixed: 0x4a9eff, // mixed renders as split fill f32|f64; this is the fallback
   generic: 0x6e7681, // gray: monomorphized over R
 };
 
 export const PACKET_COLORS: Record<'data' | 'control', number> = {
-  data: 0x8fc1ff,
+  data: 0xc9d1d9, // neutral: data payload with no declared precision
   control: 0xc9d1d9,
+};
+
+/** Packet tints for edges that declare a payload precision (brighter than node fills). */
+export const PACKET_PRECISION_COLORS: Record<'f32' | 'f64', number> = {
+  f32: 0xf5c04a,
+  f64: 0x8fc1ff,
 };
 
 export const KIND_LABELS: Record<NodeKind, string> = {

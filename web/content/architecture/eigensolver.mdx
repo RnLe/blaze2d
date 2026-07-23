@@ -1,4 +1,6 @@
-import { IterationBarChart, IterationDistributionChart, IterationTimeChart } from '../../components/charts'
+import { IterationBarChart, IterationDistributionChart, IterationTimeChart, ChartRow } from '../../components/charts'
+import Figure from '../../components/Figure'
+import SubspaceWidget from '../../components/architecture/SubspaceWidget'
 
 <div className="narrow-centered">
 
@@ -39,6 +41,23 @@ operator images alongside the eigenvector block is what makes the rest cheap.
    block from step 7 rebuilds the operator image by GEMM instead of a fresh block of
    operator applies. This one reuse pays for the entire caching scheme.
 
+The reason all of this is affordable is the shape of the search space. The trial basis
+[X, P, W] never leaves storage; what gets solved exactly is a tiny dense eigenproblem in
+the subspace it spans:
+
+<ChartRow width={900}>
+  <Figure
+    src="/figures/architecture/lobpcg_subspace.svg"
+    alt="Structure of the LOBPCG search subspace: the blocks X, P, W assemble into a trial basis whose projected eigenproblem is small and dense"
+    caption="The trial basis [X, P, W] defines a small dense projected eigenproblem whose exact solution yields the updated eigenvectors. Each iteration works in a subspace of dimension r ≈ 3·bands, never in the full N-dimensional space."
+  />
+</ChartRow>
+
+Play with the dimensions to feel how lopsided this is. The blocks are tall and skinny, the
+projected problem is a dot at true scale, and the byte counts underneath are the real ones:
+
+<SubspaceWidget />
+
 ## Warm starts collapse the iteration count
 
 Within one band structure, k-points are solved in path order and each solve starts from
@@ -46,11 +65,14 @@ the previous k-point's eigenvectors, gauge-aligned by polar-decomposition parall
 transport. The measured effect on this site's own benchmark data: the first k-point needs
 around a dozen iterations, and warm-started k-points settle to a handful.
 
-<IterationBarChart width={1000} height={380} />
+<ChartRow>
+  <IterationBarChart width={1000} height={380} />
+</ChartRow>
 
-<IterationDistributionChart width={1000} height={380} />
-
-<IterationTimeChart width={1000} height={380} />
+<ChartRow>
+  <IterationDistributionChart width={540} height={380} />
+  <IterationTimeChart width={540} height={380} />
+</ChartRow>
 
 Press **Run** on [the board](/architecture/?view=run) to watch these numbers play out: the
 first k-point's iterations are expanded stage by stage, and the remaining sweep runs at

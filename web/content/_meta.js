@@ -29,6 +29,7 @@ export default {
   },
   workbench: {
     title: 'Workbench',
+    href: '/workbench/',
   },
 
   projectSep: { type: 'separator' },

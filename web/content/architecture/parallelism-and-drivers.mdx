@@ -1,4 +1,5 @@
-import { ThroughputScalingChart, SpeedupScalingChart, MultiCorePerformanceChart } from '../../components/charts'
+import { ThroughputScalingChart, SpeedupScalingChart, MultiCorePerformanceChart, ChartRow } from '../../components/charts'
+import JobsVsKernels from '../../components/architecture/JobsVsKernels'
 
 <div className="narrow-centered">
 
@@ -31,17 +32,39 @@ Two decisions the board makes visible:
   times *slower* than sequential. There is not enough work per GEMM to amortize a fork.
   The parallelism budget is spent where the work is: across jobs.
 
+Both schedules below use the same four cores. The top machine gives each worker a whole
+solve; the bottom machine splits one solve's GEMMs across threads and pays a sync barrier
+at the end of every micro-phase. Watch the job counters:
+
+</div>
+
+<div style={{
+  width: '1000px',
+  maxWidth: '92vw',
+  marginLeft: '50%',
+  transform: 'translateX(-50%)',
+  marginTop: '1.5rem',
+  marginBottom: '1.5rem'
+}}>
+  <JobsVsKernels />
+</div>
+
+<div className="narrow">
+
 ## Adaptive threading
 
 Job wall-times vary with sweep parameters, so a fixed thread count is rarely optimal. The
 adaptive thread manager watches live job timings and tunes the pool. With `--threads -1`
 the driver manages itself.
 
-<ThroughputScalingChart width={1000} height={380} />
+<ChartRow>
+  <ThroughputScalingChart width={1000} height={380} />
+</ChartRow>
 
-<SpeedupScalingChart width={1000} height={380} />
-
-<MultiCorePerformanceChart width={650} height={420} />
+<ChartRow>
+  <SpeedupScalingChart width={600} height={400} />
+  <MultiCorePerformanceChart width={480} height={400} />
+</ChartRow>
 
 ## The driver around one job
 
