@@ -1,5 +1,8 @@
 # Square lattice with two-atom basis
 
+schema = 2
+
+[solver]
 polarization = "TM"
 
 [geometry]
@@ -27,7 +30,7 @@ ly = 1.0
 
 [path]
 preset = "square"
-segments_per_leg = 12
+points_per_segment = 12
 
 [eigensolver]
 n_bands = 10

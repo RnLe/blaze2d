@@ -1,6 +1,11 @@
 # Benchmark Config A: Square lattice, air bg (ε=1), ε=8.9 rods, r=0.2a
 # Based on Joannopoulos et al., Nature 1997
+# Migrated to config schema v2 (2026-07): key renames only, physics unchanged.
+# The v1 original is in git history.
 
+schema = 2
+
+[solver]
 polarization = "TM"
 
 [geometry]
@@ -23,7 +28,7 @@ ly = 1.0
 
 [path]
 preset = "square"
-segments_per_leg = 20
+points_per_segment = 20
 
 [eigensolver]
 n_bands = 12

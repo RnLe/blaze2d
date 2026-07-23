@@ -1,5 +1,5 @@
 # ============================================================================
-# MPB2D Bulk Driver - Two-Atom Basis Sweep Example
+# Blaze2D Bulk Driver - Two-Atom Basis Sweep Example (config schema v2)
 # ============================================================================
 #
 # Complete example for photonic crystal band structure sweeps with a 2-atom
@@ -7,29 +7,26 @@
 #   - Second atom position (first atom fixed at origin)
 #   - Atom radius
 #   - Background dielectric
-#
-# TOML RULE: Top-level fields (no [section]) must appear first.
 # ============================================================================
 
-polarization = "TM"    # "TM" (E_z polarization) or "TE" (H_z polarization)
+schema = 2
 
 # ============================================================================
 # DRIVER CONFIGURATION
 # ============================================================================
 
-[bulk]
-threads = 4            # null = all cores
-verbose = false
-dry_run = false        # Set true to count jobs without running
+[run]
+threads = 4            # omit for all physical cores
 
 [solver]
 type = "maxwell"
+polarization = "TM"    # "TM" (E_z polarization) or "TE" (H_z polarization)
 
 # ============================================================================
 # GEOMETRY - Two-Atom Basis
 # ============================================================================
 #
-# Fractional coordinates: [x, y] where x,y ∈ [0, 1)
+# Fractional coordinates: [x, y] where x,y in [0, 1)
 # Position [0.5, 0.5] = center of unit cell
 # Position [0.0, 0.0] = corner of unit cell
 #
@@ -41,7 +38,7 @@ type = "maxwell"
 eps_bg = 12.0          # Background dielectric (silicon/GaAs)
 
 [geometry.lattice]
-type = "triangular"    # 60° convention: a₁=[a,0], a₂=[a/2, a√3/2]
+type = "triangular"    # 60-degree convention: a1=[a,0], a2=[a/2, a*sqrt(3)/2]
 a = 1.0
 
 # Atom 0: Fixed at origin (will NOT be swept)
@@ -62,22 +59,18 @@ eps_inside = 1.0
 
 [grid]
 nx = 32
-ny = 32
-lx = 1.0
-ly = 1.0
 
 [path]
-preset = "triangular"  # Γ→M→K→Γ (matches triangular lattice)
-segments_per_leg = 10
+preset = "auto"        # Gamma -> M -> K -> Gamma (from the triangular lattice)
+points_per_segment = 10
 
 [eigensolver]
 n_bands = 8
 tol = 1e-8
 max_iter = 200
 
-[dielectric.smoothing]
-mesh_size = 3
-method = "analytic"
+[dielectric]
+smoothing = "analytic"
 
 # ============================================================================
 # PARAMETER SWEEPS
@@ -95,10 +88,10 @@ method = "analytic"
 #   "eps_bg"          - Background dielectric
 #   "resolution"      - Grid resolution (nx=ny)
 #   "polarization"    - ["TM", "TE"]
-#   "lattice_type"    - ["square", "triangular", ...]
+#   "lattice_type"    - ["square", "rectangular", "triangular", "hexagonal"]
 #
-# Range format: { min, max, step } or { min, max, count }
-# List format:  values = [...]
+# Range format: min / max / step. List format: values = [...]
+# atomN must reference an atom defined in [[geometry.atoms]].
 # ============================================================================
 
 # Outermost: Background dielectric (3 values: 10, 11, 12)
@@ -121,7 +114,7 @@ min = 0.10
 max = 0.20
 step = 0.05
 
-# Inner: Second atom position (3×3 = 9 positions)
+# Inner: Second atom position (3x3 = 9 positions)
 [[sweeps]]
 parameter = "atom1.pos_x"
 min = 0.3
@@ -134,7 +127,7 @@ min = 0.3
 max = 0.5
 step = 0.1
 
-# Total jobs: 3 × 3 × 3 × 3 × 3 = 243
+# Total jobs: 3 x 3 x 3 x 3 x 3 = 243
 
 # ============================================================================
 # OUTPUT
@@ -142,71 +135,9 @@ step = 0.1
 
 [output]
 mode = "full"          # One CSV per job
-io_mode = "stream"     # Real-time emission
 directory = "./two_atom_output"
 prefix = "job"
 
-# ============================================================================
-# RESULT STRUCTURE
-# ============================================================================
-#
-# Each result contains the complete band structure for one parameter combination.
-#
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ RESULT DICT STRUCTURE                                                   │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │                                                                         │
-# │  job_index     : int        Completion order (not sweep order!)         │
-# │  result_type   : "maxwell"  Solver used                                 │
-# │                                                                         │
-# │  k_path        : [[kx, ky], ...]   K-points in fractional coords        │
-# │  distances     : [d₀, d₁, ...]     Cumulative path distance (for x-axis)│
-# │  bands         : [[ω₁, ω₂, ...],   Frequencies at each k-point          │
-# │                   [ω₁, ω₂, ...],   Shape: [num_k_points][num_bands]     │
-# │                   ...]             Units: ω/2π (normalized to c/a=1)    │
-# │                                                                         │
-# │  num_k_points  : int        Length of k_path                            │
-# │  num_bands     : int        Number of bands per k-point                 │
-# │                                                                         │
-# │  params : {                 Full configuration snapshot                 │
-# │    eps_bg       : 12.0                                                  │
-# │    resolution   : 32                                                    │
-# │    polarization : "TM"                                                  │
-# │    lattice_type : "triangular"                                          │
-# │    atoms : [                                                            │
-# │      { pos: [0.0, 0.0], radius: 0.15, eps_inside: 1.0 },               │
-# │      { pos: [0.4, 0.4], radius: 0.15, eps_inside: 1.0 }                │
-# │    ]                                                                    │
-# │  }                                                                      │
-# │                                                                         │
-# │  sweep_values : {           Current sweep parameter values              │
-# │    "eps_bg"       : 12.0                                                │
-# │    "atom0.radius" : 0.15                                                │
-# │    "atom1.radius" : 0.15                                                │
-# │    "atom1.pos_x"  : 0.4                                                 │
-# │    "atom1.pos_y"  : 0.4                                                 │
-# │  }                                                                      │
-# │                                                                         │
-# │  sweep_order : str          For sorting/grouping results                │
-# │    "eps_bg=12.0|atom0.radius=0.15|atom1.radius=0.15|..."               │
-# │                                                                         │
-# └─────────────────────────────────────────────────────────────────────────┘
-#
-# ============================================================================
-# INTERPRETING BAND DATA
-# ============================================================================
-#
-# Frequencies are normalized: ω_norm = ωa/(2πc)
-# To convert to physical frequency: f = ω_norm × (c/a)
-#
-# Example: If a = 500nm and ω_norm = 0.3:
-#   f = 0.3 × (3×10⁸ m/s) / (500×10⁻⁹ m) = 1.8×10¹⁴ Hz ≈ 180 THz
-#   λ = c/f = 1.67 μm
-#
-# Band gaps appear as frequency ranges with no bands:
-#   - Look for gaps between bands[k][n] and bands[k][n+1]
-#   - Gap exists if min(band_n+1) > max(band_n) across all k-points
-#
 # ============================================================================
 # PYTHON USAGE
 # ============================================================================
@@ -221,6 +152,8 @@ prefix = "job"
 #       bands = result["bands"]
 #       print(f"eps={sv['eps_bg']}, r={sv['atom0.radius']}, "
 #             f"pos=({sv['atom1.pos_x']}, {sv['atom1.pos_y']})")
-#       print(f"  Band 1 at Γ: {bands[0][0]:.4f}")
+#       print(f"  Band 1 at Gamma: {bands[0][0]:.4f}")
 #
+# Frequencies are normalized: w_norm = w*a/(2*pi*c). Results arrive in
+# completion order (parallel); use sweep_order for sorting.
 # ============================================================================

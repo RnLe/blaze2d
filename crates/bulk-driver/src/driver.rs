@@ -117,7 +117,7 @@ impl PreRunReport {
         // Job summary with solver type
         let solver_str = match config.solver_type() {
             SolverType::Maxwell => "Maxwell",
-            SolverType::OperatorData => "EA Hamiltonian",
+            SolverType::OperatorData => "Operator Data",
         };
         lines.push(format!(
             "  Solver: {}  │  Jobs: {}  │  Threads: {}",
@@ -127,28 +127,22 @@ impl PreRunReport {
         ));
         lines.push(String::new());
 
-        // Fixed parameters (from base config) - only for Maxwell
+        // Fixed parameters (base values that are not swept).
+        let swept_param = |name: &str| config.sweeps.iter().any(|s| s.parameter == name);
         let mut fixed = Vec::new();
-        if let Some(ref geometry) = config.geometry {
-            if config.ranges.eps_bg.is_none() {
-                fixed.push(format!("ε_bg={:.1}", geometry.eps_bg));
-            }
-            if config.ranges.resolution.is_none() {
-                fixed.push(format!("grid={}×{}", config.grid.nx, config.grid.ny));
-            }
-            if config.ranges.lattice_type.is_none() {
-                if let Some(ref lt) = geometry.lattice.lattice_type {
-                    fixed.push(format!("lattice={}", lt));
-                }
-            }
-            // Only show atoms info if there are atoms and they're not being swept
-            if !geometry.atoms.is_empty() {
-                let base_atoms_count = geometry.atoms.len();
-                fixed.push(format!("atoms={}", base_atoms_count));
-            }
-        } else {
-            // Non-Maxwell (operator-data extraction): show grid + band count.
-            fixed.push(format!("grid={}×{}", config.grid.nx, config.grid.ny));
+        if !swept_param("eps_bg") {
+            fixed.push(format!("ε_bg={:.1}", config.geometry.eps_bg));
+        }
+        if !swept_param("resolution") {
+            fixed.push(format!("grid={}×{}", config.grid.nx, config.grid.ny()));
+        }
+        if !swept_param("lattice_type") {
+            fixed.push(format!("lattice={}", config.geometry.lattice.kind));
+        }
+        if !config.geometry.atoms.is_empty() {
+            fixed.push(format!("atoms={}", config.geometry.atoms.len()));
+        }
+        if config.solver_type() == SolverType::OperatorData {
             fixed.push(format!("n_bands={}", config.eigensolver.n_bands));
         }
 
@@ -156,70 +150,20 @@ impl PreRunReport {
             lines.push(format!("  Fixed: {}", fixed.join(", ")));
         }
 
-        // Swept parameters
+        // Swept parameters, in loop order (first = outermost).
         let mut swept = Vec::new();
-        if let Some(ref range) = config.ranges.eps_bg {
-            swept.push(format!(
-                "ε_bg: {:.1}→{:.1} ({})",
-                range.min,
-                range.max,
-                range.count()
-            ));
-        }
-        if let Some(ref range) = config.ranges.resolution {
-            swept.push(format!(
-                "res: {}→{} ({})",
-                range.min as i32,
-                range.max as i32,
-                range.count()
-            ));
-        }
-        if let Some(ref pols) = config.ranges.polarization {
-            let pol_strs: Vec<_> = pols.iter().map(|p| format!("{:?}", p)).collect();
-            swept.push(format!("pol: [{}]", pol_strs.join(",")));
-        }
-        if let Some(ref types) = config.ranges.lattice_type {
-            let type_strs: Vec<_> = types.iter().map(|t| format!("{:?}", t)).collect();
-            swept.push(format!("lattice: [{}]", type_strs.join(",")));
-        }
-
-        // Atom parameter sweeps
-        for (i, atom_range) in config.ranges.atoms.iter().enumerate() {
-            if let Some(ref r) = atom_range.radius {
+        for sweep in &config.sweeps {
+            if let (Some(min), Some(max)) = (sweep.min, sweep.max) {
                 swept.push(format!(
-                    "atom{}.r: {:.2}→{:.2} ({})",
-                    i,
-                    r.min,
-                    r.max,
-                    r.count()
+                    "{}: {:.4}→{:.4} ({})",
+                    sweep.parameter,
+                    min,
+                    max,
+                    sweep.count()
                 ));
-            }
-            if let Some(ref px) = atom_range.pos_x {
-                swept.push(format!(
-                    "atom{}.x: {:.2}→{:.2} ({})",
-                    i,
-                    px.min,
-                    px.max,
-                    px.count()
-                ));
-            }
-            if let Some(ref py) = atom_range.pos_y {
-                swept.push(format!(
-                    "atom{}.y: {:.2}→{:.2} ({})",
-                    i,
-                    py.min,
-                    py.max,
-                    py.count()
-                ));
-            }
-            if let Some(ref eps) = atom_range.eps_inside {
-                swept.push(format!(
-                    "atom{}.ε: {:.1}→{:.1} ({})",
-                    i,
-                    eps.min,
-                    eps.max,
-                    eps.count()
-                ));
+            } else if let Some(ref values) = sweep.values {
+                let strs: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+                swept.push(format!("{}: [{}]", sweep.parameter, strs.join(",")));
             }
         }
 
@@ -305,7 +249,7 @@ impl<R: Real + FftNum> BulkDriver<R> {
             }
         };
 
-        let verbose = config.bulk.verbose;
+        let verbose = config.run.verbose;
         let jobs = expand_jobs(&config);
 
         Self {
@@ -935,9 +879,12 @@ impl<R: Real + FftNum> BulkDriver<R> {
     ) -> Result<JobResult, JobError> {
         let start = Instant::now();
 
-        // Build run options from config
-        let run_options = RunOptions::default()
-            .with_disable_band_tracking(self.config.bulk.disable_band_tracking);
+        // Build run options from config. `skip_final_gamma` maps onto the
+        // solver's reuse_gamma fast path (copy the initial Γ result for a
+        // closing Γ instead of re-solving it).
+        let mut run_options = RunOptions::default()
+            .with_disable_band_tracking(self.config.run.disable_band_tracking);
+        run_options.reuse_gamma = self.config.run.skip_final_gamma;
 
         // Run the solver
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1049,41 +996,13 @@ impl<R: Real + FftNum> BulkDriver<R> {
     pub fn dry_run(&self) -> DryRunStats {
         let total_jobs = self.jobs.len();
 
-        // Collect parameter statistics
+        // Collect parameter statistics from the ordered sweeps.
         let mut param_counts = HashMap::new();
-
-        if let Some(ref range) = self.config.ranges.eps_bg {
-            param_counts.insert("eps_bg", range.count());
-        }
-        if let Some(ref range) = self.config.ranges.resolution {
-            param_counts.insert("resolution", range.count());
-        }
-        if let Some(ref pols) = self.config.ranges.polarization {
-            param_counts.insert("polarization", pols.len());
-        }
-        if let Some(ref types) = self.config.ranges.lattice_type {
-            param_counts.insert("lattice_type", types.len());
-        }
-
-        for (i, atom_range) in self.config.ranges.atoms.iter().enumerate() {
-            if atom_range.radius.is_some() {
-                param_counts.insert(
-                    Box::leak(format!("atom{}_radius", i).into_boxed_str()),
-                    atom_range.radius.as_ref().unwrap().count(),
-                );
-            }
-            if atom_range.pos_x.is_some() {
-                param_counts.insert(
-                    Box::leak(format!("atom{}_pos_x", i).into_boxed_str()),
-                    atom_range.pos_x.as_ref().unwrap().count(),
-                );
-            }
-            if atom_range.pos_y.is_some() {
-                param_counts.insert(
-                    Box::leak(format!("atom{}_pos_y", i).into_boxed_str()),
-                    atom_range.pos_y.as_ref().unwrap().count(),
-                );
-            }
+        for sweep in &self.config.sweeps {
+            param_counts.insert(
+                Box::leak(sweep.parameter.clone().into_boxed_str()) as &'static str,
+                sweep.count(),
+            );
         }
 
         // Create adaptive manager to get initial thread count for display

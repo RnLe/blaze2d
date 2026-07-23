@@ -33,7 +33,7 @@ pub enum SmoothingMethod {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct DielectricOptions {
     pub smoothing: SmoothingOptions,
 }
@@ -53,7 +53,7 @@ impl DielectricOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SmoothingOptions {
     /// Subgrid mesh size for numerical integration (only used with Subgrid method)
     pub mesh_size: usize,
