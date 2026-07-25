@@ -25,6 +25,6 @@ pub trait BulkConfigNativeExt {
 
 impl BulkConfigNativeExt for BulkConfig {
     fn effective_threads(&self) -> usize {
-        self.run.threads.unwrap_or_else(num_cpus::get_physical)
+        self.bulk.threads.unwrap_or_else(num_cpus::get_physical)
     }
 }
