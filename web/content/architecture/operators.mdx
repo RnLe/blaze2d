@@ -1,5 +1,4 @@
-import { SingleCorePerformanceChart, ResolutionScalingChart, ChartRow } from '../../components/charts'
-import OperatorPipeline from '../../components/architecture/OperatorPipeline'
+import { SingleCorePerformanceChart, ResolutionScalingChart } from '../../components/charts'
 
 <div className="narrow-centered">
 
@@ -49,12 +48,6 @@ deliberately loops vector by vector so those buffers stay hot in L2 instead of s
 through a larger batch footprint. See it on
 [the board](/architecture/?node=theta.te).
 
-Step through one application yourself. Every stage is either an FFT or a pointwise
-multiply, and the buffer strip shows the reuse: nothing is allocated, the same three
-buffers pass the field back and forth between real space and G-space:
-
-<OperatorPipeline />
-
 ## Preconditioners share the machinery
 
 The TM preconditioner is a Fourier-space diagonal, 1/(|k+G|² + σ): two more FFTs. The TE
@@ -68,10 +61,9 @@ Operator applies dominate each LOBPCG iteration (the batched A·Q step applies t
 to every subspace vector). Making each apply cheap, allocation-free, and cache-resident is
 the single biggest reason for the single-core numbers below.
 
-<ChartRow>
-  <SingleCorePerformanceChart width={480} height={400} />
-  <ResolutionScalingChart width={600} height={400} />
-</ChartRow>
+<SingleCorePerformanceChart width={650} height={420} />
+
+<ResolutionScalingChart width={1000} height={380} />
 
 → Continue with [the eigensolver](/architecture/eigensolver) that drives these applies.
 

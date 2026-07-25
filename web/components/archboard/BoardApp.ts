@@ -107,16 +107,6 @@ export class BoardApp {
 
     this.layout = resolveLayout(ARCH_MODEL);
 
-    if (process.env.NODE_ENV !== 'production') {
-      const { auditEdgeRoutes } = await import('../../lib/archboard/audit');
-      const crossings = auditEdgeRoutes(this.layout, ARCH_MODEL);
-      if (crossings.length > 0) {
-        console.groupCollapsed(`[archboard] ${crossings.length} edge/node crossings (route: waypoints fix these)`);
-        console.table(crossings);
-        console.groupEnd();
-      }
-    }
-
     const bench: BenchData =
       (opts.benchJson ? benchFromSeries4(opts.benchJson) : null) ?? syntheticBench(this.params.kPoints);
     this.timeline = buildTimeline(this.params, bench);

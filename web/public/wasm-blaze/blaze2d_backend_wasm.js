@@ -197,7 +197,7 @@ export class WasmBulkDriver {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * Get the solver type ("maxwell" or "operator_data").
+     * Get the solver type ("maxwell" or "ea_hamiltonian").
      * @returns {string}
      */
     get solverType() {
@@ -372,22 +372,6 @@ export class WasmBulkDriver {
         const ret = wasm.wasmbulkdriver_numBands(this.__wbg_ptr);
         return ret >>> 0;
     }
-    /**
-     * Get the storage precision ("f32" or "f64").
-     * @returns {string}
-     */
-    get precision() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.wasmbulkdriver_precision(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
 }
 if (Symbol.dispose) WasmBulkDriver.prototype[Symbol.dispose] = WasmBulkDriver.prototype.free;
 
@@ -539,35 +523,6 @@ export function isSelectiveSupported() {
 export function isStreamingSupported() {
     const ret = wasm.isSelectiveSupported();
     return ret !== 0;
-}
-
-/**
- * Validate a schema v2 TOML configuration without running anything.
- *
- * This runs THE parser: the exact same `parse_and_validate` the native
- * drivers use, so web editors get zero-drift validation. Returns:
- *
- * ```text
- * {
- *   ok: boolean,
- *   errors: [{ path: string, message: string, span: [start, end] | null }],
- *   summary?: {                     // present when ok
- *     jobs, nx, ny, n_bands, k_points,
- *     precision, solver_type, polarization,
- *   }
- * }
- * ```
- * @param {string} config_str
- * @returns {any}
- */
-export function validateConfig(config_str) {
-    const ptr0 = passStringToWasm0(config_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.validateConfig(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
 }
 
 const EXPECTED_RESPONSE_TYPES = new Set(['basic', 'cors', 'default']);
