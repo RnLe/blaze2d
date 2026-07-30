@@ -26,6 +26,7 @@ pub mod deflation;
 pub mod dense;
 pub mod initialization;
 pub mod normalization;
+pub mod refine;
 pub mod subspace_prediction;
 
 #[cfg(test)]
@@ -38,6 +39,7 @@ mod _tests_normalization;
 // Re-exports from submodules
 pub use deflation::{DeflationSubspace, LockingResult, check_for_locking};
 pub use dense::{DenseEigenResult, solve_hermitian_eigen};
+pub use refine::{BlockCertification, rayleigh_ritz_certify};
 pub use initialization::{
     BlockEntry, GAMMA_TOLERANCE, InitializationConfig, InitializationResult, create_gamma_mode,
     is_gamma_point,
@@ -2372,6 +2374,20 @@ where
         all.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         all
+    }
+
+    /// Post-solve certification: final dense Rayleigh–Ritz rotation of a
+    /// returned eigenblock (in place) plus fresh residuals and the
+    /// B-orthogonality defect, all computed against this solver's operator.
+    ///
+    /// See [`refine::rayleigh_ritz_certify`]. This method exists so drivers
+    /// that only hold the operator through the solver borrow can still certify.
+    pub fn certify_and_refine(
+        &mut self,
+        eigenvalues: &mut [f64],
+        eigenvectors: &mut [Field2D],
+    ) -> refine::BlockCertification {
+        refine::rayleigh_ritz_certify(&mut *self.operator, eigenvalues, eigenvectors)
     }
 
     /// Get the current eigenvector approximations as f64 fields (boundary precision).

@@ -990,6 +990,7 @@ impl<R: Real + FftNum> BulkDriver<R> {
                 compute_born_huang: spec.compute_born_huang,
                 compute_slow_coefficient: spec.compute_slow_coefficient,
                 compute_overlap: false,
+                fail_on_residual: None,
             };
 
             let eigensolver = EigensolverConfig {

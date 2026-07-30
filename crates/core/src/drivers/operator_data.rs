@@ -33,6 +33,7 @@ use crate::backend::SpectralBackend;
 use crate::band_tracking::{apply_permutation, track_bands_with_frequencies};
 use crate::dielectric::{Dielectric2D, DielectricDerivative, DielectricOptions};
 use crate::operator_data::{OperatorDataConfig, OperatorDataExtractor, OperatorData};
+use crate::eigensolver::refine::{self, BlockCertification};
 use crate::eigensolver::{Eigensolver, EigensolverConfig};
 use crate::field::Field2D;
 use crate::geometry::Geometry2D;
@@ -93,11 +94,56 @@ pub struct OperatorDataDriverResult {
     pub solve_time_seconds: f64,
     /// Total wall-clock time for the extraction (seconds).
     pub extract_time_seconds: f64,
+    /// Set when `fail_on_residual` was configured and a certified band
+    /// exceeded it: (band index, residual) of the worst offender. Callers
+    /// MUST treat this as a hard failure of the extraction (the Python
+    /// bindings raise a RuntimeError; note the release profile builds with
+    /// panic=abort, so the gate must not panic here).
+    pub residual_gate_violation: Option<(usize, f64)>,
 }
 
 // ============================================================================
 // Driver Functions
 // ============================================================================
+
+/// Post-solve certification: final dense Rayleigh–Ritz rotation of the
+/// returned block plus fresh per-band residuals and B-orthogonality defect.
+fn certify_block<B: SpectralBackend>(
+    theta: &mut ThetaOperator<B>,
+    eigenvalues: &mut [f64],
+    eigenvectors: &mut [Field2D],
+) -> BlockCertification {
+    refine::rayleigh_ritz_certify(theta, eigenvalues, eigenvectors)
+}
+
+/// Evaluate the optional residual strictness gate: returns the worst
+/// (band, residual) exceeding `threshold`, or `None` when the gate is
+/// disabled or satisfied. `!(res <= threshold)` also trips on NaN.
+fn residual_gate_violation(
+    residuals: &[f64],
+    threshold: Option<f64>,
+) -> Option<(usize, f64)> {
+    let threshold = threshold?;
+    let mut worst: Option<(usize, f64)> = None;
+    for (band, &res) in residuals.iter().enumerate() {
+        if !(res <= threshold) {
+            match worst {
+                Some((_, worst_res)) if !(res > worst_res) => {}
+                _ => worst = Some((band, res)),
+            }
+        }
+    }
+    if let Some((band, res)) = worst {
+        log::error!(
+            "operator-data residual gate: band {} residual {:.3e} exceeds \
+             fail_on_residual={:.3e}",
+            band,
+            res,
+            threshold
+        );
+    }
+    worst
+}
 
 /// Run the full EA extraction pipeline at a single (R, k₀) point.
 ///
@@ -170,12 +216,15 @@ pub fn run_with_reference<B: SpectralBackend>(
         None,
     );
     let result = solver.solve();
-    let eigenvectors = solver.all_eigenvectors();
-    let solve_time = solve_start.elapsed().as_secs_f64();
+    let mut eigenvectors = solver.all_eigenvectors();
 
     let n_iterations = result.iterations;
     let converged = result.converged;
-    let eigenvalues = result.eigenvalues;
+    let mut eigenvalues = result.eigenvalues;
+
+    // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+    let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
+    let solve_time = solve_start.elapsed().as_secs_f64();
 
     // 5. Extract EA ingredients
     let extract_start = std::time::Instant::now();
@@ -186,7 +235,7 @@ pub fn run_with_reference<B: SpectralBackend>(
         job.operator_data_config.clone(),
     );
 
-    let ingredients = extractor.extract(
+    let mut ingredients = extractor.extract(
         job.k0,
         job.registry,
         diel_derivs.as_ref(),
@@ -194,12 +243,19 @@ pub fn run_with_reference<B: SpectralBackend>(
         n_iterations,
         converged,
     );
+    ingredients.residuals = cert.residuals;
+    ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
+    let residual_gate_violation = residual_gate_violation(
+        &ingredients.residuals,
+        job.operator_data_config.fail_on_residual,
+    );
     let extract_time = extract_start.elapsed().as_secs_f64();
 
     OperatorDataDriverResult {
         ingredients,
         solve_time_seconds: solve_time,
         extract_time_seconds: extract_time,
+        residual_gate_violation,
     }
 }
 
@@ -258,12 +314,15 @@ pub fn run_with_warmstart<B: SpectralBackend>(
         Some(warmstart),
     );
     let result = solver.solve();
-    let eigenvectors = solver.all_eigenvectors();
-    let solve_time = solve_start.elapsed().as_secs_f64();
+    let mut eigenvectors = solver.all_eigenvectors();
 
     let n_iterations = result.iterations;
     let converged = result.converged;
-    let eigenvalues = result.eigenvalues;
+    let mut eigenvalues = result.eigenvalues;
+
+    // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+    let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
+    let solve_time = solve_start.elapsed().as_secs_f64();
 
     let extract_start = std::time::Instant::now();
     let mut extractor = OperatorDataExtractor::new(
@@ -273,7 +332,7 @@ pub fn run_with_warmstart<B: SpectralBackend>(
         job.operator_data_config.clone(),
     );
 
-    let ingredients = extractor.extract(
+    let mut ingredients = extractor.extract(
         job.k0,
         job.registry,
         diel_derivs.as_ref(),
@@ -281,12 +340,19 @@ pub fn run_with_warmstart<B: SpectralBackend>(
         n_iterations,
         converged,
     );
+    ingredients.residuals = cert.residuals;
+    ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
+    let residual_gate_violation = residual_gate_violation(
+        &ingredients.residuals,
+        job.operator_data_config.fail_on_residual,
+    );
     let extract_time = extract_start.elapsed().as_secs_f64();
 
     OperatorDataDriverResult {
         ingredients,
         solve_time_seconds: solve_time,
         extract_time_seconds: extract_time,
+        residual_gate_violation,
     }
 }
 
@@ -420,17 +486,21 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             None,
         );
         let result = solver.solve();
-        let eigenvectors = solver.all_eigenvectors();
+        let mut eigenvectors = solver.all_eigenvectors();
+        let mut eigenvalues = result.eigenvalues.clone();
+
+        // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+        let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
         let solve_time = solve_start.elapsed().as_secs_f64();
 
         let extract_start = std::time::Instant::now();
         let mut extractor = OperatorDataExtractor::new(
             &mut theta,
             &eigenvectors,
-            &result.eigenvalues,
+            &eigenvalues,
             job.operator_data_config.clone(),
         );
-        let ingredients = extractor.extract(
+        let mut ingredients = extractor.extract(
             job.k0,
             job.registry,
             diel_derivs.as_ref(),
@@ -438,12 +508,19 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             result.iterations,
             result.converged,
         );
+        ingredients.residuals = cert.residuals;
+        ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
+        let residual_gate_violation = residual_gate_violation(
+            &ingredients.residuals,
+            job.operator_data_config.fail_on_residual,
+        );
         let extract_time = extract_start.elapsed().as_secs_f64();
 
         (OperatorDataDriverResult {
             ingredients,
             solve_time_seconds: solve_time,
             extract_time_seconds: extract_time,
+            residual_gate_violation,
         }, eigenvectors)
     };
 
@@ -547,6 +624,12 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
         let result = solver.solve();
         let mut eigenvalues = result.eigenvalues;
         let mut eigenvectors = solver.all_eigenvectors();
+
+        // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+        // BEFORE band tracking, so tracking permutes certified eigenpairs.
+        let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
+        let mut residuals = cert.residuals;
+
         let mut omegas: Vec<f64> = eigenvalues
             .iter()
             .map(|&lambda| lambda.max(0.0).sqrt())
@@ -564,9 +647,13 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
 
             let eigenvalues_orig = eigenvalues.clone();
+            let residuals_orig = residuals.clone();
             for (idx, &src) in tracking_result.permutation.iter().enumerate() {
                 if idx < eigenvalues.len() && src < eigenvalues_orig.len() {
                     eigenvalues[idx] = eigenvalues_orig[src];
+                }
+                if idx < residuals.len() && src < residuals_orig.len() {
+                    residuals[idx] = residuals_orig[src];
                 }
             }
         }
@@ -580,13 +667,19 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             &eigenvalues,
             job.operator_data_config.clone(),
         );
-        let ingredients = extractor.extract(
+        let mut ingredients = extractor.extract(
             k_point,
             job.registry,
             diel_derivs.as_ref(),
             Some(ref_vecs),
             result.iterations,
             result.converged,
+        );
+        ingredients.residuals = residuals;
+        ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
+        let residual_gate_violation = residual_gate_violation(
+            &ingredients.residuals,
+            job.operator_data_config.fail_on_residual,
         );
         let extract_time = extract_start.elapsed().as_secs_f64();
 
@@ -595,6 +688,7 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
                 ingredients,
                 solve_time_seconds: solve_time,
                 extract_time_seconds: extract_time,
+                residual_gate_violation,
             },
             eigenvectors,
             omegas,

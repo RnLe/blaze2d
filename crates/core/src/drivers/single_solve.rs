@@ -222,8 +222,12 @@ pub struct SingleSolveResult {
     pub converged: bool,
     /// Total solve time in seconds (excluding setup).
     pub elapsed_seconds: f64,
-    /// Final relative residual for each band (if available).
+    /// Fresh normalized generalized residuals ‖Au − λBu‖/(‖Au‖+|λ|‖Bu‖) per
+    /// band, computed AFTER a final dense Rayleigh–Ritz rotation from fresh
+    /// A/B applications — never the solver's stale/zeroed iteration residuals.
     pub final_residuals: Vec<f64>,
+    /// B-orthogonality defect max |⟨uᵢ|B|uⱼ⟩ − δᵢⱼ| of the returned block.
+    pub b_orthogonality_defect: f64,
 }
 
 /// Extended result including convergence diagnostics for analysis.
@@ -318,7 +322,11 @@ where
     // Create and run the eigensolver
     let mut solver = Eigensolver::new(operator, config, preconditioner, None);
     let result: EigensolverResult = solver.solve();
-    let eigenvectors = solver.all_eigenvectors();
+    let mut eigenvectors = solver.all_eigenvectors();
+    let mut eigenvalues = result.eigenvalues;
+
+    // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+    let cert = solver.certify_and_refine(&mut eigenvalues, &mut eigenvectors);
 
     let elapsed = start_time.elapsed_secs();
 
@@ -328,12 +336,13 @@ where
     );
 
     SingleSolveResult {
-        eigenvalues: result.eigenvalues,
+        eigenvalues,
         eigenvectors,
         iterations: result.iterations,
         converged: result.converged,
         elapsed_seconds: elapsed,
-        final_residuals: result.convergence.relative_residuals,
+        final_residuals: cert.residuals,
+        b_orthogonality_defect: cert.b_orthogonality_defect,
     }
 }
 
@@ -393,7 +402,11 @@ where
     // Create and run the eigensolver with progress callback
     let mut solver = Eigensolver::new(operator, config, preconditioner, None);
     let result: EigensolverResult = solver.solve_with_progress(on_progress);
-    let eigenvectors = solver.all_eigenvectors();
+    let mut eigenvectors = solver.all_eigenvectors();
+    let mut eigenvalues = result.eigenvalues;
+
+    // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+    let cert = solver.certify_and_refine(&mut eigenvalues, &mut eigenvectors);
 
     let elapsed = start_time.elapsed_secs();
 
@@ -403,12 +416,13 @@ where
     );
 
     SingleSolveResult {
-        eigenvalues: result.eigenvalues,
+        eigenvalues,
         eigenvectors,
         iterations: result.iterations,
         converged: result.converged,
         elapsed_seconds: elapsed,
-        final_residuals: result.convergence.relative_residuals,
+        final_residuals: cert.residuals,
+        b_orthogonality_defect: cert.b_orthogonality_defect,
     }
 }
 
@@ -460,7 +474,11 @@ where
     // Create and run the eigensolver with diagnostics
     let mut solver = Eigensolver::new(operator, config, preconditioner, None);
     let diag_result: DiagnosticResult = solver.solve_with_diagnostics(&run_label);
-    let eigenvectors = solver.all_eigenvectors();
+    let mut eigenvectors = solver.all_eigenvectors();
+    let mut eigenvalues = diag_result.result.eigenvalues.clone();
+
+    // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+    let cert = solver.certify_and_refine(&mut eigenvalues, &mut eigenvectors);
 
     let elapsed = start_time.elapsed_secs();
 
@@ -470,12 +488,13 @@ where
     );
 
     let result = SingleSolveResult {
-        eigenvalues: diag_result.result.eigenvalues,
+        eigenvalues,
         eigenvectors,
         iterations: diag_result.result.iterations,
         converged: diag_result.result.converged,
         elapsed_seconds: elapsed,
-        final_residuals: diag_result.result.convergence.relative_residuals,
+        final_residuals: cert.residuals,
+        b_orthogonality_defect: cert.b_orthogonality_defect,
     };
 
     SingleSolveResultWithDiagnostics {
@@ -518,7 +537,11 @@ where
     let mut solver = Eigensolver::new(operator, config, preconditioner, Some(warm_start));
 
     let result = solver.solve();
-    let eigenvectors = solver.all_eigenvectors();
+    let mut eigenvectors = solver.all_eigenvectors();
+    let mut eigenvalues = result.eigenvalues;
+
+    // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+    let cert = solver.certify_and_refine(&mut eigenvalues, &mut eigenvectors);
 
     let elapsed = start_time.elapsed_secs();
 
@@ -533,12 +556,13 @@ where
     );
 
     SingleSolveResult {
-        eigenvalues: result.eigenvalues,
+        eigenvalues,
         eigenvectors,
         iterations: result.iterations,
         converged: result.converged,
         elapsed_seconds: elapsed,
-        final_residuals: result.convergence.relative_residuals,
+        final_residuals: cert.residuals,
+        b_orthogonality_defect: cert.b_orthogonality_defect,
     }
 }
 
@@ -564,7 +588,11 @@ where
     let mut solver = Eigensolver::new(operator, config, preconditioner, Some(warm_start));
 
     let diag_result: DiagnosticResult = solver.solve_with_diagnostics(&run_label);
-    let eigenvectors = solver.all_eigenvectors();
+    let mut eigenvectors = solver.all_eigenvectors();
+    let mut eigenvalues = diag_result.result.eigenvalues.clone();
+
+    // Post-solve Rayleigh–Ritz rotation + fresh residual certification
+    let cert = solver.certify_and_refine(&mut eigenvalues, &mut eigenvectors);
 
     let elapsed = start_time.elapsed_secs();
 
@@ -574,12 +602,13 @@ where
     );
 
     let result = SingleSolveResult {
-        eigenvalues: diag_result.result.eigenvalues,
+        eigenvalues,
         eigenvectors,
         iterations: diag_result.result.iterations,
         converged: diag_result.result.converged,
         elapsed_seconds: elapsed,
-        final_residuals: diag_result.result.convergence.relative_residuals,
+        final_residuals: cert.residuals,
+        b_orthogonality_defect: cert.b_orthogonality_defect,
     };
 
     SingleSolveResultWithDiagnostics {
