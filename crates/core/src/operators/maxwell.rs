@@ -75,9 +75,21 @@ pub struct ThetaOperator<B: SpectralBackend> {
     bloch: [f64; 2],
     kx_shifted: Vec<f64>,
     ky_shifted: Vec<f64>,
+    /// Raw (unclamped) k+G tables. Used by every physical operator and every
+    /// exported k-derivative. At Γ the G=0 entry is exactly (0, 0).
     k_plus_g_x: Vec<f64>,
     k_plus_g_y: Vec<f64>,
     k_plus_g_sq: Vec<f64>,
+    /// Clamped k+G tables (|k+G|² floored at `K_PLUS_G_NEAR_ZERO_FLOOR`).
+    /// ONLY for preconditioner construction — never for physical operators.
+    k_plus_g_x_precond: Vec<f64>,
+    k_plus_g_y_precond: Vec<f64>,
+    k_plus_g_sq_precond: Vec<f64>,
+    /// G-only wavevector tables (k₀ = 0). Used exclusively to Fourier-
+    /// differentiate PERIODIC COEFFICIENTS (ε, ε⁻¹, ρ), which are strictly
+    /// lattice-periodic and must never see the Bloch shift.
+    g_x: Vec<f64>,
+    g_y: Vec<f64>,
     #[allow(dead_code)]
     k_plus_g_sq_min: f64,
     #[allow(dead_code)]
@@ -136,19 +148,11 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         let b2 = dielectric.reciprocal_b2();
 
         // Build k+G tables using the reciprocal lattice basis
-        let (
-            k_plus_g_x,
-            k_plus_g_y,
-            k_plus_g_sq,
-            k_plus_g_sq_min_raw,
-            k_plus_g_sq_min,
-            k_plus_g_floor_count,
-            k_plus_g_was_clamped,
-        ) = build_k_plus_g_tables_with_reciprocal(grid, b1, b2, bloch_k);
+        let tables = build_k_plus_g_tables_with_reciprocal(grid, b1, b2, bloch_k);
 
-        // kx_shifted and ky_shifted derived from k_plus_g values
-        let kx_shifted = k_plus_g_x.clone();
-        let ky_shifted = k_plus_g_y.clone();
+        // kx_shifted and ky_shifted derived from the raw k_plus_g values
+        let kx_shifted = tables.raw_x.clone();
+        let ky_shifted = tables.raw_y.clone();
 
         let scratch = backend.alloc_field(grid);
         let grad_x = backend.alloc_field(grid);
@@ -162,16 +166,21 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             bloch: bloch_k,
             kx_shifted,
             ky_shifted,
-            k_plus_g_x,
-            k_plus_g_y,
-            k_plus_g_sq,
-            k_plus_g_sq_min,
-            k_plus_g_sq_min_raw,
-            k_plus_g_floor_count,
+            k_plus_g_x: tables.raw_x,
+            k_plus_g_y: tables.raw_y,
+            k_plus_g_sq: tables.raw_sq,
+            k_plus_g_x_precond: tables.clamped_x,
+            k_plus_g_y_precond: tables.clamped_y,
+            k_plus_g_sq_precond: tables.clamped_sq,
+            g_x: tables.g_x,
+            g_y: tables.g_y,
+            k_plus_g_sq_min: tables.clamped_min,
+            k_plus_g_sq_min_raw: tables.raw_min,
+            k_plus_g_floor_count: tables.floor_count,
             scratch,
             grad_x,
             grad_y,
-            k_plus_g_was_clamped,
+            k_plus_g_was_clamped: tables.clamp_mask,
         }
     }
 
@@ -210,8 +219,11 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     }
 
     /// Compute spectral statistics for the current k-point.
+    ///
+    /// Uses the clamped |k+G|² table: these statistics only feed
+    /// preconditioner shift selection, where the floor is intentional.
     pub fn spectral_stats(&self) -> SpectralStats {
-        SpectralStats::compute(&self.k_plus_g_sq)
+        SpectralStats::compute(&self.k_plus_g_sq_precond)
     }
 
     /// Build homogeneous preconditioner with k-dependent (adaptive) shift.
@@ -303,7 +315,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 let eps_eff = self.effective_tm_epsilon();
                 let mass_floor = tm_preconditioner_mass_floor(eps_eff);
                 let inverse_diagonal = build_inverse_diagonal(
-                    &self.k_plus_g_sq,
+                    &self.k_plus_g_sq_precond,
                     shift,
                     eps_eff,
                     mass_floor,
@@ -313,8 +325,13 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             }
             Polarization::TE => {
                 let eps_eff = self.effective_te_epsilon();
-                let inverse_diagonal =
-                    build_inverse_diagonal(&self.k_plus_g_sq, shift, eps_eff, 0.0, near_zero_mask);
+                let inverse_diagonal = build_inverse_diagonal(
+                    &self.k_plus_g_sq_precond,
+                    shift,
+                    eps_eff,
+                    0.0,
+                    near_zero_mask,
+                );
                 FourierDiagonalPreconditioner::new(inverse_diagonal)
             }
         }
@@ -370,9 +387,9 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             &self.backend,
             &self.dielectric,
             self.polarization,
-            self.k_plus_g_x.clone(),
-            self.k_plus_g_y.clone(),
-            self.k_plus_g_sq.clone(),
+            self.k_plus_g_x_precond.clone(),
+            self.k_plus_g_y_precond.clone(),
+            self.k_plus_g_sq_precond.clone(),
             self.k_plus_g_was_clamped.clone(),
             shift,
         )
@@ -1033,6 +1050,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     /// hermitized TM Hamiltonian. The input and output both live in the
     /// standard spatial χ-representation, so the projected matrix elements can
     /// be taken with the ordinary backend dot product.
+    ///
+    /// Table conventions: the field derivative D_i uses the Bloch k₀+G table,
+    /// while ∂_i ε⁻¹ (a periodic coefficient) uses the G-only table — a Bloch
+    /// table there would export O_i − i·k₀ᵢ·ε⁻¹ instead of O_i.
     pub fn apply_tm_hermitized_fast_derivative(
         &mut self,
         input: &B::Buffer,
@@ -1083,13 +1104,15 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             *dst = cscalar::<B::Real>(inv_eps, 0.0);
         }
 
+        // ε⁻¹ is a periodic coefficient: differentiate with the G-only table
+        // (k₀ = 0), NOT the Bloch k₀+G table used for field derivatives.
         self.backend.forward_fft_2d(&mut self.scratch);
         compute_gradients_from_potential(
             self.scratch.as_slice(),
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
-            &self.k_plus_g_x,
-            &self.k_plus_g_y,
+            &self.g_x,
+            &self.g_y,
         );
         self.backend.inverse_fft_2d(&mut self.grad_x);
         self.backend.inverse_fft_2d(&mut self.grad_y);
@@ -1606,12 +1629,33 @@ fn build_g_vectors_with_reciprocal_lattice(
     (gx, gy)
 }
 
+/// The full set of wavevector tables for one k-point.
+///
+/// - `raw_*`: exact k+G values — the physical operator tables.
+/// - `clamped_*`: |k+G|² floored at `K_PLUS_G_NEAR_ZERO_FLOOR` — for
+///   preconditioner construction ONLY.
+/// - `g_x`/`g_y`: G-only tables (k₀ = 0) for periodic-coefficient derivatives.
+struct KPlusGTables {
+    g_x: Vec<f64>,
+    g_y: Vec<f64>,
+    raw_x: Vec<f64>,
+    raw_y: Vec<f64>,
+    raw_sq: Vec<f64>,
+    clamped_x: Vec<f64>,
+    clamped_y: Vec<f64>,
+    clamped_sq: Vec<f64>,
+    raw_min: f64,
+    clamped_min: f64,
+    floor_count: usize,
+    clamp_mask: Vec<bool>,
+}
+
 fn build_k_plus_g_tables_with_reciprocal(
     grid: Grid2D,
     b1: [f64; 2],
     b2: [f64; 2],
     bloch: [f64; 2],
-) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, usize, Vec<bool>) {
+) -> KPlusGTables {
     let (gx_base, gy_base) = build_g_vectors_with_reciprocal_lattice(grid, b1, b2);
     let len = grid.len();
 
@@ -1626,9 +1670,12 @@ fn build_k_plus_g_tables_with_reciprocal(
         );
     }
 
-    let mut k_plus_g_x = vec![0.0; len];
-    let mut k_plus_g_y = vec![0.0; len];
-    let mut squares = vec![0.0; len];
+    let mut raw_x = vec![0.0; len];
+    let mut raw_y = vec![0.0; len];
+    let mut raw_sq_table = vec![0.0; len];
+    let mut clamped_x = vec![0.0; len];
+    let mut clamped_y = vec![0.0; len];
+    let mut clamped_sq_table = vec![0.0; len];
     let mut clamp_mask = vec![false; len];
     let mut raw_min = f64::INFINITY;
     let mut clamped_min = f64::INFINITY;
@@ -1648,9 +1695,12 @@ fn build_k_plus_g_tables_with_reciprocal(
             floor_count += 1;
             clamp_mask[idx] = true;
         }
-        k_plus_g_x[idx] = clamped_kx;
-        k_plus_g_y[idx] = clamped_ky;
-        squares[idx] = clamped_sq;
+        raw_x[idx] = raw_kx;
+        raw_y[idx] = raw_ky;
+        raw_sq_table[idx] = raw_sq;
+        clamped_x[idx] = clamped_kx;
+        clamped_y[idx] = clamped_ky;
+        clamped_sq_table[idx] = clamped_sq;
     }
 
     if raw_min == f64::INFINITY {
@@ -1660,15 +1710,20 @@ fn build_k_plus_g_tables_with_reciprocal(
         clamped_min = 0.0;
     }
 
-    (
-        k_plus_g_x,
-        k_plus_g_y,
-        squares,
+    KPlusGTables {
+        g_x: gx_base,
+        g_y: gy_base,
+        raw_x,
+        raw_y,
+        raw_sq: raw_sq_table,
+        clamped_x,
+        clamped_y,
+        clamped_sq: clamped_sq_table,
         raw_min,
         clamped_min,
         floor_count,
         clamp_mask,
-    )
+    }
 }
 
 fn clamp_gradient_components(kx: f64, ky: f64) -> (f64, f64) {
@@ -1899,6 +1954,58 @@ fn apply_dielectric_derivative<R: Real>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_tables_are_unclamped_and_precond_tables_are_floored_at_gamma() {
+        let grid = Grid2D::new(4, 4, 1.0, 1.0);
+        let two_pi = 2.0 * std::f64::consts::PI;
+        let tables = build_k_plus_g_tables_with_reciprocal(
+            grid,
+            [two_pi, 0.0],
+            [0.0, two_pi],
+            [0.0, 0.0],
+        );
+
+        // Physical tables: the G=0 entry is EXACTLY zero at Γ.
+        assert_eq!(tables.raw_x[0], 0.0);
+        assert_eq!(tables.raw_y[0], 0.0);
+        assert_eq!(tables.raw_sq[0], 0.0);
+
+        // Preconditioner tables carry the floor with an artificial x-direction.
+        assert_eq!(tables.clamped_x[0], K_PLUS_G_NEAR_ZERO_FLOOR.sqrt());
+        assert_eq!(tables.clamped_y[0], 0.0);
+        assert!(tables.clamp_mask[0]);
+        assert_eq!(tables.floor_count, 1);
+
+        // Away from G=0 both tables agree exactly, and G-only == raw at Γ.
+        for idx in 1..grid.len() {
+            assert_eq!(tables.raw_x[idx], tables.clamped_x[idx]);
+            assert_eq!(tables.raw_y[idx], tables.clamped_y[idx]);
+            assert_eq!(tables.raw_x[idx], tables.g_x[idx]);
+            assert_eq!(tables.raw_y[idx], tables.g_y[idx]);
+        }
+    }
+
+    #[test]
+    fn g_only_tables_ignore_bloch_shift() {
+        let grid = Grid2D::new(4, 4, 1.0, 1.0);
+        let two_pi = 2.0 * std::f64::consts::PI;
+        let bloch = [0.31, -0.17];
+        let tables = build_k_plus_g_tables_with_reciprocal(
+            grid,
+            [two_pi, 0.0],
+            [0.0, two_pi],
+            bloch,
+        );
+
+        for idx in 0..grid.len() {
+            assert!((tables.raw_x[idx] - (tables.g_x[idx] + bloch[0])).abs() < 1e-15);
+            assert!((tables.raw_y[idx] - (tables.g_y[idx] + bloch[1])).abs() < 1e-15);
+        }
+        // G-only table has an exact zero at the G=0 entry regardless of k₀.
+        assert_eq!(tables.g_x[0], 0.0);
+        assert_eq!(tables.g_y[0], 0.0);
+    }
 
     #[test]
     fn clamp_gradient_handles_zero_and_nan() {

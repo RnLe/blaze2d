@@ -328,6 +328,16 @@ pub struct OperatorData {
     // -- Solver metadata --
     pub n_iterations: usize,
     pub converged: bool,
+
+    // -- Post-solve certification --
+    /// Fresh normalized generalized residuals ‖Au − λBu‖/(‖Au‖+|λ|‖Bu‖)
+    /// for EVERY returned band (including soft-locked ones), computed AFTER
+    /// the final dense Rayleigh–Ritz rotation from fresh A/B applications.
+    /// Length: n_total. Empty only if the driver skipped certification.
+    pub residuals: Vec<f64>,
+    /// B-orthogonality defect max |⟨uᵢ|B|uⱼ⟩ − δᵢⱼ| of the returned block.
+    /// NaN if the driver skipped certification.
+    pub b_orthogonality_defect: f64,
 }
 
 // ============================================================================
@@ -354,6 +364,9 @@ pub struct OperatorDataConfig {
     pub compute_slow_coefficient: bool,
     /// Whether to compute overlap matrix with reference eigenvectors.
     pub compute_overlap: bool,
+    /// Optional strictness gate: error the extraction if any certified
+    /// band residual exceeds this threshold. `None` disables the gate.
+    pub fail_on_residual: Option<f64>,
 }
 
 impl Default for OperatorDataConfig {
@@ -366,6 +379,7 @@ impl Default for OperatorDataConfig {
             compute_born_huang: false,
             compute_slow_coefficient: false,
             compute_overlap: false,
+            fail_on_residual: None,
         }
     }
 }
@@ -601,6 +615,9 @@ impl<'a, B: SpectralBackend> OperatorDataExtractor<'a, B> {
             exact_tm,
             n_iterations,
             converged,
+            // Filled by the driver after post-solve certification.
+            residuals: Vec::new(),
+            b_orthogonality_defect: f64::NAN,
         }
     }
 

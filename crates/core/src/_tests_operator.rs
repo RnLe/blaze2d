@@ -918,3 +918,83 @@ fn theta_operator_band_window_preconditioner() {
         .count();
     assert!(positive_count > grid.len() / 2);
 }
+
+// ============================================================================
+// kernel regression tests
+// ============================================================================
+
+#[test]
+fn tm_fast_derivative_coefficient_term_vanishes_for_uniform_eps() {
+    // The exported operator is O_i = -2 ε⁻¹ D_i - ∂_i ε⁻¹. For uniform ε
+    // the coefficient derivative must vanish at ANY k₀ — this fails when
+    // ∂_i ε⁻¹ is differentiated with the Bloch table (yields -i·k₀ᵢ·ε⁻¹).
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let eps_const = 4.0;
+    let dielectric = uniform_dielectric(grid, eps_const);
+    let backend = TestBackend;
+    let bloch = [0.7, -0.3]; // generic non-symmetry k₀
+
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, bloch);
+
+    let input = deterministic_field(grid, 3);
+    let mut output = Field2D::zeros(grid);
+    let mut rho_grad = Field2D::zeros(grid);
+
+    for direction in 0..2 {
+        theta.apply_tm_hermitized_fast_derivative(&input, &mut output, direction);
+
+        // Expected: -2 ε⁻¹ D_i(input). Since ρ D_i(input) is exposed via the
+        // rho-covariant gradient helper and ρ = ε^{-1/2} is constant here,
+        // expected = (-2 ε⁻¹ / ρ) · (ρ D_i input) = -2 ε^{-1/2} · (ρ D_i input).
+        theta.apply_tm_rho_covariant_gradient(&input, &mut rho_grad, direction);
+        let scale = -2.0 * eps_const.powf(-0.5);
+        let mut expected = rho_grad.clone();
+        for value in expected.as_mut_slice() {
+            *value *= FieldScalar::new(scale as FieldReal, 0.0);
+        }
+
+        let scale_ref = field_norm(&output).max(1e-30);
+        for (lhs, rhs) in output.as_slice().iter().zip(expected.as_slice()) {
+            assert!(
+                (*lhs - *rhs).norm() < 1e-10 * scale_ref,
+                "direction {direction}: coefficient-derivative term leaked \
+                 (got {lhs:?}, expected {rhs:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn tm_velocity_operator_is_exact_at_gamma() {
+    // At exactly k = (0,0) the exported velocity operator 2(k+G)ᵢ must
+    // annihilate the constant mode — the preconditioner clamp must not leak
+    // an artificial x-direction (2·√floor) into the physical tables.
+    let grid = Grid2D::new(8, 8, 1.0, 1.0);
+    let dielectric = uniform_dielectric(grid, 4.0);
+    let backend = TestBackend;
+
+    let mut theta = ThetaOperator::new(backend, dielectric, Polarization::TM, [0.0, 0.0]);
+
+    let constant = plane_wave(grid, 0, 0);
+    let mut output = Field2D::zeros(grid);
+
+    for direction in 0..2 {
+        theta.apply_dL_dk(&constant, &mut output, direction);
+        let leak = field_norm(&output) / field_norm(&constant);
+        assert!(
+            leak < 1e-12,
+            "direction {direction}: velocity operator leaks {leak:.3e} on the \
+             Γ constant mode (clamp pollution)"
+        );
+    }
+
+    // The TM operator itself must also keep the constant mode as an exact
+    // kernel. The clamp would leak |k+G|² = 1e-9; the naive test-DFT noise
+    // floor is ~1e-12, so 1e-10 cleanly discriminates.
+    theta.apply(&constant, &mut output);
+    let kernel_leak = field_norm(&output) / field_norm(&constant);
+    assert!(
+        kernel_leak < 1e-10,
+        "TM operator leaks {kernel_leak:.3e} on the Γ constant mode"
+    );
+}
