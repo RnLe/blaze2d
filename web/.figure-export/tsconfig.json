@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmitOnError": true,
+    "rootDir": "src",
+    "outDir": "build",
+    "types": [
+      "node",
+      "react"
+    ]
+  },
+  "include": [
+    "src/**/*"
+  ]
+}
