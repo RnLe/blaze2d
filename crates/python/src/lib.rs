@@ -34,9 +34,63 @@ mod streaming;
 #[cfg(feature = "bindings")]
 mod py {
     use pyo3::prelude::*;
+    use pyo3::types::PyDict;
 
     use crate::operator_data;
     use crate::streaming;
+
+    /// Run `git <args>` in the blaze2d repo at runtime; None on any failure.
+    fn runtime_git(args: &[&str]) -> Option<String> {
+        // The installed module does not live in the repo, so anchor git at the
+        // source directory recorded at compile time.
+        let repo_dir = env!("CARGO_MANIFEST_DIR");
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_dir)
+            .args(args)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8(output.stdout).ok()?;
+        Some(text.trim().to_string())
+    }
+
+    /// Build provenance of the native module.
+    ///
+    /// Returns a dict with:
+    /// - ``version``: blaze2d crate version
+    /// - ``git_sha``: git SHA of the blaze2d repo at build time (compile-time
+    ///   embedded by build.rs; runtime ``git rev-parse`` fallback; "unknown"
+    ///   if neither is available)
+    /// - ``git_dirty``: "clean"/"dirty"/"unknown" working-tree state at build time
+    /// - ``git_sha_source``: "build_script", "runtime_git", or "unknown"
+    /// - ``profile``: "release" or "debug"
+    #[pyfunction]
+    fn build_info(py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new(py);
+        dict.set_item("version", env!("CARGO_PKG_VERSION"))?;
+
+        let (sha, source) = match option_env!("BLAZE2D_GIT_SHA") {
+            Some(sha) => (sha.to_string(), "build_script"),
+            None => match runtime_git(&["rev-parse", "HEAD"]) {
+                Some(sha) => (sha, "runtime_git"),
+                None => ("unknown".to_string(), "unknown"),
+            },
+        };
+        dict.set_item("git_sha", sha)?;
+        dict.set_item("git_sha_source", source)?;
+        dict.set_item(
+            "git_dirty",
+            option_env!("BLAZE2D_GIT_DIRTY").unwrap_or("unknown"),
+        )?;
+        dict.set_item(
+            "profile",
+            if cfg!(debug_assertions) { "debug" } else { "release" },
+        )?;
+        Ok(dict.into())
+    }
 
     /// BLAZE native Rust module (imported as blaze._native).
     ///
@@ -50,6 +104,9 @@ mod py {
             "BLAZE: Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals",
         )?;
         m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+
+        // Build provenance
+        m.add_function(wrap_pyfunction!(build_info, m)?)?;
 
         // Register streaming classes
         streaming::register_streaming(m)?;

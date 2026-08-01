@@ -112,6 +112,31 @@ fn build_dielectric_opts(smoothing: bool, smoothing_method: Option<&str>) -> Die
     }
 }
 
+/// Enforce the residual strictness gate on a driver result.
+///
+/// The core driver records the violation instead of panicking (the release
+/// profile builds with panic=abort); the bindings raise it as a RuntimeError.
+fn enforce_residual_gate(result: &operator_data::OperatorDataDriverResult) -> Result<(), String> {
+    if let Some((band, res)) = result.residual_gate_violation {
+        return Err(format!(
+            "residual gate: band {} residual {:.3e} exceeds fail_on_residual at \
+             k0=({:.6}, {:.6}) registry=({:.4}, {:.4})",
+            band,
+            res,
+            result.ingredients.k0[0],
+            result.ingredients.k0[1],
+            result.ingredients.registry[0],
+            result.ingredients.registry[1]
+        ));
+    }
+    Ok(())
+}
+
+/// Raise the Residual gate as a Python RuntimeError.
+fn enforce_residual_gate_py(result: &operator_data::OperatorDataDriverResult) -> PyResult<()> {
+    enforce_residual_gate(result).map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
 /// Convert a panic payload into a PyRuntimeError.
 fn panic_to_pyerr(e: Box<dyn std::any::Any + Send>) -> PyErr {
     let msg = if let Some(s) = e.downcast_ref::<&str>() {
@@ -167,6 +192,7 @@ fn build_ea_job(
     max_iterations: usize,
     compute_r_derivatives: bool,
     dielectric_opts: DielectricOptions,
+    fail_on_residual: Option<f64>,
 ) -> OperatorDataJob {
     let lattice = Lattice2D::oblique(lattice_vectors[0], lattice_vectors[1]);
     let geom = Geometry2D {
@@ -184,6 +210,7 @@ fn build_ea_job(
         compute_born_huang,
         compute_slow_coefficient,
         compute_overlap,
+        fail_on_residual,
     };
 
     let mut eigensolver_config = EigensolverConfig::default();
@@ -248,6 +275,7 @@ fn single_solve_to_py_dict(
     dict.set_item("converged", result.converged)?;
     dict.set_item("elapsed_seconds", result.elapsed_seconds)?;
     dict.set_item("final_residuals", result.final_residuals.clone())?;
+    dict.set_item("b_orthogonality_defect", result.b_orthogonality_defect)?;
     Ok(dict.into())
 }
 
@@ -415,6 +443,9 @@ impl OperatorDataExtractorPy {
     ///     Whether to compute R-derivative matrices (default: True).
     /// smoothing : bool, optional
     ///     Whether to enable MPB-style dielectric smoothing (default: True).
+    /// fail_on_residual : float, optional
+    ///     Strictness gate: raise a RuntimeError if any certified band
+    ///     residual exceeds this threshold (default: None = disabled).
     ///
     /// Returns
     /// -------
@@ -431,6 +462,11 @@ impl OperatorDataExtractorPy {
     ///     - ``grid_dims`` (tuple): (nx, ny)
     ///     - ``n_iterations`` (int): solver iterations
     ///     - ``converged`` (bool): convergence status
+    ///     - ``residuals`` (list[float]): fresh normalized generalized
+    ///       residuals ‖Au − λBu‖/(‖Au‖+|λ|‖Bu‖) for EVERY returned band,
+    ///       computed after a final dense Rayleigh–Ritz rotation
+    ///     - ``b_orthogonality_defect`` (float): max |⟨uᵢ|B|uⱼ⟩ − δᵢⱼ| of the
+    ///       returned block
     ///     - ``solve_time_seconds`` (float): eigensolver wall time
     ///     - ``extract_time_seconds`` (float): extraction wall time
     ///
@@ -500,6 +536,7 @@ impl OperatorDataExtractorPy {
         compute_r_derivatives = true,
         smoothing = true,
         smoothing_method = None,
+        fail_on_residual = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn extract(
@@ -524,6 +561,7 @@ impl OperatorDataExtractorPy {
         compute_r_derivatives: bool,
         smoothing: bool,
         smoothing_method: Option<&str>,
+        fail_on_residual: Option<f64>,
     ) -> PyResult<Py<PyDict>> {
         let pol = parse_polarization(polarization)?;
         let basis_atoms = parse_atoms(&atoms)?;
@@ -558,6 +596,7 @@ impl OperatorDataExtractorPy {
             max_iterations,
             compute_r_derivatives,
             dielectric_opts,
+            fail_on_residual,
         );
 
         // Run the extraction (release the GIL during computation)
@@ -570,6 +609,7 @@ impl OperatorDataExtractorPy {
         });
 
         let result = result.map_err(panic_to_pyerr)?;
+        enforce_residual_gate_py(&result)?;
 
         // Convert to Python dict
         ingredients_to_py_dict(py, &result)
@@ -613,6 +653,7 @@ impl OperatorDataExtractorPy {
         smoothing_method = None,
         threads = None,
         progress_callback = None,
+        fail_on_residual = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn extract_registry_sweep(
@@ -639,6 +680,7 @@ impl OperatorDataExtractorPy {
         threads: Option<usize>,
         #[allow(unused_variables)]
         progress_callback: Option<PyObject>,
+        fail_on_residual: Option<f64>,
     ) -> PyResult<Py<PyList>> {
         let pol = parse_polarization(polarization)?;
         let base_atoms = parse_atoms(&atoms)?;
@@ -725,6 +767,7 @@ impl OperatorDataExtractorPy {
                 max_iterations,
                 compute_r_derivatives,
                 dielectric_opts.clone(),
+                fail_on_residual,
             );
             let backend = CpuBackend::<f64>::new();
             let result = operator_data::run(backend, &job);
@@ -781,6 +824,7 @@ impl OperatorDataExtractorPy {
 
         let py_results = PyList::empty(py);
         for result in &results {
+            enforce_residual_gate_py(result)?;
             py_results.append(ingredients_to_py_dict(py, result)?)?;
         }
         Ok(py_results.into())
@@ -818,6 +862,7 @@ impl OperatorDataExtractorPy {
         smoothing_method = None,
         reference_eigenvectors = None,
         warmstart_eigenvectors = None,
+        fail_on_residual = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn extract_with_reference(
@@ -844,6 +889,7 @@ impl OperatorDataExtractorPy {
         smoothing_method: Option<&str>,
         reference_eigenvectors: Option<Vec<Vec<(f64, f64)>>>,
         warmstart_eigenvectors: Option<Vec<Vec<(f64, f64)>>>,
+        fail_on_residual: Option<f64>,
     ) -> PyResult<Py<PyDict>> {
         let pol = parse_polarization(polarization)?;
         let basis_atoms = parse_atoms(&atoms)?;
@@ -881,6 +927,7 @@ impl OperatorDataExtractorPy {
             compute_born_huang,
             compute_slow_coefficient,
             compute_overlap,
+            fail_on_residual,
         };
 
         let mut eigensolver_config = EigensolverConfig::default();
@@ -923,6 +970,7 @@ impl OperatorDataExtractorPy {
         });
 
         let result = result.map_err(panic_to_pyerr)?;
+        enforce_residual_gate_py(&result)?;
         ingredients_to_py_dict(py, &result)
     }
 
@@ -1007,6 +1055,7 @@ impl OperatorDataExtractorPy {
         compute_r_derivatives = true,
         smoothing = true,
         smoothing_method = None,
+        fail_on_residual = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn extract_k_stencil(
@@ -1033,6 +1082,7 @@ impl OperatorDataExtractorPy {
         compute_r_derivatives: bool,
         smoothing: bool,
         smoothing_method: Option<&str>,
+        fail_on_residual: Option<f64>,
     ) -> PyResult<Py<PyDict>> {
         if n_stencil == 0 || n_stencil % 2 == 0 {
             return Err(PyValueError::new_err(
@@ -1066,6 +1116,7 @@ impl OperatorDataExtractorPy {
             compute_born_huang,
             compute_slow_coefficient,
             compute_overlap,
+            fail_on_residual,
         };
         let mut eigensolver_config = EigensolverConfig::default();
         eigensolver_config.n_bands = band_lo + n_retained + n_remote;
@@ -1095,6 +1146,10 @@ impl OperatorDataExtractorPy {
         });
 
         let stencil_result = stencil_result.map_err(panic_to_pyerr)?;
+        enforce_residual_gate_py(&stencil_result.center)?;
+        for neighbor in &stencil_result.neighbors {
+            enforce_residual_gate_py(neighbor)?;
+        }
 
         // Build output dict
         let dict = PyDict::new(py);
@@ -1406,6 +1461,7 @@ impl OperatorDataExtractorPy {
         threads = None,
         n_per_row = None,
         skip_eigenvectors = true,
+        fail_on_residual = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn extract_registry_sweep_checkpointed(
@@ -1433,6 +1489,7 @@ impl OperatorDataExtractorPy {
         threads: Option<usize>,
         n_per_row: Option<usize>,
         skip_eigenvectors: bool,
+        fail_on_residual: Option<f64>,
     ) -> PyResult<Py<PyDict>> {
         let pol = parse_polarization(polarization)?;
         let base_atoms = parse_atoms(&atoms)?;
@@ -1592,6 +1649,7 @@ impl OperatorDataExtractorPy {
                                         max_iterations,
                                         compute_r_derivatives,
                                         dielectric_opts.clone(),
+                                        fail_on_residual,
                                     );
                                     let backend = CpuBackend::<f64>::new();
                                     let result = operator_data::run(backend, &job);
@@ -1613,6 +1671,12 @@ impl OperatorDataExtractorPy {
                                 })
                                 .collect()
                         });
+
+                    // Residual gate: hard-fail the row BEFORE it is
+                    // checkpointed, so no gated data ever lands on disk.
+                    for point in &row_results {
+                        enforce_residual_gate(point)?;
+                    }
 
                     // Serialize the row to JSON (without eigenvectors)
                     let row_json = serialize_row_results(
@@ -1813,6 +1877,8 @@ fn serialize_one_result(
         "converged": ing.converged,
         "solve_time_seconds": result.solve_time_seconds,
         "extract_time_seconds": result.extract_time_seconds,
+        "residuals": &ing.residuals,
+        "b_orthogonality_defect": ing.b_orthogonality_defect,
         "eigenvalues": &ing.eigenvalues,
         "velocity_matrices_x": complex_vec_to_json(&ing.velocity_matrices[0]),
         "velocity_matrices_y": complex_vec_to_json(&ing.velocity_matrices[1]),
@@ -1978,6 +2044,11 @@ fn checkpoint_point_to_py_dict(
         reg[1].as_f64().unwrap_or(0.0),
     ))?;
 
+    // band_lo is part of the band-identity contract: surface
+    // it whenever the checkpoint carries it so consumers never have to guess.
+    if let Some(band_lo) = pt.get("band_lo").and_then(|v| v.as_u64()) {
+        dict.set_item("band_lo", band_lo)?;
+    }
     dict.set_item("n_retained", pt["n_retained"].as_u64().unwrap_or(0))?;
     dict.set_item("n_remote", pt["n_remote"].as_u64().unwrap_or(0))?;
 
@@ -1991,6 +2062,15 @@ fn checkpoint_point_to_py_dict(
     dict.set_item("converged", pt["converged"].as_bool().unwrap_or(false))?;
     dict.set_item("solve_time_seconds", pt["solve_time_seconds"].as_f64().unwrap_or(0.0))?;
     dict.set_item("extract_time_seconds", pt["extract_time_seconds"].as_f64().unwrap_or(0.0))?;
+
+    // Post-solve certification
+    if let Some(res) = pt.get("residuals").and_then(|v| v.as_array()) {
+        let vals: Vec<f64> = res.iter().map(|v| v.as_f64().unwrap_or(f64::NAN)).collect();
+        dict.set_item("residuals", vals)?;
+    }
+    if let Some(defect) = pt.get("b_orthogonality_defect") {
+        dict.set_item("b_orthogonality_defect", defect.as_f64().unwrap_or(f64::NAN))?;
+    }
 
     // Eigenvalues — array of floats
     if let Some(evals) = pt["eigenvalues"].as_array() {
@@ -2160,6 +2240,10 @@ fn ingredients_to_py_dict(
     dict.set_item("converged", ing.converged)?;
     dict.set_item("solve_time_seconds", result.solve_time_seconds)?;
     dict.set_item("extract_time_seconds", result.extract_time_seconds)?;
+
+    // -- Post-solve certification: fresh residuals for EVERY band --
+    dict.set_item("residuals", ing.residuals.clone())?;
+    dict.set_item("b_orthogonality_defect", ing.b_orthogonality_defect)?;
 
     // -- Eigenvalues --
     dict.set_item("eigenvalues", ing.eigenvalues.clone())?;

@@ -17,7 +17,7 @@ Quick start::
 
 # Re-export native Rust bindings
 from blaze._native import BulkDriver, BandResultIterator, OperatorDataExtractor  # noqa: F401
-from blaze._native import __version__  # noqa: F401
+from blaze._native import __version__, build_info  # noqa: F401
 
 # High-level API
 from blaze.solve import solve  # noqa: F401
@@ -27,5 +27,6 @@ __all__ = [
     "BulkDriver",
     "BandResultIterator",
     "OperatorDataExtractor",
+    "build_info",
     "__version__",
 ]
