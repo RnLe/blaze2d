@@ -37,6 +37,14 @@ import io
 import sys
 from pathlib import Path
 
+try:
+    import brotli  # noqa: F401  (imported for the side effect of failing early)
+except ImportError:  # pragma: no cover
+    sys.exit(
+        "error: reading WOFF2 needs brotli.\n"
+        "       pip install fonttools brotli, or point PYTHON at an environment that has them."
+    )
+
 from fontTools.merge import Merger
 from fontTools.subset import Subsetter
 from fontTools.ttLib import TTFont
@@ -102,6 +110,7 @@ def wanted_codepoints() -> set[int]:
 
 def compile_to_buffer(font: TTFont) -> io.BytesIO:
     """Serialise a font so the merger, which only opens files, can read it."""
+    font.recalcTimestamp = False
     buffer = io.BytesIO()
     font.save(buffer)
     buffer.seek(0)
@@ -162,6 +171,12 @@ def build_face(src: Path, targets: set[int]) -> tuple[Path, int, list[str]]:
     upem = base["head"].unitsPerEm
     missing = targets - coverage(base)
 
+    # fontTools stamps head.modified with the current time on every save. These
+    # faces are committed, so that would turn each rebuild into a 200 kB diff.
+    # Carrying the source's own timestamps through (with recalcTimestamp off)
+    # makes the output a pure function of the inputs.
+    timestamps = (base["head"].created, base["head"].modified)
+
     style = src.stem.split("-", 1)[1] if "-" in src.stem else "Regular"
 
     buffers = [compile_to_buffer(base)]
@@ -185,6 +200,8 @@ def build_face(src: Path, targets: set[int]) -> tuple[Path, int, list[str]]:
     # own glyphs can be displaced by a donor.
     merged = Merger().merge(buffers) if len(buffers) > 1 else TTFont(buffers[0])
     rename_family(merged)
+    merged.recalcTimestamp = False        # save() would otherwise stamp "now"
+    merged["head"].created, merged["head"].modified = timestamps
 
     out = DST / f"{src.stem}-Extended.ttf"
     merged.save(str(out))
