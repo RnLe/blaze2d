@@ -1,0 +1,6 @@
+# Build output
+out/
+
+# Editor extensions compile a preview next to the source; the real build
+# lands in out/.
+reports/*/main.pdf

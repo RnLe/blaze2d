@@ -22,12 +22,19 @@ const COLOR_EPS_HIGH = { r: 0x43, g: 0x5f, b: 0x9d };
 
 /** Accent used by the viewer for the active resolution readout. */
 const ACCENT = '#a3befa';
-/** Muted label colour used by the viewer's caption. */
-const MUTED = '#666';
+/**
+ * Muted label colour. The viewer uses #666, which survives on screen but goes
+ * illegible once the four-up row is scaled down to a text column; #888 is the
+ * muted tone the site's own chart captions use and reads at print size.
+ */
+const MUTED = '#888';
 
-const TILE = 220;
-const GAP = 24;
-const LABEL_HEIGHT = 22;
+// Sized so the row lands close to a page's text width without much
+// downscaling, which keeps the caption legible in print.
+const TILE = 200;
+const GAP = 20;
+const LABEL_FONT = 18;
+const LABEL_HEIGHT = 30;
 const TILE_RADIUS = 4;
 
 function interpolateColor(t) {
@@ -109,7 +116,7 @@ export function renderEpsilonGridRow({ dataDir, resolutions }) {
           `<rect x="0" y="0" width="${TILE}" height="${TILE}" rx="${TILE_RADIUS}"/>` +
         `</clipPath>` +
         `<g clip-path="url(#eps-clip-${resolution})" shape-rendering="crispEdges">${renderTile(data)}</g>` +
-        `<text x="${TILE / 2}" y="${TILE + 15}" text-anchor="middle" font-size="12" ` +
+        `<text x="${TILE / 2}" y="${TILE + 21}" text-anchor="middle" font-size="${LABEL_FONT}" ` +
           `font-family="var(--font-sans), system-ui, sans-serif" fill="${MUTED}">` +
           `Resolution: <tspan font-weight="600" fill="${ACCENT}">` +
           `${resolution}×${resolution}</tspan>` +

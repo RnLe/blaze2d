@@ -29,3 +29,7 @@
 
 # Ignore verbose docs
 docs/
+
+# Figure-export staging tree (typst/tools/figure-export writes here; it needs
+# web/node_modules, so it cannot stage inside typst/).
+web/.figure-export/
