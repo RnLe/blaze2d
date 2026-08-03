@@ -1,0 +1,24 @@
+[package]
+name = "blaze2d-interface"
+version = "0.7.0-rc.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["native-linalg"]
+native-linalg = ["blaze2d-core/native-linalg", "blaze2d-core/std-time"]
+wasm-linalg = ["blaze2d-core/wasm-linalg"]
+
+[dependencies]
+blaze2d-core = { path = "../core", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+num-complex.workspace = true
+schemars = "1"
+
+[dev-dependencies]
+blaze2d-backend-cpu = { path = "../backend-cpu" }
+
