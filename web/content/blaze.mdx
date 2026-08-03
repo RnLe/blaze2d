@@ -2,6 +2,7 @@ import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalin
 import { EpsilonGridViewer } from '../components/charts'
 import HeroImage from '../components/HeroImage'
 import { Citation, Reference, References } from '../components/Citation'
+import { getAssetPath } from '../lib/paths'
 
 
 <HeroImage src="/banners/blaze_intro.webp" alt="Blaze2D: High-Performance Photonic Crystal Solver" cropHeight={0.85} />
@@ -12,6 +13,8 @@ import { Citation, Reference, References } from '../components/Citation'
 # Blaze2D: A High-Performance Solver for Photonic Crystals
 
 *Achieving order-of-magnitude speedups through a mixed-precision LOBPCG algorithm and cache-aware architecture.*
+
+<a href={getAssetPath('/reports/blaze2d-technical-report.pdf')} target="_blank" rel="noreferrer">Download the PDF ↗</a>
 
 ---
 </div>
