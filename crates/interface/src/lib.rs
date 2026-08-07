@@ -2,9 +2,11 @@
 
 pub mod config;
 pub mod diagnostic;
+pub mod normalize;
 
 pub use config::*;
 pub use diagnostic::*;
+pub use normalize::{ResolvedConfig, reciprocal_vectors, fractional_to_cartesian, cartesian_to_fractional};
 
 pub const CONFIG_SCHEMA: &str = "blaze2d/1";
 pub const RESULT_SCHEMA: &str = "blaze2d/result/1";
