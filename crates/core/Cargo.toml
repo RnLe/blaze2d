@@ -31,8 +31,7 @@ batched-fft = []
 # are no-ops with zero runtime overhead.
 # profiling = [] (Moved to top)
 
-# Enable std::time::Instant for timing. Disable for WASM builds.
-# When disabled, timing functions return dummy values.
+# Retained as a build-feature alias. Timing is portable on every backend.
 std-time = []
 
 [dependencies]
@@ -54,3 +53,6 @@ rayon = { workspace = true, optional = true }
 criterion.workspace = true
 clap = { workspace = true, features = ["derive"] }
 blaze2d-backend-cpu = { path = "../backend-cpu" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1.1.0"

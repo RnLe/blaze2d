@@ -149,6 +149,11 @@ pub struct KPointResult {
     pub omegas: Vec<f64>,
     /// Eigensolver iterations used for this solve.
     pub iterations: usize,
+    /// Solver convergence state and relative residuals in returned band order.
+    pub converged: bool,
+    pub residuals: Vec<f64>,
+    /// Retained only when requested through the run options.
+    pub eigenvectors: Option<Vec<Field2D>>,
     /// Whether this point is at Γ and uses the DC-mode deflation path.
     pub is_gamma: bool,
 }
@@ -221,6 +226,8 @@ pub struct RunOptions {
     ///
     /// Default: true.
     pub reuse_gamma: bool,
+    /// Include fields in incremental results. Disabled to avoid extra copies.
+    pub retain_eigenvectors: bool,
 }
 
 impl Default for RunOptions {
@@ -234,6 +241,7 @@ impl Default for RunOptions {
             band_window_scale: 0.5,        // Conservative scaling of median eigenvalue
             disable_band_tracking: false,  // Band tracking enabled by default
             reuse_gamma: true,             // Reuse first Γ for closing Γ (fast path)
+            retain_eigenvectors: false,
         }
     }
 }
@@ -562,6 +570,8 @@ fn run_core<B: SpectralBackend + Clone>(
     // Storage for first Γ-point frequencies (to reuse for last k-point if applicable)
     let mut first_gamma_omegas: Option<Vec<f64>> = None;
     let mut first_gamma_iterations: Option<usize> = None;
+    let mut first_gamma_quality = (false, Vec::new());
+    let mut first_gamma_fields = None;
 
     // Accumulate results
     let mut bands: Vec<Vec<f64>> = Vec::with_capacity(job.k_path.len());
@@ -591,6 +601,9 @@ fn run_core<B: SpectralBackend + Clone>(
                         distance: distances[k_idx],
                         omegas: gamma_omegas.clone(),
                         iterations: first_gamma_iterations.unwrap_or(0),
+                        converged: first_gamma_quality.0,
+                        residuals: first_gamma_quality.1.clone(),
+                        eigenvectors: first_gamma_fields.clone(),
                         is_gamma: true,
                     });
                 }
@@ -701,6 +714,8 @@ fn run_core<B: SpectralBackend + Clone>(
         // distinct internal convergence accounting, so we call the matching
         // one rather than always recording.
         let k_iterations;
+        let k_converged;
+        let mut k_residuals;
         let final_evals: Vec<f64>;
         let mut eigenvectors: Vec<Field2D>;
         if let Some(study) = study.as_deref_mut() {
@@ -720,6 +735,8 @@ fn run_core<B: SpectralBackend + Clone>(
 
             let diag_result = solver.solve_with_diagnostics(&run_label);
             k_iterations = diag_result.result.iterations;
+            k_converged = diag_result.result.converged;
+            k_residuals = diag_result.result.convergence.relative_residuals.clone();
             final_evals = diag_result.result.eigenvalues.clone();
             eigenvectors = solver.all_eigenvectors();
 
@@ -747,6 +764,8 @@ fn run_core<B: SpectralBackend + Clone>(
 
             let result = solver.solve();
             k_iterations = result.iterations;
+            k_converged = result.converged;
+            k_residuals = result.convergence.relative_residuals;
             final_evals = result.eigenvalues;
             eigenvectors = solver.all_eigenvectors();
         }
@@ -793,6 +812,12 @@ fn run_core<B: SpectralBackend + Clone>(
 
                 if tracking_result.had_swaps {
                     apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
+                    let original = k_residuals.clone();
+                    for (dst, &src) in tracking_result.permutation.iter().enumerate() {
+                        if dst < k_residuals.len() && src < original.len() {
+                            k_residuals[dst] = original[src];
+                        }
+                    }
 
                     // Log warnings for near-degenerate regions (low sigma_min)
                     if tracking_result.sigma_min < 0.1 {
@@ -831,6 +856,8 @@ fn run_core<B: SpectralBackend + Clone>(
         if reuse_gamma && k_idx == 0 && is_gamma {
             first_gamma_omegas = Some(omegas.clone());
             first_gamma_iterations = Some(k_iterations);
+            first_gamma_quality = (k_converged, k_residuals.clone());
+            first_gamma_fields = options.retain_eigenvectors.then(|| eigenvectors.clone());
         }
 
         if let Some(ref mut on_k_point) = on_k_point {
@@ -841,6 +868,9 @@ fn run_core<B: SpectralBackend + Clone>(
                 distance: distances[k_idx],
                 omegas: omegas.clone(),
                 iterations: k_iterations,
+                converged: k_converged,
+                residuals: k_residuals,
+                eigenvectors: options.retain_eigenvectors.then(|| eigenvectors.clone()),
                 is_gamma,
             });
         }

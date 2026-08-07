@@ -55,9 +55,9 @@ pub struct OperatorDataJob {
     pub grid: Grid2D,
     /// Polarization mode.
     pub pol: Polarization,
-    /// Carrier momentum k₀ in Cartesian reciprocal-space units (2π/a).
+    /// Carrier momentum k₀ as Cartesian angular wavevector in inverse length.
     pub k0: [f64; 2],
-    /// Registry point (fractional atom shift coordinates) — metadata only.
+    /// Registry point (fractional atom shift coordinates), used as metadata.
     /// The geometry should already have atoms at the correct positions.
     pub registry: [f64; 2],
     /// EA extraction configuration (n_retained, n_remote, what to compute).
@@ -77,7 +77,9 @@ pub struct OperatorDataJob {
 impl OperatorDataJob {
     /// Total number of bands to solve for.
     pub fn n_total_bands(&self) -> usize {
-        self.operator_data_config.n_retained + self.operator_data_config.n_remote
+        self.operator_data_config.band_lo
+            + self.operator_data_config.n_retained
+            + self.operator_data_config.n_remote
     }
 }
 
@@ -208,7 +210,7 @@ pub fn run_with_reference<B: SpectralBackend>(
         eigensolver_config.n_bands = n_total;
     }
 
-    let solve_start = std::time::Instant::now();
+    let solve_start = crate::timing::Timer::start();
     let mut solver = Eigensolver::new(
         &mut theta,
         eigensolver_config,
@@ -224,10 +226,10 @@ pub fn run_with_reference<B: SpectralBackend>(
 
     // Post-solve Rayleigh–Ritz rotation + fresh residual certification
     let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
-    let solve_time = solve_start.elapsed().as_secs_f64();
+    let solve_time = solve_start.elapsed_secs();
 
     // 5. Extract EA ingredients
-    let extract_start = std::time::Instant::now();
+    let extract_start = crate::timing::Timer::start();
     let mut extractor = OperatorDataExtractor::new(
         &mut theta,
         &eigenvectors,
@@ -249,7 +251,7 @@ pub fn run_with_reference<B: SpectralBackend>(
         &ingredients.residuals,
         job.operator_data_config.fail_on_residual,
     );
-    let extract_time = extract_start.elapsed().as_secs_f64();
+    let extract_time = extract_start.elapsed_secs();
 
     OperatorDataDriverResult {
         ingredients,
@@ -306,7 +308,7 @@ pub fn run_with_warmstart<B: SpectralBackend>(
         eigensolver_config.n_bands = n_total;
     }
 
-    let solve_start = std::time::Instant::now();
+    let solve_start = crate::timing::Timer::start();
     let mut solver = Eigensolver::new(
         &mut theta,
         eigensolver_config,
@@ -322,9 +324,9 @@ pub fn run_with_warmstart<B: SpectralBackend>(
 
     // Post-solve Rayleigh–Ritz rotation + fresh residual certification
     let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
-    let solve_time = solve_start.elapsed().as_secs_f64();
+    let solve_time = solve_start.elapsed_secs();
 
-    let extract_start = std::time::Instant::now();
+    let extract_start = crate::timing::Timer::start();
     let mut extractor = OperatorDataExtractor::new(
         &mut theta,
         &eigenvectors,
@@ -346,7 +348,7 @@ pub fn run_with_warmstart<B: SpectralBackend>(
         &ingredients.residuals,
         job.operator_data_config.fail_on_residual,
     );
-    let extract_time = extract_start.elapsed().as_secs_f64();
+    let extract_time = extract_start.elapsed_secs();
 
     OperatorDataDriverResult {
         ingredients,
@@ -391,12 +393,24 @@ pub struct KStencilResult {
 /// * `n_points` - Number of stencil points per axis (odd, ≥ 1). Total stencil
 ///   neighbors = n_points² − 1.
 /// * `delta_k` - Maximum stencil displacement from center in each direction.
-///   Units: same as k₀ (Cartesian reciprocal-space, 2π/a).
+///   Units: Cartesian angular wavevector in inverse reference length.
 pub fn run_k_stencil<B: SpectralBackend + Clone>(
     backend: B,
     job: &OperatorDataJob,
     n_points: usize,
     delta_k: f64,
+) -> KStencilResult {
+    run_k_stencil_with_progress(backend, job, n_points, delta_k, |_, _, _| {})
+}
+
+/// Report completed points without changing the center-first transport walk.
+/// The sample index is zero for the center, then canonical neighbor index + 1.
+pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
+    backend: B,
+    job: &OperatorDataJob,
+    n_points: usize,
+    delta_k: f64,
+    mut on_point: impl FnMut(usize, usize, &OperatorDataDriverResult),
 ) -> KStencilResult {
     assert!(n_points >= 1 && n_points % 2 == 1, "n_points must be odd and >= 1");
 
@@ -478,7 +492,7 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             eigensolver_config.n_bands = n_total;
         }
 
-        let solve_start = std::time::Instant::now();
+        let solve_start = crate::timing::Timer::start();
         let mut solver = Eigensolver::new(
             &mut theta,
             eigensolver_config,
@@ -491,9 +505,9 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
 
         // Post-solve Rayleigh–Ritz rotation + fresh residual certification
         let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
-        let solve_time = solve_start.elapsed().as_secs_f64();
+        let solve_time = solve_start.elapsed_secs();
 
-        let extract_start = std::time::Instant::now();
+        let extract_start = crate::timing::Timer::start();
         let mut extractor = OperatorDataExtractor::new(
             &mut theta,
             &eigenvectors,
@@ -514,7 +528,7 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             &ingredients.residuals,
             job.operator_data_config.fail_on_residual,
         );
-        let extract_time = extract_start.elapsed().as_secs_f64();
+        let extract_time = extract_start.elapsed_secs();
 
         (OperatorDataDriverResult {
             ingredients,
@@ -524,6 +538,7 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
         }, eigenvectors)
     };
 
+    on_point(0, 1, &center_ea);
     // n_points=1 → no neighbors
     if n_points == 1 {
         return KStencilResult {
@@ -614,7 +629,7 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             eigensolver_config.n_bands = n_total;
         }
 
-        let solve_start = std::time::Instant::now();
+        let solve_start = crate::timing::Timer::start();
         let mut solver = Eigensolver::new(
             &mut theta,
             eigensolver_config,
@@ -658,9 +673,9 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             }
         }
 
-        let solve_time = solve_start.elapsed().as_secs_f64();
+        let solve_time = solve_start.elapsed_secs();
 
-        let extract_start = std::time::Instant::now();
+        let extract_start = crate::timing::Timer::start();
         let mut extractor = OperatorDataExtractor::new(
             &mut theta,
             &eigenvectors,
@@ -681,7 +696,7 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             &ingredients.residuals,
             job.operator_data_config.fail_on_residual,
         );
-        let extract_time = extract_start.elapsed().as_secs_f64();
+        let extract_time = extract_start.elapsed_secs();
 
         solved_points[idx] = Some(StencilPointResult {
             ea: OperatorDataDriverResult {
@@ -693,6 +708,7 @@ pub fn run_k_stencil<B: SpectralBackend + Clone>(
             eigenvectors,
             omegas,
         });
+        on_point(idx + 1, order_pos + 2, &solved_points[idx].as_ref().unwrap().ea);
     }
 
     let neighbors = solved_points
@@ -774,7 +790,7 @@ pub fn run_k_path<B: SpectralBackend + Clone>(
             cfg.n_bands = n_bands;
         }
 
-        let solve_start = std::time::Instant::now();
+        let solve_start = crate::timing::Timer::start();
         let mut solver = Eigensolver::new(
             &mut theta,
             cfg,
@@ -785,7 +801,7 @@ pub fn run_k_path<B: SpectralBackend + Clone>(
         );
         let result = solver.solve();
         let eigenvectors = solver.all_eigenvectors();
-        let elapsed = solve_start.elapsed().as_secs_f64();
+        let elapsed = solve_start.elapsed_secs();
 
         all_eigenvalues.push(result.eigenvalues);
         solve_times.push(elapsed);
