@@ -1,0 +1,30 @@
+schema = "blaze2d/1"
+task = "operators"
+polarization = "TE"
+
+[geometry]
+background_epsilon = 12.0
+lattice = { type = "square" }
+
+[[geometry.objects]]
+name = "hole"
+kind = "circle"
+radius = 0.2
+epsilon = 1.0
+
+[grid]
+resolution = [24, 32]
+
+[operators]
+band_lo = 2
+retained_bands = 2
+remote_bands = 3
+k_point = { value = [0.25, 0.0], basis = "reciprocal_fractional" }
+quantities = ["velocity", "mass_tensor", "r_derivatives"]
+registry = { object = "hole", points = [[0.0, 0.0], [0.25, 0.25]], fd_step = 0.001 }
+k_stencil = { points_per_axis = 3, half_width = 0.02 }
+
+[[sweeps]]
+name = "radius"
+target = "geometry.objects.hole.radius"
+values = [0.18, 0.22]
