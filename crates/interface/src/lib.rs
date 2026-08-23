@@ -6,6 +6,9 @@ pub mod normalize;
 pub mod plan;
 pub mod lower;
 pub mod result;
+pub mod operator_result;
+pub mod execute;
+pub use execute::execute;
 pub use result::*;
 
 pub use config::*;
