@@ -4,6 +4,9 @@ pub mod config;
 pub mod diagnostic;
 pub mod normalize;
 pub mod plan;
+pub mod lower;
+pub mod result;
+pub use result::*;
 
 pub use config::*;
 pub use diagnostic::*;
@@ -16,4 +19,10 @@ pub const RUN_SCHEMA: &str = "blaze2d/run/1";
 
 pub fn schema() -> schemars::Schema {
     schemars::schema_for!(Config)
+}
+
+pub fn build_info() -> serde_json::Value {
+    serde_json::json!({"version": env!("CARGO_PKG_VERSION"),
+        "source_revision": env!("BLAZE_SOURCE_REVISION"),
+        "config_schema": CONFIG_SCHEMA, "result_schema": RESULT_SCHEMA})
 }

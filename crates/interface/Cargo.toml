@@ -14,11 +14,10 @@ wasm-linalg = ["blaze2d-core/wasm-linalg"]
 [dependencies]
 blaze2d-core = { path = "../core", default-features = false }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 toml.workspace = true
 num-complex.workspace = true
 schemars = "1"
 
 [dev-dependencies]
 blaze2d-backend-cpu = { path = "../backend-cpu" }
-
