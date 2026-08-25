@@ -118,7 +118,7 @@ checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
 name = "blaze2d"
-version = "0.6.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-backend-cpu",
  "blaze2d-bulk-driver",
@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "blaze2d-backend-cpu"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-core",
  "criterion",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "blaze2d-backend-cuda"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-core",
  "num-complex",
@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "blaze2d-backend-wasm"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-backend-cpu",
  "blaze2d-bulk-driver-core",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "blaze2d-bulk-driver"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-backend-cpu",
  "blaze2d-bulk-driver-core",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "blaze2d-bulk-driver-core"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-core",
  "log",
@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "blaze2d-cli"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-backend-cpu",
  "blaze2d-core",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "blaze2d-core"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 dependencies = [
  "blaze2d-backend-cpu",
  "clap",

@@ -33,3 +33,7 @@ docs/
 # Figure-export staging tree (typst/tools/figure-export writes here; it needs
 # web/node_modules, so it cannot stage inside typst/).
 web/.figure-export/
+# Locally built Python extensions are release artifacts.
+/crates/python/blaze/_native*.so
+/crates/python/blaze/_native*.pyd
+/crates/python/blaze/_native*.dylib

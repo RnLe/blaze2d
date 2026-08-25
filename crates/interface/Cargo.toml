@@ -1,6 +1,6 @@
 [package]
 name = "blaze2d-interface"
-version = "0.7.0-rc.1"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
