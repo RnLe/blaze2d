@@ -9,6 +9,7 @@ members = [
     "crates/bulk-driver",
     "crates/python",
     "crates/interface",
+    "crates/runner",
     # "crates/validation",  # Deactivated - uses eigensolver_old
 ]
 resolver = "2"

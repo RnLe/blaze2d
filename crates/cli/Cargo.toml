@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "blaze2d"
+path = "src/main.rs"
+
 [features]
 default = ["batched-fft"]
 profiling = ["blaze2d-core/profiling", "blaze2d-backend-cpu/profiling"]
@@ -21,3 +25,6 @@ serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 chrono = "0.4"
+blaze2d-interface = { path = "../interface" }
+blaze2d-runner = { path = "../runner" }
+serde_json.workspace = true

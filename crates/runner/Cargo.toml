@@ -1,0 +1,17 @@
+[package]
+name = "blaze2d-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+blaze2d-interface = { path = "../interface" }
+blaze2d-backend-cpu = { path = "../backend-cpu" }
+crossbeam-channel = "0.5"
+serde.workspace = true
+serde_json.workspace = true
+npyz = { version = "0.8.4", features = ["complex"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
+num-complex.workspace = true
