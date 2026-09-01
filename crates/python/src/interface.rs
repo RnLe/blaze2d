@@ -11,7 +11,7 @@ pub fn value_to_py<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, P
     py.import("json")?.call_method1("loads", (text,))
 }
 
-fn config_error(py: Python<'_>, d: api::Diagnostic) -> PyErr {
+pub(crate) fn config_error(py: Python<'_>, d: api::Diagnostic) -> PyErr {
     let error = ConfigurationError::new_err(d.to_string());
     if let Ok(value) = value_to_py(py, &json!(d)) { let _ = error.value(py).setattr("diagnostic", value); }
     error
@@ -63,7 +63,7 @@ pub fn result_to_py(py: Python<'_>, result: api::ResultRecord) -> PyResult<Py<Py
     Ok(dict.unbind())
 }
 
-fn failure_to_py(py: Python<'_>, error: api::JobFailure) -> PyResult<Py<PyDict>> {
+pub(crate) fn failure_to_py(py: Python<'_>, error: api::JobFailure) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("job_index", error.job_index)?;
     dict.set_item("diagnostic", value_to_py(py, &json!(error.diagnostic))?)?;
@@ -72,7 +72,7 @@ fn failure_to_py(py: Python<'_>, error: api::JobFailure) -> PyResult<Py<PyDict>>
 }
 
 #[pyclass(frozen)]
-pub struct Configuration { plan: api::Plan }
+pub struct Configuration { pub(crate) plan: api::Plan }
 
 #[pymethods]
 impl Configuration {
