@@ -205,7 +205,13 @@ fn validate_operators(op: &Operators, pol: Polarization, names: &HashSet<String>
             return Err(invalid("operators.k_stencil.half_width", "must be positive for a multi-point stencil"));
         }
     }
-    if requested.contains(&Quantity::Overlap) && op.k_stencil.as_ref().is_none_or(|s| s.points_per_axis == 1) {
+    if op.reference.is_some() && op.k_stencil.is_some() {
+        return Err(invalid("operators.reference", "k-stencils generate their own references; external references apply to point extraction"));
+    }
+    if op.reference.is_some() && !requested.contains(&Quantity::Overlap) {
+        return Err(invalid("operators.reference", "external references require the overlap quantity"));
+    }
+    if requested.contains(&Quantity::Overlap) && op.reference.is_none() && op.k_stencil.as_ref().is_none_or(|s| s.points_per_axis == 1) {
         return Err(invalid("operators.quantities", "overlap requires a multi-point k-stencil; external reference inputs are available through Python"));
     }
     if let Some(limit) = op.fail_on_residual { positive(limit, "operators.fail_on_residual")?; }

@@ -142,6 +142,17 @@ impl Plan {
     pub fn new(config: Config, platform: Platform) -> InterfaceResult<Self> {
         let base = config.resolve()?;
         let config = base.config.clone();
+        if config.dielectric.source == DielectricSource::External {
+            if platform == Platform::Browser {
+                return Err(Diagnostic::new("unsupported_capability", "dielectric.source", "external dielectric arrays require the native Python interface"));
+            }
+            if config.task != Task::Bands || base.k_points_fractional.len() != 1 || !config.geometry.objects.is_empty() {
+                return Err(invalid("dielectric.source", "external dielectric input requires one sampled band point and an empty geometry object list"));
+            }
+        }
+        if platform == Platform::Browser && config.operators.as_ref().is_some_and(|o|o.reference.is_some()) {
+            return Err(Diagnostic::new("unsupported_capability", "operators.reference", "external reference fields require the native Python interface"));
+        }
         if platform == Platform::Browser && config.eigensolver.precision != Precision::F64 {
             return Err(Diagnostic::new("unsupported_precision", "eigensolver.precision", "the browser backend supports f64; use Python or the native CLI for f32"));
         }
@@ -244,7 +255,14 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
         .ok_or_else(|| invalid("configuration", "memory estimate overflows"))?;
     let fields = samples.checked_mul(fields).and_then(|n| n.checked_mul(16));
     let dense = bands.checked_mul(bands).and_then(|n| n.checked_mul(1024));
-    fields.and_then(|n| n.checked_add(dense?)).ok_or_else(|| invalid("configuration", "memory estimate overflows"))
+    let nk = resolved.k_points_fractional.len() as u64;
+    let path_arrays = nk.checked_mul(bands.checked_mul(4).and_then(|n|n.checked_add(16))
+        .ok_or_else(|| invalid("configuration", "memory estimate overflows"))?).and_then(|n|n.checked_mul(8));
+    let retained_fields = if resolved.config.task == Task::Bands && resolved.config.results.eigenvectors {
+        nk.checked_mul(bands).and_then(|n|n.checked_mul(samples)).and_then(|n|n.checked_mul(32))
+    } else {Some(0)};
+    fields.and_then(|n| n.checked_add(dense?)).and_then(|n|n.checked_add(path_arrays?))
+        .and_then(|n|n.checked_add(retained_fields?)).ok_or_else(|| invalid("configuration", "memory estimate overflows"))
 }
 
 #[derive(Debug, Serialize)]

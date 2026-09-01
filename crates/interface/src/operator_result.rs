@@ -13,6 +13,7 @@ pub fn operator_sample(job: &PlannedJob, sample_index: usize, result: OperatorDa
     let nr = remote.len();
     let keep_fields = job.resolved.config.results.eigenvectors;
     let requested = &job.resolved.config.operators.as_ref().unwrap().quantities;
+    let max_residual = d.residuals.iter().copied().fold(0.0,f64::max);
     let mut arrays = Arrays::new();
     macro_rules! real { ($name:expr, $shape:expr, $dims:expr, $data:expr) => {
         arrays.insert($name.into(), Array::real($shape, $dims, $data));
@@ -95,7 +96,8 @@ pub fn operator_sample(job: &PlannedJob, sample_index: usize, result: OperatorDa
         "k_point": d.k0, "k_basis": "cartesian_angular", "registry": d.registry,
         "solved_band_indices": (0..n).collect::<Vec<_>>(), "retained_band_indices": retained,
         "remote_band_indices": remote, "iterations": d.n_iterations, "converged": d.converged,
-        "certification": {"source": "fresh_rayleigh_ritz", "b_orthogonality_defect": d.b_orthogonality_defect},
+        "certification": {"source": "fresh_rayleigh_ritz", "max_residual":max_residual,
+            "b_orthogonality_defect": d.b_orthogonality_defect},
         "timings": {"solve_seconds": result.solve_time_seconds, "extraction_seconds": result.extract_time_seconds},
         "residual_gate_violation": result.residual_gate_violation,
         "quantities": {"requested": requested, "computed": computed,

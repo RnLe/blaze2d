@@ -8,7 +8,8 @@ pub mod lower;
 pub mod result;
 pub mod operator_result;
 pub mod execute;
-pub use execute::execute;
+pub mod external;
+pub use execute::{execute, execute_with_fields};
 pub use result::*;
 
 pub use config::*;

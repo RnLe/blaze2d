@@ -686,7 +686,7 @@ pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
             k_point,
             job.registry,
             diel_derivs.as_ref(),
-            Some(ref_vecs),
+            Some(&ref_vecs[job.operator_data_config.band_lo..job.operator_data_config.band_lo + job.operator_data_config.n_retained]),
             result.iterations,
             result.converged,
         );

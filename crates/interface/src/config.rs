@@ -204,12 +204,18 @@ pub struct Operators {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k_stencil: Option<KStencil>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<Reference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_on_residual: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct KPoint { pub value: Vec<f64>, pub basis: KCoordinates }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag="source", rename_all="snake_case", deny_unknown_fields)]
+pub enum Reference { External }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -261,15 +267,21 @@ pub struct Eigensolver {
 #[serde(deny_unknown_fields)]
 pub struct Dielectric {
     #[serde(default)]
+    pub source: DielectricSource,
+    #[serde(default)]
     pub smoothing: Smoothing,
     #[serde(default = "mesh_size")]
     pub mesh_size: usize,
     #[serde(default = "interface_tolerance")]
     pub interface_tolerance: f64,
 }
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum DielectricSource { #[default] Geometry, External }
 impl Default for Dielectric {
     fn default() -> Self {
-        Self { smoothing: Smoothing::default(), mesh_size: mesh_size(), interface_tolerance: interface_tolerance() }
+        Self { source: DielectricSource::Geometry, smoothing: Smoothing::default(), mesh_size: mesh_size(), interface_tolerance: interface_tolerance() }
     }
 }
 
