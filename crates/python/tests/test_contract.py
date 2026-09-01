@@ -105,3 +105,28 @@ def test_residual_failures_are_preserved():
     assert study["results"] == []
 
 
+@pytest.mark.parametrize("suffix",["json","ndjson","npz"])
+def test_lossless_export_and_loading(tmp_path,suffix):
+    c=operator_config("TE"); c["results"]={"eigenvectors":True}
+    c["operators"]["k_stencil"]={"points_per_axis":1,"half_width":0.0}
+    result=blaze.solve(c)
+    path=blaze.save(result,tmp_path/f"result.{suffix}")
+    loaded=blaze.load(path)
+    compare_arrays(result,loaded)
+    assert loaded["metadata"] == result["metadata"]
+    if suffix == "npz":
+        with np.load(path,allow_pickle=False) as archive:
+            assert archive["manifest"].dtype == np.uint8
+    path=blaze.write_ndjson(iter([result,result]),tmp_path/"stream.ndjson")
+    assert len(list(blaze.read_ndjson(path))) == 2
+
+
+def test_cli_validation_and_npz_export(tmp_path):
+    path=tmp_path/"calculation.toml"
+    path.write_text(blaze.Config.from_dict(band_config()).to_toml())
+    cli=[sys.executable,"-m","blaze.cli"]
+    validated=subprocess.run(cli+["config","validate",str(path)],check=True,capture_output=True,text=True)
+    assert json.loads(validated.stdout)["jobs"] == 1
+    output=tmp_path/"study.npz"
+    subprocess.run(cli+["run",str(path),"-o",str(output)],check=True,capture_output=True)
+    assert blaze.load(output)["results"][0]["frequencies"].shape == (2,3)

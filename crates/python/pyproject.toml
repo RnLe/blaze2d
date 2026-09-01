@@ -51,6 +51,9 @@ progress = ["rich>=13"]
 plot = ["matplotlib>=3.5"]
 all = ["matplotlib>=3.5", "rich>=13"]
 
+[project.scripts]
+blaze2d = "blaze.cli:main"
+
 [tool.maturin]
 # Build the cdylib with bindings feature
 features = ["bindings"]
