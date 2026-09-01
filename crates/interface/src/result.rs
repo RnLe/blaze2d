@@ -31,12 +31,16 @@ impl Array {
         array.dtype = DType::Complex128;
         array
     }
-    pub fn validate(&self, name: &str) -> InterfaceResult<()> {
+    pub fn validate_shape(&self, name: &str) -> InterfaceResult<()> {
         let count = self.shape.iter().try_fold(1usize, |a, &b| a.checked_mul(b))
             .and_then(|n| n.checked_mul(if self.dtype == DType::Complex128 {2} else {1}));
         if count != Some(self.data.len()) || self.dimensions.len() != self.shape.len() || self.order != "C" {
             return Err(Diagnostic::new("array_shape", name, "Array dimensions do not match its data"));
         }
+        Ok(())
+    }
+    pub fn validate(&self, name: &str) -> InterfaceResult<()> {
+        self.validate_shape(name)?;
         if self.data.iter().any(|v| !v.is_finite()) {
             return Err(Diagnostic::new("nonfinite_result", name, "Array contains non-finite values; lossless JSON export is unavailable"));
         }

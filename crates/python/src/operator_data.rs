@@ -382,7 +382,7 @@ impl OperatorDataExtractorPy {
         job.tolerance = tolerance;
         job.max_iterations = max_iterations;
 
-        let result = py.allow_threads(|| {
+        let result = py.detach(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let backend = CpuBackend::<f64>::new();
                 let mut theta = ThetaOperator::new(backend, dielectric, pol, k0);
@@ -601,7 +601,7 @@ impl OperatorDataExtractorPy {
 
         // Run the extraction (release the GIL during computation)
         // Wrap in catch_unwind to convert panics to Python exceptions
-        let result = py.allow_threads(|| {
+        let result = py.detach(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let backend = CpuBackend::<f64>::new();
                 operator_data::run(backend, &job)
@@ -679,7 +679,7 @@ impl OperatorDataExtractorPy {
         smoothing_method: Option<&str>,
         threads: Option<usize>,
         #[allow(unused_variables)]
-        progress_callback: Option<PyObject>,
+        progress_callback: Option<Py<PyAny>>,
         fail_on_residual: Option<f64>,
     ) -> PyResult<Py<PyList>> {
         let pol = parse_polarization(polarization)?;
@@ -785,7 +785,7 @@ impl OperatorDataExtractorPy {
             result
         };
 
-        let results = py.allow_threads(|| {
+        let results = py.detach(|| {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if thread_count <= 1 || registries.len() <= 1 {
                     Ok::<Vec<operator_data::OperatorDataDriverResult>, String>(
@@ -950,7 +950,7 @@ impl OperatorDataExtractorPy {
             compute_dielectric_derivatives: compute_r_derivatives,
         };
 
-        let result = py.allow_threads(|| {
+        let result = py.detach(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let backend = CpuBackend::<f64>::new();
                 match warmstart_fields.as_ref() {
@@ -1138,7 +1138,7 @@ impl OperatorDataExtractorPy {
             compute_dielectric_derivatives: compute_r_derivatives,
         };
 
-        let stencil_result = py.allow_threads(|| {
+        let stencil_result = py.detach(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let backend = CpuBackend::<f64>::new();
                 operator_data::run_k_stencil(backend, &job, n_stencil, delta_k)
@@ -1274,7 +1274,7 @@ impl OperatorDataExtractorPy {
             dielectric: dielectric_opts,
         };
 
-        let bs_result = py.allow_threads(|| {
+        let bs_result = py.detach(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let backend = CpuBackend::<f64>::new();
                 bandstructure::run_with_options(backend, &job, RunOptions::default())
@@ -1603,7 +1603,7 @@ impl OperatorDataExtractorPy {
         let completed_ref = &completed;
         let unconverged_ref = &unconverged;
 
-        let result = py.allow_threads(|| {
+        let result = py.detach(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let pool = rayon::ThreadPoolBuilder::new()
                     .num_threads(thread_count)

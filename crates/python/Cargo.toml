@@ -18,16 +18,17 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-bindings = ["dep:pyo3"]
+bindings = ["dep:pyo3", "dep:numpy"]
 
 [dependencies]
 log.workspace = true
 blaze2d-core = { path = "../core" }
-blaze2d-bulk-driver = { path = "../bulk-driver" }
 blaze2d-backend-cpu = { path = "../backend-cpu" }
-pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
-crossbeam-channel = "0.5"
-parking_lot = "0.12"
+pyo3 = { version = "=0.29.2", features = ["extension-module"], optional = true }
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+blaze2d-interface = { path = "../interface" }
+blaze2d-runner = { path = "../runner" }
+numpy = { version = "=0.29.0", optional = true }

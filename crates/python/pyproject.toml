@@ -1,10 +1,10 @@
 [build-system]
-requires = ["maturin>=1.4,<2.0"]
+requires = ["maturin==1.15.0"]
 build-backend = "maturin"
 
 [project]
 name = "blaze2d"
-version = "0.6.0"
+dynamic = ["version"]
 description = "BLAZE - Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals"
 readme = "README.md"
 license = { text = "MIT" }
@@ -26,10 +26,11 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Scientific/Engineering",
@@ -38,22 +39,22 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
 ]
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.20", "rich>=13.0", "scipy>=1.10"]
+dependencies = ["numpy>=1.23"]
 
 [project.urls]
 Homepage = "https://github.com/RnLe/blaze2d"
 Repository = "https://github.com/RnLe/blaze2d"
-Documentation = "https://github.com/RnLe/blaze2d/tree/main/docs"
+Documentation = "https://rnle.github.io/blaze2d/configuration"
 
 [project.optional-dependencies]
-numpy = ["numpy>=1.20"]
+progress = ["rich>=13"]
 plot = ["matplotlib>=3.5"]
-all = ["matplotlib>=3.5", "numpy>=1.20"]
+all = ["matplotlib>=3.5", "rich>=13"]
 
 [tool.maturin]
 # Build the cdylib with bindings feature
 features = ["bindings"]
-# Python module name — compiled .so goes into blaze/_native.so
+# Python module name ; compiled .so goes into blaze/_native.so
 module-name = "blaze._native"
 # Python source directory (contains blaze/ package)
 python-source = "."

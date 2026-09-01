@@ -1,32 +1,8 @@
-"""
-BLAZE — Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals.
+"""Blaze2D: photonic bands and projected operators from one calculation contract."""
+from ._native import (CalculationError, ConfigurationError, OperatorDataExtractor,
+                      build_info, capabilities, __version__)
+from .config import Config
+from .api import solve, run, stream
 
-Quick start::
-
-    import blaze
-
-    # Single band diagram
-    result = blaze.solve(lattice_type="square", epsilon_background=12.0,
-                         epsilon_atoms=1.0, radius_atom=0.2, polarization="TM")
-
-    # Parameter sweep
-    results = blaze.solve(lattice_type="hexagonal", epsilon_background=13.0,
-                          epsilon_atoms=1.0, radius_atom=[0.2, 0.4, 0.05],
-                          polarization=["TM", "TE"])
-"""
-
-# Re-export native Rust bindings
-from blaze._native import BulkDriver, BandResultIterator, OperatorDataExtractor  # noqa: F401
-from blaze._native import __version__, build_info  # noqa: F401
-
-# High-level API
-from blaze.solve import solve  # noqa: F401
-
-__all__ = [
-    "solve",
-    "BulkDriver",
-    "BandResultIterator",
-    "OperatorDataExtractor",
-    "build_info",
-    "__version__",
-]
+__all__ = ["Config", "solve", "run", "stream", "build_info", "capabilities",
+           "OperatorDataExtractor", "CalculationError", "ConfigurationError", "__version__"]
