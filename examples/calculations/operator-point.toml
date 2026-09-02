@@ -1,0 +1,24 @@
+schema = "blaze2d/1"
+task = "operators"
+polarization = "TE"
+
+[geometry]
+background_epsilon = 12.0
+lattice = { type = "square" }
+
+[[geometry.objects]]
+name = "hole"
+kind = "circle"
+radius = 0.2
+epsilon = 1.0
+
+[grid]
+resolution = [24, 32]
+
+[operators]
+band_lo = 2
+retained_bands = 2
+remote_bands = 3
+k_point = { value = [0.25, 0.0], basis = "reciprocal_fractional" }
+quantities = ["velocity", "mass_tensor"]
+

@@ -1,0 +1,22 @@
+schema = "blaze2d/1"
+task = "bands"
+polarization = "TE"
+
+[geometry]
+background_epsilon = 12.0
+lattice = { type = "triangular", a = 1.0 }
+
+[[geometry.objects]]
+name = "hole"
+kind = "circle"
+center = [0.0, 0.0]
+radius = 0.30
+epsilon = 1.0
+
+[grid]
+resolution = 32
+
+[bands]
+count = 8
+path = { preset = "triangular", intervals_per_segment = 15 }
+

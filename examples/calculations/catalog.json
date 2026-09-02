@@ -1,0 +1,44 @@
+[
+  {
+    "slug": "square-rods",
+    "title": "Square rods",
+    "description": "TM bands of a square lattice of dielectric circles.",
+    "category": "Bands"
+  },
+  {
+    "slug": "triangular-holes",
+    "title": "Triangular holes",
+    "description": "TE bands of air holes in a dielectric background.",
+    "category": "Bands"
+  },
+  {
+    "slug": "rectangular-cell",
+    "title": "Rectangular cell",
+    "description": "A non-unit lattice and a rectangular sampling grid.",
+    "category": "Bands"
+  },
+  {
+    "slug": "oblique-cell",
+    "title": "Oblique cell",
+    "description": "An explicit path measured in the reciprocal Cartesian metric.",
+    "category": "Bands"
+  },
+  {
+    "slug": "radius-sweep",
+    "title": "Radius and polarization sweep",
+    "description": "Two ordered axes applied to one immutable model.",
+    "category": "Studies"
+  },
+  {
+    "slug": "operator-point",
+    "title": "Projected operators",
+    "description": "Velocity and inverse mass with a nonzero retained-band offset.",
+    "category": "Operators"
+  },
+  {
+    "slug": "registry-stencil",
+    "title": "Registry and k-stencil",
+    "description": "Radius sweeps, periodic translations, and transported stencil references.",
+    "category": "Operators"
+  }
+]

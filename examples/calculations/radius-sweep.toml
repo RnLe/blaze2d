@@ -1,0 +1,31 @@
+schema = "blaze2d/1"
+task = "bands"
+polarization = "TM"
+
+[geometry]
+background_epsilon = 1.0
+lattice = { type = "square", a = 1.0 }
+
+[[geometry.objects]]
+name = "rod"
+kind = "circle"
+center = [0.0, 0.0]
+radius = 0.20
+epsilon = 8.9
+
+[grid]
+resolution = 32
+
+[bands]
+count = 8
+path = { preset = "square", intervals_per_segment = 15 }
+
+[[sweeps]]
+name = "radius"
+target = "geometry.objects.rod.radius"
+linspace = { start = 0.16, stop = 0.24, count = 5 }
+
+[[sweeps]]
+name = "polarization"
+target = "polarization"
+values = ["TM", "TE"]

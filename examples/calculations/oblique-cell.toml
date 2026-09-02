@@ -1,0 +1,22 @@
+schema = "blaze2d/1"
+task = "bands"
+polarization = "TM"
+
+[geometry]
+background_epsilon = 1.0
+lattice = { type = "oblique", a = 1.4, b = 0.9, angle_deg = 70.0 }
+
+[[geometry.objects]]
+name = "rod"
+kind = "circle"
+center = [0.0, 0.0]
+radius = 0.20
+epsilon = 8.9
+
+[grid]
+resolution = 32
+
+[bands]
+count = 8
+path = { vertices = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.0]], intervals_per_segment = 10 }
+
