@@ -51,6 +51,9 @@ pub struct Options {
     /// Zero selects twice the effective thread count.
     #[serde(default)]
     pub queue_capacity: usize,
+    /// Completed checkpoint indices. Their jobs are not scheduled again.
+    #[serde(default)]
+    pub completed_jobs: Vec<usize>,
 }
 
 pub struct RunStream {
@@ -65,6 +68,10 @@ impl RunStream {
 impl Drop for RunStream { fn drop(&mut self) { self.cancel(); } }
 
 pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
+    let skipped: std::collections::HashSet<usize> = options.completed_jobs.iter().copied().collect();
+    if skipped.len() != options.completed_jobs.len() || skipped.iter().any(|&i|i>=plan.summary.jobs) {
+        return Err(Diagnostic::new("checkpoint_indices", "completed_jobs", "Completed job indices must be unique and within the study"));
+    }
     if options.threads > 1024 || options.queue_capacity > 65536 {
         return Err(Diagnostic::new("runner_options", "", "Use at most 1024 threads and 65536 queued events"));
     }
@@ -77,7 +84,8 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
     let effective = options.clone();
     let plan = Arc::new(plan);
     thread::Builder::new().name("blaze-study".into()).spawn(move || {
-        let _ = sender.send(Event::RunStart { jobs: plan.summary.jobs, solves: plan.summary.solves });
+        let jobs = plan.summary.jobs-skipped.len();
+        let _ = sender.send(Event::RunStart { jobs, solves: plan.summary.solves / plan.summary.jobs * jobs });
         let next = AtomicUsize::new(0);
         let completed = AtomicUsize::new(0);
         let failed = AtomicUsize::new(0);
@@ -86,10 +94,12 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
             for _ in 0..effective.threads {
                 let (sender, plan, cancel, effective) = (&sender, &plan, &run_cancel, &effective);
                 let (next, completed, failed, halt) = (&next, &completed, &failed, &halt);
+                let skipped = &skipped;
                 scope.spawn(move || {
                     while !cancel.load(Ordering::Acquire) && !halt.load(Ordering::Acquire) {
                         let Ok(index) = next.fetch_update(Ordering::AcqRel, Ordering::Acquire,
                             |i| (i < plan.summary.jobs).then(|| i + 1)) else { break };
+                        if skipped.contains(&index) { continue; }
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let job = plan.job(index).map_err(|diagnostic| JobFailure { job_index: index, diagnostic, partial_result: None })?;
                             let emit = |event| { if sender.send(event).is_err() { cancel.store(true, Ordering::Release); } };

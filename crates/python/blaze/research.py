@@ -55,3 +55,12 @@ class OperatorDataExtractor:
             raise ValueError("Use task = 'bands' for a band path")
         return solve(config)
 
+    @staticmethod
+    def extract_registry_sweep_checkpointed(config, checkpoint, **options):
+        from .checkpoint import run_checkpointed
+        return run_checkpointed(_operators(config),checkpoint,**options)
+
+    @staticmethod
+    def load_checkpoint_row(path):
+        from .checkpoint import load_checkpoint
+        return load_checkpoint(path)["results"]

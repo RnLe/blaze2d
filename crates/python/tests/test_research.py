@@ -42,3 +42,32 @@ def test_external_dielectric_data_is_retained_with_certification():
     with pytest.raises(ValueError): blaze.OperatorDataExtractor.solve_external_map(c,epsilon.T)
 
 
+def test_checkpoint_resume_preserves_completed_results_and_recovers_partial_tail(tmp_path):
+    c=operator_config("TE")
+    c["sweeps"]=[{"name":"radius","target":"geometry.objects.rod.radius","values":[0.18,0.2,0.22]}]
+    path=tmp_path/"study.ndjson"
+    def interrupt(event):
+        if event["event"] == "result": raise RuntimeError("interrupted")
+    with pytest.raises(RuntimeError,match="interrupted"):
+        blaze.run_checkpointed(c,path,threads=1,progress=interrupt)
+    partial=blaze.load_checkpoint(path)
+    assert len(partial["results"]) == 1
+    with path.open("ab") as file: file.write(b'{"schema":')
+    resumed=blaze.run_checkpointed(c,path,threads=1)
+    assert resumed["statistics"]["resumed"] == 1
+    assert resumed["statistics"]["completed"] == 3
+    assert resumed["statistics"]["status"] == "completed"
+    assert len(list(tmp_path.glob("*.interrupted-*"))) == 1
+    full=blaze.run(c,threads=1)
+    for a,b in zip(full["results"],resumed["results"]): compare_arrays(a,b)
+    assert len(blaze.OperatorDataExtractor.load_checkpoint_row(path)) == 3
+    c["operators"]["remote_bands"]=2
+    with pytest.raises(ValueError,match="configuration differs"):
+        blaze.run_checkpointed(c,path)
+
+
+def test_checkpoint_with_missing_schema_remains_unchanged(tmp_path):
+    path=tmp_path/"old.json";source='{"old_checkpoint":true}\n';path.write_text(source)
+    with pytest.raises(ValueError,match="Unsupported checkpoint"):
+        blaze.run_checkpointed(operator_config(),path)
+    assert path.read_text() == source
