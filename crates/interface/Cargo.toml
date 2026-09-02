@@ -19,6 +19,7 @@ toml.workspace = true
 num-complex.workspace = true
 schemars = "1"
 sha2 = "0.10"
+toml_edit = "0.23"
 
 [dev-dependencies]
 blaze2d-backend-cpu = { path = "../backend-cpu", default-features = false, features = ["batched-fft"] }

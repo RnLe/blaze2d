@@ -9,6 +9,7 @@ pub mod result;
 pub mod operator_result;
 pub mod execute;
 pub mod external;
+pub mod edit;
 pub use execute::{execute, execute_with_fields};
 pub use result::*;
 

@@ -1,14 +1,15 @@
 use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::{Value, json};
 use crate::*;
 use crate::normalize::invalid;
 
-#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Platform { #[default] Native, Browser }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Capabilities {
     pub schema: String,
     pub version: String,
@@ -33,7 +34,7 @@ pub fn capabilities(platform: Platform) -> Capabilities {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PlanSummary {
     pub jobs: usize,
     pub solves: usize,
@@ -54,7 +55,7 @@ pub struct Plan {
     axis_lengths: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct PlannedJob {
     pub index: usize,
     pub sweep: BTreeMap<String, Value>,
@@ -265,7 +266,7 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
         .and_then(|n|n.checked_add(retained_fields?)).ok_or_else(|| invalid("configuration", "memory estimate overflows"))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct ValidationReport {
     pub ok: bool,
     pub errors: Vec<Diagnostic>,

@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use crate::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ResolvedConfig {
     pub config: Config,
     /// Direct lattice vectors, stored as rows for serialization.
@@ -169,6 +170,7 @@ impl Config {
         let mut distances = vec![0.0];
         for pair in cartesian.windows(2) {
             distances.push(distances.last().unwrap() + (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]));
+            if !distances.last().unwrap().is_finite() { return Err(invalid("bands.path", "reciprocal path distance overflows")); }
         }
         Ok(ResolvedConfig { config, lattice_vectors, resolution, k_points_fractional: fractional,
             k_points_cartesian: cartesian, distances, k_labels, k_label_indices, solved_bands })

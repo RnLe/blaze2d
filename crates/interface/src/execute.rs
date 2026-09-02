@@ -40,7 +40,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
     if actual != job.resolved.config.eigensolver.precision {
         return Err(JobFailure { job_index: job.index, diagnostic: Diagnostic::new("precision", "eigensolver.precision", "Backend storage precision does not match the calculation"), partial_result: None });
     }
-    on_event(Event::JobStart { job_index: job.index });
+    on_event(Event::JobStart { job_index: job.index, job:Box::new(job.clone()) });
     let start = Timer::start();
     let mut out = ResultRecord::new(job, backend_name);
     if reference.is_some() || warmstart.is_some() {
@@ -63,7 +63,9 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                 bandstructure::RunOptions { reuse_gamma: false, disable_band_tracking: !b.tracking,
                     retain_eigenvectors: job.resolved.config.results.eigenvectors, ..Default::default() }, |point| {
                     on_event(Event::Progress { job_index: job.index, sample_index: point.k_index,
-                        completed: point.k_index + 1, total: nk, iterations: point.iterations, converged: point.converged });
+                        completed: point.k_index + 1, total: nk, iterations: point.iterations, converged: point.converged,
+                        band_point:Some(crate::BandPoint {frequencies:point.omegas.iter().map(|w|w/std::f64::consts::TAU).collect(),
+                            k_point:point.k_point,distance:job.resolved.distances[point.k_index]}) });
                     iterations.push(point.iterations); converged.push(point.converged);
                     residuals.extend(point.residuals.into_iter().take(n));
                     if let Some(v) = point.eigenvectors { fields.extend(v.into_iter().take(n).flat_map(|v| v.as_slice().to_vec())); }
@@ -83,6 +85,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             out.metadata["labels"] = json!(job.resolved.k_labels);
             out.metadata["label_indices"] = json!(job.resolved.k_label_indices);
             out.metadata["band_indices"] = json!((0..n).collect::<Vec<_>>());
+            out.metadata["stopping_criterion"] = json!("relative_eigenvalue_change");
             out.metadata["certification"] = json!({"source":"solver_reported", "b_orthogonality_defect":null});
             out.metadata["gauge"] = json!(if b.tracking {"tracked_path"} else {"independent_sorted_eigenvalues"});
             out.metadata["quantities"] = json!({"requested":["frequencies"],
@@ -96,7 +99,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                 let stencil = operator_data::run_k_stencil_with_progress(backend, &lower, s.points_per_axis, s.half_width,
                     |sample_index, completed, r| { execution_order.push(sample_index); on_event(Event::Progress { job_index: job.index, sample_index,
                         completed, total: s.points_per_axis * s.points_per_axis,
-                        iterations: r.ingredients.n_iterations, converged: r.ingredients.converged }); });
+                        iterations: r.ingredients.n_iterations, converged: r.ingredients.converged, band_point:None }); });
                 out.samples.push(crate::operator_result::operator_sample(job, 0, stencil.center));
                 for (i, point) in stencil.neighbors.into_iter().enumerate() {
                     out.samples.push(crate::operator_result::operator_sample(job, i+1, point));
@@ -114,7 +117,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                     operator_data::run_with_warmstart(backend, &lower, warm, retained_reference)
                 } else { operator_data::run_with_reference(backend, &lower, retained_reference) };
                 on_event(Event::Progress { job_index: job.index, sample_index: 0, completed: 1, total: 1,
-                    iterations: r.ingredients.n_iterations, converged: r.ingredients.converged });
+                    iterations: r.ingredients.n_iterations, converged: r.ingredients.converged, band_point:None });
                 let sample = crate::operator_result::operator_sample(job, 0, r);
                 out.arrays = sample.arrays;
                 out.metadata.as_object_mut().unwrap().extend(sample.metadata.as_object().unwrap().clone());

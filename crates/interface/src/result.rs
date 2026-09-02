@@ -4,13 +4,14 @@ use std::collections::BTreeMap;
 use num_complex::Complex64;
 use serde::{Serialize, Deserialize};
 use serde_json::{Value, json};
+use schemars::JsonSchema;
 use crate::{Diagnostic, InterfaceResult, PlannedJob, Task, RESULT_SCHEMA};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DType { Float64, Complex128 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Array {
     pub dtype: DType,
@@ -50,14 +51,14 @@ impl Array {
 
 pub type Arrays = BTreeMap<String, Array>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SampleRecord {
     pub sample_index: usize,
     pub metadata: Value,
     pub arrays: Arrays,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResultRecord {
     pub schema: String,
     pub task: Task,
@@ -101,7 +102,7 @@ impl ResultRecord {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JobFailure {
     pub job_index: usize,
     pub diagnostic: Diagnostic,
@@ -109,17 +110,25 @@ pub struct JobFailure {
     pub partial_result: Option<Box<ResultRecord>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BandPoint {
+    pub frequencies: Vec<f64>,
+    pub k_point: [f64;2],
+    pub distance: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag="event", rename_all="snake_case")]
 pub enum Event {
     RunStart { jobs: usize, solves: usize },
-    JobStart { job_index: usize },
-    Progress { job_index: usize, sample_index: usize, completed: usize, total: usize, iterations: usize, converged: bool },
+    JobStart { job_index: usize, job: Box<PlannedJob> },
+    Progress { job_index: usize, sample_index: usize, completed: usize, total: usize, iterations: usize, converged: bool,
+        #[serde(default,skip_serializing_if="Option::is_none")] band_point: Option<BandPoint> },
     Result { result: Box<ResultRecord> },
     JobFailure { error: Box<JobFailure> },
     Terminal { status: RunStatus, completed: usize, failed: usize },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all="snake_case")]
 pub enum RunStatus { Completed, CompletedWithErrors, Failed, Cancelled }
