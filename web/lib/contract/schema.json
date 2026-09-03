@@ -1,0 +1,1390 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BrowserContract",
+  "type": "object",
+  "properties": {
+    "config": {
+      "$ref": "#/$defs/Config"
+    },
+    "event": {
+      "$ref": "#/$defs/Event"
+    },
+    "job": {
+      "$ref": "#/$defs/PlannedJob"
+    },
+    "result": {
+      "$ref": "#/$defs/ResultRecord"
+    },
+    "validation": {
+      "$ref": "#/$defs/ValidationReport"
+    }
+  },
+  "required": [
+    "config",
+    "validation",
+    "result",
+    "event",
+    "job"
+  ],
+  "$defs": {
+    "Array": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dtype": {
+          "$ref": "#/$defs/DType"
+        },
+        "order": {
+          "type": "string"
+        },
+        "shape": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dtype",
+        "shape",
+        "dimensions",
+        "order",
+        "data"
+      ]
+    },
+    "BandPoint": {
+      "type": "object",
+      "properties": {
+        "distance": {
+          "type": "number",
+          "format": "double"
+        },
+        "frequencies": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "k_point": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "required": [
+        "frequencies",
+        "k_point",
+        "distance"
+      ]
+    },
+    "Bands": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "default": 8,
+          "minimum": 0
+        },
+        "path": {
+          "$ref": "#/$defs/KPath",
+          "default": {
+            "basis": "reciprocal_fractional",
+            "intervals_per_segment": 15
+          }
+        },
+        "tracking": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "Capabilities": {
+      "type": "object",
+      "properties": {
+        "checkpoint_resume": {
+          "type": "boolean"
+        },
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "external_inputs": {
+          "type": "boolean"
+        },
+        "geometries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ObjectKind"
+          }
+        },
+        "k_stencil": {
+          "type": "boolean"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "precisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precision"
+          }
+        },
+        "registry": {
+          "type": "boolean"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Task"
+          }
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "version",
+        "platform",
+        "dimensions",
+        "tasks",
+        "precisions",
+        "geometries",
+        "registry",
+        "k_stencil",
+        "external_inputs",
+        "checkpoint_resume"
+      ]
+    },
+    "Config": {
+      "type": "object",
+      "properties": {
+        "bands": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bands"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dielectric": {
+          "$ref": "#/$defs/Dielectric",
+          "default": {
+            "interface_tolerance": 0.000001,
+            "mesh_size": 3,
+            "smoothing": "analytic",
+            "source": "geometry"
+          }
+        },
+        "dimension": {
+          "type": "integer",
+          "format": "uint",
+          "default": 2,
+          "minimum": 0
+        },
+        "eigensolver": {
+          "$ref": "#/$defs/Eigensolver",
+          "default": {
+            "block_size": 0,
+            "precision": "f64"
+          }
+        },
+        "geometry": {
+          "$ref": "#/$defs/Geometry"
+        },
+        "grid": {
+          "$ref": "#/$defs/Grid",
+          "default": {
+            "resolution": 32
+          }
+        },
+        "operators": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Operators"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "polarization": {
+          "$ref": "#/$defs/Polarization",
+          "default": "TM"
+        },
+        "results": {
+          "$ref": "#/$defs/Results",
+          "default": {
+            "eigenvectors": false
+          }
+        },
+        "schema": {
+          "type": "string"
+        },
+        "sweeps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sweep"
+          }
+        },
+        "task": {
+          "$ref": "#/$defs/Task"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "task",
+        "geometry"
+      ]
+    },
+    "DType": {
+      "type": "string",
+      "enum": [
+        "float64",
+        "complex128"
+      ]
+    },
+    "Diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "span": {
+          "description": "Half-open UTF-8 byte offsets in the original TOML document.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "required": [
+        "code",
+        "path",
+        "message"
+      ]
+    },
+    "Dielectric": {
+      "type": "object",
+      "properties": {
+        "interface_tolerance": {
+          "type": "number",
+          "format": "double",
+          "default": 0.000001
+        },
+        "mesh_size": {
+          "type": "integer",
+          "format": "uint",
+          "default": 3,
+          "minimum": 0
+        },
+        "smoothing": {
+          "$ref": "#/$defs/Smoothing",
+          "default": "analytic"
+        },
+        "source": {
+          "$ref": "#/$defs/DielectricSource",
+          "default": "geometry"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DielectricSource": {
+      "type": "string",
+      "enum": [
+        "geometry",
+        "external"
+      ]
+    },
+    "Eigensolver": {
+      "type": "object",
+      "properties": {
+        "block_size": {
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "max_iterations": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "precision": {
+          "$ref": "#/$defs/Precision",
+          "default": "f64"
+        },
+        "tolerance": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "run_start"
+            },
+            "jobs": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "solves": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "event",
+            "jobs",
+            "solves"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "job_start"
+            },
+            "job": {
+              "$ref": "#/$defs/PlannedJob"
+            },
+            "job_index": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "event",
+            "job_index",
+            "job"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "band_point": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BandPoint"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "converged": {
+              "type": "boolean"
+            },
+            "event": {
+              "type": "string",
+              "const": "progress"
+            },
+            "iterations": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "job_index": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "sample_index": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "event",
+            "job_index",
+            "sample_index",
+            "completed",
+            "total",
+            "iterations",
+            "converged"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "result"
+            },
+            "result": {
+              "$ref": "#/$defs/ResultRecord"
+            }
+          },
+          "required": [
+            "event",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "$ref": "#/$defs/JobFailure"
+            },
+            "event": {
+              "type": "string",
+              "const": "job_failure"
+            }
+          },
+          "required": [
+            "event",
+            "error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "completed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "event": {
+              "type": "string",
+              "const": "terminal"
+            },
+            "failed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "status": {
+              "$ref": "#/$defs/RunStatus"
+            }
+          },
+          "required": [
+            "event",
+            "status",
+            "completed",
+            "failed"
+          ]
+        }
+      ]
+    },
+    "Geometry": {
+      "type": "object",
+      "properties": {
+        "background_epsilon": {
+          "type": "number",
+          "format": "double",
+          "default": 1
+        },
+        "lattice": {
+          "$ref": "#/$defs/Lattice"
+        },
+        "objects": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Object"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lattice"
+      ]
+    },
+    "Grid": {
+      "type": "object",
+      "properties": {
+        "resolution": {
+          "$ref": "#/$defs/Resolution",
+          "default": 32
+        }
+      },
+      "additionalProperties": false
+    },
+    "JobFailure": {
+      "type": "object",
+      "properties": {
+        "diagnostic": {
+          "$ref": "#/$defs/Diagnostic"
+        },
+        "job_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "partial_result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResultRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "job_index",
+        "diagnostic"
+      ]
+    },
+    "KCoordinates": {
+      "type": "string",
+      "enum": [
+        "reciprocal_fractional",
+        "cartesian_angular"
+      ]
+    },
+    "KPath": {
+      "type": "object",
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/KCoordinates",
+          "default": "reciprocal_fractional"
+        },
+        "intervals_per_segment": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "points": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "preset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "vertices": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "KPoint": {
+      "type": "object",
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/KCoordinates"
+        },
+        "value": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "basis"
+      ]
+    },
+    "KStencil": {
+      "type": "object",
+      "properties": {
+        "half_width": {
+          "type": "number",
+          "format": "double"
+        },
+        "points_per_axis": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points_per_axis",
+        "half_width"
+      ]
+    },
+    "Lattice": {
+      "type": "object",
+      "properties": {
+        "a": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "angle_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "b": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "type": {
+          "$ref": "#/$defs/LatticeKind"
+        },
+        "vectors": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ]
+    },
+    "LatticeKind": {
+      "type": "string",
+      "enum": [
+        "square",
+        "triangular",
+        "rectangular",
+        "oblique",
+        "custom"
+      ]
+    },
+    "Linspace": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "start": {
+          "type": "number",
+          "format": "double"
+        },
+        "stop": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "stop",
+        "count"
+      ]
+    },
+    "Object": {
+      "type": "object",
+      "properties": {
+        "center": {
+          "type": "array",
+          "default": [
+            0,
+            0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "epsilon": {
+          "type": "number",
+          "format": "double"
+        },
+        "kind": {
+          "$ref": "#/$defs/ObjectKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "radius": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind",
+        "radius",
+        "epsilon"
+      ]
+    },
+    "ObjectKind": {
+      "type": "string",
+      "enum": [
+        "circle"
+      ]
+    },
+    "Operators": {
+      "type": "object",
+      "properties": {
+        "band_lo": {
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "fail_on_residual": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "k_point": {
+          "$ref": "#/$defs/KPoint"
+        },
+        "k_stencil": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KStencil"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quantities": {
+          "type": "array",
+          "default": [
+            "velocity",
+            "mass_tensor"
+          ],
+          "items": {
+            "$ref": "#/$defs/Quantity"
+          }
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "registry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Registry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "remote_bands": {
+          "type": "integer",
+          "format": "uint",
+          "default": 8,
+          "minimum": 0
+        },
+        "retained_bands": {
+          "type": "integer",
+          "format": "uint",
+          "default": 4,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "k_point"
+      ]
+    },
+    "PlanSummary": {
+      "type": "object",
+      "properties": {
+        "estimated_peak_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "jobs": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "precision": {
+          "$ref": "#/$defs/Precision"
+        },
+        "registry_points": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "resolution": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "solved_bands": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "solves": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "sweep_shape": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "task": {
+          "$ref": "#/$defs/Task"
+        }
+      },
+      "required": [
+        "jobs",
+        "solves",
+        "estimated_peak_bytes",
+        "resolution",
+        "solved_bands",
+        "task",
+        "precision",
+        "sweep_shape",
+        "registry_points"
+      ]
+    },
+    "PlannedJob": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "multi_index": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "registry": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "registry_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "resolved": {
+          "$ref": "#/$defs/ResolvedConfig"
+        },
+        "sweep": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "index",
+        "sweep",
+        "multi_index",
+        "registry",
+        "resolved"
+      ]
+    },
+    "Platform": {
+      "type": "string",
+      "enum": [
+        "native",
+        "browser"
+      ]
+    },
+    "Polarization": {
+      "type": "string",
+      "enum": [
+        "TM",
+        "TE"
+      ]
+    },
+    "Precision": {
+      "type": "string",
+      "enum": [
+        "f64",
+        "f32"
+      ]
+    },
+    "Quantity": {
+      "type": "string",
+      "enum": [
+        "velocity",
+        "mass_tensor",
+        "r_derivatives",
+        "born_huang",
+        "slow_coefficient",
+        "exact_tm",
+        "overlap"
+      ]
+    },
+    "Reference": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "external"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "source"
+          ]
+        }
+      ]
+    },
+    "Registry": {
+      "type": "object",
+      "properties": {
+        "fd_step": {
+          "type": "number",
+          "format": "double",
+          "default": 0.001
+        },
+        "object": {
+          "type": "string"
+        },
+        "points": {
+          "type": "array",
+          "default": [
+            [
+              0,
+              0
+            ]
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "object"
+      ]
+    },
+    "Resolution": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        }
+      ]
+    },
+    "ResolvedConfig": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/Config"
+        },
+        "distances": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "k_label_indices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "k_labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "k_points_cartesian": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "k_points_fractional": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "lattice_vectors": {
+          "description": "Direct lattice vectors, stored as rows for serialization.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "resolution": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "solved_bands": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "config",
+        "lattice_vectors",
+        "resolution",
+        "k_points_fractional",
+        "k_points_cartesian",
+        "distances",
+        "k_labels",
+        "k_label_indices",
+        "solved_bands"
+      ]
+    },
+    "ResultRecord": {
+      "type": "object",
+      "properties": {
+        "arrays": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Array"
+          }
+        },
+        "job_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "metadata": true,
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SampleRecord"
+          }
+        },
+        "schema": {
+          "type": "string"
+        },
+        "task": {
+          "$ref": "#/$defs/Task"
+        }
+      },
+      "required": [
+        "schema",
+        "task",
+        "job_index",
+        "metadata",
+        "arrays"
+      ]
+    },
+    "Results": {
+      "type": "object",
+      "properties": {
+        "eigenvectors": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "completed_with_errors",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "SampleRecord": {
+      "type": "object",
+      "properties": {
+        "arrays": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Array"
+          }
+        },
+        "metadata": true,
+        "sample_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sample_index",
+        "metadata",
+        "arrays"
+      ]
+    },
+    "Smoothing": {
+      "type": "string",
+      "enum": [
+        "analytic",
+        "subgrid",
+        "none"
+      ]
+    },
+    "Sweep": {
+      "type": "object",
+      "properties": {
+        "linspace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Linspace"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "values": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "target"
+      ]
+    },
+    "Task": {
+      "type": "string",
+      "enum": [
+        "bands",
+        "operators"
+      ]
+    },
+    "ValidationReport": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Config"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          }
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "resolved": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "errors",
+        "capabilities"
+      ]
+    }
+  }
+}
