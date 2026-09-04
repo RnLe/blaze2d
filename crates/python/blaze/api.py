@@ -69,6 +69,7 @@ def run(config, *, threads=0, error_policy="stop", queue_capacity=0,
     finally:
         events.cancel()
     statistics["elapsed_seconds"] = perf_counter() - start
+    statistics["runtime"] = dict(events.options, progress=progress is not None)
     return {"schema": "blaze2d/run/1", "config": config.to_dict(),
             "results": sorted(results, key=lambda r: r["job_index"]),
             "errors": errors, "statistics": statistics}

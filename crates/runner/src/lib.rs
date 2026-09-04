@@ -18,17 +18,22 @@ pub struct Study {
 }
 
 pub fn collect(plan: Plan, options: Options) -> InterfaceResult<Study> {
+    collect_with_progress(plan, options, |_| {})
+}
+
+pub fn collect_with_progress(plan: Plan, options: Options, mut progress: impl FnMut(&Event)) -> InterfaceResult<Study> {
     let start_time = std::time::Instant::now();
     let mut study = Study {schema: blaze2d_interface::RUN_SCHEMA.into(), config: plan.config.clone(),
         results: vec![], errors: vec![], statistics: serde_json::json!({})};
     let stream = start(plan, options)?;
     while let Some(event) = stream.next_event() {
+        progress(&event);
         match event {
             Event::Result {result} => study.results.push(*result),
             Event::JobFailure {error} => study.errors.push(*error),
             Event::Terminal {status,completed,failed} => {
                 study.statistics = serde_json::json!({"status":status,"completed":completed,"failed":failed,
-                    "elapsed_seconds":start_time.elapsed().as_secs_f64()});
+                    "elapsed_seconds":start_time.elapsed().as_secs_f64(), "runtime":stream.options});
             }, _=>{}
         }
     }

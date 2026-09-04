@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+from contextlib import nullcontext
 from . import _native
 from .config import Config
 from .api import run
@@ -15,6 +16,7 @@ def main(argv=None):
     run_parser = commands.add_parser("run", help="Run a TOML calculation or study")
     run_parser.add_argument("file")
     run_parser.add_argument("-o", "--output", help="JSON, NDJSON, or NPZ destination")
+    run_parser.add_argument("--progress", action="store_true", help="Show completed jobs on stderr (requires blaze2d[progress])")
     run_parser.add_argument("--threads", type=int, default=0)
     run_parser.add_argument("--error-policy", choices=("stop", "continue"), default="stop")
     config_parser = commands.add_parser("config", help="Inspect the configuration contract")
@@ -31,7 +33,14 @@ def main(argv=None):
                 config = Config.from_file(args.file)
                 print(config.to_toml() if args.action == "normalize" else json.dumps(config.summary, indent=2))
             return 0
-        study = run(Config.from_file(args.file), threads=args.threads, error_policy=args.error_policy)
+        if args.progress:
+            from .progress import TerminalProgress
+            display = TerminalProgress()
+        else:
+            display = nullcontext()
+        with display as progress:
+            study = run(Config.from_file(args.file), threads=args.threads, error_policy=args.error_policy, progress=progress)
+        study['statistics']['runtime']['output'] = str(args.output) if args.output else None
         if args.output:
             save(study, args.output)
         else:

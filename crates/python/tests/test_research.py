@@ -70,4 +70,4 @@ def test_checkpoint_with_missing_schema_remains_unchanged(tmp_path):
     path=tmp_path/"old.json";source='{"old_checkpoint":true}\n';path.write_text(source)
     with pytest.raises(ValueError,match="Unsupported checkpoint"):
         blaze.run_checkpointed(operator_config(),path)
-    assert path.read_text() == source
+    assert path.read_text(encoding="utf8") == source

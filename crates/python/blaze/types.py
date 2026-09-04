@@ -28,6 +28,17 @@ class Sample(TypedDict, total=False):
     mass_tensor_inv: NDArray[np.complex128]  # (2, 2, retained_band, retained_band)
     r_derivative_matrices: NDArray[np.complex128]  # (2, retained_band, solved_band)
     metric_derivative_matrices: NDArray[np.complex128]  # (2, retained_band, solved_band)
+    berry_connection_matrices: NDArray[np.complex128]  # (2, retained_band, retained_band)
+    born_huang: NDArray[np.complex128]  # (retained_band, retained_band)
+    born_huang_tensor: NDArray[np.complex128]  # (2, 2, retained_band, retained_band)
+    slow_coefficient_potential: NDArray[np.complex128]  # (retained_band, retained_band)
+    slow_coefficient_tensor: NDArray[np.complex128]  # (2, 2, retained_band, retained_band)
+    xi_scalar_first_order: NDArray[np.complex128]  # (retained_band, retained_band)
+    kappa_matrices: NDArray[np.complex128]  # (2, retained_band, retained_band)
+    weighted_leakage_scalar: NDArray[np.complex128]  # (retained_band, retained_band)
+    lowdin_t_matrices: NDArray[np.complex128]  # (2, remote_band, retained_band)
+    lowdin_r_matrix: NDArray[np.complex128]  # (remote_band, retained_band)
+    overlap_matrix: NDArray[np.complex128]  # (retained_band, retained_band)
 
 
 class Result(Sample, total=False):
@@ -38,7 +49,7 @@ class Result(Sample, total=False):
     k_points: NDArray[np.float64]  # (k_point, 2), reciprocal fractional
     k_points_cartesian: NDArray[np.float64]  # (k_point, 2), angular wavevector
     distances: NDArray[np.float64]  # (k_point,), reciprocal Cartesian metric
-    samples: list[Sample]  # center first, followed by canonical stencil neighbors
+    samples: list[Sample]  # center first, then increasing x and y offsets; the center is skipped
 
 
 class StudyResult(TypedDict):

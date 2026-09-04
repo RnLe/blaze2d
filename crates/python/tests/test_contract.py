@@ -42,7 +42,7 @@ def test_config_roundtrip_and_diagnostics():
         c = blaze.Config.from_file(path)
         assert c.to_dict() == blaze.Config.from_toml(c.to_toml()).to_dict()
         assert c.to_dict() == blaze.Config.from_dict(c.to_dict()).to_dict()
-        assert c.source == path.read_text()
+        assert c.source == path.read_text(encoding="utf8")
     with pytest.raises(blaze.ConfigurationError) as error:
         blaze.Config.from_toml('schema = "blaze2d/1"\nmisspelled = 1')
     assert error.value.diagnostic["span"] is not None

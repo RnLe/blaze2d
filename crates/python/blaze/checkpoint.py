@@ -116,5 +116,6 @@ def run_checkpointed(config, checkpoint, *, resume=True, threads=0, error_policy
         events.cancel()
     statistics["resumed"] = resumed
     statistics["elapsed_seconds"] = perf_counter()-start
+    statistics["runtime"] = dict(events.options, progress=progress is not None, checkpoint=str(path))
     return {"schema":"blaze2d/run/1","config":config.to_dict(),
             "results":sorted(results,key=lambda r:r["job_index"]),"errors":errors,"statistics":statistics}

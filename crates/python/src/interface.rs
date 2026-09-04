@@ -130,6 +130,8 @@ impl Configuration {
 pub struct Events { stream: blaze2d_runner::RunStream, done: bool }
 #[pymethods]
 impl Events {
+    #[getter]
+    fn options<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> { value_to_py(py, &json!(self.stream.options)) }
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> { slf }
     fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         if self.done { return Ok(None); }
