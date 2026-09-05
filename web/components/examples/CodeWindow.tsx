@@ -19,7 +19,7 @@ export interface CodeWindowProps {
 }
 
 /**
- * CodeWindow — a reusable editor-window chrome (traffic-light dots, a filename
+ * CodeWindow ,  a reusable editor-window chrome (traffic-light dots, a filename
  * badge, and an optional actions slot) wrapping a syntax-highlighted CodeBlock.
  * Used for both the Python script and the TOML config of an example.
  */
