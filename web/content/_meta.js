@@ -1,46 +1,18 @@
 export default {
-  index: {
-    title: 'Home',
-    display: 'hidden',
-  },
-
-  introduction: {
-    title: 'Introduction',
-  },
-  thesis: {
-    title: "Master's Thesis",
-  },
-
-  blazeSep: { type: 'separator' },
-  blaze: {
-    title: 'Technical Report',
-  },
-  paper: {
-    title: 'Paper',
-  },
-  architecture: {
-    title: 'Architecture',
-  },
-  installation: {
-    title: 'Installation',
-  },
-  examples: {
-    title: 'Examples',
-  },
-  workbench: {
-    title: 'Workbench',
-  },
-
-  projectSep: { type: 'separator' },
-  potential: {
-    title: 'Optimization Potential',
-  },
-  roadmap: {
-    title: 'Roadmap',
-  },
-
-  pitch: {
-    title: 'Pitch',
-    href: '/pitch/',
-  },
+  index: { title: 'Home', display: 'hidden', theme: { layout: 'full', toc: false, breadcrumb: false, pagination: false, timestamp: false } },
+  introduction: { title: 'Introduction', display: 'hidden' },
+  workbench: { title: 'Workbench', href: '/workbench/' },
+  useBlaze: { title: 'Use Blaze', type: 'separator' },
+  installation: { title: 'Installation' },
+  examples: { title: 'Examples' },
+  'workbench-guide': { title: 'Workbench guide' },
+  configuration: { title: 'API & TOML' },
+  research: { title: 'Research', type: 'separator' },
+  thesis: { title: "Master's Thesis" },
+  blaze: { title: 'Technical Report' },
+  paper: { title: 'Manuscript', theme: { layout: 'full', toc: false } },
+  project: { title: 'Project', type: 'separator' },
+  roadmap: { title: 'Optimization & Roadmap' },
+  pitch: { title: 'Pitch', href: '/pitch/' },
+  potential: { title: 'Optimization & Roadmap', display: 'hidden' },
 }

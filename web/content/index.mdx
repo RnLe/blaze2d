@@ -1,46 +1,16 @@
-import BlogCard, { BlogCardGrid } from '../components/BlogCard'
+---
+title: Blaze2D
+description: Photonic bands, parameter studies, and projected operator extraction.
+---
 
-<div className="blaze-landing-marker" style={{ display: 'none' }} />
+import PostGrid from '../components/PostGrid'
 
-<BlogCardGrid>
-  <BlogCard
-    href="/thesis"
-    title="Why Blaze2D Exists: Photonic Moiré Crystals"
-    description="The master's thesis behind Blaze: a two-scale envelope theory of twisted photonic crystals, and the eigenvector-level data no other fast solver could provide."
-    image="/banners/blaze_thesis.webp"
-    date="2026"
-    tags={["Research"]}
-  />
-  <BlogCard
-    href="/blaze"
-    title="Blaze2D: A High-Performance Solver for Photonic Crystals"
-    description="Achieving order-of-magnitude speedups through mixed-precision arithmetic and cache-aware architecture."
-    image="/banners/blaze_intro.webp"
-    date="January 8, 2026"
-    tags={["Release"]}
-  />
-  <BlogCard
-    href="/paper"
-    title="The Blaze2D Paper"
-    description="The standalone manuscript — design choices, operator construction, MPB validation, and mixed-precision benchmarks. Read it right in the browser."
-    image="/banners/blaze_paper.webp"
-    date="July 6, 2026"
-    tags={["Paper"]}
-  />
-  <BlogCard
-    href="/installation"
-    title="Install, Run and Test Blaze"
-    description="Get started with Blaze."
-    image="/banners/blaze_installation.webp"
-    date="January 9, 2026"
-    tags={["Guide"]}
-  />
-  <BlogCard
-    href="/examples"
-    title="Examples & Live Code"
-    description="An interactive, searchable library of runnable examples: band diagrams, sweeps, and live data inspection, powered by WebAssembly."
-    image="/banners/blaze_examples.webp"
-    date="February 12, 2026"
-    tags={["Examples"]}
-  />
-</BlogCardGrid>
+<div className="homepage-intro">
+
+Blaze2D computes photonic bands and projected operators for two-dimensional periodic
+dielectrics. Start with an example or the Workbench, and explore the research behind
+the solver. [Read the introduction](/introduction).
+
+</div>
+
+<PostGrid />
