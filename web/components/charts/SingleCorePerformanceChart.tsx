@@ -109,7 +109,7 @@ export default function SingleCorePerformanceChart({
   // Show loading state
   if (loading) {
     return (
-      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
         Loading benchmark data...
       </div>
     );

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useChartWidth } from './useChartWidth';
 import { Group } from '@visx/group';
 import { Bar } from '@visx/shape';
 import { scaleBand, scaleLinear } from '@visx/scale';
@@ -22,9 +23,10 @@ interface IterationTimeChartProps {
 }
 
 export default function IterationTimeChart({
-  width = 650,
+  width: maximumWidth = 650,
   height = 380,
 }: IterationTimeChartProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth, 960);
   const { data: benchmarkData, loading } = useSeries4Benchmarks();
 
   // Transform data for the bar charts
@@ -77,7 +79,7 @@ export default function IterationTimeChart({
 
   if (loading) {
     return (
-      <div style={{ width: width * 2 + 40, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
         Loading benchmark data...
       </div>
     );
@@ -122,7 +124,7 @@ export default function IterationTimeChart({
     const xTickValues = kIndices.filter((_, i) => i % tickStep === 0);
 
     return (
-      <svg width={chartWidth} height={height} style={{ overflow: 'visible' }}>
+      <div tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: chartWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}><svg width={chartWidth} height={height} style={{ overflow: 'visible' }}>
         {/* Title */}
         <Text
           x={0}
@@ -278,12 +280,12 @@ export default function IterationTimeChart({
             Blaze2D
           </Text>
         </Group>
-      </svg>
+      </svg></div>
     );
   };
 
   return (
-    <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center' }}>
+    <div ref={chartRef} style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center' }}>
       {renderChart(tmData, 'TM')}
       {renderChart(teData, 'TE')}
     </div>

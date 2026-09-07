@@ -1,4 +1,5 @@
 'use client';
+import { useChartWidth } from './useChartWidth';
 
 import { useMemo } from 'react';
 import { Group } from '@visx/group';
@@ -61,10 +62,11 @@ const COMPARE_COLOR = '#435f9d';  // f32 vs f64 - reference blue
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 export default function DeviationBoxPlotChart({
-  width = 400,
+  width: maximumWidth = 400,
   height = 400,
   polarization = 'TM',
 }: DeviationBoxPlotChartProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth);
   const { data, error, isLoading } = useSWR<Series6Data>(
     getAssetPath('/data/benchmarks/series6-accuracy.json'),
     fetcher
@@ -163,7 +165,7 @@ export default function DeviationBoxPlotChart({
 
   if (isLoading) {
     return (
-      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
         Loading...
       </div>
     );
@@ -171,15 +173,15 @@ export default function DeviationBoxPlotChart({
 
   if (error || !data) {
     return (
-      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
         Error loading data
       </div>
     );
   }
 
   return (
-    <div className="deviation-boxplot-container" style={{ width: '100%', maxWidth: width }}>
-      <svg width={width} height={height} style={{ overflow: 'visible' }}>
+    <div className="deviation-boxplot-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
         {/* Title */}
         <Text
           x={0}

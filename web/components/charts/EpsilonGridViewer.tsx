@@ -57,7 +57,7 @@ function loadResolution(res: number): Promise<EpsilonGridData> {
       dataCache.set(res, data);
       promiseCache.delete(res);
       return data;
-    });
+    }).catch(error => { promiseCache.delete(res); throw error; });
     
   promiseCache.set(res, promise);
   return promise;
@@ -186,7 +186,7 @@ export default function EpsilonGridViewer({
       {/* Grid display */}
       <div 
         style={{ 
-          width: size, 
+          width: '100%', maxWidth: size, 
           height: size, 
           position: 'relative',
           backgroundColor: '#f0f0f0',
@@ -239,7 +239,7 @@ export default function EpsilonGridViewer({
 
       {/* Slider */}
       {showSlider && (
-        <div style={{ width: size, position: 'relative' }}>
+        <div style={{ width: '100%', maxWidth: size, position: 'relative' }}>
           {/* Slider input */}
           <input
             type="range"

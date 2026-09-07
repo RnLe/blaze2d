@@ -26,7 +26,8 @@ export default function Figure({ src, alt, caption, maxWidth }: FigureProps) {
         // the figure is used standalone (outside a flex container).
         flex: '1 1 320px',
         width: '100%',
-        maxWidth: maxWidth ?? '100%',
+        maxWidth: `min(100%, ${maxWidth ?? '100%'})`,
+        minWidth: 0,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -57,7 +58,7 @@ export default function Figure({ src, alt, caption, maxWidth }: FigureProps) {
           style={{
             fontSize: '0.82rem',
             lineHeight: 1.5,
-            color: 'var(--blaze-muted, #6b7280)',
+            color: 'var(--site-muted, #a8b8af)',
             textAlign: 'center',
             marginTop: '0.6rem',
             maxWidth: '46ch',

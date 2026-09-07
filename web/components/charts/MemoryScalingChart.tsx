@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useChartWidth } from './useChartWidth';
 import { Group } from '@visx/group';
 import { LinePath, Line } from '@visx/shape';
 import { scaleLog } from '@visx/scale';
@@ -27,9 +28,10 @@ interface MemoryScalingChartProps {
 }
 
 export default function MemoryScalingChart({
-  width = 650,
+  width: maximumWidth = 650,
   height = 380,
 }: MemoryScalingChartProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth, 960);
   const { data: benchmarkData, loading } = useSeries5Benchmarks();
 
   // Transform data for the log-log plot
@@ -83,7 +85,7 @@ export default function MemoryScalingChart({
 
   if (loading) {
     return (
-      <div style={{ width: width * 2 + 40, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
         Loading benchmark data...
       </div>
     );
@@ -178,7 +180,7 @@ export default function MemoryScalingChart({
     const blazeLabelPos = getFitLabelPosition(blazeFitLine, -0.25);
 
     return (
-    <svg width={chartWidth} height={height} style={{ overflow: 'visible' }}>
+    <div tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: chartWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}><svg width={chartWidth} height={height} style={{ overflow: 'visible' }}>
       {/* Title */}
       <Text
         x={0}
@@ -467,13 +469,13 @@ export default function MemoryScalingChart({
           Blaze2D
         </Text>
       </Group>
-    </svg>
+    </svg></div>
     );
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-      <div style={{ display: 'flex', gap: '20px', justifyContent: 'center' }}>
+    <div ref={chartRef} style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', flexWrap: 'wrap', width: '100%', minWidth: 0 }}>
         {renderChart(tmData, fitCoeffs.tm, 'TM')}
         {renderChart(teData, fitCoeffs.te, 'TE')}
       </div>

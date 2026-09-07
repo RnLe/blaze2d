@@ -1,16 +1,14 @@
 'use client';
 
-import { NodeNextRequest } from 'next/dist/server/base-http/node';
 import { useState } from 'react';
 
 export default function FooterIcons() {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    navigator.clipboard.writeText('pip install blaze2d');
-    setCopied(true);
+    try { await navigator.clipboard.writeText('pip install blaze2d'); setCopied(true); } catch { setCopied(false); }
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -20,10 +18,11 @@ export default function FooterIcons() {
       justifyContent: 'center',
       alignItems: 'center',
       gap: '1.5rem',
+      flexWrap: 'wrap',
       width: '100%',
     }}>
       <a 
-        href="https://github.com/RnLe/blaze2d" 
+        aria-label="Blaze2D source on GitHub" href="https://github.com/RnLe/blaze2d" 
         target="_blank" 
         rel="noopener noreferrer" 
         style={{ display: 'flex', alignItems: 'center', opacity: 0.7, transition: 'opacity 0.15s' }}
@@ -38,7 +37,7 @@ export default function FooterIcons() {
       
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
         <a 
-          href="https://pypi.org/project/blaze2d/" 
+          aria-label="Blaze2D package on PyPI" href="https://pypi.org/project/blaze2d/" 
           target="_blank" 
           rel="noopener noreferrer" 
           style={{ display: 'flex', alignItems: 'center', opacity: 0.7, transition: 'opacity 0.15s' }}
@@ -62,7 +61,7 @@ export default function FooterIcons() {
             border: 'none',
             // border: '1px solid rgba(255, 255, 255, 0.2)',
             borderRadius: '4px',
-            outline: 'none',
+            minHeight: 44,
             padding: 2,
             cursor: 'pointer',
           }}
@@ -82,7 +81,7 @@ export default function FooterIcons() {
           </span>
           <span style={{
             fontSize: '11px',
-            color: copied ? '#00ff88' : 'rgba(255, 255, 255, 0.4)',
+            color: copied ? '#00ff88' : '#a8b8af',
             minWidth: '30px',
             textAlign: 'center',
           }}>

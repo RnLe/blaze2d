@@ -1,7 +1,7 @@
 /**
  * Tiny browser helpers for copying text and downloading files.
  *
- * Includes a minimal STORE-mode (uncompressed) ZIP writer — small enough to
+ * Includes a minimal STORE-mode (uncompressed) ZIP writer ,  small enough to
  * inline so we don't need a dependency for the file-explorer's
  * "download all" action. Modern operating systems and archive utilities
  * extract stored ZIPs without issue.

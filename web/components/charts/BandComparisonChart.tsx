@@ -1,4 +1,5 @@
 'use client';
+import { useChartWidth } from './useChartWidth';
 
 import { useMemo } from 'react';
 import { Group } from '@visx/group';
@@ -94,10 +95,11 @@ function TriangleMarker({ x, y, size, color, opacity = 1 }: { x: number; y: numb
 }
 
 export default function BandComparisonChart({
-  width = 600,
+  width: maximumWidth = 600,
   height = 400,
   polarization = 'TM',
 }: BandComparisonChartProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth);
   const { data, error, isLoading } = useSWR<Series6Data>(
     getAssetPath('/data/benchmarks/series6-accuracy.json'),
     fetcher
@@ -188,7 +190,7 @@ export default function BandComparisonChart({
 
   if (isLoading) {
     return (
-      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
         Loading...
       </div>
     );
@@ -196,15 +198,15 @@ export default function BandComparisonChart({
 
   if (error || !data) {
     return (
-      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: CHART_STYLES.labelColor }}>
         Error loading data
       </div>
     );
   }
 
   return (
-    <div className="band-comparison-container" style={{ width: '100%', maxWidth: width }}>
-      <svg width={width} height={height} style={{ overflow: 'visible' }}>
+    <div className="band-comparison-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
         {/* Title */}
         <Text
           x={0}

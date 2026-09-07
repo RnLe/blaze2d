@@ -185,7 +185,7 @@ export default function EpsilonGrid({
 
   if (loading) {
     return (
-      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0' }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0' }}>
         Loading...
       </div>
     );
@@ -193,7 +193,7 @@ export default function EpsilonGrid({
 
   if (error || !data || !imageDataUrl) {
     return (
-      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#ffe0e0', color: '#800' }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#ffe0e0', color: '#800' }}>
         Error: {error || 'Failed to render'}
       </div>
     );

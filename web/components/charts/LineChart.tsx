@@ -1,4 +1,5 @@
 'use client';
+import { useChartWidth } from './useChartWidth';
 
 import { useMemo } from 'react';
 import { Group } from '@visx/group';
@@ -107,7 +108,7 @@ function Marker({
 
 export default function LineChart({
   series,
-  width = 600,
+  width: maximumWidth = 600,
   height = 400,
   title,
   caption,
@@ -122,6 +123,7 @@ export default function LineChart({
   xDomain,
   yDomain,
 }: LineChartProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth);
   // Calculate inner dimensions
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
@@ -188,8 +190,8 @@ export default function LineChart({
   }, [series, legendItemWidths, innerWidth]);
 
   return (
-    <div className="line-chart-container" style={{ width: '100%', maxWidth: width }}>
-      <svg width={width} height={height} style={{ overflow: 'visible' }}>
+    <div className="line-chart-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
         {/* Title - left aligned to component edge */}
         {title && (
           <Text

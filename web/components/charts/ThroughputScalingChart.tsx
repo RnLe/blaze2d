@@ -101,7 +101,7 @@ export default function ThroughputScalingChart({
 
   if (loading) {
     return (
-      <div style={{ width: width * 2 + 40, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
         Loading benchmark data...
       </div>
     );
@@ -112,8 +112,8 @@ export default function ThroughputScalingChart({
   const highResolution = benchmarkData.high.resolution;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-      <div style={{ display: 'flex', gap: '20px', justifyContent: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%', maxWidth: width, minWidth: 0 }}>
+      <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', flexWrap: 'wrap', width: '100%', minWidth: 0 }}>
         <LineChart
           series={lowResSeries}
           width={chartWidth}

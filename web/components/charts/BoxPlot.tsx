@@ -1,4 +1,5 @@
 'use client';
+import { useChartWidth } from './useChartWidth';
 
 import { useMemo } from 'react';
 import { Group } from '@visx/group';
@@ -47,7 +48,7 @@ const defaultMargin = { top: 60, right: 30, bottom: 60, left: 70 };
 
 export default function BoxPlot({
   data,
-  width = 600,
+  width: maximumWidth = 600,
   height = 400,
   title,
   caption,
@@ -58,6 +59,7 @@ export default function BoxPlot({
   margin = defaultMargin,
   boxWidth = 0.6,
 }: BoxPlotProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth);
   // Calculate inner dimensions
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
@@ -110,8 +112,8 @@ export default function BoxPlot({
   const actualBoxWidth = xScale.bandwidth() * boxWidth;
 
   return (
-    <div className="boxplot-container" style={{ width: '100%', maxWidth: width }}>
-      <svg width={width} height={height} style={{ overflow: 'visible' }}>
+    <div className="boxplot-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
         {/* Title - left aligned to component edge */}
         {title && (
           <Text

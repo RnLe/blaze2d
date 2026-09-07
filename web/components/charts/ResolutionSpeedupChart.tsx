@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useChartWidth } from './useChartWidth';
 import { Group } from '@visx/group';
 import { Bar } from '@visx/shape';
 import { scaleBand, scaleLinear } from '@visx/scale';
@@ -22,9 +23,10 @@ interface ResolutionSpeedupChartProps {
 }
 
 export default function ResolutionSpeedupChart({
-  width = 650,
+  width: maximumWidth = 650,
   height = 380,
 }: ResolutionSpeedupChartProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth, 960);
   const { data: benchmarkData, loading } = useSeries3Benchmarks();
 
   // Calculate speedups
@@ -48,7 +50,7 @@ export default function ResolutionSpeedupChart({
 
   if (loading) {
     return (
-      <div style={{ width: width * 2 + 40, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
         Loading benchmark data...
       </div>
     );
@@ -76,7 +78,7 @@ export default function ResolutionSpeedupChart({
     const barWidth = xScale.bandwidth();
 
     return (
-      <svg width={chartWidth} height={height} style={{ overflow: 'visible' }}>
+      <div tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: chartWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}><svg width={chartWidth} height={height} style={{ overflow: 'visible' }}>
         {/* Title */}
         <Text
           x={0}
@@ -199,12 +201,12 @@ export default function ResolutionSpeedupChart({
             Resolution (N×N)
           </Text>
         </Group>
-      </svg>
+      </svg></div>
     );
   };
 
   return (
-    <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center' }}>
+    <div ref={chartRef} style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center' }}>
       {renderChart(tmSpeedups, 'TM')}
       {renderChart(teSpeedups, 'TE')}
     </div>

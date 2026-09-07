@@ -1,4 +1,5 @@
 'use client';
+import { useChartWidth } from './useChartWidth';
 
 import { useMemo } from 'react';
 import { Group } from '@visx/group';
@@ -55,7 +56,7 @@ export const CHART_STYLES = {
 
 export default function BarChart({
   data,
-  width = 600,
+  width: maximumWidth = 600,
   height = 400,
   title,
   caption,
@@ -72,6 +73,7 @@ export default function BarChart({
   showCategoryBrackets = false,
   bracketOffset = 50,
 }: BarChartProps) {
+  const { ref: chartRef, width } = useChartWidth(maximumWidth);
   // Calculate inner dimensions
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
@@ -156,8 +158,8 @@ export default function BarChart({
   };
 
   return (
-    <div className="bar-chart-container" style={{ width: '100%', maxWidth: width }}>
-      <svg width={width} height={height} style={{ overflow: 'visible' }}>
+    <div className="bar-chart-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
         {/* Title - left aligned to component edge */}
         {title && (
           <Text
