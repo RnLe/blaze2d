@@ -1,38 +1,50 @@
-<div className="narrow-centered">
-
-# Roadmap
-
-*Where Blaze2D is headed.*
-
+---
+title: Optimization & Roadmap
+description: Current scope and planned scientific and performance work.
 ---
 
-</div>
+# Optimization & Roadmap
 
-<div className="narrow">
+Blaze2D focuses on parameter studies of two-dimensional photonic crystals and
+projected operator and derivative extraction. The shared configuration and result
+contracts connect the native solver, Python, and the browser Workbench.
 
-> **This page is being written.** A detailed, versioned roadmap is on the way. The summary
-> below captures the direction.
+## Current scope
 
-**The vision:** Blaze2D should become a **faithful drop-in replacement for MPB in two
-dimensions** — any 2D periodic photonic-crystal band-structure problem MPB can solve, Blaze
-can solve at comparable or better wall-clock, with a friendlier Python/CLI interface and a
-one-command install. And a **strict superset** wherever operator-level data extraction
-enables physics MPB cannot reach: multi-band envelope models, Berry-curvature
-post-processing, and gauge-aware band derivatives.
+- Two-dimensional periodic lattices with circular inclusions and positive scalar permittivity.
+- TE and TM band structures, explicit sampling paths, and ordered parameter sweeps.
+- Projected velocity, mass, registry derivatives, and the existing TE/TM research quantities.
+- Registry studies and k-stencils with recorded gauge conventions and residual certification.
+- Native f32 and f64 calculations; f64 calculations in the browser.
 
-Headline directions on the way to parity and beyond:
+## Numerical and performance work
 
-- **MPB-parity geometry** — ellipses, rectangles, polygons, multi-material inclusions, and
-  imported dielectric maps.
-- **Output parity** — per-band, per-k field export and group velocities in the formats MPB
-  users already script against.
-- **Performance** — symmetry reduction, parameter warm-starts across sweeps, and further
-  memory-layout improvements (see [Optimization Potential](/potential)).
-- **Dispersion & loss** — frequency-dependent and complex dielectric functions.
+Performance changes need comparisons at matched discretization, solver settings,
+convergence requirements, precision, and retained outputs. Priorities include:
 
-Explicit non-goals, for now: 3D Maxwell, distributed-memory (MPI), and time-domain
-simulation — those belong to separate projects.
+- Stronger residual-based stopping and certification studies, especially for remote bands.
+- Preconditioner and block-size studies for difficult dielectric contrasts and clustered eigenvalues.
+- Warm starts between related parameter configurations, with explicit gauge and failure handling.
+- Memory layout, FFT scheduling, and symmetry reduction where measured workloads justify them.
+- GPU execution where arithmetic intensity and data residency outweigh transfer and launch costs.
 
-→ [Architecture](/architecture) · [Optimization Potential](/potential)
+The current solver uses LOBPCG. Alternative eigensolvers and electromagnetic
+formulations require separate numerical validation. Browser execution is already
+available; it uses the same scientific contract as the native interfaces.
 
-</div>
+## Geometry, dimensions, and compatibility
+
+Future work includes additional geometry and material variants, general three-dimensional
+Maxwell calculations, and an MPB compatibility adapter. These are planned extensions,
+not capabilities of the current release. Tagged types, dimension-aware coordinates,
+and explicit capabilities keep their future interfaces separate from current field meanings.
+
+MPB-compatible geometry also requires a dedicated study of overlap precedence,
+material sampling, boundary interfaces, and numerical convergence. The current
+circle rasterizer does not promise MPB overlap semantics.
+
+MPB already exposes fields, eigenvectors, and group velocities. Blaze's research
+focus is the integration of configuration sweeps with projected operator and
+derivative datasets for multiband models. See the
+[MPB Python interface](https://mpb.readthedocs.io/en/latest/Python_User_Interface/)
+for the reference capabilities.
