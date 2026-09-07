@@ -1,0 +1,183 @@
+---
+title: API & TOML
+description: One versioned calculation contract for Python, native tools, and the Workbench.
+card:
+  title: "API & TOML"
+  category: "Use Blaze"
+  order: 3
+  size: "1x1"
+  description: "Configuration, coordinates, array shapes, and migration."
+  image: ""
+  showDescription: false
+  showDate: false
+  showTags: false
+  showImage: false
+  tags: []
+---
+
+import ExampleSource from '../components/examples/ExampleSource'
+
+# API & TOML
+
+A `blaze2d/1` configuration describes a calculation independently of its runner.
+Rust resolves defaults, validates geometry and numerical settings, and expands studies.
+Python, the command line, and the Workbench consume the same normalized jobs.
+
+## A band calculation
+
+<ExampleSource slug="square-rods" language="toml" />
+
+The optional sections are `[eigensolver]`, `[dielectric]`, `[results]`, and
+`[[sweeps]]`. Choose `task = "bands"` with `[bands]`, or `task = "operators"`
+with `[operators]`. Supplying both task sections is an error. Unknown keys and
+unsupported precision, geometry, material, or dimension requests also fail explicitly.
+An empty object list is a valid homogeneous medium.
+
+| Section | Responsibility |
+| --- | --- |
+| `geometry` | Direct lattice, background permittivity, and named objects |
+| `grid` | Scalar resolution or an explicit `[nx, ny]` |
+| `bands` / `operators` | Calculation, band window, and sampling |
+| `sweeps` | Ordered, typed parameter axes |
+| `eigensolver` | Precision, stopping tolerance, iteration limit, and block size |
+| `dielectric` | Sampling, smoothing, mesh size, and interface tolerance |
+| `results` | Retention of optional large datasets |
+
+Object names are unique. Use `geometry.objects.rod.radius` as a sweep target.
+A lattice uses either a preset with lengths, or `type = "custom"` with explicit
+vectors. Rectangular lattices require `b`; oblique lattices also require `angle_deg`.
+The current release supports two-dimensional circles and positive scalar permittivity.
+
+## Defaults and coordinates
+
+Defaults are grid 32 × 32, f64, eight bands, and analytic dielectric smoothing
+with mesh size 3 and interface tolerance `1e-6`. Eigenvector retention is off.
+Band calculations use tolerance `1e-6` and 200 iterations. Operators use `1e-8`
+and 300 iterations, starting at band 0 with four retained and eight upper remote bands.
+
+The stopping tolerance measures **relative eigenvalue changes**. Fresh operator
+residuals and orthogonality defects are reported separately. Set
+`operators.fail_on_residual` to enforce a normalized residual acceptance threshold.
+Without that gate, a completed calculation may still contain inaccurate remote eigenvectors.
+
+- Lattice vectors and circle radii share one reference length.
+- Object centers and registry displacements use direct fractional coordinates.
+- Reciprocal fractional coordinates use $k = 2\pi A^{-T}q$.
+- Cartesian wavevectors are angular wavevectors in inverse reference-length units.
+- Frequencies are $\sqrt{\lambda}/(2\pi)$, in units of $c$ per reference length.
+- Operator derivatives keep their recorded differentiation basis. Changing the carrier coordinate representation does not change that basis.
+
+A band path is a preset, vertices with `intervals_per_segment`, or already sampled
+points. These forms cannot be combined. A path with $S$ segments and $N$ intervals
+per segment has $SN+1$ samples. Distances use the reciprocal Cartesian metric.
+Labels retain their exact sample indices, and a closing Gamma point is recomputed.
+
+## Parameter studies
+
+```toml
+[[sweeps]]
+name = "radius"
+target = "geometry.objects.rod.radius"
+linspace = { start = 0.16, stop = 0.24, count = 5 }
+
+[[sweeps]]
+name = "polarization"
+target = "polarization"
+values = ["TM", "TE"]
+```
+
+Use `values` or `linspace`, with inclusive endpoints and a count. Descending
+interpolation is valid. The first axis is outermost and the last varies fastest.
+Each combination starts from the immutable base configuration. Results preserve
+axis values, job indices, and integer multi-indices.
+
+Thread counts, error policy, and output paths are runner options. The default
+failure policy stops the study while retaining completed jobs. Native scheduling
+parallelizes independent configurations with bounded result delivery.
+
+## Operators, registry studies, and stencils
+
+<ExampleSource slug="operator-point" language="toml" />
+
+`band_lo` is zero-based. The solved window includes lower bands, retained bands,
+and upper remote bands. Arrays record the actual band-index sets.
+
+Supported quantity groups are `velocity`, `mass_tensor`, `r_derivatives`,
+`born_huang`, `slow_coefficient`, `exact_tm`, and `overlap`, subject to the
+polarization and reference requirements of the current formulation. Dependency
+quantities may be computed automatically; computed and retained quantities are recorded.
+
+```toml
+[operators.registry]
+object = "hole"
+points = [[0.0, 0.0], [0.25, 0.25]]
+fd_step = 0.001
+
+[operators.k_stencil]
+points_per_axis = 3
+half_width = 0.02
+```
+
+Generic sweep axes are outermost, registry points follow, and a stencil runs at
+each configuration. Registry translations start from the base model and wrap
+periodically. Independent registry points retain independent gauges.
+K-stencils solve the center first and transport along the existing adjacent walk.
+Returned sample order is recorded separately. A one-point stencil is valid.
+Overlap extraction needs a reference source; stencil neighbors use internal references.
+
+## Python
+
+<ExampleSource slug="square-rods" language="python" />
+
+- `Config.from_file`, `.from_toml`, and `.from_dict` validate through Rust.
+- `config.to_dict()` and `.to_toml()` expose normalized settings.
+- `blaze.solve(config)` runs exactly one calculation and returns a dictionary.
+- `blaze.run(config, threads=4)` returns results, errors, and run statistics.
+- `blaze.stream(config)` yields completed records incrementally.
+- `blaze.build_info()` and `.capabilities()` report the installed backend.
+
+Simple band calculations also accept scalar convenience arguments to `blaze.solve`.
+Numerical lists do not implicitly create sweeps. Plotting and terminal output are optional extras.
+
+| Dataset | NumPy shape |
+| --- | --- |
+| `frequencies` | `(k_point, band)` |
+| Operator `eigenvalues` | `(solved_band,)` |
+| Operator `eigenvectors` | `(solved_band, ny, nx)` |
+| `velocity_matrices` | `(direction, retained_band, solved_band)` |
+| `w_matrices`, `mass_tensor_inv` | `(direction, direction, retained_band, retained_band)` |
+| Registry and metric derivatives | `(direction, retained_band, solved_band)` |
+
+Arrays use C order, with flattened grid index `iy * nx + ix`. Complex output is
+NumPy `complex128`, including when solver storage uses f32. Metadata records
+storage and accumulation precision, coordinates, convergence, provenance, and shapes.
+Raw eigenvectors from different gauges should be compared through subspace invariants.
+
+`blaze.OperatorDataExtractor` retains native reference-field, external dielectric,
+and checkpoint workflows. Its methods take the shared configuration. External
+fields use a complete solved-band block; reference overlaps select the retained window.
+External dielectric input declares `dielectric.source = "external"`, an empty
+object list, and one sampled band point. These inputs are unavailable in the browser.
+
+## Command line and export
+
+```shell
+blaze2d config validate calculation.toml
+blaze2d config normalize calculation.toml
+blaze2d config describe
+blaze2d run calculation.toml -o results.npz
+```
+
+Both the Python entry point and native CLI share the contract. Use `blaze.save`
+and `blaze.load` for JSON or NPZ. `write_ndjson` and `read_ndjson` support streams.
+Exports include explicit array descriptors and complex encoding. NPZ includes a
+UTF-8 metadata manifest and loads without pickle. Checkpoint resumption validates
+the normalized configuration and build before skipping completed jobs.
+
+## Migrating from 0.6
+
+The old TOML dialects are removed. Replace `[bulk]`, `[defaults]`, and `[ranges]`
+with the sections above. Give objects stable names. Replace three-element range
+shorthand with `values` or `linspace`. Move filenames and threads to runner options.
+Use result dictionary keys instead of `BandResult` attributes, and use `run` or
+`stream` for explicit studies. The [examples](/examples) are executable migration references.

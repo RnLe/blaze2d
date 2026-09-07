@@ -1,0 +1,42 @@
+---
+title: Workbench
+description: Choose a model, configure a study, run it, inspect results, and export.
+card:
+  title: "Workbench"
+  category: "Use Blaze"
+  order: 2
+  size: "1x2"
+  description: "Build a model, configure a study, and inspect the results in your browser."
+  image: "/banners/blaze_intro.webp"
+  showDescription: true
+  showDate: false
+  showTags: false
+  showImage: true
+  tags: []
+---
+
+# Workbench
+
+The [Workbench](/workbench) runs Blaze2D in your browser. It uses the same
+configuration and numerical defaults as Python, with an f64 backend.
+
+1. **Choose a model.** In Model, select an example, edit the lattice and dielectric objects, or import a TOML file.
+2. **Configure a study.** In Study, choose bands or operators, sampling, sweep axes, and retained outputs. Advanced numerical settings stay collapsed.
+3. **Run.** Start the calculation and inspect its progress. Cancel stops the browser worker immediately. Completed jobs remain available.
+4. **Inspect.** Results contains band plots, arrays, dimensions, and convergence information. Select a configuration or stencil sample to inspect its data.
+5. **Export.** Download NPZ, JSON, NDJSON, or the selected run's original TOML. History stores recent runs on this device.
+
+TOML edits require **Apply** or **Revert**. An invalid or unapplied draft blocks
+execution and structured editing. **Normalize** explicitly writes every effective
+setting. A completed result always keeps the configuration used for that run.
+
+The eigensolver stopping tolerance measures relative eigenvalue changes.
+Operator results also contain fresh residuals and an orthogonality defect.
+Use an explicit residual acceptance threshold when the study requires one.
+
+The browser preflights a 512 MiB execution budget. History uses a bounded local
+cache; export important results before leaving. Use Python for larger studies,
+external dielectric arrays, reference fields, or checkpointed runs.
+
+See [Examples](/examples) and [API & TOML](/configuration) for reusable calculations
+and the coordinate and array conventions.
