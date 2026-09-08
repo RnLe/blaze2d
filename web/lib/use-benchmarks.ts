@@ -24,11 +24,10 @@ if (typeof window !== 'undefined') {
  * 
  * Loading strategy:
  * 1. Check cache first (may be prefetched)
- * 2. Try static data from public/data/ (hoisted by pre-commit hook)
+ * 2. Try static data from public/data/ (recorded benchmark exports)
  * 3. If static fails: Use fallback data embedded in code
  * 
- * The pre-commit hook (scripts/hoist-benchmark-data.js) copies benchmark
- * data to public/data/ so it's available for static export (GitHub Pages).
+ * Historical benchmark data is retained in public/data/ for static export.
  */
 export function useSingleCoreBenchmarks() {
   const [data, setData] = useState<SingleCoreBenchmarkData>(FALLBACK_SINGLE_CORE_DATA);
@@ -50,7 +49,7 @@ export function useSingleCoreBenchmarks() {
         return;
       }
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/single-core.json'));
         if (response.ok) {
@@ -82,7 +81,7 @@ export function useSingleCoreBenchmarks() {
  * Hook to load multi-core benchmark data
  * 
  * Loading strategy:
- * 1. Try static data from public/data/ (hoisted by pre-commit hook)
+ * 1. Try static data from public/data/ (recorded benchmark exports)
  * 2. If static fails: Use fallback data embedded in code
  */
 export function useMultiCoreBenchmarks() {
@@ -96,7 +95,7 @@ export function useMultiCoreBenchmarks() {
       setLoading(true);
       setError(null);
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/multi-core.json'));
         if (response.ok) {
@@ -137,7 +136,7 @@ export function useSeries7Benchmarks() {
       setLoading(true);
       setError(null);
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/series7-scaling.json'));
         if (response.ok) {
@@ -178,7 +177,7 @@ export function useSeries5Benchmarks() {
       setLoading(true);
       setError(null);
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/series5-memory.json'));
         if (response.ok) {
@@ -219,7 +218,7 @@ export function useSeries3Benchmarks() {
       setLoading(true);
       setError(null);
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/series3-resolution.json'));
         if (response.ok) {
@@ -260,7 +259,7 @@ export function useSeries4Benchmarks() {
       setLoading(true);
       setError(null);
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/series4-iterations.json'));
         if (response.ok) {
@@ -301,7 +300,7 @@ export function useSeries1Benchmarks() {
       setLoading(true);
       setError(null);
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/series1-epsilon.json'));
         if (response.ok) {
@@ -342,7 +341,7 @@ export function useSeries2Benchmarks() {
       setLoading(true);
       setError(null);
 
-      // Try static data from public/data/ (hoisted by pre-commit hook)
+      // Try static data from public/data/ (recorded benchmark exports)
       try {
         const response = await fetch(getAssetPath('/data/benchmarks/series2-bands.json'));
         if (response.ok) {

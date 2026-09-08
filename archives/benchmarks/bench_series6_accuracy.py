@@ -251,7 +251,7 @@ def run_blaze(
     output_csv = tempfile.mktemp(suffix='.csv')
     
     try:
-        # Build once — the binary contains both f32 and f64 monomorphisations;
+        # Build once ,  the binary contains both f32 and f64 monomorphisations;
         # precision is selected at runtime via --precision (build no longer
         # depends on the removed mixed-precision Cargo feature).
         build_cmd = ["cargo", "build", "--release", "-p", "blaze2d-cli"]
