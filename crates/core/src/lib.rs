@@ -83,7 +83,6 @@ pub mod eigensolver;
 pub mod field;
 pub mod geometry;
 pub mod grid;
-pub mod io;
 pub mod lattice;
 pub mod metrics;
 pub mod polarization;
