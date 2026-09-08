@@ -6,8 +6,8 @@ Install:
   # or: conda install -c conda-forge pymeep=*=mpi_openmpi_*
 
 Computes TM and TE band structures for two lattices:
-  1) Square lattice — dielectric rods (ε=8.9, r=0.2a) in air
-  2) Hexagonal lattice — air holes (r=0.48a) in dielectric (ε=13)
+  1) Square lattice ,  dielectric rods (ε=8.9, r=0.2a) in air
+  2) Hexagonal lattice ,  air holes (r=0.48a) in dielectric (ε=13)
 
 Usage:
     python band_diagram_mpb.py
