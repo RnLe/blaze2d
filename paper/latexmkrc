@@ -1,4 +1,4 @@
-# latexmk configuration — lualatex + biber, output to ./build
+# latexmk configuration , lualatex + biber, output to ./build
 $pdf_mode      = 4;       # lualatex
 $bibtex_use    = 2;       # always run biber when needed
 $out_dir       = 'build';

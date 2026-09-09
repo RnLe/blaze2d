@@ -1,5 +1,5 @@
 % =====================================================================
-%  Blaze2D — paper body (Design Choices … From Solver to Pipeline)
+%  Blaze2D ,  paper body (Design Choices … From Solver to Pipeline)
 % =====================================================================
 
 \section{Design Choices}\label{sec:design}
@@ -55,7 +55,7 @@ avoids the staircasing artifacts that naive pixelization introduces at
 dielectric interfaces.
 
 Validating this module is straightforward: the permittivity matrix can
-be compared element-by-element against MPB for any crystal geometry.
+be compared element-by-element against MPB for the tested circle geometries. Overlap precedence is not guaranteed to match MPB.
 \Cref{fig:material_map_comparison} shows such a comparison for a square
 lattice of dielectric rods ($\epsilon = 8.9$, $r = 0.45a$) at
 resolutions $N = 8$ to $128$. Only the coarsest grid ($N = 8$) exhibits
@@ -187,16 +187,13 @@ matrix and is numerically stable even for tightly clustered
 eigenvalues.
 
 \paragraph{Convergence criterion.}
-MPB monitors the residual norm $\|A x - \lambda B x\|$ and declares
-convergence when it falls below a threshold (default $10^{-7}$).
-Blaze2D instead monitors the relative change in eigenvalues between
-iterations. In practice, eigenvalues stabilize well before the residual
-reaches a tight tolerance, so eigenvalue-based convergence requires
-substantially fewer iterations per solve. While residual convergence
-carries a proven convergence-rate guarantee~\cite{knyazev2001},
-eigenvalue convergence proved completely stable across all tested
-configurations, including difficult cases with accidental degeneracies
-at high-symmetry $\bm{k}$-points.
+Blaze2D monitors relative eigenvalue changes between iterations. MPB
+also documents its tolerance in terms of fractional eigenvalue changes.\footnote{\url{https://mpb.readthedocs.io/en/latest/Python_User_Interface/}}
+Eigenvalue stabilization alone does not certify eigenvector accuracy.
+Operator extraction therefore reports freshly evaluated residuals and
+orthogonality defects and can enforce a residual acceptance threshold.
+Iteration counts must be interpreted with the actual stopping settings;
+different tolerances do not provide an equal-accuracy comparison.
 
 \paragraph{Warm-starting.}
 The single largest lever for performance is also the simplest:

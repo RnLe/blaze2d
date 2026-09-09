@@ -1,3 +1,19 @@
+---
+title: "Technical Report"
+card:
+  title: "Technical Report"
+  category: "Research"
+  order: 1
+  size: "2x1"
+  description: "Numerical methods, validation, and benchmarks for two-dimensional photonic crystals."
+  image: "/banners/blaze_intro.webp"
+  showDescription: true
+  showDate: false
+  showTags: false
+  showImage: true
+  tags: []
+---
+
 import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalingChart, SpeedupScalingChart, MemoryUsageChart, MemoryRatioChart, MemoryScalingChart, ResolutionBarChart, ResolutionSpeedupChart, ResolutionScalingChart, IterationBarChart, IterationTimeChart, IterationDistributionChart, EpsilonBarChart, BandsBarChart, BandComparisonChart, DeviationBoxPlotChart } from '../components/charts'
 import { EpsilonGridViewer } from '../components/charts'
 import HeroImage from '../components/HeroImage'
@@ -5,14 +21,14 @@ import { Citation, Reference, References } from '../components/Citation'
 import { getAssetPath } from '../lib/paths'
 
 
-<HeroImage src="/banners/blaze_intro.webp" alt="Blaze2D: High-Performance Photonic Crystal Solver" cropHeight={0.85} />
+<HeroImage src="/banners/blaze_intro.webp" alt="Blaze2D photonic crystal calculations" cropHeight={0.85} />
 <div className="narrow-centered">
 
 <span className="date">January 8, 2026</span>
 
-# Blaze2D: A High-Performance Solver for Photonic Crystals
+# Blaze2D: Numerical Methods and Benchmarks
 
-*Achieving order-of-magnitude speedups through a mixed-precision LOBPCG algorithm and cache-aware architecture.*
+*Historical measurements of band calculations, memory use, and numerical agreement.*
 
 <a href={getAssetPath('/reports/blaze2d-technical-report.pdf')} target="_blank" rel="noreferrer">Download the PDF ↗</a>
 
@@ -24,7 +40,7 @@ import { getAssetPath } from '../lib/paths'
 
 Photonic band structure calculations commonly rely on the Plane Wave Expansion (PWE) method, and [MIT Photonic Bands (MPB)](https://mpb.readthedocs.io/en/latest/) has long served as a widely used reference implementation for it.<Citation id={1} /><Citation id={2} /> MPB is trusted for its accuracy and is therefore a natural baseline for performance comparisons.
 
-We introduce **Blaze**, a Rust-based solver that modernizes the PWE approach using mixed-precision arithmetic and an improved LOBPCG algorithm.<Citation id={3} /><Citation id={4} /> By explicitly targeting memory bandwidth bottlenecks, Blaze offers superior single- and multi-core scaling, and achieves a 95% reduction in memory footprint for regular use cases while maintaining reference accuracy.
+Blaze is a Rust solver using LOBPCG and mixed-precision arithmetic.<Citation id={3} /><Citation id={4} /> This report presents historical measurements of band calculations. It separates observed timings and memory use from hypotheses about their causes.
 
 <div style={{
   background: 'rgba(100, 150, 200, 0.08)',
@@ -35,7 +51,7 @@ We introduce **Blaze**, a Rust-based solver that modernizes the PWE approach usi
   fontSize: '0.9rem',
   lineHeight: 1.6,
 }}>
-Performance benchmarks utilize the canonical square and hexagonal lattice configurations from [Joannopoulos' seminal 1997 Nature paper](https://www.nature.com/articles/386143a0).<Citation id={5} /> Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, computing the lowest 8 bands with 20 k-points per segment between two high-symmetry points.
+These historical benchmarks use square and hexagonal lattice configurations from [Joannopoulos and colleagues' 1997 paper](https://www.nature.com/articles/386143a0).<Citation id={5} /> Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, computing the lowest 8 bands with 20 k-points per segment between high-symmetry points. Series 4 and 5 record MPB tolerance `1e-7` and Blaze tolerance `1e-4`. The archived web datasets do not consistently record hardware identifiers or solver revisions, which limits reproducibility and cross-release comparisons.
 </div>
 
 </div>
@@ -45,7 +61,7 @@ Performance benchmarks utilize the canonical square and hexagonal lattice config
 
 The computational cost of PWE solvers is dominated by Fast Fourier Transforms (FFTs).<Citation id={1} /> In this plane-wave formulation, Transverse Electric (TE) modes are more expensive to solve than Transverse Magnetic (TM) modes, because each operator application requires six FFTs rather than two for TM.
 
-This complexity penalty is clearly visible in the legacy solver. Blaze, however, mitigates this through algorithmic optimizations. Even in Full Precision (``f64``), Blaze outperforms MPB. The decisive leap comes from the Mixed Precision (``f32/f64``) approach, which reduces memory traffic enough to effectively double the throughput, resulting in a total speedup of approximately ``3×``.
+In these recorded single-core workloads, the f64 and mixed-precision Blaze runs are faster than the MPB runs. The mixed-precision measurements give an average speed ratio of about ``2.9×``. This ratio depends on the geometry, numerical settings, and execution environment.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
@@ -55,11 +71,11 @@ This complexity penalty is clearly visible in the legacy solver. Blaze, however,
 <div className="narrow">
 ## Multi-Core Performance
 
-The architectural age of legacy solvers is most evident in parallel execution.<Citation id={6} /><Citation id={7} /> MPB attempts to parallelize individual operations ***within*** an iteration. On modern hardware, where small-to-medium lattice problems fit entirely within the CPU cache, this fine-grained threading introduces synchronization overhead that outweighs the computational gains, causing performance to regress as threads are added.
+The benchmark compares MPB threading within individual solves with Blaze scheduling independent configurations.<Citation id={6} /><Citation id={7} /> The cost of synchronization and data movement can limit scaling for small problems.
 
 Blaze avoids this overhead by parallelizing entire jobs rather than individual operations, a strategy optimized for large-scale parameter sweeps.
 
-The chart below reveals a clear three-tier performance hierarchy. The legacy solver struggles with thread overhead. Blaze in Full Precision scales efficiently but remains sensitive to the higher algebraic load of TE modes (approx. ``240–350 ms``). In contrast, the Mixed Precision mode hits a "hard floor" at roughly ``160 ms``. By halving the memory requirement for state vectors, Blaze masks much of the computational complexity of the TE mode, consistent with a solver that has entered a memory-bandwidth-limited regime on a given machine.<Citation id={7} />
+The recorded 16-thread runs give an average speed ratio of ``11.9×``. Blaze f64 times are approximately ``240–350 ms``, while mixed-precision times are about ``160 ms``. These timings alone do not identify a unique hardware bottleneck.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
@@ -84,11 +100,11 @@ The chart below reveals a clear three-tier performance hierarchy. The legacy sol
 <div className="narrow">
 ## Memory Efficiency
 
-High-performance computing is increasingly defined by data movement.<Citation id={7} /> A major limitation of MPB is its static memory management; benchmarks reveal that the legacy solver reserves a large, fixed memory block (approx. ``190 MB``) ***regardless*** of the problem size.
+The recorded process-memory measurements are approximately ``190 MB`` for MPB over much of this sweep. Process memory includes runtime and library allocations, so this observation does not establish that MPB reserves a fixed solver workspace.<Citation id={7} />
 
-Blaze adopts a dynamic allocation strategy. As shown below, this results in a dramatic reduction in peak memory usage for standard resolutions. This reduction is critical: by keeping the working set small, Blaze allows the CPU to operate almost entirely within its high-speed L3 cache, avoiding the latency penalty of fetching data from main RAM.
+Blaze uses less measured peak memory in these runs. A smaller working set can reduce data movement, but cache residency requires direct profiling and cannot be inferred from the memory ratio alone.
 
-Fundamentally, the storage requirements for FFTs and operator workspaces scale directly with the grid resolution ($N$). Therefore, analyzing memory growth against resolution provides the most critical insight into the architectural efficiency.
+For a square grid with side length $N$, field storage grows as $N^2$ per band. Eigensolver workspaces also depend on band count, precision, and retained outputs. Process-level measurements may conceal that growth over a limited range.
 
 </div>
 
@@ -98,7 +114,7 @@ Fundamentally, the storage requirements for FFTs and operator workspaces scale d
 
 <div className="narrow">
 
-This efficiency extends to the dimensionality of the search space. In the LOBPCG algorithm, the search space size is determined by the number of bands ($3n$).<Citation id={3} /> While one might expect memory usage to scale with this complexity, both solvers maintain a constant footprint even as the number of bands increases.
+Both recorded process-memory curves remain nearly flat over the tested band-count range. This does not imply that storing more eigenvectors has no memory cost.<Citation id={3} />
 
 </div>
 
@@ -109,7 +125,7 @@ This efficiency extends to the dimensionality of the search space. In the LOBPCG
 
 ### Memory Scaling Laws
 
-To understand the limits of this efficiency, we analyzed how the relative advantage evolves. At low resolutions, MPB is dominated by its static overhead, giving Blaze a ``20×`` advantage. As the resolution increases, the physical storage requirements for the grid naturally grow, and the ratio asymptotically approaches ``1x``. As mentioned, for the number of bands sweep, both solvers maintain constant memory usage, resulting in a flat ratio.
+The measured MPB-to-Blaze memory ratio is about ``20×`` at the smallest grids and decreases as the grid grows. These finite-range measurements do not determine an asymptotic memory ratio.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -118,8 +134,7 @@ To understand the limits of this efficiency, we analyzed how the relative advant
 
 <div className="narrow">
 
-For varying resolutions, MPB’s memory usage is effectively constant <br />($N^{0.06}$), confirming the pre-allocation hypothesis.
-In contrast, Blaze follows a near-linear trend ($N^{1.09}$), scaling predictably with the problem size. Notably, this footprint is identical for both TM and TE polarizations, proving that the storage cost in Blaze is determined strictly by grid topology, independent of the operator's computational complexity.
+Power-law fits over the recorded range give exponents $0.06$ for MPB and $1.09$ for Blaze. These are empirical fits to process-memory measurements, not asymptotic storage laws or proof of a particular allocation strategy.
 
 </div>
 
@@ -131,7 +146,7 @@ In contrast, Blaze follows a near-linear trend ($N^{1.09}$), scaling predictably
 <div className="narrow">
 ## Resolution and Geometry
 
-Several of the benchmarks below vary the grid resolution, measured in pixels per unit cell. The following interactive viewer shows what a given resolution looks like for a circular rod, which helps build intuition for how coarse these grids actually are. It also shows the subpixel smoothing applied at the rod boundary: instead of sampling the permittivity on a hard pixel grid, which would produce jagged staircase edges, the dielectric is smoothed at the corners. Blaze uses the same subpixel smoothing method as MPB.<Citation id={8} /> In practice, resolutions of 32 to 64 pixels per unit cell are enough for research-grade band structures, and higher values are rarely necessary unless the unit cell contains many atoms.
+The viewer below illustrates grid resolution and interface smoothing for a circle. Blaze implements analytic subpixel averaging motivated by established dielectric-interface methods.<Citation id={8} /> Its present rasterizer does not guarantee MPB overlap precedence. Choose resolution through convergence tests for the geometry and quantities of interest.
 </div>
 
 <EpsilonGridViewer initialResolution={64} size={400} />
@@ -141,7 +156,7 @@ Several of the benchmarks below vary the grid resolution, measured in pixels per
 
 The reduction in precision and memory footprint raises a direct question: do we gain speed at the cost accuracy? To answer this question, we compared the eigenfrequencies from Blaze against a high-precision MPB reference along the full $\Gamma \to X \to M \to \Gamma$ path. In the plots below, the MPB bands are drawn as lines and the Blaze eigenvalues as markers.
 
-A short note on methodology. MPB tracks each band *adiabatically* across avoided crossings, while Blaze reports the lowest eigenvalues at each $k$-point without assigning band identities. The two conventions can disagree on the highest band of the computed set, where a crossing may exchange a band with the next one just outside the set. To keep the comparison clean we compute the lowest 20 bands with both solvers but show only the lowest 10, and for Blaze we plot the lowest eigenvalues directly with no band matching. Every displayed band is then well inside the computed window, so both solvers report the same set of values and the band-tracking difference does not appear here.
+The comparison computes 20 bands and displays the lowest 10. Frequencies are compared as sorted eigenvalue sets at each wavevector, avoiding sensitivity to band labels near crossings and the upper edge of the solved window. This historical plotting convention differs from the current API, which preserves the tracked path returned by the solver.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '2rem 0', width: '100%', maxWidth: '1200px', marginLeft: 'auto', marginRight: 'auto', flexWrap: 'wrap' }}>
@@ -157,9 +172,9 @@ A short note on methodology. MPB tracks each band *adiabatically* across avoided
 <div className="narrow">
 ## Deviation Analysis
 
-Across the full path, both polarizations agree with the MPB reference to within Blaze's convergence tolerance. The relative deviation has a median of about $1 \times 10^{-4}$, with a worst case of $4 \times 10^{-4}$ for TM and $3 \times 10^{-4}$ for TE. The agreement does not degrade with band index; it is flat from the lowest band to the tenth.
+The recorded median relative frequency difference from MPB is about $1 \times 10^{-4}$. The maximum is approximately $4 \times 10^{-4}$ for TM and $3 \times 10^{-4}$ for TE. These discrepancies measure agreement between runs; they are not certified bounds on discretization error.
 
-The comparison between the ``f32`` and ``f64`` runs of Blaze is just as informative: They differ by a median of about $1 \times 10^{-7}$ and a maximum below $5 \times 10^{-5}$, more than an order of magnitude smaller than either run's deviation from MPB. The eigenvalues from mixed precision and full precision are, in effect, identical. That outcome is consistent with prior mixed-precision LOBPCG results in electronic-structure calculations, where single-precision storage with double-precision critical reductions preserved eigenvalue accuracy while accelerating solves.<Citation id={4} /> Here, the higher noise floor of single-precision field storage remains below the convergence floor of the runs, so the ``3×`` speedup and the ``95%`` memory reduction come at no measurable cost in accuracy.
+The f32 and f64 Blaze runs differ by a median of about $1 \times 10^{-7}$ and a maximum below $5 \times 10^{-5}$. Storage precision therefore has a smaller effect than the observed MPB difference in this dataset. Prior mixed-precision eigensolver studies provide related context.<Citation id={4} />
 
 </div>
 
@@ -168,9 +183,9 @@ The comparison between the ``f32`` and ``f64`` runs of Blaze is just as informat
 
 The two solvers parallelize in different ways. MPB splits the work inside a single solve across threads, while Blaze runs many independent solves at the same time, one per thread, which suits the parameter sweeps it is built for. The charts sweep the thread count from ``1`` to ``16`` and measure throughput in solves per second, for a small problem ($N = 16$) and a large one ($N = 128$).
 
-For the small problem, Blaze scales almost linearly, from ``28`` to ``220`` solves per second across 16 threads. MPB's threaded mode does not benefit: it stays near ``14`` solves per second and even drops slightly, because the cost of coordinating threads within a single solve outweighs the gain. Running MPB as separate processes, one solve per core, does scale, but reaches only about half of Blaze's throughput.
+For the recorded $N=16$ problem, Blaze throughput increases from about ``28`` to ``220`` solves per second across 16 threads. MPB threaded throughput stays near ``14`` solves per second. Separate MPB processes scale better than its threaded mode in this experiment.
 
-For the large problem the absolute numbers are smaller for every solver, but the pattern is the same. Blaze scales by about ``3×`` across the sweep, while MPB's threaded mode stays flat. The practical conclusion is that **parallelizing across independent jobs works better than parallelizing within a single solve**.
+For $N=128$, Blaze throughput increases by about ``3×`` across the thread-count sweep. This supports scheduling independent configurations for these workloads; it does not establish a general limit on MPB parallelism.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -186,9 +201,9 @@ For the large problem the absolute numbers are smaller for every solver, but the
 
 Resolution sets the overall cost: the number of plane waves grows as $N^2$ and the FFTs as $N^2 \log N$. The bar chart sweeps the grid from $N = 16$ to $N = 192$ and compares wall-clock time against MPB.
 
-Blaze is faster at every resolution, and its solve time grows smoothly and predictably with $N$. MPB behaves differently. Its timings are uneven across resolutions, performing noticeably better at powers of two (16, 32, 64, 128) and jumping in cost at the values in between. At $N = 96$ MPB is already almost as slow as at $N = 128$, and the step up to $N = 192$ is large. The exact cause is not certain, but it most likely comes down to how the FFT plans and operator tiling handle sizes that are not powers of two. The speedup chart shows the combined effect: Blaze's lead grows toward higher $N$, reaching roughly ``5×`` at $N = 192$ (``8.0 s`` against ``39 s`` for TM, ``12 s`` against ``70 s`` for TE).
+Blaze is faster at each sampled resolution in this dataset. At $N=192$, the recorded times are approximately ``8.0 s`` versus ``39 s`` for TM and ``12 s`` versus ``70 s`` for TE. MPB timings vary non-monotonically with some grid sizes. FFT factorization and planning are possible contributors, requiring separate profiling.
 
-The log-log scaling plot makes the trends comparable. Blaze follows a clean power law, while MPB's curve is jumpy and trends toward a steeper slope at high resolution.
+The log-log plot compares empirical trends over the sampled resolutions. Its fitted slopes should not be extrapolated beyond this range without further measurements.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -208,9 +223,9 @@ The log-log scaling plot makes the trends comparable. Blaze follows a clean powe
 
 Beyond the cost of the *entire* single iteration, the number of iterations needed to converge each $k$-point matters.
 
-Blaze converges in fewer iterations than MPB on average, about ``4.5`` per $k$-point for TM and ``5.6`` for TE, against ``7.5`` and ``11.9`` for MPB. Both solvers **warm-start** each $k$-point from the converged solution of the previous one (Blaze adopts this technique from MPB), so the warm start cannot explain the difference. The most likely explanation is a combination of soft-locking, where converged bands are kept in the working space but no longer refined, and the different convergence criteria the two solvers use: Blaze stops once the eigenvalues have stabilized, while MPB monitors the residual. There may also be a general efficiency difference in the LOBPCG variant.
+Mean iteration counts are approximately ``4.5`` for Blaze TM and ``5.6`` for Blaze TE, compared with ``7.5`` and ``11.9`` for MPB. The recorded tolerances are ``1e-4`` for Blaze and ``1e-7`` for MPB, so these are not equal-tolerance iteration comparisons. Both implementations use eigenvalue changes in their stopping criteria. [MPB documents this convention explicitly](https://mpb.readthedocs.io/en/latest/Python_User_Interface/). Fresh residuals must be checked separately.
 
-MPB's iteration count spikes at certain $k$-points, most often around high-symmetry points, where it reaches ``39`` iterations for TM and ``85`` for TE. Blaze has occasional spikes as well, but they are smaller (up to ``12`` and ``24``) and tend to fall at *different* $k$-points. That the spikes occur in different places is consistent with the two solvers using different stopping criteria, which become sensitive under different conditions rather than at the same points. The polarization gap is visible throughout: TM, whose operator is diagonal and easy to precondition, converges in fewer iterations than TE for both solvers.
+Maximum recorded iteration counts are ``39`` for MPB TM and ``85`` for MPB TE, compared with ``12`` and ``24`` for Blaze. Their locations vary along the path. The measurements do not isolate whether preconditioning, subspace updates, or stopping settings cause the difference.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -228,7 +243,7 @@ MPB's iteration count spikes at certain $k$-points, most often around high-symme
 <div className="narrow">
 ## Dielectric Contrast
 
-The following benchmark varies the rod permittivity from $\varepsilon = 2$ to $\varepsilon = 13$, covering the range where photonic band gaps open. Blaze's solve time stays essentially flat across the whole range, which is a useful stability property: the cost does not depend on the contrast of the crystal. MPB's behavior is more uneven. Its timings vary substantially from one contrast to the next, with occasional sudden drops and jumps. MPB is therefore more sensitive to the dielectric contrast than Blaze.
+The dielectric-contrast sweep covers rod permittivities from $\varepsilon=2$ to $13$. Blaze times vary little over these sampled configurations; MPB times vary more. This is an observation about the recorded sweep, not a guarantee of contrast-independent cost.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -238,7 +253,7 @@ The following benchmark varies the rod permittivity from $\varepsilon = 2$ to $\
 <div className="narrow">
 ## Scaling with Band Count
 
-This sweep varies the number of bands requested, from ``4`` to ``20``. The cost grows steadily with band count for both solvers, which is expected: more bands mean a larger LOBPCG search block and more vectors to orthogonalize each iteration. Blaze keeps a roughly ``2×`` lead across the whole range, solving the 20-band TM problem in ``1.9 s`` against MPB's ``3.9 s``. As the memory section showed, this added work does not increase the memory footprint, so requesting more bands costs time but not space.
+The band-count sweep requests ``4`` to ``20`` bands. Solve time increases for both solvers. The recorded 20-band TM times are ``1.9 s`` for Blaze and ``3.9 s`` for MPB. Workspace size still depends on band count even where the process-memory measurements appear flat.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0', width: '100%', maxWidth: '1000px', marginLeft: 'auto', marginRight: 'auto' }}>
@@ -248,11 +263,11 @@ This sweep varies the number of bands requested, from ``4`` to ``20``. The cost 
 <div className="narrow">
 ## Conclusion
 
-Blaze was built to solve 2D photonic crystal band structures quickly, repeatedly, and without surprises. The benchmarks underline this behavior. In mixed precision Blaze is roughly ``3×`` faster than MPB on a single core, scales almost linearly across threads where MPB's threaded mode stalls, and uses up to ``20×`` less memory at the resolutions used in practice. It does so while reproducing MPB's eigenvalues to within $\sim 10^{-4}$ (its own convergence tolerance) with single and double precision giving indistinguishable results. Its cost is also predictable: solve time grows smoothly with resolution and stays flat across dielectric contrast, in both of which MPB is uneven.
+The recorded experiments show lower Blaze wall-clock times and peak process memory for the tested configurations. The reported ratios are specific to those measurements and their numerical settings. A matched comparison of release 0.7 requires new runs with explicit solver revisions, hardware, retained outputs, and residual checks.
 
-None of this is accidental. It follows from starting on a modern foundation: a memory-aware, mixed-precision LOBPCG core written in Rust, parallelized across whole solves rather than inside them, and shipped as an installable Python package. Performance, scalability, and simplicity were design goals from the start.
+Blaze schedules independent configurations and uses mixed-precision storage with f64 critical reductions. These design choices support repeated crystal calculations and scientific data extraction.
 
-The most consequential advantage does not appear in any timing plot. Because Blaze is a plane-wave solver that exposes its internals, it returns far more than frequencies: the Bloch functions themselves, and the operator matrix elements assembled from them, such as Berry connections and effective-mass tensors.<Citation id={9} /><Citation id={10} /><Citation id={11} /> Standard band solvers like MPB do not surface this data. This allows the user to look inside the operator instead of only at its spectrum, and to do so for thousands of crystal configurations in a single sweep. For routine band-structure work the speed is the headline. For the physics that follows, the ability to extract this interior structure at scale is what turns a fast solver into a foundation to build on.
+Blaze exports projected operator and derivative data, including velocity matrices, effective masses, and formulation-specific geometric terms.<Citation id={9} /><Citation id={10} /><Citation id={11} /> MPB also exposes fields, eigenvectors, and group velocities. Blaze integrates parameter studies and projected extraction in one configuration and result contract.
 </div>
 
 <References>
@@ -275,7 +290,7 @@ The most consequential advantage does not appear in any timing plot. Because Bla
     J. L. Hennessy and D. A. Patterson, <em>Computer Architecture: A Quantitative Approach</em>, 5th ed. Morgan Kaufmann, 2011, Fig. 2.2. [<a href="https://acs.pub.ro/~cpop/SMPA/Computer%20Architecture%20A%20Quantitative%20Approach%20(5th%20edition).pdf" target="_blank" rel="noopener noreferrer">PDF</a>]
     <br />
     <span style={{ fontSize: '0.9em', color: 'rgba(160, 160, 160, 0.85)', fontStyle: 'italic', display: 'block', backgroundColor: 'rgba(10, 10, 10, 1)', marginTop: '-1rem', paddingLeft: '0.5rem' }}>
-      Figure 2.2 illustrates the dramatic divergence in performance trends between processor speed and memory bandwidth, showing how memory access has become the dominant bottleneck in modern computing systems.
+      Figure 2.2 illustrates differing trends in performance trends between processor speed and memory bandwidth, showing how memory access has become the dominant bottleneck in modern computing systems.
     </span>
   </Reference>
   <Reference id={7}>

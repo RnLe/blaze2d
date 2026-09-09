@@ -1,3 +1,19 @@
+---
+title: "Master’s Thesis"
+card:
+  title: "Master’s Thesis"
+  category: "Research"
+  order: 0
+  size: "2x2"
+  description: "Photonic moiré crystals and the two-scale theory that motivates Blaze’s operator extraction."
+  image: "/banners/blaze_thesis.webp"
+  showDescription: true
+  showDate: false
+  showTags: false
+  showImage: true
+  tags: []
+---
+
 import Figure, { FigureRow } from '../components/Figure'
 import HeroImage from '../components/HeroImage'
 
@@ -19,21 +35,19 @@ import HeroImage from '../components/HeroImage'
 
 Blaze2D is the computational engine of a master's thesis, *Photonic Band Theory of Moiré
 Crystals: A Two-Scale Approach*. This page is a short tour of that research, what it built,
-and why it forced a new solver into existence. *(A dedicated thesis site follows; this is
-the bridge.)*
+and how it motivates the solver interfaces.
 
 ## Photonic moiré crystals
 
 Overlay two photonic crystals with a small relative twist and a new, much larger periodic
 pattern emerges: a *moiré* superlattice, the optical cousin of the patterns behind twisted
-bilayer graphene. The physics is richest at small angles, which is exactly where it becomes
-impossible to compute directly:
+bilayer graphene. At small angles, direct supercell calculations become costly:
 
 - At **generic twist angles** the bilayer is *incommensurate*: there is no repeating unit
   cell at all, so a conventional solver has nothing to operate on.
 - At the special **commensurate angles** where periodicity is restored, the unit cell grows
   as roughly the inverse of the twist angle, so a brute-force "supercell" calculation
-  explodes precisely where the interesting physics lives.
+  increases substantially.
 
 <Figure src="/figures/thesis/moire-crystals.webp" alt="Photonic moiré lattices formed by twisting two crystals" caption="Twisting two photonic crystals produces an emergent moiré superlattice whose period far exceeds that of the layers it is built from." maxWidth="760px" />
 
@@ -73,7 +87,7 @@ The headline quantitative result is this **quadratic ($\theta^2$) bandwidth scal
 lowest minibands, predicted by the envelope theory and independently confirmed by a
 finite-difference (FDFD) reference that is itself checked against MPB.
 
-## The data MPB cannot give
+## Projected operator data
 
 The framework's real payoff is *geometric*. Because it works from full Bloch eigenvectors,
 it produces spatially resolved fields (Berry connection and curvature, the Born–Huang
@@ -82,24 +96,12 @@ conventional supercell eigenvalue calculation can.
 
 <Figure src="/figures/thesis/geometric-data.webp" alt="Berry curvature and Born–Huang geometric fields on the registry domain" caption="Geometric fields on the registry domain: Berry curvature and the Born–Huang metric. These are the quantities the envelope Hamiltonian is built from, and the reason the solver had to expose eigenvectors, not just eigenvalues." maxWidth="760px" />
 
-## Why this required a new solver
+## The local-calculation workflow
 
-The envelope pipeline asks for the **full Bloch eigenvector** at every point of a dense
-registry sweep: thousands of local eigenproblems per configuration. That specific
-combination of demands is what existing tools could not meet together:
+The envelope pipeline uses Bloch eigenvectors at many registry points and constructs projected velocity, mass, and derivative data. Blaze integrates these calculations with parameter studies and explicit conventions for coordinates, gauges, and retained bands.
 
-- **Throughput.** Thousands of solves per sweep make solver speed the binding constraint.
-- **Data transparency.** The theory consumes eigenvectors, group velocities, and
-  Berry-phase data directly: operator-level quantities most solvers never expose.
-- **Control and understanding.** Owning the solver meant owning every numerical choice the
-  geometric data depends on: band tracking through avoided crossings, gauge conventions,
-  dielectric smoothing.
+MPB also exposes fields, eigenvectors, and group velocities through its [Python interface](https://mpb.readthedocs.io/en/latest/Python_User_Interface/). The research motivation for Blaze is an integrated extraction workflow and control over its numerical implementation.
 
-[**Blaze2D**](/blaze) was written to fill exactly this gap: fast enough for the dense
-sweep, transparent enough to hand the envelope framework everything it needs, and validated
-against the same FDFD/MPB references used throughout the thesis. The speed and convenience
-were necessary; the *data extraction* was the part that made the research possible at all.
-
-→ [**Technical Report**](/blaze) · [**Architecture**](/architecture)
+→ [**Technical Report**](/blaze) · [**API & TOML**](/configuration)
 
 </div>

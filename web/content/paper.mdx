@@ -1,3 +1,19 @@
+---
+title: "Manuscript"
+card:
+  title: "Manuscript"
+  category: "Research"
+  order: 2
+  size: "2x1"
+  description: "Operator construction, MPB comparisons, and mixed-precision calculations."
+  image: "/banners/blaze_paper.webp"
+  showDescription: true
+  showDate: false
+  showTags: false
+  showImage: true
+  tags: []
+---
+
 import PdfViewer from '../components/PdfViewer'
 import { getAssetPath } from '../lib/paths'
 
@@ -18,11 +34,6 @@ benchmarks in one self-contained manuscript.*
 
 </div>
 
-<div className="w-full mt-8" style={{
-  width: '1000px',
-  maxWidth: '90vw',
-  marginLeft: '50%',
-  transform: 'translateX(-50%)'
-}}>
-  <PdfViewer src="/paper/blaze2d.pdf" height="85vh" />
+<div className="manuscript-viewer">
+  <PdfViewer src="/paper/blaze2d.pdf" height="80dvh" />
 </div>

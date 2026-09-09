@@ -1,4 +1,4 @@
-# Blaze2D — Standalone Paper
+# Blaze2D ,  Standalone Paper
 
 A self-contained LaTeX source package describing **Blaze2D**.
 
@@ -29,7 +29,7 @@ make watch
 ## Regenerating figure PDFs from SVG
 
 Only required if you edit one of the SVG sources. Uses
-[`cairosvg`](https://cairosvg.org/) (a pure-Python converter — no
+[`cairosvg`](https://cairosvg.org/) (a pure-Python converter ,  no
 Inkscape required):
 
 ```bash
