@@ -1,123 +1,86 @@
 # Blaze2D
 
-A Rust-based 2D Maxwell solver designed for large-scale band diagram sweeps.
-Outperforms [MIT's MPB](https://github.com/NanoComp/mpb) in TM polarizations and high-throughput workloads.
+A Rust solver for two-dimensional photonic bands and projected Maxwell operators.
+Blaze combines TE and TM calculations with ordered parameter studies, registry sampling,
+and k-stencils. TOML, Python, the native CLI, and the browser use one configuration contract.
 
 [![PyPI](https://img.shields.io/pypi/v/blaze2d)](https://pypi.org/project/blaze2d/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**[Try it in your browser](https://rnle.github.io/blaze2d/blaze/)** — no installation required (WebAssembly).
+[Workbench](https://rnle.github.io/blaze2d/workbench) ·
+[Examples](https://rnle.github.io/blaze2d/examples) ·
+[API and TOML](https://rnle.github.io/blaze2d/configuration)
 
----
-
-## Quick Start
-
-```bash
-# Clone and test
-git clone https://github.com/RnLe/blaze2d.git
-cd blaze2d
-cargo test
-
-# Run a simulation
-cargo run --release -- --lattice square --eps-bg 13.0 --radius 0.3 --polarization TM --resolution 24
-
-# Reproduce benchmarks (requires conda/mamba for MPB)
-cd benchmarks
-make setup-env   # one-time: creates mpb-reference environment
-make quick       # ~2 min validation run
-```
-
-→ [Full Installation Guide](https://rnle.github.io/blaze2d/installation)
-
----
-
-## Usage
-
-Blaze2D offers two interfaces:
-
-| Interface | Best For | Documentation |
-|-----------|----------|---------------|
-| **CLI flags** | Quick single runs, scripting | [CLI Reference](docs/usage-cli.md) |
-| **TOML files** | Reproducible simulations, parameter sweeps | [TOML Reference](docs/usage-toml.md) |
-
-### Quick Example
+## Install and calculate
 
 ```bash
-# Using CLI flags
-blaze2d --lattice square --eps-bg 13.0 --radius 0.3 --polarization TM --resolution 24
-
-# Using a TOML file
-blaze2d run examples/square_eps13_r0p3_tm_res24.toml
+python -m pip install blaze2d
 ```
 
----
+```python
+import blaze
 
-## Web Demo
+result = blaze.solve(resolution=32, n_bands=8)
+print(result["frequencies"].shape)  # (k_point, band)
+```
 
-The solver compiles to WebAssembly, enabling browser-based simulations without installation:
+Results are dictionaries containing NumPy arrays, resolved parameters, coordinate
+conventions, and convergence information. Native execution supports f32 and f64 storage;
+the Workbench uses f64. Complex arrays use NumPy `complex128` in both cases.
 
-**https://rnle.github.io/blaze2d/blaze/**
-
-Features:
-- Interactive band diagram visualization
-- Real-time parameter adjustment
-- Export results as CSV/JSON
-
----
-
-## Benchmarks
-
-Comparative benchmarks against MPB under matched conditions (same tolerance, resolution, band count).
-
-→ [Technical Report with Full Results](https://rnle.github.io/blaze2d/blaze)
-
----
-
-## Installation
-
-### From PyPI (Recommended)
+## Reproducible studies
 
 ```bash
-pip install blaze2d
+blaze2d config validate examples/calculations/radius-sweep.toml
+blaze2d run examples/calculations/radius-sweep.toml --output results.npz
 ```
 
-### From Source
+```python
+config = blaze.Config.from_file("examples/calculations/radius-sweep.toml")
+study = blaze.run(config, threads=4)
+blaze.save(study, "results.npz")
+```
+
+Use `blaze.stream(config)` to consume jobs incrementally. JSON, NDJSON, and NPZ preserve
+array dimensions, complex data, and provenance. The [configuration reference](https://rnle.github.io/blaze2d/configuration)
+explains sweeps, operator quantities, advanced Python inputs, checkpoints, and migration
+to `schema = "blaze2d/1"`.
+
+## Build and verify
+
+Rust 1.91.1 and CPython 3.10 or later are required to build the Python extension.
 
 ```bash
-git clone https://github.com/RnLe/blaze2d.git
-cd blaze2d
-cargo build --release
+cargo test -p blaze2d-core -p blaze2d-interface -p blaze2d-runner
+cargo build --release -p blaze2d-cli
+python -m pip install ./crates/python
 ```
 
-The binary will be at `target/release/blaze2d`.
+The native executable is `target/release/blaze2d`. The website uses Node 22,
+pnpm 10.10.0, and wasm-pack 0.13.1:
 
-### Requirements
+```bash
+cd web
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test:browser
+```
 
-- Rust 1.91+ (for building from source)
-- Python 3.9+ (for Python bindings)
+The site build regenerates its interface types and WASM from the current source.
+Release workflows build portable wheels and test installation outside the repository.
 
----
+## Scientific scope
 
-## Optimization Potential
+This release supports 2D circle geometry and positive scalar dielectric materials.
+It provides projected velocity, mass, registry derivatives, and the formulation-specific
+research quantities documented in the API. General geometry, 3D, and an MPB adapter remain
+future work. Current overlap rasterization is not guaranteed to follow MPB precedence.
 
-Blaze2D is currently CPU-bound with a straightforward LOBPCG implementation.
-Significant performance gains are achievable through:
-
-| Optimization | Expected Impact |
-|--------------|-----------------|
-| Optimized preconditioners | up to 2–3× fewer iterations |
-| Dynamic subspace deflation | Reduced dense matrix ops; faster convergence |
-| Advanced BLAS/LAPACK integration | Faster dense operations; speedup potential 1–3x |
-| **GPU acceleration (CUDA/Metal)** | 10–100× for large grids; linear scaling (!) |
-
-GPU support is expected to provide substantial speedups even at modest resolutions (64×64), where memory transfer overhead is amortized across many eigenvalue iterations.
-
----
+The [technical report](https://rnle.github.io/blaze2d/blaze) records benchmark conditions
+and comparisons. MPB exposes fields, eigenvectors, and group velocities; Blaze's research
+focus is integrated parameter studies and projected operator extraction.
+See [Optimization & Roadmap](https://rnle.github.io/blaze2d/roadmap) for planned work.
 
 ## License
 
-Licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
-## Citation
-
-If you use Blaze2D in academic work, please cite this repository.
+MIT. See [LICENSE](LICENSE).
