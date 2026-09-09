@@ -17,12 +17,7 @@ The computational cost of PWE solvers is dominated by Fast Fourier Transforms
 more expensive to solve than Transverse Magnetic (TM) modes, because each
 operator application requires six FFTs rather than two for TM.
 
-This complexity penalty is clearly visible in the legacy solver (@fig_single_core).
-Blaze, however, mitigates this through algorithmic optimizations. Even in Full
-Precision (`f64`), Blaze outperforms MPB. The decisive leap comes from the Mixed
-Precision (`f32/f64`) approach, which reduces memory traffic enough to
-effectively double the throughput, resulting in a total speedup of approximately
-3×.
+In these recorded single-core workloads, the f64 and mixed-precision Blaze runs are faster than the MPB runs. The mixed-precision measurements give an average speed ratio of about `2.9×`. This ratio depends on the geometry, numerical settings, and execution environment.
 
 #figure(
   plot("single-core"),

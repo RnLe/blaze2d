@@ -6,19 +6,9 @@ Resolution sets the overall cost: the number of plane waves grows as $N^2$ and
 the FFTs as $N^2 log N$. @fig_resolution_bar sweeps the grid from $N = 16$ to
 $N = 192$ and compares wall-clock time against MPB.
 
-Blaze is faster at every resolution, and its solve time grows smoothly and
-predictably with $N$. MPB behaves differently. Its timings are uneven across
-resolutions, performing noticeably better at powers of two (16, 32, 64, 128) and
-jumping in cost at the values in between. At $N = 96$ MPB is already almost as
-slow as at $N = 128$, and the step up to $N = 192$ is large. The exact cause is
-not certain, but it most likely comes down to how the FFT plans and operator
-tiling handle sizes that are not powers of two. @fig_resolution_speedup shows
-the combined effect: Blaze's lead grows toward higher $N$, reaching roughly 5×
-at $N = 192$ (8.0 s against 39 s for TM, 12 s against 70 s for TE).
+Blaze is faster at each sampled resolution in this dataset. At $N=192$, the recorded times are approximately `8.0 s` versus `39 s` for TM and `12 s` versus `70 s` for TE. MPB timings vary non-monotonically with some grid sizes. FFT factorization and planning are possible contributors, requiring separate profiling.
 
-The log-log scaling plot in @fig_resolution_scaling makes the trends comparable.
-Blaze follows a clean power law, while MPB's curve is jumpy and trends toward a
-steeper slope at high resolution.
+The log-log plot compares empirical trends over the sampled resolutions. Its fitted slopes should not be extrapolated beyond this range without further measurements.
 
 #figure(
   plot("resolution-bar"),

@@ -2,21 +2,11 @@
 
 = Memory Efficiency <sec_memory>
 
-High-performance computing is increasingly defined by data movement
-@williams2009. A major limitation of MPB is its static memory management;
-benchmarks reveal that the legacy solver reserves a large, fixed memory block
-(approx. 190 MB) *_regardless_* of the problem size.
+The recorded process-memory measurements are approximately `190 MB` for MPB over much of this sweep. Process memory includes runtime and library allocations, so this observation does not establish that MPB reserves a fixed solver workspace.
 
-Blaze adopts a dynamic allocation strategy. As @fig_memory_resolution shows,
-this results in a dramatic reduction in peak memory usage for standard
-resolutions. This reduction is critical: by keeping the working set small, Blaze
-allows the CPU to operate almost entirely within its high-speed L3 cache,
-avoiding the latency penalty of fetching data from main RAM.
+Blaze uses less measured peak memory in these runs. A smaller working set can reduce data movement, but cache residency requires direct profiling and cannot be inferred from the memory ratio alone.
 
-Fundamentally, the storage requirements for FFTs and operator workspaces scale
-directly with the grid resolution ($N$). Therefore, analyzing memory growth
-against resolution provides the most critical insight into the architectural
-efficiency.
+For a square grid with side length $N$, field storage grows as $N^2$ per band. Eigensolver workspaces also depend on band count, precision, and retained outputs. Process-level measurements may conceal that growth over a limited range.
 
 #figure(
   plot("memory-resolution"),
@@ -27,11 +17,7 @@ efficiency.
   ],
 ) <fig_memory_resolution>
 
-This efficiency extends to the dimensionality of the search space. In the LOBPCG
-algorithm, the search space size is determined by the number of bands ($3n$)
-@knyazev2001. While one might expect memory usage to scale with this complexity,
-both solvers maintain a constant footprint even as the number of bands increases
-(@fig_memory_bands).
+Both recorded process-memory curves remain nearly flat over the tested band-count range. This does not imply that storing more eigenvectors has no memory cost.
 
 #figure(
   plot("memory-bands"),
@@ -43,12 +29,7 @@ both solvers maintain a constant footprint even as the number of bands increases
 
 == Memory Scaling Laws <sec_memory_scaling>
 
-To understand the limits of this efficiency, we analyzed how the relative
-advantage evolves (@fig_memory_ratio). At low resolutions, MPB is dominated by
-its static overhead, giving Blaze a 20× advantage. As the resolution
-increases, the physical storage requirements for the grid naturally grow, and
-the ratio asymptotically approaches 1×. As mentioned, for the number of bands
-sweep, both solvers maintain constant memory usage, resulting in a flat ratio.
+The measured MPB-to-Blaze memory ratio is about `20×` at the smallest grids and decreases as the grid grows. These finite-range measurements do not determine an asymptotic memory ratio.
 
 #figure(
   plot("memory-ratio"),
@@ -59,12 +40,7 @@ sweep, both solvers maintain constant memory usage, resulting in a flat ratio.
   ],
 ) <fig_memory_ratio>
 
-For varying resolutions, MPB's memory usage is effectively constant
-($N^(0.06)$), confirming the pre-allocation hypothesis. In contrast, Blaze
-follows a near-linear trend ($N^(1.09)$), scaling predictably with the problem
-size. Notably, this footprint is identical for both TM and TE polarizations,
-proving that the storage cost in Blaze is determined strictly by grid topology,
-independent of the operator's computational complexity.
+The fitted exponents over this finite range are 0.06 for MPB and 1.09 for Blaze. These are empirical process-memory trends, not asymptotic storage laws or proof of a particular allocation strategy.
 
 #figure(
   plot("memory-scaling"),

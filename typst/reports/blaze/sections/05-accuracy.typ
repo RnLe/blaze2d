@@ -8,15 +8,7 @@ eigenfrequencies from Blaze against a high-precision MPB reference along the
 full $Gamma -> X -> M -> Gamma$ path. In @fig_band_comparison, the MPB bands are
 drawn as lines and the Blaze eigenvalues as markers.
 
-A short note on methodology. MPB tracks each band _adiabatically_ across avoided
-crossings, while Blaze reports the lowest eigenvalues at each $bold(k)$-point
-without assigning band identities. The two conventions can disagree on the
-highest band of the computed set, where a crossing may exchange a band with the
-next one just outside the set. To keep the comparison clean we compute the
-lowest 20 bands with both solvers but show only the lowest 10, and for Blaze we
-plot the lowest eigenvalues directly with no band matching. Every displayed band
-is then well inside the computed window, so both solvers report the same set of
-values and the band-tracking difference does not appear here.
+The comparison computes 20 bands and displays the lowest 10. Frequencies are compared as sorted eigenvalue sets at each wavevector, avoiding sensitivity to band labels near crossings and the upper edge of the solved window. This historical plotting convention differs from the current API, which preserves the tracked path returned by the solver.
 
 #figure(
   plot-row("bands-tm", "bands-te"),

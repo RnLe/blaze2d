@@ -2,15 +2,12 @@
 
 = Resolution and Geometry <sec_resolution_geometry>
 
-Several of the benchmarks below vary the grid resolution, measured in pixels per
-unit cell. @fig_epsilon_grids shows what a given resolution looks like for a
-circular rod, which helps build intuition for how coarse these grids actually
-are. It also shows the subpixel smoothing applied at the rod boundary: instead
-of sampling the permittivity on a hard pixel grid, which would produce jagged
-staircase edges, the dielectric is smoothed at the corners. Blaze uses the same
-subpixel smoothing method as MPB @farjadpour2006. In practice, resolutions of 32
-to 64 pixels per unit cell are enough for research-grade band structures, and
-higher values are rarely necessary unless the unit cell contains many atoms.
+Grid resolution gives the number of samples along each unit-cell direction.
+@fig_epsilon_grids shows the sampled permittivity of a circular rod. Boundary
+cells use subpixel averaging, related to the interface treatment described by
+@farjadpour2006. This does not establish identical rasterization behavior to MPB.
+The required resolution depends on geometry, dielectric contrast, frequency,
+and the target observable. Check convergence under grid refinement.
 
 #figure(
   plot("epsilon-grids"),

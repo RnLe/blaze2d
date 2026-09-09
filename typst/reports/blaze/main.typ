@@ -10,9 +10,8 @@
 #import "/typst/lib/report.typ": report
 
 #show: report.with(
-  title: "Blaze2D: A High-Performance Solver for Photonic Crystals",
-  subtitle: [Achieving order-of-magnitude speedups through a mixed-precision
-             LOBPCG algorithm and cache-aware architecture.],
+  title: "Blaze2D: Numerical Methods and Benchmarks",
+  subtitle: [Historical measurements of band calculations, memory use, and numerical agreement.],
   kicker: "Technical Report",
   affiliation: [
     Blaze2D \
@@ -41,12 +40,12 @@
     for its accuracy and is therefore a natural baseline for performance
     comparisons.
 
-    We introduce *Blaze*, a Rust-based solver that modernizes the PWE approach
-    using mixed-precision arithmetic and an improved LOBPCG algorithm
-    @knyazev2001 @woo2023. By explicitly targeting memory bandwidth bottlenecks,
-    Blaze offers superior single- and multi-core scaling, and achieves a 95%
-    reduction in memory footprint for regular use cases while maintaining
-    reference accuracy.
+    Blaze uses LOBPCG and mixed-precision arithmetic @knyazev2001 @woo2023.
+    This report presents historical measurements. The archived datasets do not
+    consistently record hardware identifiers or solver revisions. Series 4 and 5
+    use MPB tolerance `1e-7` and Blaze tolerance `1e-4`; those comparisons are
+    not at equal tolerance. Reported ratios apply to the recorded experiments.
+
   ],
 )
 

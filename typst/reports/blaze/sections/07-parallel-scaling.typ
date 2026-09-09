@@ -9,18 +9,9 @@ same time, one per thread, which suits the parameter sweeps it is built for.
 throughput in solves per second, for a small problem ($N = 16$) and a large one
 ($N = 128$).
 
-For the small problem, Blaze scales almost linearly, from 28 to 220 solves
-per second across 16 threads. MPB's threaded mode does not benefit: it stays
-near 14 solves per second and even drops slightly, because the cost of
-coordinating threads within a single solve outweighs the gain. Running MPB as
-separate processes, one solve per core, does scale, but reaches only about half
-of Blaze's throughput.
+For the recorded $N=16$ problem, Blaze throughput increases from about `28` to `220` solves per second across 16 threads. MPB threaded throughput stays near `14` solves per second. Separate MPB processes scale better than its threaded mode in this experiment.
 
-For the large problem the absolute numbers are smaller for every solver, but the
-pattern is the same. Blaze scales by about 3× across the sweep
-(@fig_speedup_scaling), while MPB's threaded mode stays flat. The practical
-conclusion is that *parallelizing across independent jobs works better than
-parallelizing within a single solve*.
+For $N=128$, Blaze throughput increases by about `3×` across the thread-count sweep. This supports scheduling independent configurations for these workloads; it does not establish a general limit on MPB parallelism.
 
 #figure(
   plot("throughput-scaling"),
