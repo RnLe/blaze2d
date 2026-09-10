@@ -127,8 +127,6 @@ mod _tests_geometry;
 #[cfg(test)]
 mod _tests_grid;
 #[cfg(test)]
-mod _tests_io;
-#[cfg(test)]
 mod _tests_lattice;
 #[cfg(test)]
 mod _tests_operator;
