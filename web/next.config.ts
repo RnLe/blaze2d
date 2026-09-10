@@ -1,10 +1,9 @@
-// apps/website/next.config.ts
-
 import type { NextConfig } from 'next';
 import nextra from 'nextra'
-import { existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 
 const base = process.env.NEXT_BASE_PATH ?? '/blaze2d';
+const build = JSON.parse(readFileSync('./public/wasm-blaze/build.json', 'utf8'));
 
 /** @type {import('next').NextConfig} */
 const nextConfig: NextConfig = {
@@ -19,10 +18,11 @@ const nextConfig: NextConfig = {
     // Make base path available to client-side code
     env: {
         NEXT_PUBLIC_BASE_PATH: base,
+        NEXT_PUBLIC_BLAZE_REVISION: build.source_revision,
+        NEXT_PUBLIC_BLAZE_VERSION: build.version,
     },
     
     // FUNCTIONALITY RELATED CONFIG
-    // GitHub Pages requires static export and serves from /msl, so we need Next to emit all HTML/CSS/JS under that path.
     transpilePackages: [],
     serverExternalPackages: ['pino'],
     turbopack: {
@@ -51,27 +51,6 @@ const nextConfig: NextConfig = {
             test: /\.wasm$/,
             type: 'asset/resource',
         });
-        
-        // Copy WASM files to public directory during build
-        if (config.mode === 'production') {
-            const path = require('path');
-            const CopyPlugin = require('copy-webpack-plugin');
-            const wasmSource = path.resolve(__dirname, 'wasm');
-            const wasmTarget = path.resolve(__dirname, 'out/wasm');
-            
-            if (existsSync(wasmSource)) {
-                config.plugins.push(
-                    new CopyPlugin({
-                        patterns: [
-                            {
-                                from: wasmSource,
-                                to: wasmTarget,
-                            },
-                        ],
-                    })
-                );
-            }
-        }
         
         // Resolve WASM imports
         config.resolve.extensions.push('.wasm');

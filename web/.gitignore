@@ -31,3 +31,9 @@ _pagefind/
 
 # Rust build directory
 **/wasm/target/
+# Browser acceptance artifacts
+/test-results/
+/playwright-report/
+
+# Build the browser solver from the release source revision.
+/public/wasm-blaze/
