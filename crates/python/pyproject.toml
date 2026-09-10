@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "blaze2d"
 dynamic = ["version"]
-description = "BLAZE - Band-structure LOBPCG Accelerated Zone Eigensolver for 2D Photonic Crystals"
+description = "Photonic bands and projected Maxwell operators for two-dimensional periodic dielectrics"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -55,6 +55,7 @@ all = ["matplotlib>=3.5", "rich>=13"]
 blaze2d = "blaze.cli:main"
 
 [tool.maturin]
+locked = true
 # Build the cdylib with bindings feature
 features = ["bindings"]
 # Python module name ; compiled .so goes into blaze/_native.so
