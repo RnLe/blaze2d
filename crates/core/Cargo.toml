@@ -45,14 +45,15 @@ num_cpus = { workspace = true, optional = true }
 
 # Dense linear algebra backends (mutually exclusive for WASM vs native)
 faer = { workspace = true, optional = true }
-nalgebra = { version = "0.33", features = ["serde-serialize"], optional = true }
+# Includes the cancellation repair for nearly diagonal Hermitian blocks.
+nalgebra = { version = "0.34.2", features = ["serde-serialize"], optional = true }
 toml.workspace = true
 rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
 clap = { workspace = true, features = ["derive"] }
-blaze2d-backend-cpu = { path = "../backend-cpu" }
+blaze2d-backend-cpu = { path = "../backend-cpu", default-features = false, features = ["batched-fft"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = "1.1.0"

@@ -206,6 +206,20 @@ fn test_2x2_diagonal_reversed() {
     assert!((result.eigenvalue(0) - 3.0).abs() < 1e-14);
     assert!((result.eigenvalue(1) - 7.0).abs() < 1e-14);
     check_eigenvalue_ordering(&result);
+    check_eigenpair_residuals(&a, &result, 1e-12);
+}
+
+#[test]
+fn test_small_coupling_in_a_separated_block_preserves_eigenpairs() {
+    // A nearly diagonal low-frequency block beside a much larger eigenvalue.
+    // Sorting eigenvalues alone can conceal a skipped eigenvector rotation.
+    for coupling in [0.0, 1e-14, 1e-12, 1e-10, 1e-8] {
+        let a = tridiagonal_matrix(&[3.0, 7.0, 10_000.0], &[coupling, 0.0]);
+        let result = solve_hermitian_eigen(&a, 3);
+        check_eigenvalue_ordering(&result);
+        check_orthonormality(&result, 1e-12);
+        check_eigenpair_residuals(&a, &result, 1e-12);
+    }
 }
 
 #[test]
