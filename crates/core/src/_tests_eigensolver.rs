@@ -640,4 +640,21 @@ fn test_eigensolver_spd_high_condition_number() {
         "SPD high-κ problem should converge! κ={:.2e}, iterations={}, max_residual={:.2e}",
         condition_number, result.iterations, result.convergence.max_residual
     );
+    for (computed, expected) in result.eigenvalues.iter().zip(&exact) {
+        assert!((computed - expected).abs() / expected < 1e-8);
+    }
+}
+
+#[test]
+fn rayleigh_ritz_retains_the_configured_guard_vectors() {
+    for block_size in [0, 7] {
+        let mut operator = DiagonalOperator::new((1..=16).map(f64::from).collect());
+        let config = EigensolverConfig { n_bands: 4, max_iter: 2, block_size, ..Default::default() };
+        let expected = config.effective_block_size();
+        let mut solver = Eigensolver::new(&mut operator, config, None, None);
+        let result = solver.solve();
+        assert_eq!(solver.block_size(), expected);
+        assert_eq!(result.eigenvalues.len(), 4);
+        assert_eq!(solver.all_eigenvectors().len(), 4);
+    }
 }

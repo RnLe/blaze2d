@@ -9,7 +9,7 @@
 //!
 //! where:
 //! - `A` is the Maxwell curl-curl operator (Θ operator)
-//! - `B` is the mass operator (identity for TM, ε-weighted for TE)
+//! - `B` is the mass operator (ε-weighted for TM, identity for TE)
 //! - `λ` are the eigenvalues (ω² in physical units)
 //! - `x` are the eigenvectors (field modes)
 //!
@@ -39,7 +39,6 @@ mod _tests_normalization;
 // Re-exports from submodules
 pub use deflation::{DeflationSubspace, LockingResult, check_for_locking};
 pub use dense::{DenseEigenResult, solve_hermitian_eigen};
-pub use refine::{BlockCertification, rayleigh_ritz_certify};
 pub use initialization::{
     BlockEntry, GAMMA_TOLERANCE, InitializationConfig, InitializationResult, create_gamma_mode,
     is_gamma_point,
@@ -48,6 +47,7 @@ pub use normalization::{
     SvqbConfig, SvqbResult, b_inner_product, b_norm, normalize_to_unit_b_norm,
     orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize,
 };
+pub use refine::{BlockCertification, rayleigh_ritz_certify};
 pub use subspace_prediction::{
     PredictionMethod, PredictionResult, SubspaceHistory, compute_complex_overlap_matrix,
     polar_decomposition, polar_decomposition_with_singular_values,
@@ -139,7 +139,7 @@ pub struct EigensolverConfig {
     pub n_bands: usize,
     /// Maximum number of LOBPCG iterations.
     pub max_iter: usize,
-    /// Convergence tolerance for relative residuals.
+    /// Convergence tolerance for relative eigenvalue changes.
     pub tol: f64,
     /// Block size (0 = automatic based on n_bands).
     pub block_size: usize,
@@ -168,10 +168,7 @@ const ENABLE_GAMMA_DEFLATION: bool = true;
 
 impl Default for EigensolverConfig {
     fn default() -> Self {
-        // When using mixed-precision (f32 storage), the noise floor is higher due to
-        // |G|^2 amplification of quantization noise. We relax the default tolerance
-        // to 1e-4 to ensure robust convergence. The eigenvalue accuracy (bands)
-        // remains high (approx 1e-8) due to the variational principle (error is quadratic).
+        // The public interface resolves task-specific tolerances before solving.
         let default_tol = 1e-6;
 
         Self {
@@ -240,7 +237,7 @@ impl EigensolverConfig {
 /// Logging schedule: iterations 1, 2, 3, 4, 5, 10, 20, 50, 100, then every 50.
 /// Promote a backend buffer (storage precision) to a `Vec<Complex<f64>>`
 /// (accumulation precision). The canonical input/output boundary helper for
-/// the eigensolver — internal blocks live at `B::Real`, the public API
+/// the eigensolver; internal blocks live at `B::Real`, the public API
 /// always sees f64.
 #[inline]
 fn buffer_to_f64_vec<B: SpectralBackend>(buf: &B::Buffer) -> Vec<Complex64> {
@@ -658,6 +655,26 @@ where
     /// Get the number of soft-locked bands (converged but still in X block).
     pub fn soft_locked_count(&self) -> usize {
         self.soft_locked.iter().filter(|&&b| b).count()
+    }
+
+    /// Count each requested band once, including the deflated Gamma mode.
+    /// Soft-locked bands remain in the active block and may also satisfy the
+    /// current convergence check. Extra block vectors do not satisfy requests.
+    fn converged_band_count(&self, states: &[BandState]) -> usize {
+        let hard = self.deflation.len().min(self.config.n_bands);
+        hard + (0..self
+            .config
+            .n_bands
+            .saturating_sub(hard)
+            .min(self.x_block.len()))
+            .filter(|&i| {
+                self.soft_locked.get(i).copied().unwrap_or(false)
+                    || matches!(
+                        states.get(i),
+                        Some(BandState::Converged | BandState::Locked)
+                    )
+            })
+            .count()
     }
 
     /// Get the number of active (non-soft-locked) bands in X block.
@@ -1350,7 +1367,7 @@ where
         #[cfg(feature = "profiling")]
         crate::profiler::start_timer("update_ritz_vectors");
 
-        let n_bands = self.config.n_bands;
+        let n_bands = self.config.effective_block_size();
         let r = dense_result.dim; // Subspace dimension
         let m = n_bands.min(r); // Number of Ritz pairs to extract
 
@@ -1552,7 +1569,7 @@ where
         q_block: &[B::Buffer],
         dense_result: &DenseEigenResult,
     ) {
-        let n_bands = self.config.n_bands;
+        let n_bands = self.config.effective_block_size();
         let r = dense_result.dim; // Subspace dimension
         let m = n_bands.min(r); // Number of X vectors
 
@@ -1761,9 +1778,8 @@ where
             // Check for overall convergence (all requested bands)
             // Count both hard-locked (deflation) and soft-locked bands as converged
             // Also count bands that converge based on eigenvalue change criterion
-            let n_hard_locked = self.deflation.len();
             let n_soft_locked = self.soft_locked_count();
-            let total_converged = n_hard_locked + n_soft_locked + convergence.n_converged;
+            let total_converged = self.converged_band_count(&convergence.band_states);
             if total_converged >= n_bands_requested {
                 // All requested bands have converged
                 let elapsed = start_time.elapsed_secs();
@@ -1830,7 +1846,7 @@ where
 
                         // Check if we just reached full convergence
                         let n_soft_locked_now = self.soft_locked_count();
-                        if n_soft_locked_now >= n_bands_requested {
+                        if self.converged_band_count(&[]) >= n_bands_requested {
                             let elapsed = start_time.elapsed_secs();
                             let max_ev_change = convergence.max_eigenvalue_change;
                             let all_eigenvalues = self.collect_all_eigenvalues();
@@ -2133,7 +2149,6 @@ where
         // End of loop: either max iterations reached or all bands locked
         let elapsed = start_time.elapsed_secs();
         let max_ev_change = convergence.max_eigenvalue_change;
-        let n_hard_locked = self.deflation.len();
         let n_soft_locked = self.soft_locked_count();
 
         // Combine locked and active eigenvalues
@@ -2141,7 +2156,7 @@ where
         let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
         // Determine if we actually converged (count both hard and soft locked)
-        let total_converged = n_hard_locked + n_soft_locked;
+        let total_converged = self.converged_band_count(&[]);
         let converged = total_converged >= n_bands_requested;
 
         // Convert Bloch wavevector to fractional k-point for logging
@@ -2270,12 +2285,12 @@ where
             });
 
             // Emit progress callback
-            let n_soft_locked = self.soft_locked_count();
+            let total_converged = self.converged_band_count(&convergence.band_states);
             let progress = ProgressInfo {
                 iteration: iter,
                 max_iterations: self.config.max_iter,
                 n_bands: n_bands_requested,
-                n_converged: n_soft_locked,
+                n_converged: total_converged,
                 trace: current_trace,
                 prev_trace,
                 trace_rel_change,
@@ -2287,7 +2302,6 @@ where
             prev_trace = Some(current_trace);
 
             // Check for overall convergence (all requested bands)
-            let total_converged = n_soft_locked;
             if total_converged >= n_bands_requested {
                 return EigensolverResult {
                     eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
@@ -2349,8 +2363,7 @@ where
 
         // End of loop: either max iterations reached or all bands soft-locked
         let all_eigenvalues = self.collect_all_eigenvalues();
-        let n_soft_locked = self.soft_locked_count();
-        let converged = n_soft_locked >= n_bands_requested;
+        let converged = self.converged_band_count(&[]) >= n_bands_requested;
 
         EigensolverResult {
             eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
@@ -2636,7 +2649,7 @@ where
 
             // Check for overall convergence
             let n_soft_locked = self.soft_locked_count();
-            let total_converged = n_soft_locked;
+            let total_converged = self.converged_band_count(&convergence.band_states);
 
             // Prepare subspace info for recording (will be filled in after SVQB)
             let subspace_dim_input = self.subspace_dimension();
@@ -2920,7 +2933,7 @@ where
         let all_eigenvalues = self.collect_all_eigenvalues();
         let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
-        let total_converged = n_locked + convergence.n_converged;
+        let total_converged = self.converged_band_count(&[]);
         let converged = total_converged >= n_bands_requested;
 
         if converged {
