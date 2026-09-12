@@ -85,6 +85,24 @@ fn linspace_planning_does_not_expand_a_large_study() {
 }
 
 #[test]
+fn memory_preflight_covers_joint_grid_and_solver_block_sweeps() {
+    let mut config = Config::default();
+    config.sweeps = vec![
+        Sweep { name: "grid".into(), target: "grid.resolution".into(), linspace: None,
+            values: Some(vec![json!([32, 32]), json!([128, 96])]) },
+        Sweep { name: "block".into(), target: "eigensolver.block_size".into(), linspace: None,
+            values: Some(vec![json!(8), json!(64)]) },
+    ];
+    let plan = Plan::new(config, Platform::Browser).unwrap();
+    for index in 0..plan.summary.jobs {
+        let mut single = plan.job(index).unwrap().resolved.config;
+        single.sweeps.clear();
+        let one = Plan::new(single, Platform::Browser).unwrap();
+        assert!(plan.summary.estimated_peak_bytes >= one.summary.estimated_peak_bytes);
+    }
+}
+
+#[test]
 fn invalid_combinations_are_rejected_before_running() {
     let source = include_str!("fixtures/bands.toml");
     assert!(Config::from_toml(&source.replace("count = 8", "coutn = 8")).is_err());
@@ -114,4 +132,3 @@ fn operator_registry_and_stencil_counts_include_the_full_window() {
     assert_eq!(job.resolved.config.geometry.objects[0].center, [0.0, 0.0]);
     assert_eq!(job.resolved.config.eigensolver.tolerance, Some(1e-8));
 }
-

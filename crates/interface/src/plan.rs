@@ -161,7 +161,7 @@ impl Plan {
         let mut targets = HashSet::new();
         let mut axis_lengths = vec![];
         let mut combinations = 1usize;
-        let mut peak = estimate_memory(&base)?;
+        let mut envelope = base.clone();
         let mut max_bands = base.solved_bands;
         let mut min_samples = base.resolution[0] * base.resolution[1];
         let mut upper_window = config.clone();
@@ -185,7 +185,10 @@ impl Plan {
                 let resolved = candidate.resolve()?;
                 min_samples = min_samples.min(resolved.resolution[0] * resolved.resolution[1]);
                 max_bands = max_bands.max(resolved.solved_bands);
-                peak = peak.max(estimate_memory(&resolved)?);
+                for axis in 0..2 {
+                    envelope.resolution[axis] = envelope.resolution[axis].max(resolved.resolution[axis]);
+                }
+                envelope.config.eigensolver.block_size = envelope.config.eigensolver.block_size.max(resolved.config.eigensolver.block_size);
                 if matches!(axis.target.as_str(), "operators.band_lo" | "operators.retained_bands" | "operators.remote_bands") {
                     max_integer = max_integer.max(integer_value(value, &axis.target)?.as_u64().unwrap());
                 }
@@ -199,11 +202,10 @@ impl Plan {
                 .ok_or_else(|| invalid("sweeps", "band window overflows"))?);
         }
         if max_bands >= min_samples { return Err(invalid("sweeps", "a swept band window does not fit the smallest swept grid")); }
-        // Cover simultaneous increases in field size and band count.
-        if base.solved_bands > 0 {
-            peak = peak.checked_mul(max_bands as u64).and_then(|n| n.checked_div(base.solved_bands as u64))
-                .ok_or_else(|| invalid("sweeps", "memory estimate overflows"))?;
-        }
+        // The largest grid and solver block can occur together in a Cartesian
+        // sweep. Estimating each axis independently underestimates that job.
+        envelope.solved_bands = max_bands;
+        let peak = estimate_memory(&envelope)?;
         let registry_points = config.operators.as_ref().and_then(|o| o.registry.as_ref()).map_or(1, |r| r.points.len());
         let jobs = combinations.checked_mul(registry_points).ok_or_else(|| invalid("sweeps", "job count overflows"))?;
         let per_job = match config.task {
@@ -250,12 +252,17 @@ impl Plan {
 fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
     let samples = resolved.resolution[0] as u64 * resolved.resolution[1] as u64;
     let bands = resolved.solved_bands as u64;
+    let block = blaze2d_core::eigensolver::EigensolverConfig {
+        n_bands: resolved.solved_bands,
+        block_size: resolved.config.eigensolver.block_size,
+        ..Default::default()
+    }.effective_block_size() as u64;
     let stencil = resolved.config.operators.as_ref().and_then(|o| o.k_stencil.as_ref()).map_or(1, |s| s.points_per_axis as u64 * s.points_per_axis as u64);
-    let fields = bands.checked_mul(24).and_then(|n| n.checked_add(16))
+    let fields = block.checked_mul(24).and_then(|n| n.checked_add(16))
         .and_then(|n| bands.checked_mul(stencil)?.checked_mul(3)?.checked_add(n))
         .ok_or_else(|| invalid("configuration", "memory estimate overflows"))?;
     let fields = samples.checked_mul(fields).and_then(|n| n.checked_mul(16));
-    let dense = bands.checked_mul(bands).and_then(|n| n.checked_mul(1024));
+    let dense = block.checked_mul(block).and_then(|n| n.checked_mul(1024));
     let nk = resolved.k_points_fractional.len() as u64;
     let path_arrays = nk.checked_mul(bands.checked_mul(4).and_then(|n|n.checked_add(16))
         .ok_or_else(|| invalid("configuration", "memory estimate overflows"))?).and_then(|n|n.checked_mul(8));
