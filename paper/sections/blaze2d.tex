@@ -241,13 +241,10 @@ dot product (a single scalar or a small matrix) is representable in
 \texttt{f32} without meaningful loss. The precision is needed
 transiently, not persistently.
 
-This mixed-precision approach yields a nearly clean $2\times$ speedup
-with no significant loss in eigenvalue accuracy. The same conclusion
-was reached independently in a 2023 study of mixed-precision LOBPCG for
-electronic-structure calculations~\cite{woo2023}, a paper discovered
-only after the approach had already been implemented in Blaze2D. The
-strategy itself is standard in modern data science and
-high-performance computing.
+The recorded calculations show shorter runtimes with mixed precision.
+The effect on eigenvalues and derivatives must be checked for the chosen
+configuration and tolerance. Mixed-precision LOBPCG has also been studied
+for electronic-structure calculations~\cite{woo2023}.
 
 \section{Validation}\label{sec:validation}
 
@@ -380,14 +377,10 @@ in \cref{fig:convergence_study}.
   \label{fig:convergence_study}
 \end{figure}
 
-The two curves track each other closely in both polarizations, for
-both RMS and worst-case errors. This matters because it rules out a
-hidden cancellation in the direct MPB comparison: Blaze2D does not
-merely match one reference calculation, but exhibits the same
-resolution dependence as an established solver. For the purposes of
-the envelope pipeline, this is the relevant notion of correctness,
-since all extracted matrix elements are ultimately built on these
-converged Bloch states.
+The two curves have comparable resolution dependence for this square-lattice
+fixture. This supports the dispersion comparison under grid refinement.
+It does not by itself certify projected matrix elements, which also depend on
+eigenvector accuracy, retained subspaces, and derivative discretization.
 
 \section{Benchmarks}\label{sec:benchmarks}
 
@@ -414,14 +407,12 @@ per-iteration costs, and memory footprint are broken down in
   \label{fig:blaze2d_iterations_memory}
 \end{figure}
 
-A few observations from these benchmarks deserve comment. The TM
-polarization converges in fewer iterations than TE for both solvers,
-consistent with the simpler preconditioner structure discussed above.
-Mixed precision does not increase the iteration count; the eigenvalue
-trajectory is indistinguishable from the full-precision run. The
-speedup seen in \cref{fig:blaze2d_benchmarks} therefore comes almost
-entirely from reduced memory traffic rather than from altered
-convergence behavior.
+The recorded TM runs use fewer iterations than TE. Mixed precision reduces
+runtime in these fixtures, but the iteration counts alone do not identify
+which hardware resource limits execution. Timing ratios apply to each figure's
+configuration and numerical settings. The archived data do not consistently
+capture full hardware identifiers and source revisions; release comparisons
+require fresh matched-accuracy measurements.
 
 The decomposition in \cref{fig:blaze2d_iterations_memory} makes this
 interpretation more concrete. Time per iteration falls under mixed

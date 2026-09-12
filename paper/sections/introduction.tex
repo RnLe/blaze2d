@@ -82,20 +82,17 @@ and as a package on
 Three concerns shape its architecture, each addressed in a later
 section:
 \begin{enumerate}
-  \item \emph{Accuracy on par with MPB.} Analytic subpixel smoothing
-        of the permittivity~\cite{farjadpour2006} and a faithful
-        reimplementation of MPB's preconditioning strategy ensure that
-        Blaze2D reproduces MPB's eigenvalues to within solver
-        tolerance across a broad set of two-dimensional geometries
-        (\cref{sec:validation}).
-  \item \emph{Throughput at moderate resolution.} A mixed-precision
-        arithmetic strategy stores all bulk arrays in
-        single precision while promoting numerically sensitive
-        reductions to double precision, yielding a near-clean
-        $2\times$ speedup with no measurable loss in eigenvalue
-        accuracy (\cref{sec:mixed_precision}). This finding mirrors
-        an independent 2023 study on dynamic-precision LOBPCG for
-        electronic structure~\cite{woo2023}.
+  \item \emph{Accuracy on tested configurations.} Subpixel averaging
+        of the permittivity~\cite{farjadpour2006} and Fourier
+        preconditioning support comparisons with MPB. Agreement is
+        assessed on the fixtures in \cref{sec:validation}; it does not
+        establish identical rasterization or general geometry support.
+  \item \emph{Throughput at moderate resolution.} Mixed precision
+        stores field arrays in single precision and uses double
+        precision for sensitive reductions. Its timing and accuracy
+        tradeoffs depend on the spectrum and numerical settings
+        (\cref{sec:mixed_precision}). Related LOBPCG work studies this
+        approach for electronic structure~\cite{woo2023}.
   \item \emph{Direct access to Bloch coefficients.} The TE and TM
         operators are implemented separately and exposed through a
         Python interface, so that derived quantities such as matrix
