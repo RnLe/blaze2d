@@ -59,6 +59,8 @@ The stopping tolerance measures **relative eigenvalue changes**. Fresh operator
 residuals and orthogonality defects are reported separately. Set
 `operators.fail_on_residual` to enforce a normalized residual acceptance threshold.
 Without that gate, a completed calculation may still contain inaccurate remote eigenvectors.
+Band results report fresh residuals and B-orthogonality without rotating the tracked fields.
+Operator results include the existing final Rayleigh-Ritz refinement.
 
 - Lattice vectors and circle radii share one reference length.
 - Object centers and registry displacements use direct fractional coordinates.

@@ -152,6 +152,7 @@ pub struct KPointResult {
     /// Solver convergence state and relative residuals in returned band order.
     pub converged: bool,
     pub residuals: Vec<f64>,
+    pub b_orthogonality_defect: f64,
     /// Retained only when requested through the run options.
     pub eigenvectors: Option<Vec<Field2D>>,
     /// Whether this point is at Γ and uses the DC-mode deflation path.
@@ -562,7 +563,8 @@ fn run_core<B: SpectralBackend + Clone>(
     // This avoids redundant computation when the path is e.g., Γ→X→M→Γ
     let first_is_gamma = job.k_path.first().map_or(false, |&k| is_gamma_point(k));
     let last_is_gamma = job.k_path.last().map_or(false, |&k| is_gamma_point(k));
-    let reuse_gamma = options.reuse_gamma && first_is_gamma && last_is_gamma && job.k_path.len() > 1;
+    let reuse_gamma =
+        options.reuse_gamma && first_is_gamma && last_is_gamma && job.k_path.len() > 1;
     let last_k_idx = job.k_path.len().saturating_sub(1);
     let distances = compute_k_path_distances(&job.k_path);
     let total_k_points = job.k_path.len();
@@ -570,7 +572,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // Storage for first Γ-point frequencies (to reuse for last k-point if applicable)
     let mut first_gamma_omegas: Option<Vec<f64>> = None;
     let mut first_gamma_iterations: Option<usize> = None;
-    let mut first_gamma_quality = (false, Vec::new());
+    let mut first_gamma_quality = (false, Vec::new(), 0.0);
     let mut first_gamma_fields = None;
 
     // Accumulate results
@@ -603,6 +605,7 @@ fn run_core<B: SpectralBackend + Clone>(
                         iterations: first_gamma_iterations.unwrap_or(0),
                         converged: first_gamma_quality.0,
                         residuals: first_gamma_quality.1.clone(),
+                        b_orthogonality_defect: first_gamma_quality.2,
                         eigenvectors: first_gamma_fields.clone(),
                         is_gamma: true,
                     });
@@ -710,9 +713,8 @@ fn run_core<B: SpectralBackend + Clone>(
         //
         // Branch on diagnostics: the recording path uses
         // `solve_with_diagnostics` (eager residual norms + per-iteration
-        // snapshots), the plain path uses the faster `solve`. The two have
-        // distinct internal convergence accounting, so we call the matching
-        // one rather than always recording.
+        // snapshots), the plain path uses `solve`. Both use the same stopping
+        // rule, while the plain path avoids recording iteration snapshots.
         let k_iterations;
         let k_converged;
         let mut k_residuals;
@@ -769,6 +771,20 @@ fn run_core<B: SpectralBackend + Clone>(
             final_evals = result.eigenvalues;
             eigenvectors = solver.all_eigenvectors();
         }
+
+        // The iteration cache contains soft-lock placeholders. Certify the
+        // returned fields without altering eigenvalues, gauges, or warm starts.
+        let k_b_orthogonality_defect = if on_k_point.is_some() {
+            let certificate = crate::eigensolver::refine::certify_without_refinement(
+                &mut theta,
+                &final_evals,
+                &eigenvectors,
+            );
+            k_residuals = certificate.residuals;
+            certificate.b_orthogonality_defect
+        } else {
+            0.0
+        };
 
         // Convert eigenvalues (ω²) to frequencies (ω)
         let mut omegas: Vec<f64> = final_evals
@@ -856,7 +872,7 @@ fn run_core<B: SpectralBackend + Clone>(
         if reuse_gamma && k_idx == 0 && is_gamma {
             first_gamma_omegas = Some(omegas.clone());
             first_gamma_iterations = Some(k_iterations);
-            first_gamma_quality = (k_converged, k_residuals.clone());
+            first_gamma_quality = (k_converged, k_residuals.clone(), k_b_orthogonality_defect);
             first_gamma_fields = options.retain_eigenvectors.then(|| eigenvectors.clone());
         }
 
@@ -870,6 +886,7 @@ fn run_core<B: SpectralBackend + Clone>(
                 iterations: k_iterations,
                 converged: k_converged,
                 residuals: k_residuals,
+                b_orthogonality_defect: k_b_orthogonality_defect,
                 eigenvectors: options.retain_eigenvectors.then(|| eigenvectors.clone()),
                 is_gamma,
             });

@@ -58,6 +58,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             let mut iterations = Vec::new();
             let mut converged = Vec::new();
             let mut residuals = Vec::new();
+            let mut orthogonality = Vec::new();
             let mut fields = Vec::new();
             let result = bandstructure::run_with_k_streaming(backend, &job.bands_job(),
                 bandstructure::RunOptions { reuse_gamma: false, disable_band_tracking: !b.tracking,
@@ -67,6 +68,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                         band_point:Some(crate::BandPoint {frequencies:point.omegas.iter().map(|w|w/std::f64::consts::TAU).collect(),
                             k_point:point.k_point,distance:job.resolved.distances[point.k_index]}) });
                     iterations.push(point.iterations); converged.push(point.converged);
+                    orthogonality.push(point.b_orthogonality_defect);
                     residuals.extend(point.residuals.into_iter().take(n));
                     if let Some(v) = point.eigenvectors { fields.extend(v.into_iter().take(n).flat_map(|v| v.as_slice().to_vec())); }
                 });
@@ -86,7 +88,11 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             out.metadata["label_indices"] = json!(job.resolved.k_label_indices);
             out.metadata["band_indices"] = json!((0..n).collect::<Vec<_>>());
             out.metadata["stopping_criterion"] = json!("relative_eigenvalue_change");
-            out.metadata["certification"] = json!({"source":"solver_reported", "b_orthogonality_defect":null});
+            out.metadata["certification"] = json!({"source":"fresh_operator_application",
+                "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
+                "max_residual":out.arrays["residuals"].data.iter().copied().fold(0.0_f64, f64::max),
+                "b_orthogonality_defect":orthogonality.iter().copied().fold(0.0_f64, f64::max),
+                "b_orthogonality_per_point":orthogonality});
             out.metadata["gauge"] = json!(if b.tracking {"tracked_path"} else {"independent_sorted_eigenvalues"});
             out.metadata["quantities"] = json!({"requested":["frequencies"],
                 "computed":["frequencies","eigenvectors","residuals"], "retained":out.arrays.keys().collect::<Vec<_>>(), "unavailable":{}});

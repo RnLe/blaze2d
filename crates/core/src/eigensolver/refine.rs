@@ -45,7 +45,7 @@ impl BlockCertification {
 /// The block is B-orthonormalized via S^{-1/2} (S = UᴴBU), the projected
 /// operator Hᵗ = S^{-1/2} UᴴAU S^{-1/2} is diagonalized densely, and the
 /// rotated Ritz vectors replace `eigenvectors` with `eigenvalues` set to the
-/// Ritz values (ascending — absolute band order). Residuals and the
+/// Ritz values (ascending; absolute band order). Residuals and the
 /// B-orthogonality defect are then computed from FRESH A/B applications on
 /// the rotated vectors.
 pub fn rayleigh_ritz_certify<O, B>(
@@ -103,9 +103,8 @@ where
                 // pathologically rank-deficient block from producing NaNs.
                 let s_k = s_eig.eigenvalues[k].max(1e-300);
                 let inv_sqrt = 1.0 / s_k.sqrt();
-                acc += s_eig.eigenvectors[i + k * n]
-                    * inv_sqrt
-                    * s_eig.eigenvectors[j + k * n].conj();
+                acc +=
+                    s_eig.eigenvectors[i + k * n] * inv_sqrt * s_eig.eigenvectors[j + k * n].conj();
             }
             w[i + j * n] = acc;
         }
@@ -152,8 +151,19 @@ where
             .backend()
             .axpy(Complex64::new(-lambda, 0.0), &bu_new[j], &mut r);
         let num = operator.backend().dot(&r, &r).re.max(0.0).sqrt();
-        let den = operator.backend().dot(&au_new[j], &au_new[j]).re.max(0.0).sqrt()
-            + lambda.abs() * operator.backend().dot(&bu_new[j], &bu_new[j]).re.max(0.0).sqrt();
+        let den = operator
+            .backend()
+            .dot(&au_new[j], &au_new[j])
+            .re
+            .max(0.0)
+            .sqrt()
+            + lambda.abs()
+                * operator
+                    .backend()
+                    .dot(&bu_new[j], &bu_new[j])
+                    .re
+                    .max(0.0)
+                    .sqrt();
         residuals.push(if den > 0.0 { num / den } else { num });
     }
 
@@ -178,6 +188,57 @@ where
         eigenvectors[j] = Field2D::from_vec(grid, buffer_to_f64_vec::<B>(&u_new[j]));
     }
 
+    BlockCertification {
+        residuals,
+        b_orthogonality_defect: defect,
+    }
+}
+
+/// Measure the supplied eigenpairs without rotating, sorting, or changing them.
+/// This preserves band tracking while replacing cached iteration residuals with
+/// fresh operator applications. The residual convention matches refinement.
+pub fn certify_without_refinement<O, B>(
+    operator: &mut O,
+    eigenvalues: &[f64],
+    eigenvectors: &[Field2D],
+) -> BlockCertification
+where
+    O: LinearOperator<B>,
+    B: SpectralBackend,
+{
+    let n = eigenvalues.len().min(eigenvectors.len());
+    let fields: Vec<B::Buffer> = eigenvectors[..n]
+        .iter()
+        .map(|field| field_to_buffer::<O, B>(operator, field))
+        .collect();
+    let mut residuals = Vec::with_capacity(n);
+    let mut defect = 0.0_f64;
+    for (j, field) in fields.iter().enumerate() {
+        let mut a = operator.alloc_field();
+        let mut b = operator.alloc_field();
+        operator.apply(field, &mut a);
+        operator.apply_mass(field, &mut b);
+        let lambda = eigenvalues[j];
+        let denominator = operator.backend().dot(&a, &a).re.max(0.0).sqrt()
+            + lambda.abs() * operator.backend().dot(&b, &b).re.max(0.0).sqrt();
+        operator
+            .backend()
+            .axpy(Complex64::new(-lambda, 0.0), &b, &mut a);
+        let numerator = operator.backend().dot(&a, &a).re.max(0.0).sqrt();
+        residuals.push(if denominator > 0.0 {
+            numerator / denominator
+        } else {
+            numerator
+        });
+        for (i, other) in fields.iter().enumerate() {
+            let target = if i == j {
+                Complex64::new(1.0, 0.0)
+            } else {
+                Complex64::ZERO
+            };
+            defect = defect.max((operator.backend().dot(other, &b) - target).norm());
+        }
+    }
     BlockCertification {
         residuals,
         b_orthogonality_defect: defect,
