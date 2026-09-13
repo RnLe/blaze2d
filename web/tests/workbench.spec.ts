@@ -51,6 +51,14 @@ test('invalid drafts survive reload and cannot overwrite the applied model', asy
 
 test('bands export complete arrays and preserve a historical snapshot', async ({ page }) => {
   await open(page); await apply(page, bands); await run(page);
+  await page.getByRole('combobox', { name: 'Readout band' }).selectOption('6');
+  await page.getByRole('slider', { name: 'Selected k-point' }).fill('3');
+  const readout = await page.locator('.wb-plot-readout output').textContent();
+  for (const width of [390, 1920]) {
+    await page.setViewportSize({ width, height: 1080 });
+    await expect(page.locator('.wb-plot-readout output')).toHaveText(readout!);
+    await expect(page.getByRole('combobox', { name: 'Readout band' })).toHaveValue('6');
+  }
   const first = JSON.parse((await exported(page, 'json')).toString());
   expect(first.results[0].arrays.frequencies.shape).toEqual([7, 8]);
   expect(first.results[0].arrays.k_points.data.slice(-2)).toEqual([0, 0]);

@@ -27,6 +27,7 @@ export function BandPlot({ data, title = 'Band structure' }: { data: BandPlotDat
   const x = (value: number) => left + value / maximumX * (right - left);
   const y = (value: number) => bottom - value / maximumY * (bottom - top);
   const selected = Math.min(point, Math.max(0, data.distances.length - 1));
+  const selectedBand = Math.min(band, Math.max(0, data.bands - 1));
   return <div className="wb-plot" ref={ref}>
     <div className="wb-row"><h3>{title}</h3><button onClick={() => {
       if (svg.current) { const copy = svg.current.cloneNode(true) as SVGSVGElement; copy.querySelectorAll('[data-interactive]').forEach(node => node.remove());
@@ -53,8 +54,8 @@ export function BandPlot({ data, title = 'Band structure' }: { data: BandPlotDat
     {plotted.length < data.distances.length && <p className="wb-muted">Plot overview uses {plotted.length} samples. The readout and exported data retain every point.</p>}
     <div className="wb-plot-readout">
       <label>Point <input aria-label="Selected k-point" type="range" min={0} max={Math.max(0, data.distances.length - 1)} value={selected} onChange={event => setPoint(Number(event.target.value))} /></label>
-      <label>Band <select aria-label="Readout band" value={band} onChange={event => setBand(Number(event.target.value))}>{Array.from({ length: data.bands }, (_, index) => <option key={index} value={index}>{index}</option>)}</select></label>
-      <output>k[{selected}] · f = {data.frequencies[selected * data.bands + Math.min(band, data.bands - 1)]?.toPrecision(6) ?? 'pending'}</output>
+      <label>Band <select aria-label="Readout band" value={selectedBand} onChange={event => setBand(Number(event.target.value))}>{Array.from({ length: data.bands }, (_, index) => <option key={index} value={index}>{index}</option>)}</select></label>
+      <output>k[{selected}] · f = {data.frequencies[selected * data.bands + selectedBand]?.toPrecision(6) ?? 'pending'}</output>
     </div>
   </div>;
 }
