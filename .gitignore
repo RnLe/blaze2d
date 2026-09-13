@@ -37,5 +37,6 @@ web/.figure-export/
 /crates/python/blaze/_native*.so
 /crates/python/blaze/_native*.pyd
 /crates/python/blaze/_native*.dylib
+/crates/python/dist/
 
 /crates/interface/source-revision.txt
