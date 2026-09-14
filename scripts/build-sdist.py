@@ -4,6 +4,7 @@ import gzip
 import io
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -24,6 +25,12 @@ with tempfile.TemporaryDirectory(prefix='blaze-sdist-') as folder:
         members = source.getmembers()
         source.extractall(temporary / 'source', filter='data')
     package = next((temporary / 'source').iterdir())
+    # The numerical dependencies are qualified with this Rust toolchain.
+    # Keep source installs independent of the caller's default rustup channel.
+    shutil.copyfile(root / 'rust-toolchain.toml', package / 'rust-toolchain.toml')
+    member = tarfile.TarInfo(f'{package.name}/rust-toolchain.toml')
+    member.mode = 0o644
+    members.append(member)
     original = tomllib.loads((package / 'Cargo.lock').read_text(encoding='utf8'))
     # Maturin omits unrelated workspace members. Cargo must prune their lock
     # entries before --locked can be used by the source-distribution consumer.

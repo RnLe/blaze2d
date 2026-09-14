@@ -33,5 +33,6 @@ with tarfile.open(sources[0]) as archive:
     names = archive.getnames()
     assert any(name.endswith('/source-revision.txt') for name in names)
     assert any(name.endswith('/Cargo.lock') for name in names)
+    assert any(name.endswith('/rust-toolchain.toml') for name in names)
     assert not any(name.endswith(('.so','.pyd','.dylib')) for name in names)
 print(f'{version}: 20 wheels and one source distribution verified.')
