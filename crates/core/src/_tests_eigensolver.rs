@@ -14,7 +14,7 @@ use super::operators::LinearOperator;
 
 /// A simple test backend that uses Field2D directly.
 #[derive(Clone, Copy, Default)]
-struct TestBackend;
+pub(crate) struct TestBackend;
 
 impl SpectralBackend for TestBackend {
     type Real = f64;
@@ -60,14 +60,14 @@ impl SpectralBackend for TestBackend {
 
 /// A simple diagonal operator for testing.
 /// A = diag(eigenvalues), B = I (identity mass matrix)
-struct DiagonalOperator {
+pub(crate) struct DiagonalOperator {
     backend: TestBackend,
     grid: Grid2D,
     diagonal: Vec<f64>,
 }
 
 impl DiagonalOperator {
-    fn new(diagonal: Vec<f64>) -> Self {
+    pub(crate) fn new(diagonal: Vec<f64>) -> Self {
         let n = diagonal.len();
         Self {
             backend: TestBackend,

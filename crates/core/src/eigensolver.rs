@@ -1001,12 +1001,10 @@ where
 
         let backend = self.operator.backend();
 
-        // For each residual (active band)
-        for (i, r) in residuals.iter_mut().enumerate() {
-            // Skip if this band itself is soft-locked (r should be 0 anyway)
-            if i < self.soft_locked.len() && self.soft_locked[i] {
-                continue;
-            }
+        // Preconditioning compacts the active block, so its positions no
+        // longer identify band indices. Project every supplied vector;
+        // zero residuals from locked bands remain zero.
+        for r in residuals.iter_mut() {
 
             // Project against every soft-locked vector
             for (j, is_locked) in self.soft_locked.iter().enumerate() {
@@ -1663,7 +1661,7 @@ where
     ///
     /// This is the main entry point for solving the eigenvalue problem.
     /// It iterates until either:
-    /// - All requested bands have converged (relative residual < tol)
+    /// - All requested bands have converged (relative eigenvalue change < tol)
     /// - Maximum iterations reached
     ///
     /// # Deflation Strategy
@@ -2976,5 +2974,26 @@ where
             result,
             diagnostics,
         }
+    }
+}
+
+#[cfg(test)]
+mod compact_deflation_tests {
+    use super::*;
+    use crate::_tests_eigensolver::DiagonalOperator;
+
+    #[test]
+    fn compact_search_positions_are_not_band_indices() {
+        let mut operator = DiagonalOperator::new((1..=16).map(f64::from).collect());
+        let config = EigensolverConfig { n_bands: 4, ..Default::default() };
+        let mut solver = Eigensolver::new(&mut operator, config, None, None);
+        solver.initialize();
+        solver.soft_locked[0] = true;
+        // A preconditioner can reintroduce a locked component in the first
+        // active direction, whose compact position is also zero.
+        let mut compact = vec![solver.x_block[0].vector.clone()];
+        solver.apply_soft_deflation(&mut compact);
+        let norm = solver.operator.backend().dot(&compact[0], &compact[0]).re.sqrt();
+        assert!(norm < 1e-12, "locked component remained: {norm}");
     }
 }
