@@ -97,6 +97,11 @@ pub fn cartesian_to_fractional(k: [f64; 2], a: [[f64; 2]; 2]) -> [f64; 2] {
 impl Config {
     /// Resolve schema defaults without expanding parameter sweeps.
     pub fn resolve(&self) -> InterfaceResult<ResolvedConfig> {
+        self.resolve_fields(true)
+    }
+
+    /// Sweep planning checks coupled grid, band, and block bounds jointly.
+    pub(crate) fn resolve_fields(&self, check_dimensions: bool) -> InterfaceResult<ResolvedConfig> {
         if self.schema != CONFIG_SCHEMA {
             return Err(Diagnostic::new("unsupported_schema", "schema", format!("use schema = \"{CONFIG_SCHEMA}\"; legacy TOML is not supported")));
         }
@@ -159,11 +164,14 @@ impl Config {
                 (count, vec![k])
             }
         };
-        if solved_bands == 0 || solved_bands >= grid_size {
+        if solved_bands == 0 || (check_dimensions && solved_bands >= grid_size) {
             return Err(invalid("grid.resolution", "the grid must have more samples than the solved band window"));
         }
-        if config.eigensolver.block_size > 0 && config.eigensolver.block_size < solved_bands {
+        if check_dimensions && config.eigensolver.block_size > 0 && config.eigensolver.block_size < solved_bands {
             return Err(invalid("eigensolver.block_size", "must be zero (automatic) or at least the solved band count"));
+        }
+        if check_dimensions && config.eigensolver.block_size > grid_size {
+            return Err(invalid("eigensolver.block_size", "must not exceed the number of grid samples"));
         }
         let cartesian: Vec<_> = fractional.iter().map(|&q| fractional_to_cartesian(q, lattice_vectors)).collect();
         if cartesian.iter().flatten().any(|v| !v.is_finite()) { return Err(invalid("geometry.lattice", "reciprocal coordinates overflow")); }

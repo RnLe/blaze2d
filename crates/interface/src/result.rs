@@ -77,6 +77,11 @@ impl ResultRecord {
                 "config_schema": crate::CONFIG_SCHEMA, "build": crate::build_info(),
                 "backend": backend, "storage_precision": job.resolved.config.eigensolver.precision,
                 "accumulation_precision": "f64", "array_order": "C",
+                "solver_block_size": blaze2d_core::eigensolver::EigensolverConfig {
+                    n_bands: job.resolved.solved_bands,
+                    block_size: job.resolved.config.eigensolver.block_size,
+                    ..Default::default()
+                }.effective_block_size(),
                 "config": job.resolved.config, "sweep_parameters": job.sweep,
                 "multi_index": job.multi_index, "registry_index": job.registry_index,
                 "registry": job.registry, "resolution": job.resolved.resolution,

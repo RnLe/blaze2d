@@ -162,9 +162,9 @@ impl Plan {
         let mut axis_lengths = vec![];
         let mut combinations = 1usize;
         let mut envelope = base.clone();
-        let mut max_bands = base.solved_bands;
         let mut min_samples = base.resolution[0] * base.resolution[1];
         let mut upper_window = config.clone();
+        let mut min_explicit_block = if config.eigensolver.block_size == 0 { usize::MAX } else { config.eigensolver.block_size };
         for (axis_index, axis) in config.sweeps.iter().enumerate() {
             if axis.name.is_empty() || !names.insert(axis.name.clone()) { return Err(invalid("sweeps.name", "axis names must be nonempty and unique")); }
             if !targets.insert(axis.target.clone()) { return Err(invalid("sweeps.target", "each target may appear only once")); }
@@ -178,28 +178,42 @@ impl Plan {
             }
             let indices: Vec<_> = if axis.values.is_some() { (0..length).collect() } else { vec![0, length - 1] };
             let mut max_integer = 0u64;
+            if axis.target == "grid.resolution" { min_samples = usize::MAX; }
+            if axis.target == "eigensolver.block_size" {
+                min_explicit_block = usize::MAX;
+                envelope.config.eigensolver.block_size = 0;
+            }
             for i in indices {
                 let mut candidate = config.clone();
                 let value = axis.value(i)?;
                 set_parameter(&mut candidate, &axis.target, value.clone()).map_err(|mut e| { e.path = format!("sweeps[{axis_index}].{}", e.path); e })?;
-                let resolved = candidate.resolve()?;
-                min_samples = min_samples.min(resolved.resolution[0] * resolved.resolution[1]);
-                max_bands = max_bands.max(resolved.solved_bands);
+                let resolved = candidate.resolve_fields(false)?;
+                if axis.target == "grid.resolution" {
+                    min_samples = min_samples.min(resolved.resolution[0] * resolved.resolution[1]);
+                }
+                if axis.target == "eigensolver.block_size" && resolved.config.eigensolver.block_size > 0 {
+                    min_explicit_block = min_explicit_block.min(resolved.config.eigensolver.block_size);
+                }
                 for axis in 0..2 {
                     envelope.resolution[axis] = envelope.resolution[axis].max(resolved.resolution[axis]);
                 }
-                envelope.config.eigensolver.block_size = envelope.config.eigensolver.block_size.max(resolved.config.eigensolver.block_size);
-                if matches!(axis.target.as_str(), "operators.band_lo" | "operators.retained_bands" | "operators.remote_bands") {
+                if axis.target == "eigensolver.block_size" {
+                    envelope.config.eigensolver.block_size = envelope.config.eigensolver.block_size.max(resolved.config.eigensolver.block_size);
+                }
+                if matches!(axis.target.as_str(), "bands.count" | "operators.band_lo" | "operators.retained_bands" | "operators.remote_bands") {
                     max_integer = max_integer.max(integer_value(value, &axis.target)?.as_u64().unwrap());
                 }
             }
-            if matches!(axis.target.as_str(), "operators.band_lo" | "operators.retained_bands" | "operators.remote_bands") {
+            if matches!(axis.target.as_str(), "bands.count" | "operators.band_lo" | "operators.retained_bands" | "operators.remote_bands") {
                 set_parameter(&mut upper_window, &axis.target, json!(max_integer))?;
             }
         }
-        if let Some(op) = &upper_window.operators {
-            max_bands = max_bands.max(op.band_lo.checked_add(op.retained_bands).and_then(|v| v.checked_add(op.remote_bands))
-                .ok_or_else(|| invalid("sweeps", "band window overflows"))?);
+        let max_bands = upper_window.resolve_fields(false)?.solved_bands;
+        if min_explicit_block < max_bands {
+            return Err(invalid("sweeps", "every explicit block size must contain the largest swept band window"));
+        }
+        if envelope.config.eigensolver.block_size > min_samples {
+            return Err(invalid("sweeps", "a swept block size exceeds the smallest swept grid"));
         }
         if max_bands >= min_samples { return Err(invalid("sweeps", "a swept band window does not fit the smallest swept grid")); }
         // The largest grid and solver block can occur together in a Cartesian

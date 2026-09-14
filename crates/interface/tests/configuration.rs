@@ -132,3 +132,24 @@ fn operator_registry_and_stencil_counts_include_the_full_window() {
     assert_eq!(job.resolved.config.geometry.objects[0].center, [0.0, 0.0]);
     assert_eq!(job.resolved.config.eigensolver.tolerance, Some(1e-8));
 }
+
+#[test]
+fn coupled_band_grid_and_block_axes_are_validated_as_complete_jobs() {
+    let mut config = Config::default();
+    config.eigensolver.block_size = 8;
+    config.sweeps = vec![
+        Sweep { name: "bands".into(), target: "bands.count".into(), linspace: None, values: Some(vec![json!(12), json!(16)]) },
+        Sweep { name: "block".into(), target: "eigensolver.block_size".into(), linspace: None, values: Some(vec![json!(16), json!(24)]) },
+    ];
+    let plan = Plan::new(config.clone(), Platform::Native).unwrap();
+    for i in 0..4 { assert!(plan.job(i).is_ok()); }
+    config.sweeps[1].values = Some(vec![json!(8), json!(24)]);
+    assert!(Plan::new(config.clone(), Platform::Native).is_err());
+    config.bands.as_mut().unwrap().count = 32;
+    config.eigensolver.block_size = 32;
+    config.sweeps[0].values = Some(vec![json!(1), json!(2)]);
+    config.sweeps[1].values = Some(vec![json!(3), json!(4)]);
+    config.sweeps.push(Sweep { name: "grid".into(), target: "grid.resolution".into(), linspace: None, values: Some(vec![json!([4, 4])]) });
+    let plan = Plan::new(config, Platform::Native).unwrap();
+    for i in 0..4 { assert!(plan.job(i).is_ok()); }
+}
