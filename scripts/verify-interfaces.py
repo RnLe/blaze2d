@@ -45,7 +45,14 @@ def compare(reference, candidate):
             # Eigenvalue-change stopping does not prescribe a residual. These
             # fixtures have a separate backward-error acceptance bound. Raw
             # per-vector residuals are not invariant under degenerate rotations.
-            assert certificate['max_residual'] < 1e-3, certificate
+            assert certificate['max_absolute_residual'] == float(np.max(result['absolute_residuals']))
+            eigenvalues = result.get('eigenvalues')
+            if eigenvalues is None:
+                eigenvalues = (2 * np.pi * result['frequencies'])**2
+            # A mixed absolute/relative criterion stays defined at Gamma.
+            # The unit floor is in the declared angular eigenvalue units.
+            scaled = result['absolute_residuals'] / np.maximum(1.0, np.abs(eigenvalues))
+            assert float(np.max(scaled)) < 1e-3, certificate
     for name, info in reference['array_info'].items():
         a, b = reference[name], candidate[name]
         assert np.isfinite(b).all(), name
@@ -116,6 +123,7 @@ with nullcontext(args.output) if args.output else tempfile.TemporaryDirectory(pr
         report.append(entry)
         (directory / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
         print(f'{fixture.name}: {entry["status"]}', flush=True)
+    (directory / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
 if any(item['status'] != 'passed' for item in report):
     raise SystemExit(f'{sum(item["status"] == "failed" for item in report)} fixtures failed')
 print(f'{len(report)} fixtures agree across Python, native CLI, and WASM.')

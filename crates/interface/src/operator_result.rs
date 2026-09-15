@@ -14,6 +14,7 @@ pub fn operator_sample(job: &PlannedJob, sample_index: usize, result: OperatorDa
     let keep_fields = job.resolved.config.results.eigenvectors;
     let requested = &job.resolved.config.operators.as_ref().unwrap().quantities;
     let max_residual = d.residuals.iter().copied().fold(0.0,f64::max);
+    let max_absolute_residual = d.absolute_residuals.iter().copied().fold(0.0,f64::max);
     let mut arrays = Arrays::new();
     macro_rules! real { ($name:expr, $shape:expr, $dims:expr, $data:expr) => {
         arrays.insert($name.into(), Array::real($shape, $dims, $data));
@@ -32,6 +33,7 @@ pub fn operator_sample(job: &PlannedJob, sample_index: usize, result: OperatorDa
     } }
     real!("eigenvalues", &[n], &["solved_band"], d.eigenvalues);
     real!("residuals", &[n], &["solved_band"], d.residuals);
+    real!("absolute_residuals", &[n], &["solved_band"], d.absolute_residuals);
     if keep_fields {
         complex!("eigenvectors", &[n,ny,nx], &["solved_band","y","x"], d.eigenvectors.into_iter().flatten());
     }
@@ -99,6 +101,10 @@ pub fn operator_sample(job: &PlannedJob, sample_index: usize, result: OperatorDa
         "stopping_criterion": "relative_eigenvalue_change",
         "eigenvalue_tolerance": job.resolved.config.eigensolver.tolerance,
         "certification": {"source": "fresh_rayleigh_ritz", "max_residual":max_residual,
+            "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
+            "absolute_residual_convention":"norm(Au-lambda*Bu)/norm(u)",
+                "absolute_residual_unit":"inverse_reference_length_squared",
+            "max_absolute_residual":max_absolute_residual,
             "b_orthogonality_defect": d.b_orthogonality_defect,
             "residual_acceptance_threshold": job.resolved.config.operators.as_ref().unwrap().fail_on_residual,
             "residual_gate_passed": job.resolved.config.operators.as_ref().unwrap().fail_on_residual.map(|limit| max_residual <= limit)},

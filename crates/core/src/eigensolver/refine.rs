@@ -1,16 +1,12 @@
-//! Post-solve Rayleigh–Ritz refinement and eigenpair certification (B3).
+//! Eigenpair refinement and certification after solving.
 //!
-//! LOBPCG converges on eigenvalue stagnation and gives soft-locked bands zero
-//! residual placeholders, so the `converged` flag is NOT an accuracy
-//! certificate. This module performs, after LOBPCG convergence:
+//! Convergence uses eigenvalue changes. Certification separately measures
+//! normalized and absolute residuals with fresh operator applications, and
+//! the B-orthogonality defect of the returned block.
 //!
-//! 1. a final dense Rayleigh–Ritz rotation in the full returned block,
-//! 2. FRESH operator applications A·u and B·u for every rotated band,
-//! 3. normalized generalized residuals ‖Au − λBu‖ / (‖Au‖ + |λ|·‖Bu‖),
-//! 4. the B-orthogonality defect max |⟨uᵢ|B|uⱼ⟩ − δᵢⱼ| of the returned block.
-//!
-//! Nothing here is ever silently zeroed: every returned band (including
-//! soft-locked ones) gets a residual computed from fresh A/B applications.
+//! `rayleigh_ritz_certify` refines the returned eigenpairs through a dense
+//! Rayleigh-Ritz projection. `certify_without_refinement` preserves the fields,
+//! eigenvalues, and ordering supplied by the caller.
 
 use num_complex::{Complex, Complex64};
 
@@ -26,6 +22,8 @@ pub struct BlockCertification {
     /// Fresh normalized generalized residual ‖Au − λBu‖/(‖Au‖+|λ|‖Bu‖) per
     /// band, in the (ascending) band order of the refined block.
     pub residuals: Vec<f64>,
+    /// Fresh absolute eigenpair residual norm(Au - lambda Bu) / norm(u).
+    pub absolute_residuals: Vec<f64>,
     /// max_{ij} |⟨uᵢ|B|uⱼ⟩ − δᵢⱼ| over the returned block.
     pub b_orthogonality_defect: f64,
 }
@@ -34,6 +32,7 @@ impl BlockCertification {
     pub fn empty() -> Self {
         Self {
             residuals: Vec::new(),
+            absolute_residuals: Vec::new(),
             b_orthogonality_defect: 0.0,
         }
     }
@@ -144,6 +143,7 @@ where
 
     // -- Fresh normalized generalized residuals --
     let mut residuals = Vec::with_capacity(n);
+    let mut absolute_residuals = Vec::with_capacity(n);
     for j in 0..n {
         let lambda = h_eig.eigenvalues[j];
         let mut r = au_new[j].clone();
@@ -165,6 +165,8 @@ where
                     .max(0.0)
                     .sqrt();
         residuals.push(if den > 0.0 { num / den } else { num });
+        let norm = operator.backend().dot(&u_new[j], &u_new[j]).re.max(0.0).sqrt();
+        absolute_residuals.push(if norm > 0.0 { num / norm } else { num });
     }
 
     // -- B-orthogonality defect of the rotated block --
@@ -190,6 +192,7 @@ where
 
     BlockCertification {
         residuals,
+        absolute_residuals,
         b_orthogonality_defect: defect,
     }
 }
@@ -212,6 +215,7 @@ where
         .map(|field| field_to_buffer::<O, B>(operator, field))
         .collect();
     let mut residuals = Vec::with_capacity(n);
+    let mut absolute_residuals = Vec::with_capacity(n);
     let mut defect = 0.0_f64;
     for (j, field) in fields.iter().enumerate() {
         let mut a = operator.alloc_field();
@@ -225,6 +229,8 @@ where
             .backend()
             .axpy(Complex64::new(-lambda, 0.0), &b, &mut a);
         let numerator = operator.backend().dot(&a, &a).re.max(0.0).sqrt();
+        let norm = operator.backend().dot(field, field).re.max(0.0).sqrt();
+        absolute_residuals.push(if norm > 0.0 { numerator / norm } else { numerator });
         residuals.push(if denominator > 0.0 {
             numerator / denominator
         } else {
@@ -241,6 +247,7 @@ where
     }
     BlockCertification {
         residuals,
+        absolute_residuals,
         b_orthogonality_defect: defect,
     }
 }

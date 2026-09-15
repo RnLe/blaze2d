@@ -3,6 +3,8 @@
 All arrays use C ordering. Rust Complex64 maps to NumPy complex128 regardless
 of solver storage precision. Each result also carries per-array dimensions in
 array_info. Operator derivatives retain the basis recorded in metadata.
+Band residual arrays have shape (k_point, band); operator residual arrays
+have shape (solved_band,).
 """
 from typing import Any, TypedDict
 import numpy as np
@@ -22,7 +24,8 @@ class Sample(TypedDict, total=False):
     array_info: dict[str, ArrayInfo]
     eigenvalues: NDArray[np.float64]  # (solved_band,)
     eigenvectors: NDArray[np.complex128]  # (solved_band, ny, nx)
-    residuals: NDArray[np.float64]  # (solved_band,)
+    residuals: NDArray[np.float64]  # normalized residuals
+    absolute_residuals: NDArray[np.float64]  # norm(Au - lambda Bu) / norm(u)
     velocity_matrices: NDArray[np.complex128]  # (2, retained_band, solved_band)
     w_matrices: NDArray[np.complex128]  # (2, 2, retained_band, retained_band)
     mass_tensor_inv: NDArray[np.complex128]  # (2, 2, retained_band, retained_band)

@@ -58,6 +58,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             let mut iterations = Vec::new();
             let mut converged = Vec::new();
             let mut residuals = Vec::new();
+            let mut absolute_residuals = Vec::new();
             let mut orthogonality = Vec::new();
             let mut fields = Vec::new();
             let result = bandstructure::run_with_k_streaming(backend, &job.bands_job(),
@@ -70,6 +71,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                     iterations.push(point.iterations); converged.push(point.converged);
                     orthogonality.push(point.b_orthogonality_defect);
                     residuals.extend(point.residuals.into_iter().take(n));
+                    absolute_residuals.extend(point.absolute_residuals.into_iter().take(n));
                     if let Some(v) = point.eigenvectors { fields.extend(v.into_iter().take(n).flat_map(|v| v.as_slice().to_vec())); }
                 });
             out.arrays.insert("frequencies".into(), Array::real(&[nk,n], &["k_point","band"],
@@ -78,6 +80,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             out.arrays.insert("k_points_cartesian".into(), Array::real(&[nk,2], &["k_point","direction"], job.resolved.k_points_cartesian.iter().flatten().copied()));
             out.arrays.insert("distances".into(), Array::real(&[nk], &["k_point"], job.resolved.distances.iter().copied()));
             out.arrays.insert("residuals".into(), Array::real(&[nk,n], &["k_point","band"], residuals));
+            out.arrays.insert("absolute_residuals".into(), Array::real(&[nk,n], &["k_point","band"], absolute_residuals));
             if job.resolved.config.results.eigenvectors {
                 out.arrays.insert("eigenvectors".into(), Array::complex(&[nk,n,ny,nx], &["k_point","band","y","x"], fields));
             }
@@ -90,12 +93,15 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             out.metadata["stopping_criterion"] = json!("relative_eigenvalue_change");
             out.metadata["certification"] = json!({"source":"fresh_operator_application",
                 "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
+                "absolute_residual_convention":"norm(Au-lambda*Bu)/norm(u)",
+                "absolute_residual_unit":"inverse_reference_length_squared",
+                "max_absolute_residual":out.arrays["absolute_residuals"].data.iter().copied().fold(0.0_f64, f64::max),
                 "max_residual":out.arrays["residuals"].data.iter().copied().fold(0.0_f64, f64::max),
                 "b_orthogonality_defect":orthogonality.iter().copied().fold(0.0_f64, f64::max),
                 "b_orthogonality_per_point":orthogonality});
             out.metadata["gauge"] = json!(if b.tracking {"tracked_path"} else {"independent_sorted_eigenvalues"});
             out.metadata["quantities"] = json!({"requested":["frequencies"],
-                "computed":["frequencies","eigenvectors","residuals"], "retained":out.arrays.keys().collect::<Vec<_>>(), "unavailable":{}});
+                "computed":["frequencies","eigenvectors","residuals","absolute_residuals"], "retained":out.arrays.keys().collect::<Vec<_>>(), "unavailable":{}});
         }
         Task::Operators => {
             let o = job.resolved.config.operators.as_ref().unwrap();

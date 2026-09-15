@@ -34,6 +34,7 @@ fn fresh_measurement_detects_an_inaccurate_plane_wave_without_changing_it() {
     let certificate =
         certify_without_refinement(&mut theta, &[eigenvalue], std::slice::from_ref(&field));
     assert!((certificate.residuals[0] - 1.0 / 21.0).abs() < 1e-12);
+    assert!((certificate.absolute_residuals[0] - 0.1 * (k[0]*k[0] + k[1]*k[1])).abs() < 1e-12);
     assert!(certificate.b_orthogonality_defect < 1e-12);
     assert_eq!(field.as_slice(), original.as_slice());
 }
@@ -73,4 +74,24 @@ fn band_certification_preserves_tracked_frequencies_and_reports_unconverged_fiel
         "fresh_operator_application"
     );
     assert!(result.arrays["residuals"].data.iter().any(|r| *r > 1e-6));
+}
+
+#[test]
+fn absolute_residuals_remain_defined_for_the_gamma_nullspace() {
+    let mut c = Config::default();
+    c.geometry.objects.clear();
+    c.grid.resolution = Resolution::Axes(vec![12, 16]);
+    c.bands.as_mut().unwrap().path = KPath {
+        points: Some(vec![vec![0.0, 0.0]]), intervals_per_segment: None, ..Default::default()
+    };
+    let job = Plan::new(c, Platform::Native).unwrap().job(0).unwrap();
+    let dielectric = Dielectric2D::from_geometry(&job.geometry(), job.grid(), &job.dielectric());
+    let mut theta = ThetaOperator::new(CpuBackend::<f64>::new(), dielectric, job.polarization(), [0.0, 0.0]);
+    let field = Field2D::from_f64_vec(job.grid(), (0..192).map(|i| {
+        (Complex64::new(1.0, 0.0) + Complex64::from_polar(1e-12, std::f64::consts::TAU * (i % 12) as f64 / 12.0)) / 192.0_f64.sqrt()
+    }).collect());
+    let certificate = certify_without_refinement(&mut theta, &[0.0], &[field]);
+    assert!(certificate.residuals[0] > 0.99);
+    assert!(certificate.absolute_residuals[0] > 1e-13);
+    assert!(certificate.absolute_residuals[0] < 1e-9);
 }

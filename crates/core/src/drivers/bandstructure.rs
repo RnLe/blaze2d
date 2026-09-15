@@ -152,6 +152,7 @@ pub struct KPointResult {
     /// Solver convergence state and relative residuals in returned band order.
     pub converged: bool,
     pub residuals: Vec<f64>,
+    pub absolute_residuals: Vec<f64>,
     pub b_orthogonality_defect: f64,
     /// Retained only when requested through the run options.
     pub eigenvectors: Option<Vec<Field2D>>,
@@ -572,7 +573,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // Storage for first Γ-point frequencies (to reuse for last k-point if applicable)
     let mut first_gamma_omegas: Option<Vec<f64>> = None;
     let mut first_gamma_iterations: Option<usize> = None;
-    let mut first_gamma_quality = (false, Vec::new(), 0.0);
+    let mut first_gamma_quality = (false, Vec::new(), 0.0, Vec::new());
     let mut first_gamma_fields = None;
 
     // Accumulate results
@@ -605,6 +606,7 @@ fn run_core<B: SpectralBackend + Clone>(
                         iterations: first_gamma_iterations.unwrap_or(0),
                         converged: first_gamma_quality.0,
                         residuals: first_gamma_quality.1.clone(),
+                        absolute_residuals: first_gamma_quality.3.clone(),
                         b_orthogonality_defect: first_gamma_quality.2,
                         eigenvectors: first_gamma_fields.clone(),
                         is_gamma: true,
@@ -718,6 +720,7 @@ fn run_core<B: SpectralBackend + Clone>(
         let k_iterations;
         let k_converged;
         let mut k_residuals;
+        let mut k_absolute_residuals = Vec::new();
         let final_evals: Vec<f64>;
         let mut eigenvectors: Vec<Field2D>;
         if let Some(study) = study.as_deref_mut() {
@@ -780,6 +783,7 @@ fn run_core<B: SpectralBackend + Clone>(
                 &final_evals,
                 &eigenvectors,
             );
+            k_absolute_residuals = certificate.absolute_residuals;
             k_residuals = certificate.residuals;
             certificate.b_orthogonality_defect
         } else {
@@ -829,9 +833,13 @@ fn run_core<B: SpectralBackend + Clone>(
                 if tracking_result.had_swaps {
                     apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
                     let original = k_residuals.clone();
+                    let absolute_original = k_absolute_residuals.clone();
                     for (dst, &src) in tracking_result.permutation.iter().enumerate() {
                         if dst < k_residuals.len() && src < original.len() {
                             k_residuals[dst] = original[src];
+                        }
+                        if dst < k_absolute_residuals.len() && src < absolute_original.len() {
+                            k_absolute_residuals[dst] = absolute_original[src];
                         }
                     }
 
@@ -872,7 +880,7 @@ fn run_core<B: SpectralBackend + Clone>(
         if reuse_gamma && k_idx == 0 && is_gamma {
             first_gamma_omegas = Some(omegas.clone());
             first_gamma_iterations = Some(k_iterations);
-            first_gamma_quality = (k_converged, k_residuals.clone(), k_b_orthogonality_defect);
+            first_gamma_quality = (k_converged, k_residuals.clone(), k_b_orthogonality_defect, k_absolute_residuals.clone());
             first_gamma_fields = options.retain_eigenvectors.then(|| eigenvectors.clone());
         }
 
@@ -886,6 +894,7 @@ fn run_core<B: SpectralBackend + Clone>(
                 iterations: k_iterations,
                 converged: k_converged,
                 residuals: k_residuals,
+                absolute_residuals: k_absolute_residuals,
                 b_orthogonality_defect: k_b_orthogonality_defect,
                 eigenvectors: options.retain_eigenvectors.then(|| eigenvectors.clone()),
                 is_gamma,

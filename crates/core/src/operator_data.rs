@@ -335,6 +335,8 @@ pub struct OperatorData {
     /// the final dense Rayleigh–Ritz rotation from fresh A/B applications.
     /// Length: n_total. Empty only if the driver skipped certification.
     pub residuals: Vec<f64>,
+    /// Fresh absolute eigenpair residual norm(Au - lambda Bu) / norm(u).
+    pub absolute_residuals: Vec<f64>,
     /// B-orthogonality defect max |⟨uᵢ|B|uⱼ⟩ − δᵢⱼ| of the returned block.
     /// NaN if the driver skipped certification.
     pub b_orthogonality_defect: f64,
@@ -617,6 +619,7 @@ impl<'a, B: SpectralBackend> OperatorDataExtractor<'a, B> {
             converged,
             // Filled by the driver after post-solve certification.
             residuals: Vec::new(),
+            absolute_residuals: Vec::new(),
             b_orthogonality_defect: f64::NAN,
         }
     }

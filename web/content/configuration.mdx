@@ -62,6 +62,10 @@ Without that gate, a completed calculation may still contain inaccurate remote e
 Band results report fresh residuals and B-orthogonality without rotating the tracked fields.
 Operator results include the existing final Rayleigh-Ritz refinement.
 
+`absolute_residuals` contains $\|Au-\lambda Bu\|/\|u\|$. Use it near Gamma,
+where a small denominator can make normalized residuals misleading. Both arrays
+follow the returned band order; their conventions and units are recorded in metadata.
+
 - Lattice vectors and circle radii share one reference length.
 - Object centers and registry displacements use direct fractional coordinates.
 - Reciprocal fractional coordinates use $k = 2\pi A^{-T}q$.

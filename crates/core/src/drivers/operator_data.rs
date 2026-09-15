@@ -245,6 +245,7 @@ pub fn run_with_reference<B: SpectralBackend>(
         n_iterations,
         converged,
     );
+    ingredients.absolute_residuals = cert.absolute_residuals;
     ingredients.residuals = cert.residuals;
     ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
     let residual_gate_violation = residual_gate_violation(
@@ -342,6 +343,7 @@ pub fn run_with_warmstart<B: SpectralBackend>(
         n_iterations,
         converged,
     );
+    ingredients.absolute_residuals = cert.absolute_residuals;
     ingredients.residuals = cert.residuals;
     ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
     let residual_gate_violation = residual_gate_violation(
@@ -522,6 +524,7 @@ pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
             result.iterations,
             result.converged,
         );
+        ingredients.absolute_residuals = cert.absolute_residuals;
         ingredients.residuals = cert.residuals;
         ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
         let residual_gate_violation = residual_gate_violation(
@@ -643,6 +646,7 @@ pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
         // Post-solve Rayleigh–Ritz rotation + fresh residual certification
         // BEFORE band tracking, so tracking permutes certified eigenpairs.
         let cert = certify_block(&mut theta, &mut eigenvalues, &mut eigenvectors);
+        let mut absolute_residuals = cert.absolute_residuals;
         let mut residuals = cert.residuals;
 
         let mut omegas: Vec<f64> = eigenvalues
@@ -663,12 +667,14 @@ pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
 
             let eigenvalues_orig = eigenvalues.clone();
             let residuals_orig = residuals.clone();
+            let absolute_orig = absolute_residuals.clone();
             for (idx, &src) in tracking_result.permutation.iter().enumerate() {
                 if idx < eigenvalues.len() && src < eigenvalues_orig.len() {
                     eigenvalues[idx] = eigenvalues_orig[src];
                 }
                 if idx < residuals.len() && src < residuals_orig.len() {
                     residuals[idx] = residuals_orig[src];
+                    absolute_residuals[idx] = absolute_orig[src];
                 }
             }
         }
@@ -690,6 +696,7 @@ pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
             result.iterations,
             result.converged,
         );
+        ingredients.absolute_residuals = absolute_residuals;
         ingredients.residuals = residuals;
         ingredients.b_orthogonality_defect = cert.b_orthogonality_defect;
         let residual_gate_violation = residual_gate_violation(
