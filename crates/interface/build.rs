@@ -1,7 +1,12 @@
 use std::{env, process::Command};
 fn main() {
     println!("cargo:rerun-if-env-changed=BLAZE_SOURCE_REVISION");
-    println!("cargo:rerun-if-changed=source-revision.txt");
+    // Absolute paths distinguish a checkout from an unpacked source archive
+    // when both builds reuse the same Cargo target directory.
+    let manifest = std::path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    for name in ["build.rs", "source-revision.txt"] {
+        println!("cargo:rerun-if-changed={}", manifest.join(name).display());
+    }
     let revision = env::var("BLAZE_SOURCE_REVISION").ok().or_else(|| {
         Command::new("git").args(["rev-parse", "HEAD"]).output().ok()
             .filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
