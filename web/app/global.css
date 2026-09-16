@@ -36,6 +36,11 @@ button, input, select, textarea { font: inherit; }
 .docs-shell th, .docs-shell td { border-color: var(--site-border); }
 .docs-shell .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: .5rem 0; }
 .docs-shell .nextra-sidebar { scrollbar-gutter: stable; }
+.docs-shell .nextra-search kbd {
+  color: var(--site-muted);
+  background: var(--site-background);
+  transition: none;
+}
 .docs-shell .nextra-sidebar a { padding-top: .65rem; padding-bottom: .65rem; }
 .docs-shell .nextra-sidebar a[href$="/workbench/"], .docs-shell .nextra-sidebar a[href$="/workbench"] {
   border: 1px solid var(--site-accent); border-radius: 8px; color: var(--site-accent); font-weight: 600; margin-bottom: 1rem;
