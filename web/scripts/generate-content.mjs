@@ -104,9 +104,11 @@ await writeFile(new URL('../lib/documents.generated.ts', import.meta.url), gener
   "import type { DocumentInfo } from './documents';\n\n" +
   'export const documents: Record<string, DocumentInfo> = ' + JSON.stringify(Object.fromEntries(documents), null, 2) + ';\n');
 const routes = new URL('../app/(docs)/(content)/', import.meta.url);
+const relocations = new URL('../app/(relocations)/', import.meta.url);
 await rm(routes, { recursive: true, force: true });
+await rm(relocations, { recursive: true, force: true });
 for (const { slug, file, title, description, layout, robots, toc, redirect } of articles) {
-  const folder = new URL(slug ? `${slug}/` : './', routes);
+  const folder = new URL(slug ? `${slug}/` : './', redirect ? relocations : routes);
   await mkdir(folder, { recursive: true });
   if (redirect) {
     await writeFile(new URL('page.tsx', folder), generated +

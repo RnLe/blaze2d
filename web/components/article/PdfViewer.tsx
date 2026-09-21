@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { CommandButtonItem, PluginRegistry, ToolbarItem, UIPlugin } from '@embedpdf/react-pdf-viewer';
+import type { EmbedPdfContainer, CommandButtonItem, PluginRegistry, ToolbarItem, UIPlugin } from '@embedpdf/react-pdf-viewer';
 import { getAssetPath } from '@/lib/paths';
 
 // EmbedPDF drives canvases and a WASM engine, so it must never run during
@@ -102,6 +102,16 @@ function promoteFitButtons(registry: PluginRegistry) {
   if (items) ui.mergeSchema({ toolbars: { ...toolbars, 'main-toolbar': { ...toolbar, items } } });
 }
 
+/** Keep the viewport size stable while pages and zoom controls initialize.
+ * Auto scrollbars feed size changes back into EmbedPDF's ResizeObserver in WebKit.
+ * Reserve both scrollbars inside the viewer's shadow root instead.
+ */
+function stabilizeViewport(container: EmbedPdfContainer) {
+  const style = document.createElement('style');
+  style.textContent = '.bg-bg-app[style*="overflow: auto"] { overflow: scroll !important; }';
+  container.shadowRoot?.append(style);
+}
+
 interface PdfViewerProps {
   /** Public path to the PDF (e.g. '/paper/blaze2d.pdf'); the base path is added here. */
   src: string;
@@ -129,6 +139,7 @@ export default function PdfViewer({ src, height }: PdfViewerProps) {
             // a category hides its items and disables its commands and shortcuts.
             disabledCategories: ['annotation', 'redaction', 'mode', 'insert', 'form', 'panel-comment'],
           }}
+          onInit={stabilizeViewport}
           onReady={promoteFitButtons}
           style={{ width: '100%', height: '100%' }}
         />

@@ -19,7 +19,9 @@ for (const width of [320, 1920]) test(`public routes reflow at ${width}px`, asyn
     if (route === 'workbench' || route === 'examples' || route.startsWith('examples/'))
       await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
     await page.evaluate(() => document.fonts.ready);
-    await page.waitForTimeout(100);
+    // Let route prefetches finish before the next full navigation. WebKit reports
+    // aborted requests from a departing document as access-control errors.
+    await page.waitForLoadState('networkidle');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     if (overflow > 1) failures.push(`${route || '/'}: ${overflow}px`);
   }

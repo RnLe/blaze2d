@@ -40,6 +40,7 @@ _pagefind/
 
 # Static article routes generated from content metadata.
 /app/(docs)/(content)/
+/app/(relocations)/
 
 # Staging tree compiled by typst/tools/figure-export.
 /.figure-export/

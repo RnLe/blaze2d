@@ -163,7 +163,13 @@ export default function BilayerExplorer() {
           <div className="bilayer-angle-track">
             <input id={`${id}-angle`} type="range" min="0" max={geometry.symmetry} step="0.1" value={angle} aria-orientation="vertical"
               aria-valuetext={`${angle.toFixed(1)} degrees. ${vectors ? `Moiré period ${periodLabel} lattice constants.` : 'Layers aligned; no finite moiré period.'}`}
-              onChange={event => setAngle(Number(event.target.value))} />
+              onChange={event => setAngle(Number(event.target.value))}
+              onKeyDown={event => {
+                const deltas: Record<string, number> = { ArrowUp: 0.1, ArrowRight: 0.1, ArrowDown: -0.1, ArrowLeft: -0.1, PageUp: 1, PageDown: -1 };
+                const value = event.key === 'Home' ? 0 : event.key === 'End' ? geometry.symmetry
+                  : event.key in deltas ? Math.round((angle + deltas[event.key]) * 10) / 10 : undefined;
+                if (value !== undefined) { event.preventDefault(); setAngle(Math.max(0, Math.min(geometry.symmetry, value))); }
+              }} />
             <div className="bilayer-range-labels" aria-hidden="true">{[1, 0.75, 0.5, 0.25, 0].map(fraction => <span key={fraction}>{geometry.symmetry * fraction}°</span>)}</div>
           </div>
         </div>
