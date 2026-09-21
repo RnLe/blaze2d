@@ -10,8 +10,8 @@
 #import "/typst/lib/report.typ": report
 
 #show: report.with(
-  title: "Blaze2D: Numerical Methods and Benchmarks",
-  subtitle: [Historical measurements of band calculations, memory use, and numerical agreement.],
+  title: "Blaze2D: A High-Performance Solver for Photonic Crystals",
+  subtitle: [Achieving order-of-magnitude speedups through a mixed-precision LOBPCG algorithm and cache-aware architecture.],
   kicker: "Technical Report",
   affiliation: [
     Blaze2D \

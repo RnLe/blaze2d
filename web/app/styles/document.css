@@ -1,0 +1,125 @@
+/**
+ * Document pages: an article whose subject is a PDF.
+ *
+ * The summary and the reader sit side by side on a wide screen, so the document
+ * is visible without scrolling past its own description, and stack on a narrow
+ * one where a two-column reader would be unusable.
+ *
+ * On a wide screen the page is a reader rather than an article: it fills the
+ * window exactly and does not scroll, so the height the shell is not using
+ * belongs to the document.
+ */
+
+.document-layout {
+  display: grid;
+  /* The reader keeps just under two thirds; the rest is the summary, which needs
+     far less width than a page of a document does. */
+  grid-template-columns: minmax(0, 34.5fr) minmax(0, 65.5fr);
+  gap: 2.75rem;
+  align-items: stretch;
+  height: calc(100dvh - var(--header-height) - 2.5rem);
+  margin-top: 0;
+}
+/* Only the page that holds a reader: the footer and the article's own bottom
+   padding would push the document out of the window. */
+.docs-shell:has(.document-layout) .site-footer {
+  display: none;
+}
+.docs-shell:has(.document-layout) .site-content {
+  padding-top: 1.25rem;
+}
+
+.document-summary {
+  min-width: 0;
+  /* A safety valve: on a short window the summary scrolls inside its column
+     rather than making the whole page scroll. */
+  overflow: auto;
+}
+.article .document-summary h1 {
+  font-size: 2.45rem;
+  margin: 0.35rem 0 0.9rem;
+}
+.article .document-summary p {
+  font-size: 1.1rem;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+.document-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  margin: 0 0 1.35rem;
+  font-size: 1.05rem;
+  color: var(--text-subtle);
+}
+.document-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+/* Trailing rather than leading, so a wrapped line never starts with a dot. */
+.document-meta span:not(:last-child)::after {
+  content: ' ·';
+  color: var(--border-strong);
+}
+.document-note {
+  margin: 1.25rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-md);
+  background: var(--warning-surface);
+}
+.article .document-note p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--warning);
+}
+.document-actions {
+  margin: 1.35rem 0 0;
+}
+/* Beside the reader the download is the column's one control, so it takes the
+   whole width. The icons keep the gap they already had and ride along with the
+   label rather than being pushed out to the edges. */
+.document-summary .document-download {
+  display: flex;
+  justify-content: center;
+}
+
+/* ---- Viewer ---------------------------------------------------------------- */
+
+.pdf-viewer {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+.pdf-viewer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 1.05rem;
+}
+
+/* Stacked, the page becomes an ordinary scrolling article again. */
+@media (max-width: 1100px) {
+  .document-layout {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .document-summary {
+    max-width: var(--reading-width);
+    overflow: visible;
+  }
+  .docs-shell:has(.document-layout) .site-footer {
+    display: block;
+  }
+  .pdf-viewer {
+    height: min(75dvh, 51.25rem);
+  }
+}

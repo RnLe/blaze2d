@@ -1,0 +1,141 @@
+/**
+ * Example library (the /examples index) and the header of a single example page.
+ *
+ * Each card carries its own `--example-accent` from the generated catalogue, so
+ * its hover edge matches the lattice image above it.
+ */
+
+.example-library {
+  container: examples / inline-size;
+  margin-top: 2.5rem;
+}
+/* One heading per class of calculation, with a line saying what the class is
+   for, over a rule that marks where one class ends and the next begins. Quiet
+   enough that the cards stay the thing you read. */
+.example-library > section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1.6rem;
+  margin-top: 2.5rem;
+}
+.example-library > section:first-of-type {
+  margin-top: 1.75rem;
+}
+.example-library > section > h2 {
+  font-size: 1.55rem;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  color: var(--text-heading);
+  margin: 0 0 0.35rem;
+}
+.example-section-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 1rem;
+  line-height: 1.6;
+  max-width: 68ch;
+}
+
+.example-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.1rem 0 0;
+}
+.example-links a {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  transition:
+    border-color 0.2s,
+    transform 0.2s;
+}
+.example-links a:hover {
+  border-color: var(--example-accent, var(--accent));
+  transform: translateY(-3px);
+}
+.example-card-image {
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-default);
+  /* Shorter than the lattice it shows. The pattern repeats, so cropping costs
+     the card height rather than information. */
+  aspect-ratio: 64 / 23;
+  overflow: hidden;
+}
+.example-card-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s;
+}
+.example-links a:hover .example-card-image img {
+  transform: scale(1.035);
+}
+.example-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.95rem 1.15rem 1.1rem;
+}
+.example-card-body h3 {
+  color: var(--text-heading);
+  font-size: 1.28rem;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
+  margin: 0;
+}
+.example-card-body p {
+  /* Cards render inside `.article`; see the note in home.css. */
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+@container examples (min-width: 65rem) {
+  .example-links {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@container examples (max-width: 39rem) {
+  .example-links {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- Single example page header -------------------------------------------- */
+
+.example-intro {
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: 2rem 3rem;
+}
+.example-intro h1 {
+  font-size: 2.6rem;
+  margin: 1rem 0;
+  line-height: 1.2;
+}
+.example-intro p {
+  color: var(--text-muted);
+  margin: 0.7rem 0;
+  max-width: 76ch;
+}
+.example-intro a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.example-intro details {
+  max-width: 100%;
+  margin-top: 1rem;
+}
+.example-intro summary {
+  padding-block: 0.75rem;
+}
+.examples-header {
+  max-width: var(--reading-width);
+  margin-inline: auto;
+}

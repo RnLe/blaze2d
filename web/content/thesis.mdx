@@ -1,107 +1,333 @@
 ---
+nav:
+  group: Research
+  order: 1
+layout: wide
 title: "Master’s Thesis"
+description: "Why twisted photonic crystals need a two-scale theory, how the second edition tests it, and why that work led to Blaze2D."
+document: "/reports/masters-thesis-second-edition.pdf"
 card:
   title: "Master’s Thesis"
   category: "Research"
-  order: 0
+  order: 2
   size: "2x2"
   description: "Photonic moiré crystals and the two-scale theory that motivates Blaze’s operator extraction."
-  image: "/banners/blaze_thesis.webp"
+  image: "/banners/blaze_thesis_moire.webp"
   showDescription: true
-  showDate: false
+  showDate: true
+  date: "2026-03-27"
   showTags: false
   showImage: true
   tags: []
 ---
 
-import Figure, { FigureRow } from '../components/Figure'
-import HeroImage from '../components/HeroImage'
+import { HeroImage } from '@/components/article/Figure'
+import DocumentDownload from '@/components/article/DocumentDownload'
+import BilayerExplorer from '@/components/thesis-page/BilayerExplorer'
+import ImageViewer from '@/components/thesis-page/ImageViewer'
+import '@/components/thesis-page/thesis.css'
 
-<HeroImage src="/banners/blaze_thesis.webp" alt="Photonic moiré crystals" cropHeight={0.7} />
+<div className="thesis-page">
 
-<div className="narrow-centered">
-
-<span className="date">Master's Thesis · Condensed Matter Theory, TU Dortmund · 2026</span>
-
-# Why Blaze2D Exists: Photonic Moiré Crystals
-
-*The research Blaze was built to make possible: a two-scale theory of twisted photonic crystals.*
-
----
-
+<div className="thesis-hero">
+<HeroImage src="/banners/thesis-triangular-bilayer.svg" alt="Two triangular lattices of solid blue and orange dots at a six-degree twist, viewed across 64 lattice spacings to reveal several moiré cells." />
 </div>
 
 <div className="narrow">
 
-Blaze2D is the computational engine of a master's thesis, *Photonic Band Theory of Moiré
-Crystals: A Two-Scale Approach*. This page is a short tour of that research, what it built,
-and how it motivates the solver interfaces.
+<span className="date">Master’s thesis · TU Dortmund · Second edition, September 2026</span>
 
-## Photonic moiré crystals
+# Photonic moiré crystals
 
-Overlay two photonic crystals with a small relative twist and a new, much larger periodic
-pattern emerges: a *moiré* superlattice, the optical cousin of the patterns behind twisted
-bilayer graphene. At small angles, direct supercell calculations become costly:
+<p className="thesis-lead">How a two-scale description of twisted crystals led to Blaze2D.</p>
 
-- At **generic twist angles** the bilayer is *incommensurate*: there is no repeating unit
-  cell at all, so a conventional solver has nothing to operate on.
-- At the special **commensurate angles** where periodicity is restored, the unit cell grows
-  as roughly the inverse of the twist angle, so a brute-force "supercell" calculation
-  increases substantially.
+A photonic crystal controls light through a repeating pattern of dielectric material.
+Twist two such patterns against each other and their local alignment changes slowly
+across space. That extra structure can reshape the optical bands, reduce propagation
+speeds and confine modes. The question behind this thesis was how to calculate those
+effects directly from Maxwell’s equations without resolving every microscopic cell
+of a large twisted structure.
 
-<Figure src="/figures/thesis/moire-crystals.webp" alt="Photonic moiré lattices formed by twisting two crystals" caption="Twisting two photonic crystals produces an emergent moiré superlattice whose period far exceeds that of the layers it is built from." maxWidth="760px" />
+The answer developed in *Photonic Band Theory of Moire Crystals: A Two-Scale Approach*
+is an envelope theory built from local Bloch modes. It replaces one large calculation
+with many small crystal calculations and a separate problem for the slow modulation.
+Blaze2D was built to supply those local calculations, including the operator data
+needed to connect them.
 
-## A two-scale envelope theory
+<div className="thesis-source">
 
-The thesis sidesteps the supercell entirely. Locally, every patch of the twisted bilayer
-looks like an ordinary crystal with a two-atom basis; only the *inter-layer registry*
-drifts slowly from patch to patch. A single dimensionless **quality parameter** decides
-when this picture holds: the twist angle $\theta$ measured against the stop-band width
-$\gamma$,
+This page follows the revised derivation and results in the second edition. [Read the full thesis](/reports/masters-thesis-second-edition.pdf).
+
+</div>
+
+## Why direct calculations become expensive
+
+A periodic band solver needs a repeating cell. A generic twist has no exact repeating
+bilayer cell. Special, commensurate angles do, but those cells grow rapidly as the angle
+shrinks. At a fixed microscopic resolution, the number of grid points grows roughly
+as $\theta^{-2}$. Memory, factorization and repeated eigensolves then become the bottleneck.
+
+This was concrete in the revised square-bilayer study. The FDFD reference at $2.01^\circ$
+used about **3.3 million unknowns** and took **3,221 seconds**. The next cell at $1.01^\circ$
+would need about 13 million unknowns and did not fit in the workstation’s memory.
+An angle sweep therefore needed a description whose grid follows the slow physics.
+
+## Two scales from one twist
+
+Each monolayer has a lattice spacing $a$. Their changing alignment introduces the much
+larger moiré period $L$. For identical lattices near alignment,
 
 $$
-\beta := \frac{\theta}{\gamma}.
+L = \frac{a}{2\sin(\theta/2)},
+\qquad
+\eta = \frac{a}{L} = 2\sin(\theta/2) \simeq \theta.
 $$
 
-When $\beta \ll 1$ the local crystal barely changes over the distance light needs to "feel"
-the lattice, and a two-scale separation is justified. A systematic expansion in the scale
-ratio $\eta = a/L$ (monolayer period over moiré period) then projects the full Maxwell
-operator onto a few retained bands, producing an **effective Hamiltonian** defined on the
-registry domain and *independent of the twist angle*:
+Here the small-angle approximation uses radians. A $2^\circ$ twist gives $L\approx29a$.
+The dots below show the microscopic scale; the white arrows and cell show the slow
+stacking pattern. Change the angle to see the two scales separate. The enlarged
+monolayer cells keep their size while the moiré cell changes.
+
+</div>
+
+<BilayerExplorer />
+
+<div className="narrow">
+
+The moiré cell describes a repeating **pattern of local alignment**. It is not generally
+an exact supercell of all the dielectric objects. That distinction is what lets the
+theory address angles at which a periodic full-structure calculation is unavailable.
+At large twists the geometric construction still works, but the two scales are no
+longer well separated and the small-angle theory loses its basis.
+
+## From Maxwell to a slow envelope
+
+For a lossless, non-magnetic medium with scalar permittivity $\varepsilon(x,y)$, the
+strictly two-dimensional problem separates into two polarizations:
 
 $$
-\mathcal{H}_{\text{eff}} = \Lambda + \eta\!\left[\tfrac{1}{2}\!\left(v^{(i)}\Pi_i + \Pi_i v^{(i)}\right) + U^{(1)}_{\text{rem}}\right] + \eta^{2}\!\left[\tfrac{1}{2}\,\Pi_i\,M^{-1}_{ij}\,\Pi_j + U^{(2)}_{\text{rem}}\right] + \mathcal{O}(\eta^{3}).
+\begin{aligned}
+\mathrm{TE}:\quad -\nabla\!\cdot\!\left(\varepsilon^{-1}\nabla H_z\right)
+&= \frac{\omega^2}{c^2}H_z,\\[4pt]
+\mathrm{TM}:\quad -\nabla^2 E_z
+&= \frac{\omega^2}{c^2}\varepsilon E_z.
+\end{aligned}
 $$
 
-Every ingredient is a physical field on the registry: the local band energies $\Lambda$,
-the group velocities $v^{(i)}$, the inverse-mass tensor $M^{-1}$, the covariant momentum
-$\Pi_i$ carrying the **Berry connection**, and the **Born–Huang** leakage potentials
-$U_{\text{rem}}$. The twist angle re-enters only through the single scalar $\eta$.
+Locally, a small-angle bilayer resembles an ordinary periodic crystal with a relative
+shift between its two constituents. This shift is the **registry**, $\boldsymbol\delta$.
+Moving through the moiré pattern changes the registry slowly, so the local Bloch modes
+can serve as a basis for the full field:
 
-<FigureRow>
-  <Figure src="/figures/thesis/miniband.svg" alt="Moiré miniband dispersion" caption="Moiré minibands: the slow envelope modulation reorganizes the spectrum into flat, closely spaced bands." maxWidth="380px" />
-  <Figure src="/figures/thesis/bandwidth-scaling.svg" alt="Quadratic bandwidth scaling with twist angle" caption="A θ² bandwidth scaling, predicted by the envelope theory and independently reproduced by the reference solver." maxWidth="380px" />
-</FigureRow>
+$$
+\psi^\eta(\mathbf x)\approx
+ e^{i\mathbf k_0\cdot\mathbf r}
+ \sum_{n\in P}u_n\!\left(\mathbf r;\boldsymbol\delta(\mathbf R)\right)f_n(\mathbf R),
+\qquad \mathbf r=\frac{\mathbf x}{a},\quad \mathbf R=\frac{\mathbf x}{L}.
+$$
 
-The headline quantitative result is this **quadratic ($\theta^2$) bandwidth scaling** of the
-lowest minibands, predicted by the envelope theory and independently confirmed by a
-finite-difference (FDFD) reference that is itself checked against MPB.
+The $u_n$ resolve the fast crystal oscillations near a chosen carrier momentum
+$\mathbf k_0$. The amplitudes $f_n$ describe the slow envelope. Only a selected group
+of bands, $P$, is retained. Its separation from the other bands matters: a small twist
+alone cannot make a poorly isolated band group into a valid reduced model.
 
-## Projected operator data
+## What the effective Hamiltonian contains
 
-The framework's real payoff is *geometric*. Because it works from full Bloch eigenvectors,
-it produces spatially resolved fields (Berry connection and curvature, the Born–Huang
-potential, velocity and effective-mass maps) that decompose the moiré physics in a way no
-conventional supercell eigenvalue calculation can.
+Projecting Maxwell’s operator onto these local modes and expanding through second
+order in $\eta$ gives the following compact TE form:
 
-<Figure src="/figures/thesis/geometric-data.webp" alt="Berry curvature and Born–Huang geometric fields on the registry domain" caption="Geometric fields on the registry domain: Berry curvature and the Born–Huang metric. These are the quantities the envelope Hamiltonian is built from, and the reason the solver had to expose eigenvectors, not just eigenvalues." maxWidth="760px" />
+$$
+\begin{aligned}
+\mathcal H_{\mathrm{eff}} ={}& \Lambda
++ \eta\left[\frac12\left(v^{(i)}\Pi_i+\Pi_i v^{(i)}\right)+U_{\mathrm{rem}}^{(1)}\right]\\
+&+\eta^2\left[\frac12\Pi_i M^{-1}_{ij}\Pi_j+U_{\mathrm{rem}}^{(2)}\right]
++\mathcal O(\eta^3).
+\end{aligned}
+$$
 
-## The local-calculation workflow
+It acts on the envelope via $\mathcal H_{\mathrm{eff}}f=\lambda f$, with the dimensionless
+$\lambda=(\omega a/c)^2$. Repeated spatial indices are summed.
 
-The envelope pipeline uses Bloch eigenvectors at many registry points and constructs projected velocity, mass, and derivative data. Blaze integrates these calculations with parameter studies and explicit conventions for coordinates, gauges, and retained bands.
+- **Local band energies** $\Lambda$ describe how the spectrum changes with registry.
+- **Velocity and inverse mass** describe the local band slopes and curvatures. The mass includes virtual coupling to bands outside $P$ through Löwdin downfolding.
+- **Covariant momentum** $\Pi_i=-i\mathcal D_i$ includes the Berry connection, which tracks how the retained Bloch basis changes from one registry to another.
+- **Remainder operators** contain the remaining scalar and derivative terms, including the Born-Huang contribution from the basis changing into the discarded band space.
 
-MPB also exposes fields, eigenvectors, and group velocities through its [Python interface](https://mpb.readthedocs.io/en/latest/Python_User_Interface/). The research motivation for Blaze is an integrated extraction workflow and control over its numerical implementation.
+These coefficients are tabulated on the registry domain for a fixed material and band
+choice, then reused at different twists. For TM, transforming the field with
+$\widetilde E_z=\varepsilon^{1/2}E_z$ makes the eigenproblem Hermitian in the ordinary
+inner product. Derivatives of the factor $\rho=\varepsilon^{-1/2}$ then contribute
+additional terms. The complete expressions and definitions are collected in these
+two annotated posters.
 
-→ [**Technical Report**](/blaze) · [**API & TOML**](/configuration)
+</div>
 
+<div className="thesis-poster-grid">
+  <ImageViewer polarization="TE" src="/figures/thesis/second-edition/te-hamiltonian.svg" title="Full TE effective Hamiltonian" alt="Complete second-edition TE Hamiltonian, with every term expanded through second order, colour-coded contributions, coefficient definitions and symbol legend." caption="TE uses the out-of-plane magnetic field Hz. The poster expands the first-order remainder, the dielectric-weighted Born-Huang term and the direct and remote-band contributions. Slow derivatives act on everything to their right, including coefficient fields. Appendix A, second edition." />
+  <ImageViewer polarization="TM" src="/figures/thesis/second-edition/tm-hamiltonian.svg" title="Full TM effective Hamiltonian" alt="Complete second-edition TM Hamiltonian, with the hermitizing factor, expanded leakage flux, velocity and inverse-mass definitions, and all second-order terms." caption="TM uses the out-of-plane electric field Ez, transformed by the square root of the permittivity. The factor ρ dresses the coefficients and contributes to the leakage flux and Born-Huang potential. Every term and symbol is defined in the original poster. Appendix A, second edition." />
+</div>
+
+<div className="narrow">
+
+## Why this required Blaze2D
+
+The reduced problem is smaller, but assembling it needs more than band frequencies.
+Each registry point requires Bloch eigenvectors, velocity and mass matrix elements,
+momentum and registry derivatives, and couplings between retained and remote bands.
+Keeping four bands can require solving sixteen or more, repeated at thousands of
+slightly different crystal configurations.
+
+MPB provided a valuable reference. Its [Python interface](https://mpb.readthedocs.io/en/latest/Python_User_Interface/)
+also exposes fields, raw eigenvectors and group velocities. The missing part for this
+thesis was direct access to the specific projected operators and interband couplings
+needed by the envelope construction. Those quantities were not available as the
+operator dataset the pipeline required. Extracting them, with consistent normalization
+and gauge conventions across a registry sweep, was a separate problem from computing
+a band diagram.
+
+Blaze2D combines that access with a Rust plane-wave solver designed for repeated local
+solves. Iterative eigensolves, warm starts, mixed precision and parallel parameter
+studies address throughput; explicit Bloch and operator outputs address the data
+bottleneck. Blaze supplies the microscopic inputs. The **MSL research pipeline**
+assembles and solves the moiré envelope problem from them.
+
+<aside className="thesis-results-note" aria-label="About the thesis results">
+
+**Reading the results**
+
+The following sections present results from the thesis and assume some familiarity
+with photonic bands and effective models. For a visual overview of the operator
+data provided by Blaze, jump to [What the operator data reveal](#what-the-operator-data-reveal).
+
+</aside>
+
+## What the second edition establishes
+
+The central test is whether the small envelope problem reproduces the full crystal’s
+frequencies. **EA** labels the envelope approximation, assembled by MSL from Blaze’s
+local Bloch data. The independent references solve Maxwell’s equations on the full
+structure: **PWE** uses plane waves; **FDFD** uses a spatial grid. MPB adds a check
+for the square bilayer. Every comparison uses the same dielectric and declared band domain.
+
+Eigenvalues determine the crystal’s allowed frequencies. Similar-looking bands can
+hide missing, extra or misplaced modes. Matching **every state in a range chosen
+in advance** tests both the frequencies and their count. Agreement near the reference’s
+own numerical error shows how much the small model preserves. Frequency differences
+below use $f=\omega a/(2\pi c)$.
+
+### Convergence under controlled conditions
+
+A **frame** is the set of local Bloch field patterns used to build the envelope
+solution. Recall how the blue and orange dots change their local alignment across
+the explorer’s white cell. That change in registry also changes the local modes.
+
+- A **frozen frame** reuses the modes from one registry and carrier momentum everywhere. The envelope can vary, but its microscopic field patterns stay fixed.
+- A **registry-adapted frame** recalculates those patterns as the local alignment changes. The envelope is built on modes that follow the crystal underneath it.
+
+The first plot asks whether a smaller twist makes the prediction more accurate.
+On this smooth, weakly coupled crystal, adaptation lowers the error about fifteenfold.
+At fixed material, however, both models reach an error floor: the registry potential
+becomes stronger relative to the slow kinetic energy as the angle shrinks.
+
+A controlled test reduces the second-layer amplitude as $a_2\propto\eta^2$, keeping
+that balance fixed. Its adapted model converges approximately as **$\eta^{3.8}$**
+and reaches agreement with both full-Maxwell references of about
+**$8\times10^{-7}$ in frequency**. This rate belongs to that scaled family.
+
+<ImageViewer src="/figures/thesis/second-edition/hero_scaling.svg" title="Controlled convergence of the envelope model" alt="Logarithmic eigenvalue-error plot showing fixed-material error floors and approximately eta to the power 3.8 convergence on the scaled weak-coupling family." caption="Figure 44. Leftward means a smaller twist; downward means a smaller eigenvalue error. Grey is frozen, steel blue is registry-adapted at fixed material, and light blue also scales the second-layer amplitude. The dotted line shows how closely the two full-Maxwell references agree." />
+
+### Matching every state in a declared domain
+
+A frame also depends on **momentum**, which sets the wave’s direction and wavelength.
+The “exact frames” below use a Bloch solution at each retained momentum, summing beyond
+the low-order expansion. This separate weak-coupling test uses modes of the
+registry-averaged crystal.
+
+At **$0.607^\circ$**, a supercell contains **8,911 microscopic cells**. The chosen domain
+covers states near one minimum of the local band, called a valley. The exact-frame
+model matches all **51** states in that domain, with frequency differences of
+$4.7\times10^{-8}$ to $8.1\times10^{-8}$. These are comparable to the measured
+numerical error of the full-Maxwell reference.
+
+<ImageViewer src="/figures/thesis/second-edition/ladder_big.svg" title="All 51 states of the declared domain" alt="Spectral ladders and per-state errors comparing FDFD, fixed Bloch frames and exact momentum-dependent frames for all 51 in-domain states." caption="Figure 47. Each rung on the left is one allowed frequency; connecting lines pair the same state across models. The right panel resolves differences too small to see in the ladders. Exact frames recover all 51 states. The fixed-frame model has a smaller valid range and fails the full state count." />
+
+Bands outside the retained set also influence how its modes propagate. The second-order
+**Löwdin correction** includes this influence and recovers two to three orders of
+accuracy on the affected states. **Feshbach downfolding** treats the same coupling
+without that second-order truncation. Exact momentum-dependent frames improve it
+further. The discarded bands contribute corrections, while the envelope state set
+stays fixed.
+
+<ImageViewer src="/figures/thesis/second-edition/order_ladder.svg" title="Accuracy recovered by completing the model" alt="Errors for 21 spectral states across five models: fixed frame, one- and three-band Löwdin corrections, Feshbach downfolding and resummed exact frames." caption="Figure 48. All five models predict the same 21 states. Left: frequency error for each state. Right: typical errors as median bars, with the worst error marked above each. Lower means better. Adding the missing band coupling explains much of the improvement." />
+
+### What remains unresolved at strong coupling
+
+The square rod bilayer is harder: its changing registry creates deep wells that
+confine the envelopes. The revised model brings the lowest frequency close to the
+full-wave references and reaches **$0.50^\circ$**, where the full calculation did not
+fit in memory. Higher in the spectrum, however, symmetry should make groups of four
+modes share a frequency. The model splits these groups incorrectly. Its adapted
+basis still needs a consistent phase and mixing convention, or **gauge**, that
+respects the crystal’s symmetry.
+
+<ImageViewer src="/figures/thesis/second-edition/thesis_crystal_ladder.svg" title="The square bilayer across five angles" alt="Manifold spectra for five commensurate angles, with MPB and FDFD references at the three largest angles and envelope results down to half a degree." caption="Figure 43. Each column is a twist angle. The upper ladders show frequencies relative to each method’s lowest state; the lower panels show errors against FDFD. The lowest state agrees well, but the groups of four remain unresolved. The two smallest angles have envelope predictions only, with no full-wave reference here." />
+
+## What the operator data reveal
+
+Figure 61 collects the local band data and Hamiltonian coefficients for a honeycomb TM crystal. Its retained
+**Dirac pair** consists of two bands that meet at a cone-shaped crossing when aligned.
+Each sheet maps a different quantity over the same local alignments, like moving
+around the explorer’s white cell.
+
+<div className="thesis-stack">
+  <ImageViewer src="/figures/thesis/second-edition/dirac_tm_full_stack.svg" title="The full honeycomb Hamiltonian stack" alt="Ten separated sheets above a honeycomb moiré cell: the two Dirac bands, their gap, group velocity, Berry connection and curvature, two kinetic mass maps, and the Born-Huang correction." caption="Figure 61. Ten datasets from a 48 × 48 registry sweep. Vertical separation makes the individual quantities visible; it is not a physical stack of ten layers. Open the figure to inspect the full detail." />
+  <div className="thesis-stack-guide">
+    <span className="thesis-kicker">Read from the bottom up</span>
+
+**Local spectrum.** Above the crystal sit the two band energies and their gap. Their variation supplies the landscape the envelope moves through.
+
+**Propagation.** The velocity and kinetic mass describe the slopes and curvatures of the local bands, including the influence of remote bands.
+
+**Changing modes.** The Berry fields track changes within the retained pair. The Born-Huang term at the top records how its basis changes into discarded bands.
+
+The same registry data can be mapped onto different moiré cell sizes. Changing the twist changes that spatial scale, as in the explorer above.
+
+  </div>
+</div>
+
+The maps below unpack the stack’s geometric part. The upper row shows the local gap
+and two measures of how strongly the retained basis changes into other bands.
+Bright lines mark the strongest changes.
+
+A computed mode has an arbitrary phase; a nearly degenerate pair can also be mixed.
+A **gauge** fixes these choices between neighbouring registries. The two Berry-connection
+maps show how inconsistent choices can dominate the apparent variation. The Berry
+curvature at bottom right is independent of that choice.
+
+<ImageViewer src="/figures/thesis/second-edition/dirac_metrics.svg" title="Geometry of the honeycomb Dirac pair" alt="Six registry maps: Dirac gap, Born-Huang potential, quantum metric, Berry connection in two gauges, and gauge-invariant Berry curvature." caption="Figure 52. Each panel spans the same relative layer shifts. Top: gap, Born-Huang contribution and quantum metric. Bottom: the Berry connection before and after aligning neighbouring frames, followed by the gauge-invariant curvature. Colour scales differ between panels." />
+
+### Does a smaller twist make flatter bands?
+
+Flat bands and magic angles are of particular interest in physics. A study of band
+flattening was therefore a natural application of the thesis’s effective model.
+
+A moiré band traces an envelope mode’s frequency as its momentum changes. Its slope
+sets the wave packet’s propagation speed, so flat bands are candidates for slow light.
+The **bandwidth** measures the frequency spread along the sampled momentum path.
+
+The pipeline scanned **237 angles** from $0.2^\circ$ to $10^\circ$. Above $1.5^\circ$,
+the typical bandwidth follows roughly $\theta^{1.6}$. At smaller angles the fixed-grid
+calculation plateaus. **No magic angle was established**: the shallow minimum does
+not demonstrate a collapse to a flat band. Resolving that question would require
+finer, angle-dependent grids and a direct check of the propagation velocity.
+
+<ImageViewer src="/figures/thesis/second-edition/bandwidth_vs_angle.svg" title="Bandwidth across the twist-angle scan" alt="Per-mode and RMS miniband widths across 237 twist angles, including the theta to the power 1.6 fit and the low-angle plateau." caption="Figure 53. Top: bandwidths of six individual modes and the RMS average over twenty. Bottom: logarithmic axes expose the scaling trend and compare it with a quadratic law. The low-angle plateau is resolution-sensitive; the minimum near 1.05 degrees is not a demonstrated magic angle." />
+
+Blaze exposes the local modes and operator matrix elements so a smaller model can
+be assembled, tested and understood term by term. The second edition establishes that approach in controlled
+regimes. Strong-coupling symmetry and an extension to photonic slabs remain open.
+
+<DocumentDownload src="/reports/masters-thesis-second-edition.pdf" label="Read the second edition" />
+
+</div>
 </div>

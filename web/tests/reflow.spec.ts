@@ -11,10 +11,12 @@ for (const width of [320, 1920]) test(`public routes reflow at ${width}px`, asyn
   test.setTimeout(180_000);
   await page.setViewportSize({ width, height: width === 320 ? 740 : 1080 });
   const failures: string[] = [];
+  page.on('pageerror', error => failures.push(`${page.url()}: ${error.message}`));
   for (const route of routes) {
     const response = await page.goto(`${base}/${route}${route ? '/' : ''}`);
     expect(response?.status(), route).toBe(200);
-    if (route === 'workbench' || route.startsWith('examples/'))
+    if (route === 'examples' || route.startsWith('examples/')) await expect(page).toHaveURL(/\/workbench\/?\?view=examples/);
+    if (route === 'workbench' || route === 'examples' || route.startsWith('examples/'))
       await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
     await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(100);
@@ -45,10 +47,15 @@ test('primary workflows have accessible controls and contrast', async ({ page })
   for (const route of ['', 'installation', 'configuration', 'workbench']) {
     await page.goto(`${base}/${route}${route ? '/' : ''}`);
     if (route === 'workbench') await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
-    for (const tab of route === 'workbench' ? ['Model', 'Study', 'Results'] : ['']) {
+    for (const tab of route === 'workbench' ? ['Geometry', 'Study', 'Results', 'Examples'] : ['']) {
       if (tab) await page.getByRole('tab', { name: tab, exact: true }).click();
       const report = await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
       expect(report.violations.map(v => ({ id:v.id, impact:v.impact, nodes:v.nodes.map(n=>n.target) })), `${route} ${tab}`).toEqual([]);
+    }
+    if (route === 'workbench') {
+      await page.getByRole('tab', { name: 'TOML', exact: true }).click();
+      const editorReport = await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa']).analyze();
+      expect(editorReport.violations.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) }))).toEqual([]);
     }
   }
 });

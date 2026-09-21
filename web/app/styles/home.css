@@ -1,0 +1,659 @@
+/**
+ * Homepage.
+ *
+ * The welcome and the card grid are separated by a rule rather than by empty
+ * space, so the page can introduce the project properly without pushing the
+ * articles below the fold. On a wide screen the introduction and the site index
+ * sit side by side, which is what keeps it compact.
+ */
+
+.welcome {
+  display: grid;
+  /* The index column is held at the width its open list needs, not at the
+     width of whatever is showing. Otherwise opening the disclosure would drag
+     the prose in beside it from full width to two thirds, which is a far bigger
+     movement than the one being asked for. */
+  grid-template-columns: minmax(0, 1fr) 43.5rem;
+  column-gap: 3.5rem;
+  align-items: start;
+  padding-bottom: 2.5rem;
+  margin-bottom: 2.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.welcome-intro {
+  min-width: 0;
+}
+/* Spans both columns. */
+.article .welcome > h1 {
+  grid-column: 1 / -1;
+  font-size: 3rem;
+  letter-spacing: -0.035em;
+  margin: 0 0 1.4rem;
+}
+.article .welcome-intro p {
+  margin: 0 0 0.9rem;
+  color: var(--text-muted);
+  font-size: 1.15rem;
+  line-height: 1.7;
+}
+.article .welcome-intro strong {
+  color: var(--text-primary);
+}
+/* Prose links here keep the text colour instead of taking the accent, so the
+   paragraph reads as a paragraph; the rule appears on hover. */
+.article .welcome-intro > p a,
+.article .welcome-intro > p a strong {
+  color: var(--text-primary);
+  text-decoration: none;
+  cursor: pointer;
+}
+.article .welcome-intro > p a:hover,
+.article .welcome-intro > p a:hover strong {
+  text-decoration: underline;
+}
+
+.welcome-callout {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 1.4rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.625rem;
+  background: linear-gradient(115deg, var(--accent-surface), var(--surface-base));
+  color: var(--accent-soft);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.article .welcome-callout {
+  color: var(--accent-soft);
+  text-decoration: none;
+}
+.welcome-callout:hover {
+  border-color: var(--accent-hover);
+  background: var(--accent-surface-hover);
+}
+.welcome-callout-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-right: auto;
+}
+.welcome-callout-text > strong {
+  font-size: 1.1rem;
+  font-weight: 550;
+}
+.welcome-callout small {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+/* The one claim worth reading twice. */
+.welcome-callout small strong {
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+.welcome-callout:hover small strong {
+  color: var(--text-primary);
+}
+.welcome-callout:hover small {
+  color: var(--text-secondary);
+}
+
+/* Keeps the longer explanation reachable without giving it a card. */
+.article .welcome-aside p {
+  margin: 0.95rem 0 0;
+  font-size: 0.98rem;
+  color: var(--text-subtle);
+}
+.article .welcome-aside a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.welcome-index {
+  min-width: 0;
+  /* Centred against the prose column rather than top-aligned; the cards keep
+     their own padding. */
+  align-self: center;
+}
+/* Closed by default: the four answers are an index, not the first thing to
+   read. Opening fades them in rather than snapping, and the column is sized
+   for the open list either way, so the prose beside it never reflows. */
+.welcome-answers summary {
+  display: flex;
+  align-items: center;
+  /* Shrink-wrapped so the click target is the label rather than the whole
+     column, then centred over the list it opens. */
+  width: max-content;
+  margin-inline: auto;
+  padding: 0.45rem 0 0.7rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  cursor: pointer;
+  list-style: none;
+  transition: color 0.15s;
+}
+.welcome-answers summary::-webkit-details-marker {
+  display: none;
+}
+.welcome-answers summary:hover {
+  color: var(--text-secondary);
+}
+/* Opening runs as one sequence: the block grows from nothing, which carries the
+   centred summary upwards, and the answers fade in just behind it.
+   `interpolate-size` is what lets a height of `auto` be animated at all; where
+   a browser does not support it the disclosure simply opens at once. */
+.welcome-answers {
+  interpolate-size: allow-keywords;
+}
+.welcome-answers::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    content-visibility 0.3s allow-discrete;
+}
+.welcome-answers[open]::details-content {
+  block-size: auto;
+}
+.welcome-answers[open] .welcome-links {
+  animation: welcome-answers-open 0.25s cubic-bezier(0.4, 0, 0.2, 1) 0.1s both;
+}
+@keyframes welcome-answers-open {
+  from {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-answers[open] .welcome-links {
+    animation: none;
+  }
+}
+.article .welcome-links {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+}
+.article .welcome-links li {
+  margin: 0;
+}
+.article .welcome-links a {
+  display: block;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5625rem;
+  background: var(--surface-raised);
+  text-decoration: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.welcome-links a:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-surface);
+}
+.welcome-links strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 550;
+  color: var(--text-primary);
+  margin-bottom: 0.3rem;
+}
+.welcome-links a:hover strong {
+  color: var(--accent);
+}
+.welcome-links strong svg {
+  flex-shrink: 0;
+  color: var(--text-subtle);
+}
+.welcome-links a:hover strong svg {
+  color: var(--accent);
+}
+.welcome-links span {
+  display: block;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+  /* Answers read as single lines; the column above is sized to hold them. */
+  white-space: nowrap;
+}
+
+/* Side by side only while the prose keeps the wider of the two columns. The
+   index is sized by its longest answer, so below this width it would start
+   taking space from the introduction rather than sharing it; there it stacks
+   under the prose and wraps instead. */
+@media (max-width: 1500px) {
+  .welcome {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.75rem;
+  }
+  /* Stacked, either block would otherwise run the full content width, which is
+     well past a comfortable measure. */
+  .welcome-intro,
+  .welcome-index {
+    max-width: 62rem;
+  }
+  .welcome-index {
+    align-self: start;
+  }
+  .welcome-links span {
+    white-space: normal;
+  }
+}
+@media (max-width: 900px) {
+  .welcome {
+    padding-bottom: 2rem;
+    margin-bottom: 2rem;
+  }
+}
+
+/* Card sizes come from each article's `card.size` frontmatter (1x1, 2x1, 1x2,
+   2x2) and are laid out with container queries, so the grid reflows against the
+   content column rather than the viewport. */
+.posts {
+  container: posts / inline-size;
+}
+.post-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.15rem;
+}
+
+.post-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+.post-tile:hover {
+  border-color: var(--accent);
+}
+.post-image {
+  height: 11.25rem;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--surface-raised);
+}
+.post-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.85);
+  transition: filter 0.2s ease;
+}
+.post-tile:hover .post-image img {
+  filter: saturate(1);
+}
+.post-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 1.35rem;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.post-body h3 {
+  /* Cards render inside `.article`, which gives bare headings and paragraphs
+     prose margins; a card sets its own spacing with `gap`. */
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.95rem;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+}
+.post-body p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+.post-tags {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* ---- API & TOML card art -------------------------------------------------
+ * Python and Rust rest side by side; hovering the card draws them apart, fades
+ * in the configuration document between them, then runs a line out to each one
+ * in turn. One second in all, and it unwinds the same way on the way out.
+ *
+ * Transitions rather than keyframes, because the hover state is a state and not
+ * a one-shot: leaving halfway reverses from wherever it got to instead of
+ * snapping back. The staged delays apply only on the way in, so the return is
+ * immediate.
+ */
+.post-tile-diagram .post-body {
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+}
+.api-art {
+  display: block;
+  width: 100%;
+  max-width: 14rem;
+  height: auto;
+}
+.api-art-python,
+.api-art-rust,
+.api-art-document,
+.api-art-line {
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 0.45s;
+  transition-delay: 0s;
+}
+.api-art-python,
+.api-art-rust {
+  transition-property: transform;
+}
+.api-art-document {
+  opacity: 0;
+  transition-property: opacity;
+  transition-duration: 0.3s;
+}
+/* Dashed to its own length, so the line is there but drawn back to nothing. */
+.api-art-line {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  transition-property: stroke-dashoffset;
+  transition-duration: 0.25s;
+}
+.post-tile:hover .api-art-python {
+  transform: translateX(-34px);
+}
+.post-tile:hover .api-art-rust {
+  transform: translateX(34px);
+}
+.post-tile:hover .api-art-document {
+  opacity: 1;
+  transition-delay: 0.25s;
+}
+.post-tile:hover .api-art-line-left {
+  stroke-dashoffset: 0;
+  transition-delay: 0.5s;
+}
+.post-tile:hover .api-art-line-right {
+  stroke-dashoffset: 0;
+  transition-delay: 0.75s;
+}
+
+/* ---- Manuscript card art -------------------------------------------------
+ * Four sheets stacked at rest; hovering the card fans them apart over 0.7s and
+ * they close again on the way out. Transforms come from the
+ * `blaze-documents` package -- see DocumentsFanArt.tsx for what was changed.
+ */
+.post-tile-documents .post-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42%;
+  align-items: center;
+  column-gap: 1.1rem;
+}
+.post-tile-documents .post-body > h3 {
+  grid-area: 1 / 1;
+  align-self: end;
+}
+.post-tile-documents .post-body > p {
+  grid-area: 2 / 1;
+  align-self: start;
+}
+.post-tile-documents .post-body > .bd-art {
+  grid-area: 1 / 2 / 3 / 3;
+}
+.bd-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  color: var(--text-primary);
+}
+/* Each sheet rests in one place and fans to another; only the transform moves. */
+.bd-motion {
+  transform-box: view-box;
+  transform-origin: 160px 120px;
+  transform: var(--bd-rest);
+  transition: transform 700ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bd-sheet-0 {
+  --bd-rest: translate(-8px, -6px) rotate(-13deg);
+  --bd-fan: translate(-80px, 7px) rotate(-13deg);
+}
+.bd-sheet-1 {
+  --bd-rest: translate(7px, -5px) rotate(12deg);
+  --bd-fan: translate(82px, 5px) rotate(12deg);
+}
+.bd-sheet-2 {
+  --bd-rest: translate(-3px, -2px) rotate(-6deg);
+  --bd-fan: translate(-33px, 2px) rotate(-6deg);
+}
+.bd-sheet-3 {
+  --bd-rest: translate(0, 0) rotate(3deg);
+  --bd-fan: translate(17px, 0) rotate(3deg);
+}
+.post-tile:hover .bd-motion {
+  transform: var(--bd-fan);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bd-motion {
+    transition: none;
+  }
+}
+
+/* ---- Installation card art -----------------------------------------------
+ * Two commands sit quietly at rest so the title still leads. Hovering the card
+ * runs them and three result lines print in turn, a second in all. The results
+ * hold their space at rest rather than expanding into it, so nothing above them
+ * shifts as they arrive.
+ */
+.post-tile-console .post-body {
+  align-items: stretch;
+  gap: 0.45rem;
+}
+/* The console reads first and the title settles into the far corner, while the
+   heading still comes first in the markup. */
+.post-tile-console h3 {
+  order: 2;
+  margin-top: auto;
+  align-self: flex-end;
+  text-align: right;
+}
+.console-art {
+  display: flex;
+  flex-direction: column;
+  gap: 0.06rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  line-height: 1.45;
+  /* Recessed by colour rather than by opacity. At 50% these commands measured
+     2.9:1 against the card and failed the accessibility check the suite runs;
+     a dim grey reads just as quietly and stays legible. */
+  color: var(--text-subtle);
+  transition: color 0.3s;
+}
+.post-tile:hover .console-art {
+  color: var(--text-secondary);
+}
+.console-art-line {
+  display: flex;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+.console-art-prompt,
+.console-art-tick {
+  font-style: normal;
+}
+.console-art-prompt {
+  color: var(--accent);
+}
+.console-art-tick {
+  color: var(--brand-orange);
+}
+.console-art-result {
+  opacity: 0;
+  transform: translateY(-0.25rem);
+  transition:
+    opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.post-tile:hover .console-art-result {
+  opacity: 1;
+  transform: none;
+}
+/* Printed in turn: the last lands exactly on the second. */
+.post-tile:hover .console-art-result:nth-of-type(4) {
+  transition-delay: 0.2s;
+}
+.post-tile:hover .console-art-result:nth-of-type(5) {
+  transition-delay: 0.4s;
+}
+.post-tile:hover .console-art-result:nth-of-type(6) {
+  transition-delay: 0.58s;
+}
+.post-tile:hover .console-art-result:nth-of-type(7) {
+  transition-delay: 0.75s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-art,
+  .console-art-result {
+    transition: none;
+  }
+}
+
+/* The two logos alone still say what the card is about. */
+@media (prefers-reduced-motion: reduce) {
+  .api-art-python,
+  .api-art-rust,
+  .api-art-document,
+  .api-art-line {
+    transition: none;
+  }
+}
+
+.post-tags {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+/* An optional date, in the corner opposite the title. Only the cards whose
+   frontmatter sets `showDate` have one. */
+.post-body time {
+  align-self: flex-end;
+  margin-top: auto;
+  padding-top: 0.6rem;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  transition: color 0.15s;
+}
+.post-tile:hover .post-body time {
+  color: var(--text-secondary);
+}
+
+@container posts (min-width: 40rem) {
+  .post-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container posts (min-width: 68.001rem) {
+  .post-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    /* Every row the same height, set by whichever row needs the most. `1fr`
+       under an indefinite grid height resolves to one shared fraction, so a
+       one-row tile is the same height whichever row it landed in -- the
+       Manuscript matches the Release above it -- and a two-row tile ends
+       exactly where its neighbour's second row does. `auto` rows would each
+       take their own content's height and none of that would hold. */
+    grid-auto-rows: minmax(min-content, 1fr);
+    /* Tiles of four different shapes cannot pack into a full rectangle in the
+       order they are written, and a gap in the middle of the grid reads as a
+       mistake. Dense lets a later small tile fill an earlier gap; the reading
+       order in the markup stays the relevance order. */
+    grid-auto-flow: dense;
+  }
+  /* The floor a row rests on when nothing in it asks for more. It belongs on
+     the tile rather than on the track, because a track floor would be a floor
+     the `1fr` could not rise above. A two-row tile asks for this once, which is
+     half a row each -- the one-row tiles set the floor. */
+  .post-tile {
+    min-height: 13rem;
+  }
+  .post-tile-2x1 {
+    grid-column: span 2;
+    flex-direction: row;
+  }
+  .post-tile-1x2 {
+    grid-row: span 2;
+  }
+  .post-tile-2x2 {
+    grid-column: span 2;
+    grid-row: span 2;
+  }
+  /* The banner here is a screenshot of the interface, and a fixed box would
+     crop it to whichever slice happened to fall in the middle. The box takes
+     the picture's own proportions instead, so the whole frame shows. It is
+     shorter than a cropped box would be, and being the first thing in the
+     column it keeps the top; the text centres in what is left below. */
+  .post-tile-1x2 .post-image {
+    height: auto;
+  }
+  .post-tile-1x2 .post-image img {
+    display: block;
+    height: auto;
+    object-fit: contain;
+  }
+  .post-tile-1x2 .post-body {
+    justify-content: center;
+  }
+  /* The largest tile spans two rows, and its text needs far less than that, so
+     the picture takes whatever is left below it. It claims no height of its
+     own: an intrinsic size here -- an aspect ratio, or the source image's own
+     shape -- would be a demand two rows deep, and the rows it shares with the
+     one-row tiles beside it would stretch to meet it. Cropping is `object-fit`
+     above. */
+  .post-tile-2x2 .post-image {
+    position: relative;
+    height: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  /* Out of flow, so the source's own proportions are not a height demand
+     either; `inset` gives it the box the flex line leaves it. */
+  .post-tile-2x2 .post-image img {
+    position: absolute;
+    inset: 0;
+  }
+  .post-tile-2x2 .post-body {
+    flex: 0 0 auto;
+  }
+  .post-tile-2x1 .post-image {
+    height: auto;
+    width: 35%;
+  }
+  .post-tile-1x1 .post-image {
+    height: 6rem;
+  }
+  .post-tile-text .post-body {
+    justify-content: center;
+  }
+}

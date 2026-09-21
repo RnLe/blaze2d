@@ -1,16 +1,53 @@
 ---
+layout: home
 title: Blaze2D
 description: Photonic bands, parameter studies, and projected operator extraction.
 ---
 
-import PostGrid from '../components/PostGrid'
+import PostGrid from '@/components/article/PostGrid'
+import WelcomeLinks from '@/components/article/WelcomeLinks'
+import WorkbenchCallout from '@/components/article/WorkbenchCallout'
 
-<div className="homepage-intro">
+<section className="welcome">
 
-Blaze2D computes photonic bands and projected operators for two-dimensional periodic
-dielectrics. Start with an example or the Workbench, and explore the research behind
-the solver. [Read the introduction](/introduction).
+# Blaze2D: A Rust Maxwell solver for photonic crystals
+
+<div className="welcome-intro">
+
+Blaze computes **band structures**, **configuration studies**, and **projected
+operators** for 2D periodic dielectrics. Built for fast, large-scale parameter
+sweeps, it exposes operator data unavailable in conventional solvers such as MPB.
+
+Created for a [**master’s thesis in theoretical physics at TU Dortmund
+University**](/thesis) on photonic moiré crystals, Blaze remains actively
+developed. Its [**methods, measurements, and reasoning**](/blaze) are documented
+[here](/blaze).
+
+Use Blaze through [**Python**](https://pypi.org/project/blaze2d/)
+(`pip install blaze2d`), the command line, or this website’s **interactive
+browser tool**, which requires **no installation**.
+
+<WorkbenchCallout />
+
+<div className="welcome-aside">
+
+New to photonic band structures? Start with the [introduction](/introduction).
 
 </div>
+
+</div>
+
+<div className="welcome-index">
+
+<details className="welcome-answers">
+<summary>What this website answers</summary>
+
+<WelcomeLinks />
+
+</details>
+
+</div>
+
+</section>
 
 <PostGrid />

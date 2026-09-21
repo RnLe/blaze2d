@@ -9,7 +9,8 @@ import { GridRows } from '@visx/grid';
 import { Text } from '@visx/text';
 import useSWR from 'swr';
 import { CHART_STYLES } from './BarChart';
-import { getAssetPath } from '../../lib/paths';
+import { getAssetPath } from '@/lib/paths';
+import { series } from '@/lib/theme';
 
 interface BoxPlotStats {
   min: number;
@@ -55,9 +56,9 @@ export interface DeviationBoxPlotChartProps {
 const defaultMargin = { top: 60, right: 30, bottom: 60, left: 80 };
 
 // Colors matching band diagram
-const F64_COLOR = '#a3befa';  // Full precision - light blue
-const F32_COLOR = '#bbc1cb';  // Mixed precision - gray
-const COMPARE_COLOR = '#435f9d';  // f32 vs f64 - reference blue
+const F64_COLOR = series.primary;  // Full precision - light blue
+const F32_COLOR = series.muted;  // Mixed precision - gray
+const COMPARE_COLOR = series.reference;  // f32 vs f64 - reference blue
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 

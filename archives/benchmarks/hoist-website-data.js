@@ -104,7 +104,7 @@ async function hoistSingleCoreData() {
   // Write transformed data
   const outputFile = join(outputPath, 'single-core.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -200,7 +200,7 @@ async function hoistSeries7Data() {
   // Write transformed data
   const outputFile = join(outputPath, 'series7-scaling.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -290,7 +290,7 @@ async function hoistMultiCoreData() {
   // Write transformed data
   const outputFile = join(outputPath, 'multi-core.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -358,7 +358,7 @@ async function hoistSeries5Data() {
   // Write transformed data
   const outputFile = join(outputPath, 'series5-memory.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -404,7 +404,7 @@ async function hoistSeries3Data() {
   // Write transformed data
   const outputFile = join(outputPath, 'series3-resolution.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -481,7 +481,7 @@ async function hoistSeries4Data() {
   // Write transformed data
   const outputFile = join(outputPath, 'series4-iterations.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -526,7 +526,7 @@ async function hoistSeries1Data() {
   // Write transformed data
   const outputFile = join(outputPath, 'series1-epsilon.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -573,7 +573,7 @@ async function hoistSeries2Data() {
   // Write transformed data
   const outputFile = join(outputPath, 'series2-bands.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }
@@ -672,7 +672,7 @@ async function hoistSeries6Data() {
   // Write transformed data
   const outputFile = join(outputPath, 'series6-accuracy.json');
   await writeFile(outputFile, JSON.stringify(result, null, 2));
-  console.log(`✅ Wrote ${outputFile}`);
+  console.log(`Wrote ${outputFile}`);
 
   return true;
 }

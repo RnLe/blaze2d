@@ -2,12 +2,14 @@
 
 import { useMemo } from 'react';
 import LineChart, { LineSeries } from './LineChart';
-import { useSeries5Benchmarks } from '../../lib/use-benchmarks';
+import { useSeries5Benchmarks } from '@/lib/use-benchmarks';
+import ChartPlaceholder from './ChartPlaceholder';
+import { series, theme } from '@/lib/theme';
 
 // Colors for TM and TE polarizations
 const COLORS = {
-  TM: '#eaf1fe',   // Light blue-white
-  TE: '#5477c4',   // Blue-gray
+  TM: series.highlight,   // Light blue-white
+  TE: series.reference,   // Blue-gray
 };
 
 interface MemoryRatioChartProps {
@@ -134,9 +136,7 @@ export default function MemoryRatioChart({
 
   if (loading) {
     return (
-      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-        Loading benchmark data...
-      </div>
+      <ChartPlaceholder width={width} height={height} />
     );
   }
 
@@ -175,7 +175,7 @@ export default function MemoryRatioChart({
       <p style={{
         marginTop: '1rem',
         fontSize: '0.875rem',
-        color: '#888',
+        color: theme.textSubtle,
         lineHeight: 1.5,
         fontFamily: 'var(--font-sans), system-ui, sans-serif',
         fontStyle: 'italic',

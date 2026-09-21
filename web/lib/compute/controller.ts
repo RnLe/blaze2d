@@ -1,5 +1,5 @@
-import type { BandPoint, Config, Diagnostic, PlannedJob, ValidationReport } from '../contract/generated';
-import { resultBytes, type Failure, type Result, type RunEvent } from '../contract/records';
+import type { BandPoint, Config, Diagnostic, PlannedJob, ValidationReport } from '@/lib/contract/generated';
+import { resultBytes, type Failure, type Result, type RunEvent } from '@/lib/contract/records';
 import { diagnostic, EXECUTION_BUDGET, type BuildInfo, type SolveRequest, type SolveResponse, type ValidationRequest, type ValidationResponse } from './protocol';
 import { holdRun, saveHeader, saveRecord, type RunHeader } from './storage';
 

@@ -14,6 +14,7 @@ interface ActiveBand {
   progress: number;      // 0 to 1+, how far across the screen
   yOffset: number;       // Random vertical offset (0-1)
   hue: number;           // Color hue
+  saturation: number;    // Per-family, so orange can sit back from blue
   // Depth-based properties (0 = far/background, 1 = close/foreground)
   depth: number;
   dotSize: number;
@@ -26,19 +27,21 @@ interface ActiveBand {
 function createBandFromDepth(depth: number, bandIndex: number, initialProgress: number = 0): ActiveBand {
   // depth: 0 = far away (small, slow, long trail), 1 = close (big, fast, short trail)
   
-  // Color range: blue (200-240), purple (260-300), neon green (100-140)
-  const colorRanges = [
-    200 + Math.random() * 40,  // Blue
-    260 + Math.random() * 40,  // Purple
-    100 + Math.random() * 40,  // Neon green
-  ];
-  const hue = colorRanges[Math.floor(Math.random() * colorRanges.length)];
+  // The two brand colours rather than one: Blaze blue is hsl(207 58% 46%) and
+  // Blaze orange hsl(25 83% 54%). Each family gets a narrow hue spread so the
+  // curves still read as one palette, and the orange runs at roughly half its
+  // brand saturation -- at full strength it burns through the blue instead of
+  // mixing with it.
+  const orange = Math.random() < 0.42;
+  const hue = orange ? 20 + Math.random() * 14 : 198 + Math.random() * 18;
+  const saturation = orange ? 42 + Math.random() * 12 : 54 + Math.random() * 12;
 
   return {
     bandIndex,
     progress: initialProgress,
     yOffset: 0.1 + Math.random() * 0.8,
     hue,
+    saturation,
     depth,
     // Far (depth=0): small dots (0.8), slow (0.000192), long trail (120), dense (1)
     // Close (depth=1): big dots (3.2), moderate speed (0.000528), medium trail (50), sparse (2.5)
@@ -72,10 +75,13 @@ export default function BandBackground() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Resize canvas to window
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    let width = innerWidth, height = innerHeight, previous = 0;
     const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      width = innerWidth; height = innerHeight;
+      const ratio = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -104,6 +110,8 @@ export default function BandBackground() {
     }
 
     const animate = (timestamp: number) => {
+      const step = previous ? Math.min((timestamp - previous) / (1000 / 60), 2) : 1;
+      previous = timestamp;
       // Spawn new bands periodically
       if (timestamp - lastSpawnTime > spawnInterval) {
         spawnBand(0);
@@ -112,14 +120,14 @@ export default function BandBackground() {
 
       // Clear canvas completely each frame
       ctx.fillStyle = 'rgb(0, 0, 0)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, width, height);
 
       // Sort by depth so far bands render first (behind close bands)
       const sortedBands = [...activeBandsRef.current].sort((a, b) => a.depth - b.depth);
 
       // Update and draw each active band
       activeBandsRef.current = activeBandsRef.current.filter(band => {
-        band.progress += band.speed;
+        if (!motion.matches) band.progress += band.speed * step;
         
         // Remove if fully off screen (trail has completely passed)
         const maxTrailProgress = band.trailLength / bandData.n_points;
@@ -145,10 +153,10 @@ export default function BandBackground() {
 
           const distFromHead = headIdx - pointIdx;
           
-          const x = (pointIdx / nPoints) * canvas.width;
-          const baseY = band.yOffset * canvas.height;
-          const curveY = bandCurve[pointIdx] * canvas.height * 0.3;
-          const y = baseY + curveY - canvas.height * 0.15;
+          const x = (pointIdx / nPoints) * width;
+          const baseY = band.yOffset * height;
+          const curveY = bandCurve[pointIdx] * height * 0.3;
+          const y = baseY + curveY - height * 0.15;
 
           // Alpha fades linearly from 1 at head to 0 at trail end
           const alpha = 1 - (distFromHead / band.trailLength);
@@ -158,26 +166,36 @@ export default function BandBackground() {
 
           ctx.beginPath();
           ctx.arc(x, y, band.dotSize, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${band.hue}, 80%, ${45 + band.depth * 15}%, ${alpha * 0.9 * brightnessMultiplier})`;
+          ctx.fillStyle = `hsla(${band.hue}, ${band.saturation}%, ${44 + band.depth * 14}%, ${alpha * 0.9 * brightnessMultiplier})`;
           ctx.fill();
         }
       }
 
-      animationRef.current = requestAnimationFrame(animate);
+      if (!motion.matches && !document.hidden) animationRef.current = requestAnimationFrame(animate);
     };
 
-    // Start animation
-    animationRef.current = requestAnimationFrame(animate);
+    const resume = () => {
+      cancelAnimationFrame(animationRef.current); previous = 0;
+      if (!document.hidden) animationRef.current = requestAnimationFrame(animate);
+    };
+    motion.addEventListener('change', resume);
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('resize', resume);
+    resume();
 
     return () => {
       cancelAnimationFrame(animationRef.current);
       window.removeEventListener('resize', resize);
+      window.removeEventListener('resize', resume);
+      motion.removeEventListener('change', resume);
+      document.removeEventListener('visibilitychange', resume);
     };
   }, [bandData]);
 
   return (
     <canvas
       ref={canvasRef}
+      aria-hidden="true"
       style={{
         position: 'fixed',
         top: 0,

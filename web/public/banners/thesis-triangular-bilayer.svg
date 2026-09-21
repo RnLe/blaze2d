@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820">
+<title>A triangular bilayer at a six-degree twist</title>
+<desc>Blue and orange triangular lattices, sixty-four lattice constants across. Solid sites reveal several moiré cells on a black background.</desc>
+<defs>
+  <pattern id="blue" width="25" height="43.30127018922193" patternUnits="userSpaceOnUse" x="793.75" y="399.1746824526945">
+  <circle cx="6.25" cy="10.825317547305483" r="4.6" fill="#317cb8"/>
+  <circle cx="18.75" cy="32.47595264191645" r="4.6" fill="#317cb8"/>
+</pattern>
+  <pattern id="orange" width="25" height="43.30127018922193" patternUnits="userSpaceOnUse" x="793.75" y="399.1746824526945">
+  <circle cx="6.25" cy="10.825317547305483" r="4.6" fill="#eb7929"/>
+  <circle cx="18.75" cy="32.47595264191645" r="4.6" fill="#eb7929"/>
+</pattern>
+  <radialGradient id="fade"><stop offset="40%" stop-color="#000000" stop-opacity="0"/><stop offset="100%" stop-color="#000000" stop-opacity="0.55"/></radialGradient>
+</defs>
+<rect width="1600" height="820" fill="#000000"/>
+<rect x="-250" y="-400" width="2100" height="1620" fill="url(#blue)"/>
+<g style="mix-blend-mode:screen" transform="rotate(6 800 410)"><rect x="-250" y="-400" width="2100" height="1620" fill="url(#orange)"/></g>
+<rect width="1600" height="820" fill="url(#fade)"/>
+</svg>

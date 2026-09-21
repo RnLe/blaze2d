@@ -1,0 +1,17 @@
+/**
+ * Benchmark charts.
+ *
+ * The charts themselves are SVG built with visx; these rules cover the frames
+ * and controls around them. Series colours live in lib/theme.ts because canvas
+ * cannot read CSS custom properties.
+ */
+
+.chart-placeholder {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subtle);
+  font-size: 0.9rem;
+}

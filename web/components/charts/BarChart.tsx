@@ -8,6 +8,7 @@ import { scaleLinear, scaleBand, scaleOrdinal } from '@visx/scale';
 import { AxisLeft, AxisBottom } from '@visx/axis';
 import { GridRows } from '@visx/grid';
 import { Text } from '@visx/text';
+import { series, theme } from '@/lib/theme';
 
 export interface BarDataPoint {
   /** Unique identifier for this data point (used for keys). Falls back to label if not provided */
@@ -46,12 +47,12 @@ const defaultMargin = { top: 60, right: 30, bottom: 100, left: 70 };
 
 // Shared chart styling constants - export for use in other chart components
 export const CHART_STYLES = {
-  labelColor: '#ffffff',
-  gridColor: '#333',
-  axisColor: '#555',
-  captionColor: '#888',
-  barBorderColor: '#eaf1fe',
-  fontFamily: 'var(--font-sans), system-ui, sans-serif',
+  labelColor: theme.textPrimary,
+  gridColor: theme.gridLine,
+  axisColor: theme.axisLine,
+  captionColor: theme.textMuted,
+  barBorderColor: series.highlight,
+  fontFamily: 'inherit',
 };
 
 export default function BarChart({
@@ -66,23 +67,25 @@ export default function BarChart({
   showValues = true,
   valueFormat = (v) => v.toFixed(0),
   showStd = true,
-  defaultBarColor = '#3b82f6',
+  defaultBarColor = theme.accent,
   margin = defaultMargin,
   groupColors,
   categoryBrackets,
   showCategoryBrackets = false,
   bracketOffset = 50,
 }: BarChartProps) {
-  const { ref: chartRef, width } = useChartWidth(maximumWidth);
+  const { ref: chartRef, width, scale } = useChartWidth(maximumWidth);
   // Calculate inner dimensions
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
 
-  // Determine if we have groups
+  // Derived once per dataset: a fresh array on every render would invalidate
+  // every scale below.
   const hasGroups = data.some(d => d.group);
-  const groups = hasGroups 
-    ? [...new Set(data.map(d => d.group).filter(Boolean))] as string[]
-    : [];
+  const groups = useMemo(
+    () => (hasGroups ? ([...new Set(data.map(d => d.group).filter(Boolean))] as string[]) : []),
+    [data, hasGroups],
+  );
   
   // Get unique data point identifiers (use id if present, otherwise label)
   const getDataId = (d: BarDataPoint) => d.id || d.label;
@@ -144,7 +147,7 @@ export default function BarChart({
     if (groupColors) {
       return (group: string) => groupColors[group] || defaultBarColor;
     }
-    const defaultGroupColors = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b'];
+    const defaultGroupColors = [series.reference, series.primary, series.highlight, theme.accent];
     return scaleOrdinal<string, string>({
       domain: groups,
       range: defaultGroupColors,
@@ -158,8 +161,10 @@ export default function BarChart({
   };
 
   return (
-    <div className="bar-chart-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
-      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
+    <div className="bar-chart-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth * scale, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+      {/* Drawn in design units and scaled to the display here, so the chart
+          matches the surrounding interface at any resolution. */}
+      <svg viewBox={`0 0 ${width} ${height}`} width={width * scale} height={height * scale} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
         {/* Title - left aligned to component edge */}
         {title && (
           <Text
@@ -377,7 +382,7 @@ export default function BarChart({
             top={innerHeight}
             stroke={CHART_STYLES.axisColor}
             tickStroke={CHART_STYLES.axisColor}
-            tickLabelProps={(value) => ({
+            tickLabelProps={() => ({
               fill: CHART_STYLES.labelColor,
               fontSize: 11,
               fontFamily: CHART_STYLES.fontFamily,

@@ -1,9 +1,11 @@
 'use client';
 import { useState } from 'react';
-import type { Config, KCoordinates, Quantity, Sweep } from '../../lib/contract/generated';
-import type { Applied } from '../../lib/compute/controller';
+import type { Config, Quantity, Sweep } from '@/lib/contract/generated';
+import type { Applied } from '@/lib/compute/controller';
 import { Field, JsonField, PairField, Section, ValueField } from './Fields';
 import type { EditConfig } from './ModelControls';
+import { Choices } from './Choices';
+import { ChartNoAxesCombined, Braces } from 'lucide-react';
 
 const quantityLabels: Record<Quantity, string> = {
   velocity: 'Velocity', mass_tensor: 'Inverse mass', r_derivatives: 'Registry derivatives', born_huang: 'Born-Huang',
@@ -17,15 +19,19 @@ export function StudyControls({ applied, edit, selectTask }: { applied: Applied;
   const [stencil, setStencil] = useState({ count: '', width: '' });
   return <>
     <Section title="Calculation">
-      <Field label="Task"><select value={config.task} onChange={event => selectTask(event.target.value as Config['task'])}>
-        <option value="bands">Band structure</option><option value="operators">Operator extraction</option>
-      </select></Field>
+      <Choices label="Task" value={config.task} onChange={selectTask} options={[
+        { value: 'bands', label: 'Bands', icon: <ChartNoAxesCombined size={18} /> },
+        { value: 'operators', label: 'Operators', icon: <Braces size={18} /> },
+      ]} />
       <PairField label="Grid" axes={['nx', 'ny']} value={applied.report.resolved!.resolution} onCommit={value => edit(c => { c.grid = { resolution: value as number[] }; })} />
       {bands && <>
         <ValueField label="Band count" numeric value={bands.count} onCommit={value => edit(c => { c.bands!.count = Number(value); })} />
-        <Field label="Path preset"><select value={bands.path!.preset ?? ''} onChange={event => {
-          if (event.target.value) edit(c => { c.bands!.path = { preset: event.target.value, basis: 'reciprocal_fractional', intervals_per_segment: c.bands!.path!.intervals_per_segment }; });
-        }}><option value="" disabled>Custom path</option><option value="square">Square: Γ, X, M, Γ</option><option value="triangular">Triangular: Γ, M, K, Γ</option><option value="rectangular">Rectangular: Γ, X, S, Y, Γ</option></select></Field>
+        <Choices label="Path preset" value={bands.path!.preset ?? ''} options={[
+          { value: 'square', label: 'Square', description: 'Γ → X → M → Γ' },
+          { value: 'triangular', label: 'Triangular', description: 'Γ → M → K → Γ' },
+          { value: 'rectangular', label: 'Rectangular', description: 'Γ → X → S → Y → Γ' },
+        ]} onChange={value => edit(c => { c.bands!.path = { preset: value, basis: 'reciprocal_fractional', intervals_per_segment: c.bands!.path!.intervals_per_segment }; })} />
+        {!bands.path!.preset && <p className="wb-muted">Using the custom path below.</p>}
         {!bands.path!.points && <ValueField label="Intervals per segment" numeric value={bands.path!.intervals_per_segment}
           onCommit={value => edit(c => { c.bands!.path!.intervals_per_segment = Number(value); })} />}
         <details><summary>Custom path</summary><JsonField label="Band path" value={bands.path} hint="Use vertices with intervals_per_segment, or sampled points without interpolation. State the coordinate basis."
@@ -38,10 +44,11 @@ export function StudyControls({ applied, edit, selectTask }: { applied: Applied;
           <ValueField label="Retained bands" numeric value={operators.retained_bands} onCommit={value => edit(c => { c.operators!.retained_bands = Number(value); })} />
           <ValueField label="Upper remote bands" numeric value={operators.remote_bands} onCommit={value => edit(c => { c.operators!.remote_bands = Number(value); })} />
           <PairField label="Carrier point" value={operators.k_point.value} onCommit={value => edit(c => { c.operators!.k_point.value = value as number[]; })} />
-          <Field label="Carrier coordinate basis"><select value={operators.k_point.basis} onChange={event => edit(c => { c.operators!.k_point.basis = event.target.value as KCoordinates; })}>
-            <option value="reciprocal_fractional">Reciprocal fractional</option><option value="cartesian_angular">Cartesian angular (1/reference length)</option>
-          </select></Field>
         </div>
+        <Choices label="Carrier coordinate basis" value={operators.k_point.basis} options={[
+          { value: 'reciprocal_fractional', label: 'Fractional', description: 'Reciprocal lattice' },
+          { value: 'cartesian_angular', label: 'Cartesian', description: 'Angular, 1/reference length' },
+        ]} onChange={value => edit(c => { c.operators!.k_point.basis = value; })} />
         <fieldset className="wb-quantities"><legend>Requested quantities</legend>{Object.entries(quantityLabels).map(([key, label]) =>
           <label className="wb-check" key={key}><input type="checkbox" checked={operators.quantities?.includes(key as Quantity) ?? false}
             onChange={event => edit(c => { c.operators!.quantities = event.target.checked
@@ -50,9 +57,8 @@ export function StudyControls({ applied, edit, selectTask }: { applied: Applied;
           <label className="wb-check"><input type="checkbox" checked={!!operators.registry} disabled={!config.geometry.objects?.length}
             onChange={event => edit(c => { if (event.target.checked) c.operators!.registry = { object: c.geometry.objects![0].name }; else delete c.operators!.registry; })} />Translate one object periodically</label>
           {operators.registry && <>
-            <Field label="Moving object"><select value={operators.registry.object} onChange={event => edit(c => { c.operators!.registry!.object = event.target.value; })}>
-              {config.geometry.objects?.map(object => <option key={object.name} value={object.name}>{object.name}</option>)}
-            </select></Field>
+            <Choices label="Moving object" value={operators.registry.object} options={(config.geometry.objects ?? []).map(object => ({ value: object.name, label: object.name }))}
+              onChange={value => edit(c => { c.operators!.registry!.object = value; })} />
             <JsonField label="Registry displacements" value={operators.registry.points} hint="Fractional [x, y] pairs, measured from the base geometry."
               onCommit={value => edit(c => { c.operators!.registry!.points = value as number[][]; })} />
             <ValueField label="Registry derivative step" numeric value={operators.registry.fd_step} onCommit={value => edit(c => { c.operators!.registry!.fd_step = Number(value); })} />
@@ -72,7 +78,7 @@ export function StudyControls({ applied, edit, selectTask }: { applied: Applied;
         </details>
       </>}
     </Section>
-    <Section title="Parameter sweeps">
+    <div className="wb-study-secondary"><Section title="Parameter sweeps">
       <p className="wb-muted">Axes run in order. The last axis varies fastest.</p>
       {(config.sweeps ?? []).map((sweep, index) => <div className="wb-object" key={index}>
         <div className="wb-row"><h3>{sweep.name}</h3><button onClick={() => edit(c => { c.sweeps!.splice(index, 1); })} aria-label={`Remove sweep ${sweep.name}`}>Remove</button></div>
@@ -86,10 +92,11 @@ export function StudyControls({ applied, edit, selectTask }: { applied: Applied;
       </div>)}
       <details><summary>Add an axis</summary>
         <Field label="Axis name"><input value={axis.name} onChange={event => setAxis({ ...axis, name: event.target.value })} /></Field>
-        <Field label="Target"><input list="wb-sweep-targets" value={axis.target} placeholder="geometry.objects.rod.radius" onChange={event => setAxis({ ...axis, target: event.target.value })} /></Field>
-        <datalist id="wb-sweep-targets"><option value="polarization" /><option value="grid.resolution" />
-          {(config.geometry.objects ?? []).flatMap(object => ['radius', 'epsilon', 'center'].map(field => <option key={`${object.name}.${field}`} value={`geometry.objects.${object.name}.${field}`} />))}
-        </datalist>
+        <Choices label="Common targets" value={axis.target} options={[
+          { value: 'polarization', label: 'Polarization' }, { value: 'grid.resolution', label: 'Grid' },
+          ...(config.geometry.objects ?? []).flatMap(object => ['radius', 'epsilon', 'center'].map(field => ({ value: `geometry.objects.${object.name}.${field}`, label: `${object.name} ${field}` }))),
+        ]} onChange={value => setAxis({ ...axis, target: value })} />
+        <Field label="Target"><input value={axis.target} placeholder="geometry.objects.rod.radius" onChange={event => setAxis({ ...axis, target: event.target.value })} /></Field>
         <Field label="Values"><input value={axis.values} placeholder='[0.16, 0.20, 0.24]' onChange={event => setAxis({ ...axis, values: event.target.value })} /></Field>
         <button onClick={() => { try { const values: unknown = JSON.parse(axis.values); if (!Array.isArray(values)) throw new Error();
           edit(c => { (c.sweeps ??= []).push({ name: axis.name, target: axis.target, values }); }); setAxisError('');
@@ -107,14 +114,14 @@ export function StudyControls({ applied, edit, selectTask }: { applied: Applied;
           <ValueField label="Block size (0 = automatic)" numeric value={config.eigensolver?.block_size} onCommit={value => edit(c => { c.eigensolver!.block_size = Number(value); })} />
           {operators && <ValueField label="Residual acceptance limit" numeric optional value={operators.fail_on_residual} hint="Leave empty to retain results without a residual gate." onCommit={value => edit(c => { if (value === '') delete c.operators!.fail_on_residual; else c.operators!.fail_on_residual = Number(value); })} />}
         </div>
-        <Field label="Dielectric smoothing"><select value={config.dielectric?.smoothing} onChange={event => edit(c => { c.dielectric!.smoothing = event.target.value as NonNullable<Config['dielectric']>['smoothing']; })}>
-          <option value="analytic">Analytic interface</option><option value="subgrid">Subgrid sampling</option><option value="none">None</option>
-        </select></Field>
+        <Choices label="Dielectric smoothing" value={config.dielectric?.smoothing ?? ''} options={[
+          { value: 'analytic', label: 'Analytic' }, { value: 'subgrid', label: 'Subgrid' }, { value: 'none', label: 'None' },
+        ]} onChange={value => edit(c => { c.dielectric!.smoothing = value as NonNullable<Config['dielectric']>['smoothing']; })} />
         <div className="wb-fields">
           <ValueField label="Dielectric mesh size" numeric value={config.dielectric?.mesh_size} onCommit={value => edit(c => { c.dielectric!.mesh_size = Number(value); })} />
           <ValueField label="Interface tolerance" numeric value={config.dielectric?.interface_tolerance} onCommit={value => edit(c => { c.dielectric!.interface_tolerance = Number(value); })} />
         </div>
       </details>
-    </Section>
+    </Section></div>
   </>;
 }

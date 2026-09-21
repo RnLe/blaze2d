@@ -1,5 +1,5 @@
-import type { Config, RunStatus } from '../contract/generated';
-import { resultBytes, type Failure, type Result } from '../contract/records';
+import type { Config, RunStatus } from '@/lib/contract/generated';
+import { resultBytes, type Failure, type Result } from '@/lib/contract/records';
 import type { BuildInfo } from './protocol';
 
 export interface RunHeader {

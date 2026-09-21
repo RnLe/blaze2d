@@ -37,3 +37,9 @@ _pagefind/
 
 # Build the browser solver from the release source revision.
 /public/wasm-blaze/
+
+# Static article routes generated from content metadata.
+/app/(docs)/(content)/
+
+# Staging tree compiled by typst/tools/figure-export.
+/.figure-export/

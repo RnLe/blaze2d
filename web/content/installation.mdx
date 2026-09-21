@@ -1,28 +1,31 @@
 ---
+nav:
+  group: Use Blaze
+  order: 0
 title: "Installation"
 card:
   title: "Installation"
   category: "Use Blaze"
-  order: 0
+  order: 1
   size: "1x1"
   description: "Install the Python package and run your first calculation."
-  image: "/banners/blaze_installation.webp"
+  image: ""
   showDescription: false
   showDate: false
   showTags: false
-  showImage: true
+  showImage: false
   tags: []
 ---
 
 # Installation
 
-Install Blaze2D with CPython 3.10 or later:
+Install Blaze2D with Python 3.10 or later:
 
 ```bash
 python -m pip install blaze2d
 ```
 
-Release wheels cover Linux x86_64 (glibc 2.17+), macOS 11+ on x86_64 and arm64, and Windows 10+ on x86_64. NumPy is required. Plotting and terminal progress are optional: `python -m pip install 'blaze2d[plot,progress]'`.
+Release wheels cover Linux `x86_64` (glibc 2.17+), macOS 11+ on `x86_64` and `arm64`, and Windows 10+ on `x86_64`. NumPy is required. Plotting and terminal progress are optional: `python -m pip install 'blaze2d[plot,progress]'`.
 
 ## A first calculation
 
@@ -33,18 +36,18 @@ result = blaze.solve(resolution=32, n_bands=8)
 print(result["frequencies"].shape)  # (k_point, band)
 ```
 
-The default model is a square lattice with one dielectric rod. Results are dictionaries with named NumPy arrays and numerical metadata. Use [Examples](/examples) to explore other models, or open the [Workbench](/workbench) to configure a calculation in the browser.
+The default model is a square lattice with one dielectric rod. Results are dictionaries with named NumPy arrays and numerical metadata. Use [Examples](/workbench?view=examples) to explore other models, or open the [Workbench](/workbench) to configure a calculation in the browser.
 
 ## A reproducible study
 
-Download a TOML example or export a configuration from the Workbench:
+Download a `TOML` example or export a configuration from the Workbench:
 
 ```bash
 blaze2d config validate calculation.toml
 blaze2d run calculation.toml --output results.npz
 ```
 
-The [API & TOML reference](/configuration) describes normalization, sweeps, operator extraction, and the 0.7 migration. Earlier TOML dialects are no longer accepted.
+The [API & TOML reference](/configuration) describes normalization, sweeps, and operator extraction.
 
 ## Build from source
 

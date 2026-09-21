@@ -1,12 +1,15 @@
 ---
+nav:
+  group: Use Blaze
+  order: 3
 title: API & TOML
 description: One versioned calculation contract for Python, native tools, and the Workbench.
 card:
   title: "API & TOML"
   category: "Use Blaze"
-  order: 3
+  order: 5
   size: "1x1"
-  description: "Configuration, coordinates, array shapes, and migration."
+  description: "Configuration, coordinates, array shapes, and result conventions."
   image: ""
   showDescription: false
   showDate: false
@@ -15,7 +18,7 @@ card:
   tags: []
 ---
 
-import ExampleSource from '../components/examples/ExampleSource'
+import ExampleSource from '@/components/examples/ExampleSource'
 
 # API & TOML
 
@@ -50,7 +53,7 @@ The current release supports two-dimensional circles and positive scalar permitt
 
 ## Defaults and coordinates
 
-Defaults are grid 32 × 32, f64, eight bands, and analytic dielectric smoothing
+Defaults are grid 32 × 32, `f64`, eight bands, and analytic dielectric smoothing
 with mesh size 3 and interface tolerance `1e-6`. Eigenvector retention is off.
 Band calculations use tolerance `1e-6` and 200 iterations. Operators use `1e-8`
 and 300 iterations, starting at band 0 with four retained and eight upper remote bands.
@@ -155,7 +158,7 @@ Numerical lists do not implicitly create sweeps. Plotting and terminal output ar
 | Registry and metric derivatives | `(direction, retained_band, solved_band)` |
 
 Arrays use C order, with flattened grid index `iy * nx + ix`. Complex output is
-NumPy `complex128`, including when solver storage uses f32. Metadata records
+NumPy `complex128`, including when solver storage uses `f32`. Metadata records
 storage and accumulation precision, coordinates, convergence, provenance, and shapes.
 Raw eigenvectors from different gauges should be compared through subspace invariants.
 
@@ -175,15 +178,7 @@ blaze2d run calculation.toml -o results.npz
 ```
 
 Both the Python entry point and native CLI share the contract. Use `blaze.save`
-and `blaze.load` for JSON or NPZ. `write_ndjson` and `read_ndjson` support streams.
-Exports include explicit array descriptors and complex encoding. NPZ includes a
+and `blaze.load` for `JSON` or `NPZ`. `write_ndjson` and `read_ndjson` support streams.
+Exports include explicit array descriptors and complex encoding. `NPZ` includes a
 UTF-8 metadata manifest and loads without pickle. Checkpoint resumption validates
 the normalized configuration and build before skipping completed jobs.
-
-## Migrating from 0.6
-
-The old TOML dialects are removed. Replace `[bulk]`, `[defaults]`, and `[ranges]`
-with the sections above. Give objects stable names. Replace three-element range
-shorthand with `values` or `linspace`. Move filenames and threads to runner options.
-Use result dictionary keys instead of `BandResult` attributes, and use `run` or
-`stream` for explicit studies. The [examples](/examples) are executable migration references.

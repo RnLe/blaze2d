@@ -2,6 +2,8 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { unzipSync, strFromU8 } from 'fflate';
 import { editorSpan } from '../lib/compute/editor';
+import { examples } from '../lib/examples/registry';
+import { nearestBandPoint } from '../components/workbench/BandTooltip';
 
 const base = process.env.NEXT_BASE_PATH ?? '';
 const bands = readFileSync('../examples/calculations/square-rods.toml', 'utf8').replace('resolution = 32', 'resolution = [12, 16]').replace('intervals_per_segment = 15', 'intervals_per_segment = 2');
@@ -16,6 +18,7 @@ async function apply(page: Page, source: string, executable = true) {
   await expect(page.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   if (executable) await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await page.getByRole('tab', { name: 'Geometry', exact: true }).click();
 }
 async function run(page: Page) {
   await page.getByRole('button', { name: 'Run', exact: true }).click();
@@ -23,7 +26,7 @@ async function run(page: Page) {
 }
 async function exported(page: Page, format: string) {
   const promise = page.waitForEvent('download');
-  await page.getByRole('combobox', { name: 'Export results' }).selectOption(format);
+  await page.getByRole('button', { name: `Export ${format.toUpperCase()}`, exact: true }).click();
   const download = await promise, path = await download.path();
   return readFileSync(path!);
 }
@@ -51,14 +54,6 @@ test('invalid drafts survive reload and cannot overwrite the applied model', asy
 
 test('bands export complete arrays and preserve a historical snapshot', async ({ page }) => {
   await open(page); await apply(page, bands); await run(page);
-  await page.getByRole('combobox', { name: 'Readout band' }).selectOption('6');
-  await page.getByRole('slider', { name: 'Selected k-point' }).fill('3');
-  const readout = await page.locator('.wb-plot-readout output').textContent();
-  for (const width of [390, 1920]) {
-    await page.setViewportSize({ width, height: 1080 });
-    await expect(page.locator('.wb-plot-readout output')).toHaveText(readout!);
-    await expect(page.getByRole('combobox', { name: 'Readout band' })).toHaveValue('6');
-  }
   const first = JSON.parse((await exported(page, 'json')).toString());
   expect(first.results[0].arrays.frequencies.shape).toEqual([7, 8]);
   expect(first.results[0].arrays.k_points.data.slice(-2)).toEqual([0, 0]);
@@ -67,7 +62,7 @@ test('bands export complete arrays and preserve a historical snapshot', async ({
   const manifest = JSON.parse(strFromU8(npz['manifest.npy'].subarray(10 + headerLength)));
   expect(manifest.results[0].arrays.frequencies.shape).toEqual([7, 8]);
   expect(Object.keys(npz)).toContain(manifest.results[0].arrays.frequencies.buffer + '.npy');
-  await page.getByRole('tab', { name: 'Model', exact: true }).click();
+  await page.getByRole('tab', { name: 'Geometry', exact: true }).click();
   await apply(page, bands.replace('radius = 0.20', 'radius = 0.25'));
   await page.getByRole('tab', { name: 'Results', exact: true }).click();
   expect(JSON.parse((await exported(page, 'json')).toString()).config.geometry.objects[0].radius).toBe(.2);
@@ -131,7 +126,7 @@ test('storage denial keeps results in memory and excessive memory blocks executi
 test('mobile reflow and keyboard tabs preserve usable controls', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 }); await open(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
-  await page.getByRole('tab', { name: 'Model', exact: true }).focus(); await page.keyboard.press('ArrowRight');
+  await page.getByRole('tab', { name: 'Geometry', exact: true }).focus(); await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Study', exact: true })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   await page.getByRole('button', { name: 'History', exact: true }).click();
@@ -202,4 +197,154 @@ test('reload marks an unfinished calculation as interrupted', async ({ page }) =
   await page.reload(); await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'History', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('interrupted');
+});
+
+test('all examples load their complete configuration in one workspace', async ({ page }) => {
+  await page.goto(`${base}/workbench/?view=examples`);
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await expect(page.locator('.wb-example-card')).toHaveCount(examples.length);
+  for (const example of examples) {
+    await page.getByRole('tab', { name: 'Examples', exact: true }).click();
+    const back = page.getByRole('button', { name: 'All examples', exact: true });
+    if (await back.isVisible()) await back.click();
+    await page.locator('.wb-example-card').filter({ hasText: example.title }).click();
+    await page.getByRole('button', { name: 'Load example', exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+    await page.getByRole('tab', { name: 'TOML', exact: true }).click();
+    const promise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download draft' }).click();
+    expect(readFileSync((await (await promise).path())!, 'utf8')).toBe(example.source);
+    expect(await page.locator('.workbench-shell').count()).toBe(1);
+    expect(await page.locator('.workbench-shell select').count()).toBe(0);
+  }
+});
+
+test('legacy example links open the inspectable library without a second workbench', async ({ page }) => {
+  for (const slug of ['square-rods', 'first-band-diagram']) {
+    await page.goto(`${base}/examples/${slug}/`);
+    await expect(page).toHaveURL(/workbench\/?\?view=examples&inspect=square-rods/);
+    await expect(page.getByRole('heading', { name: 'Square rods', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load example' })).toBeEnabled();
+    await expect(page.locator('.workbench-shell')).toHaveCount(1);
+  }
+});
+
+test('split editors preserve view state and protect unfinished TOML', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page); await apply(page, bands); await run(page);
+  await page.getByText('Arrays and dimensions', { exact: true }).click();
+  const arrays = page.locator('.wb-results details').filter({ has: page.getByText('Arrays and dimensions', { exact: true }) });
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Results', exact: true })).toBeVisible();
+  await expect(page.getByRole('tabpanel', { name: 'Geometry', exact: true })).toBeVisible();
+  const plots = await page.getByRole('tabpanel', { name: 'Results', exact: true }).boundingBox();
+  const geometry = await page.getByRole('tabpanel', { name: 'Geometry', exact: true }).boundingBox();
+  expect(geometry!.x).toBeGreaterThan(plots!.x + plots!.width);
+  const separator = page.getByRole('separator', { name: 'Editor split' });
+  await separator.focus(); await page.keyboard.press('ArrowRight');
+  await expect(separator).toHaveAttribute('aria-valuenow', '55');
+  const secondary = page.getByRole('tablist', { name: 'Split editor tabs' });
+  await secondary.getByRole('tab', { name: 'TOML', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Calculation TOML', exact: true });
+  await editor.fill(bands + '\n[unsupported]\nfield = true\n');
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled();
+  await expect(arrays).toHaveAttribute('open', '');
+  await page.getByRole('button', { name: 'Revert', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Close split editor' }).click();
+  await expect(arrays).toHaveAttribute('open', '');
+});
+
+test('nearest band tooltip measures both axes and searches all polarizations', () => {
+  const series = [
+    { polarization: 'TM', distances: [0, 10, 20], frequencies: [0, 10, 100, 100, 20, 30], bands: 2 },
+    { polarization: 'TE', distances: [0, 10, 20], frequencies: [50, 60, 30, 40, 40, 50], bands: 2 },
+  ];
+  const identity = (value: number) => value;
+  // The nearest column (x=10) has no nearby band: the TM point at x=0 wins.
+  expect(nearestBandPoint(series, { x: 9, y: 10 }, identity, identity)).toMatchObject({ sample: 0, band: 1, polarization: 'TM', frequency: 10 });
+  expect(nearestBandPoint(series, { x: 11, y: 40 }, identity, identity)).toMatchObject({ sample: 1, band: 1, polarization: 'TE', frequency: 40 });
+  expect(nearestBandPoint([], { x: 0, y: 0 }, identity, identity)).toBeUndefined();
+});
+
+test('instant band tooltips follow the actual point and job polarization without selection controls', async ({ page }) => {
+  await open(page);
+  await apply(page, bands + '\n[[sweeps]]\nname = "polarization"\ntarget = "polarization"\nvalues = ["TM", "TE"]\n');
+  await run(page);
+  const results = JSON.parse((await exported(page, 'json')).toString()).results;
+  await expect(page.getByRole('spinbutton', { name: 'Readout band' })).toHaveCount(0);
+  await expect(page.getByRole('slider', { name: 'Selected k-point' })).toHaveCount(0);
+  for (const [job, polarization] of ['TM', 'TE'].entries()) {
+    await page.getByRole('spinbutton', { name: 'Configuration sample', exact: true }).fill(String(job));
+    for (const width of [390, 1920]) {
+      await page.setViewportSize({ width, height: 1080 });
+      const plot = page.locator('.wb-plot');
+      await plot.scrollIntoViewIfNeeded();
+      const curve = plot.locator('polyline').nth(6);
+      const position = await curve.evaluate(element => {
+        const [x, y] = element.getAttribute('points')!.split(' ')[3].split(',').map(Number);
+        const point = new DOMPoint(x, y).matrixTransform((element as SVGPolylineElement).getScreenCTM()!);
+        return { x: point.x, y: point.y };
+      });
+      await page.mouse.move(position.x, position.y);
+      const tooltip = plot.getByRole('tooltip');
+      await expect(tooltip).toContainText(`Band index 6 · ${polarization}`);
+      await expect(tooltip).toContainText(`f = ${Number(results[job].arrays.frequencies.data[3 * 8 + 6]).toPrecision(6)}`);
+      const marker = await tooltip.locator('circle').evaluate(element => {
+        const point = new DOMPoint(Number(element.getAttribute('cx')), Number(element.getAttribute('cy'))).matrixTransform((element as SVGCircleElement).getScreenCTM()!);
+        return { x: point.x, y: point.y };
+      });
+      expect(marker.x).toBeCloseTo(position.x, 2); expect(marker.y).toBeCloseTo(position.y, 2);
+      const download = page.waitForEvent('download');
+      await plot.getByRole('button', { name: 'Export plot' }).focus(); await page.keyboard.press('Enter');
+      expect(readFileSync((await (await download).path())!, 'utf8')).not.toContain('data-interactive');
+      await page.mouse.move(0, 0); await expect(tooltip).toHaveCount(0);
+    }
+  }
+});
+
+test('normalizing an edited valid draft preserves its calculation and remains runnable', async ({ page }) => {
+  await open(page);
+  await page.locator('input[type=file]').setInputFiles({ name: 'normalize.toml', mimeType: 'text/plain', buffer: Buffer.from(bands.replace('radius = 0.20', 'radius = 0.23')) });
+  await expect(page.getByRole('button', { name: 'Normalize', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Normalize', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await expect(page.locator('.wb-validation')).toContainText('Configuration applied');
+  await run(page);
+  const result = JSON.parse((await exported(page, 'json')).toString());
+  expect(result.config.geometry.objects[0].radius).toBe(.23);
+  expect(result.results[0].arrays.frequencies.shape).toEqual([7, 8]);
+});
+
+test('selected choices preserve settings and Run keeps an existing split arrangement', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page); await apply(page, bands);
+  await page.getByRole('tab', { name: 'Study', exact: true }).click();
+  await page.getByRole('group', { name: 'Task', exact: true }).getByRole('button', { name: 'Bands', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Intervals per segment', exact: true })).toHaveValue('2');
+  await page.getByRole('tab', { name: 'Geometry', exact: true }).click();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
+  await run(page);
+  await expect(page.getByRole('tablist', { name: 'Editor tabs', exact: true }).getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tablist', { name: 'Split editor tabs' }).getByRole('tab', { name: 'Results', exact: true })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('streaming bands use the complete planned axis from the first samples', async ({ page }) => {
+  await open(page);
+  await apply(page, bands.replace('[12, 16]', '[32, 32]').replace('intervals_per_segment = 2', 'intervals_per_segment = 30'));
+  // Observe real streamed frames, including those produced faster than a test can click.
+  await page.evaluate(() => {
+    const frames: { maximum: string | null; samples: number; labels: string[] }[] = [];
+    Object.assign(window, { bandFrames: frames });
+    new MutationObserver(() => {
+      const svg = document.querySelector('.wb-plot svg[data-samples]');
+      if (svg) frames.push({ maximum: svg.getAttribute('data-x-max'), samples: Number(svg.getAttribute('data-samples')), labels: [...svg.querySelectorAll('text')].map(label => label.textContent ?? '') });
+    }).observe(document.querySelector('.wb-results') ?? document.getElementById('wb-panel-Results')!, { childList: true, subtree: true, attributes: true });
+  });
+  await run(page);
+  const frames = await page.evaluate(() => (window as unknown as { bandFrames: { maximum: string; samples: number; labels: string[] }[] }).bandFrames);
+  expect(frames.some(frame => frame.samples > 0 && frame.samples < 91)).toBe(true);
+  expect(new Set(frames.map(frame => frame.maximum)).size).toBe(1);
+  expect(frames.every(frame => frame.labels.includes('X') && frame.labels.includes('M'))).toBe(true);
 });

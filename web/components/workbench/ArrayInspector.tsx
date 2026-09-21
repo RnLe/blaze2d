@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
-import type { Arrays, NumericArray } from '../../lib/contract/records';
+import type { Arrays, NumericArray } from '@/lib/contract/records';
+import { Choices } from './Choices';
 
 function number(value: number) { return value === 0 ? '0' : value.toPrecision(5); }
 function cell(array: NumericArray, index: number) {
@@ -21,8 +22,8 @@ export function ArrayInspector({ arrays }: { arrays: Arrays }) {
   const rowStart = Math.min(rowPage * 20, Math.max(0, rows - 1)), columnStart = Math.min(columnPage * 12, Math.max(0, columns - 1));
   const visibleRows = Math.min(20, rows - rowStart), visibleColumns = Math.min(12, columns - columnStart);
   return <section className="wb-inspector">
-    <label className="wb-field"><span>Dataset</span><select value={name} onChange={event => { setSelected(event.target.value); setIndices([]); setRowPage(0); setColumnPage(0); }}>
-      {names.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
+    <Choices label="Dataset" value={name} options={names.map(name => ({ value: name, label: name.replaceAll('_', ' ') }))}
+      onChange={value => { setSelected(value); setIndices([]); setRowPage(0); setColumnPage(0); }} />
     <p className="wb-array-shape">{array.dtype} · ({shape.join(', ')}) · {array.dimensions.join(' × ')} · C order</p>
     {rank > 2 && <div className="wb-fields">{shape.slice(0, -2).map((size, index) => <label className="wb-field" key={index}><span>{array.dimensions[index]} index</span>
       <input type="number" min={0} max={size - 1} value={indices[index] ?? 0} onChange={event => setIndices(previous => {

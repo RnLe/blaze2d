@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
-import { loadWasm } from '../wasm/loadWasm';
-import type { PlanSummary } from '../contract/generated';
-import { resultBuffers, type Failure, type Result, type RunEvent } from '../contract/records';
+import { loadWasm } from '@/lib/wasm/loadWasm';
+import type { PlanSummary } from '@/lib/contract/generated';
+import { resultBuffers, type Failure, type Result, type RunEvent } from '@/lib/contract/records';
 import { diagnostic, type BuildInfo, type SolveRequest, type SolveResponse } from './protocol';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;

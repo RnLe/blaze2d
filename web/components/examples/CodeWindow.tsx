@@ -1,27 +1,28 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Copy, Download } from 'lucide-react';
-import CodeBlock from './CodeBlock';
+import CodeBlock, { type CodeLanguage } from './CodeBlock';
 import IconButton from './IconButton';
-import { copyText, downloadText } from '../../lib/util/download';
+import { copyText, downloadText } from '@/lib/util/download';
 
 export interface CodeWindowProps {
   code: string;
-  language?: 'python' | 'toml';
-  /** File name shown at the top-right of the window chrome. */
+  language?: CodeLanguage;
+  /** File name shown in the window chrome, and the name used when downloading. */
   filename: string;
-  /** Optional controls (e.g. Run / Abort) rendered at the top-right. */
+  /** Optional controls rendered after the copy and download buttons. */
   actions?: ReactNode;
   showLineNumbers?: boolean;
-  /** Max height of the scrollable code area. */
+  /** Caps the height of the scrollable code area. */
   maxHeight?: number;
 }
 
+const DOT_COLORS = ['#ff5f56', '#ffbd2e', '#27c93f'];
+
 /**
- * CodeWindow ,  a reusable editor-window chrome (traffic-light dots, a filename
- * badge, and an optional actions slot) wrapping a syntax-highlighted CodeBlock.
- * Used for both the Python script and the TOML config of an example.
+ * An editor-window frame (traffic lights, file name, copy and download) around a
+ * syntax-highlighted listing. Used for the Python and TOML source of an example.
  */
 export default function CodeWindow({
   code,
@@ -32,79 +33,25 @@ export default function CodeWindow({
   maxHeight,
 }: CodeWindowProps) {
   return (
-    <div
-      style={{
-        border: '1px solid #1f2937',
-        borderRadius: '10px',
-        overflow: 'clip',
-        background: '#0d1117',
-        display: 'flex',
-        flexDirection: 'column',
-        minWidth: 0,
-      }}
-    >
-      {/* Window chrome */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '8px 12px',
-          borderBottom: '1px solid #1f2937',
-          background: '#0b0e14',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 6 }}>
-          <Dot color="#ff5f56" />
-          <Dot color="#ffbd2e" />
-          <Dot color="#27c93f" />
+    <div className="code-window">
+      <div className="code-window-bar">
+        <div className="code-window-dots" aria-hidden="true">
+          {DOT_COLORS.map(color => (
+            <span key={color} style={{ color } as CSSProperties} />
+          ))}
         </div>
-        <span
-          style={{
-            fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-            fontSize: '0.74rem',
-            color: '#9ca3af',
-          }}
-        >
-          {filename}
-        </span>
-        <div style={{ flex: 1 }} />
-        <IconButton label="Copy code" flashOnClick="Copied to clipboard" onClick={() => copyText(code)}>
+        <span className="code-window-filename">{filename}</span>
+        <IconButton label="Copy code" flashOnClick="Copied to clipboard" onClick={() => void copyText(code)}>
           <Copy size={14} />
         </IconButton>
-        <IconButton
-          label={`Download ${filename}`}
-          onClick={() => downloadText(code, filename)}
-        >
+        <IconButton label={`Download ${filename}`} onClick={() => downloadText(code, filename)}>
           <Download size={14} />
         </IconButton>
         {actions}
       </div>
-
-      {/* Code body */}
-      <div
-        style={{
-          overflow: 'auto',
-          maxHeight: maxHeight ?? undefined,
-        }}
-        className="subtle-scroll"
-      >
-        <CodeBlock code={code} language={language} variant="full" showLineNumbers={showLineNumbers} />
+      <div className="code-window-body" style={{ maxHeight }}>
+        <CodeBlock code={code} language={language} showLineNumbers={showLineNumbers} />
       </div>
     </div>
-  );
-}
-
-function Dot({ color }: { color: string }) {
-  return (
-    <span
-      style={{
-        width: 11,
-        height: 11,
-        borderRadius: '50%',
-        background: color,
-        display: 'inline-block',
-      }}
-    />
   );
 }

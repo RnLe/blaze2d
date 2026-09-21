@@ -3,11 +3,13 @@ import { useEffect, useRef } from 'react';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { StreamLanguage, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { StreamLanguage, syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import { lintGutter, setDiagnostics } from '@codemirror/lint';
-import type { Diagnostic } from '../../lib/contract/generated';
-import { editorSpan } from '../../lib/compute/editor';
+import type { Diagnostic } from '@/lib/contract/generated';
+import { editorSpan } from '@/lib/compute/editor';
+import { syntax, theme } from '@/lib/theme';
 
 export function TomlEditor({ value, diagnostics, onChange }: { value: string; diagnostics: Diagnostic[]; onChange: (text: string) => void }) {
   const host = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null);
@@ -16,18 +18,31 @@ export function TomlEditor({ value, diagnostics, onChange }: { value: string; di
     if (!host.current) return;
     const editor = new EditorView({ parent: host.current, state: EditorState.create({ doc: value, extensions: [
       lineNumbers(), history(), keymap.of([...defaultKeymap, ...historyKeymap]), StreamLanguage.define(toml),
-      syntaxHighlighting(defaultHighlightStyle), lintGutter(), EditorView.lineWrapping,
-      EditorView.contentAttributes.of({ 'aria-label': 'Calculation TOML', spellcheck: 'false' }),
-      EditorView.theme({ '&': { background: '#0b1111', color: '#d7e3df', height: '100%' },
-        '.cm-scroller': { overflow: 'auto', fontSize: '13px', fontFamily: 'ui-monospace, monospace', lineHeight: '1.65' },
-        '.cm-gutters': { color: '#99aaa5', background: '#0b1111', border: 'none' }, '.cm-content': { padding: '12px 0' },
-        '.cm-selectionBackground': { background: '#345951 !important' }, '&.cm-focused': { outline: '2px solid #84d4bd', outlineOffset: '-2px' },
+      syntaxHighlighting(HighlightStyle.define([
+        { tag: tags.comment, color: syntax.comment, fontStyle: 'italic' },
+        { tag: tags.string, color: syntax.string },
+        { tag: [tags.number, tags.bool, tags.atom], color: syntax.number },
+        { tag: [tags.heading, tags.keyword, tags.tagName], color: syntax.keyword },
+        { tag: [tags.propertyName, tags.attributeName], color: syntax.property },
+        { tag: [tags.punctuation, tags.bracket], color: syntax.punctuation },
+      ])), lintGutter(), EditorView.lineWrapping,
+      EditorView.contentAttributes.of({ 'aria-label': 'Calculation TOML', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'false' }),
+      EditorView.theme({ '&': { background: theme.surface, color: theme.textPrimary, height: '100%' },
+        '.cm-scroller': { overflow: 'auto', fontSize: '13px', fontFamily: 'var(--font-mono)', lineHeight: '1.65' },
+        '.cm-gutters': { color: theme.textSubtle, background: theme.surface, border: 'none' }, '.cm-content': { padding: '12px 0' },
+        '.cm-selectionBackground': { background: `${syntax.selection} !important` }, '&.cm-focused': { outline: `2px solid ${theme.accent}`, outlineOffset: '-2px' },
       }, { dark: true }),
       EditorView.updateListener.of(update => { if (update.docChanged && !external.current) change.current(update.state.doc.toString()); }),
     ] }) });
+    editor.scrollDOM.tabIndex = 0;
+    editor.scrollDOM.setAttribute('role', 'region');
+    editor.scrollDOM.setAttribute('aria-label', 'TOML source viewport');
     view.current = editor;
     return () => { editor.destroy(); view.current = null; };
-  }, []); // The current callback is kept in a ref; text updates preserve the editor and selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // The editor is created once; `value` seeds the initial document and later
+  // changes arrive through this effect, which preserves cursor and selection.
   useEffect(() => {
     const editor = view.current;
     if (editor && value !== editor.state.doc.toString()) {

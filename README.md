@@ -48,7 +48,7 @@ to `schema = "blaze2d/1"`.
 
 ## Build and verify
 
-Rust 1.91.1 and CPython 3.10 or later are required to build the Python extension.
+Rust 1.91.1 and Python 3.10 or later are required to build the Python extension.
 
 ```bash
 cargo test -p blaze2d-core -p blaze2d-interface -p blaze2d-runner

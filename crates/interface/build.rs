@@ -4,8 +4,15 @@ fn main() {
     // Absolute paths distinguish a checkout from an unpacked source archive
     // when both builds reuse the same Cargo target directory.
     let manifest = std::path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    // Only watch what is actually here. Cargo treats a declared path that does
+    // not exist as changed on every build, so naming the archive's revision
+    // file in a git checkout re-runs this script -- and rebuilds this crate and
+    // everything downstream of it -- on every single build.
     for name in ["build.rs", "source-revision.txt"] {
-        println!("cargo:rerun-if-changed={}", manifest.join(name).display());
+        let path = manifest.join(name);
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
     }
     let revision = env::var("BLAZE_SOURCE_REVISION").ok().or_else(|| {
         Command::new("git").args(["rev-parse", "HEAD"]).output().ok()

@@ -1,17 +1,20 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { deleteRun, listRuns, loadRun, type RunHeader } from '../../lib/compute/storage';
-import type { BrowserRun } from '../../lib/compute/controller';
-import { diagnostic } from '../../lib/compute/protocol';
+import { deleteRun, listRuns, loadRun, type RunHeader } from '@/lib/compute/storage';
+import type { BrowserRun } from '@/lib/compute/controller';
+import { diagnostic } from '@/lib/compute/protocol';
 
 export function HistoryDrawer({ open, onClose, onSelect, running }: { open: boolean; onClose: () => void; onSelect: (run: BrowserRun) => void; running: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null), [runs, setRuns] = useState<RunHeader[]>([]), [error, setError] = useState('');
   useEffect(() => {
-    if (!open) { dialog.current?.close(); return; }
+    // Captured now so the cleanup closes the dialog this effect opened, even if
+    // the ref has moved on by the time it runs.
+    const element = dialog.current;
+    if (!open) { element?.close(); return; }
     const previous = document.activeElement as HTMLElement | null;
-    dialog.current?.showModal();
+    element?.showModal();
     void listRuns().then(setRuns).catch(error => setError(diagnostic(error).message));
-    return () => { dialog.current?.close(); previous?.focus(); };
+    return () => { element?.close(); previous?.focus(); };
   }, [open]);
   return <dialog className="wb-history" ref={dialog} onCancel={event => { event.preventDefault(); onClose(); }} aria-labelledby="wb-history-title">
     <div className="wb-row"><h2 id="wb-history-title">Run history</h2><button onClick={onClose} autoFocus>Close</button></div>

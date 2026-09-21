@@ -2,11 +2,13 @@
 
 import { useMemo } from 'react';
 import BarChart, { BarDataPoint } from './BarChart';
-import { useSeries5Benchmarks } from '../../lib/use-benchmarks';
+import { useSeries5Benchmarks } from '@/lib/use-benchmarks';
+import ChartPlaceholder from './ChartPlaceholder';
+import { series, theme } from '@/lib/theme';
 
 const COLORS = {
-  MPB: '#5477c4',     // Blue-gray
-  Blaze: '#eaf1fe',   // Light blue-white
+  MPB: series.reference,     // Blue-gray
+  Blaze: series.highlight,   // Light blue-white
 };
 
 interface MemoryUsageChartProps {
@@ -80,33 +82,10 @@ export default function MemoryUsageChart({
     return { tmData: tm, teData: te };
   }, [sweepData]);
 
-  // Calculate memory reduction for caption
-  const avgReduction = useMemo(() => {
-    let totalRatio = 0;
-    let count = 0;
-    for (const val of sweepData.values) {
-      const mpbTM = sweepData.mpb.TM.find(d => d.value === val);
-      const blazeTM = sweepData.blaze.TM.find(d => d.value === val);
-      const mpbTE = sweepData.mpb.TE.find(d => d.value === val);
-      const blazeTE = sweepData.blaze.TE.find(d => d.value === val);
-
-      if (mpbTM && blazeTM) {
-        totalRatio += mpbTM.memory_mb / blazeTM.memory_mb;
-        count++;
-      }
-      if (mpbTE && blazeTE) {
-        totalRatio += mpbTE.memory_mb / blazeTE.memory_mb;
-        count++;
-      }
-    }
-    return count > 0 ? (totalRatio / count).toFixed(0) : '?';
-  }, [sweepData]);
 
   if (loading) {
     return (
-      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-        Loading benchmark data...
-      </div>
+      <ChartPlaceholder width={width} height={height} />
     );
   }
 
@@ -149,7 +128,7 @@ export default function MemoryUsageChart({
       <p style={{
         marginTop: '1rem',
         fontSize: '0.875rem',
-        color: '#888',
+        color: theme.textSubtle,
         lineHeight: 1.5,
         fontFamily: 'var(--font-sans), system-ui, sans-serif',
         fontStyle: 'italic',

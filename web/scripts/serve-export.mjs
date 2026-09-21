@@ -15,4 +15,4 @@ http.createServer(async (request, response) => {
     response.setHeader('Content-Type', types[path.extname(file)] ?? 'application/octet-stream');
     response.end(await readFile(file));
   } catch { response.statusCode = 404; response.end('Not found'); }
-}).listen(3211, '127.0.0.1');
+}).listen(Number(process.env.PORT ?? 3211), '127.0.0.1');

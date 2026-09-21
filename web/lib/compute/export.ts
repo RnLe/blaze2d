@@ -1,6 +1,6 @@
 import { Zip, ZipPassThrough } from 'fflate';
 import type { BrowserRun } from './controller';
-import type { NumericArray } from '../contract/records';
+import type { NumericArray } from '@/lib/contract/records';
 
 const encoder = new TextEncoder();
 const yieldToBrowser = () => new Promise<void>(resolve => setTimeout(resolve, 0));
@@ -69,7 +69,8 @@ export async function exportRun(run: BrowserRun, format: 'json' | 'ndjson' | 'np
   const zip = new Zip((error, chunk) => { if (error) zipError = error; else chunks.push(new Blob([chunk as Uint8Array<ArrayBuffer>])); });
   const manifest = JSON.stringify(data, (_key, value) => {
     if (value?.data instanceof Float64Array) {
-      const { data: _data, ...descriptor } = value as NumericArray;
+      const { data: _unused, ...descriptor } = value as NumericArray;
+      void _unused;
       const buffer = `array_${String(arrays.length).padStart(6, '0')}`;
       arrays.push(value); return { ...descriptor, buffer };
     }

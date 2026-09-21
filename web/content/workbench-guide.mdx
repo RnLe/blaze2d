@@ -1,13 +1,17 @@
 ---
+nav:
+  group: Use Blaze
+  order: 2
+  title: Workbench guide
 title: Workbench
 description: Choose a model, configure a study, run it, inspect results, and export.
 card:
   title: "Workbench"
   category: "Use Blaze"
-  order: 2
+  order: 3
   size: "1x2"
-  description: "Build a model, configure a study, and inspect the results in your browser."
-  image: "/banners/blaze_intro.webp"
+  description: "Use Blaze in your browser."
+  image: "/banners/workbench_banner.webp"
   showDescription: true
   showDate: false
   showTags: false
@@ -18,25 +22,38 @@ card:
 # Workbench
 
 The [Workbench](/workbench) runs Blaze2D in your browser. It uses the same
-configuration and numerical defaults as Python, with an f64 backend.
+configuration and numerical defaults as Python, with an `f64` backend.
 
-1. **Choose a model.** In Model, select an example, edit the lattice and dielectric objects, or import a TOML file.
-2. **Configure a study.** In Study, choose bands or operators, sampling, sweep axes, and retained outputs. Advanced numerical settings stay collapsed.
+1. **Choose a model.** Open the Examples tab, inspect a calculation, and select **Load example**. Its geometry, task, settings, and sweeps fill the workspace together. You can also import a `TOML` file.
+2. **Configure a study.** The Setup sidebar has **Crystal** and **Calculation** controls. Geometry shows the crystal; Study shows the reciprocal-space path and calculation plan. Choose bands or operators, sampling, sweep axes, and retained outputs in Calculation.
 3. **Run.** Start the calculation and inspect its progress. Cancel stops the browser worker immediately. Completed jobs remain available.
 4. **Inspect.** Results contains band plots, arrays, dimensions, and convergence information. Select a configuration or stencil sample to inspect its data.
-5. **Export.** Download NPZ, JSON, NDJSON, or the selected run's original TOML. History stores recent runs on this device.
+5. **Export.** Download `NPZ`, `JSON`, `NDJSON`, or the selected run's original `TOML`. History stores recent runs on this device.
 
-TOML edits require **Apply** or **Revert**. An invalid or unapplied draft blocks
-execution and structured editing. **Normalize** explicitly writes every effective
-setting. A completed result always keeps the configuration used for that run.
+The Geometry preview repeats the crystal and marks one unit cell. Switch between
+**Geometry** and **Dielectric grid**, or change the number of visible periods.
+**Fractional** and **Cartesian** change how object centers are displayed and edited;
+the saved configuration uses fractional coordinates, wrapped into the unit cell.
+
+**Split view** opens a second editor group. Choose a tab in either group to place
+geometry beside results, TOML beside the preview, or examples beside your study.
+Drag the divider, or focus it and use the arrow keys, to adjust the widths. On
+small screens the groups stack vertically. **Setup** shows or hides the controls.
+
+**TOML** is an editor tab that shares its configuration with the visual controls.
+Edits require **Apply** or **Revert**. An invalid or unapplied draft blocks
+execution and structured editing. **Normalize** expands defaults, removes comments,
+validates the result, and applies it. A completed result always keeps the
+configuration used for that run. The live band's horizontal axis uses the complete
+planned path, so arriving points do not rescale it.
 
 The eigensolver stopping tolerance measures relative eigenvalue changes.
 Operator results also contain fresh residuals and an orthogonality defect.
 Use an explicit residual acceptance threshold when the study requires one.
 
-The browser preflights a 512 MiB execution budget. History uses a bounded local
+The browser preflights a `512 MiB` execution budget. History uses a bounded local
 cache; export important results before leaving. Use Python for larger studies,
 external dielectric arrays, reference fields, or checkpointed runs.
 
-See [Examples](/examples) and [API & TOML](/configuration) for reusable calculations
+See [Examples in the Workbench](/workbench?view=examples) and [API & TOML](/configuration) for reusable calculations
 and the coordinate and array conventions.

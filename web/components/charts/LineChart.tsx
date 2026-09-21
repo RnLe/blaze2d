@@ -123,7 +123,7 @@ export default function LineChart({
   xDomain,
   yDomain,
 }: LineChartProps) {
-  const { ref: chartRef, width } = useChartWidth(maximumWidth);
+  const { ref: chartRef, width, scale } = useChartWidth(maximumWidth);
   // Calculate inner dimensions
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
@@ -190,8 +190,10 @@ export default function LineChart({
   }, [series, legendItemWidths, innerWidth]);
 
   return (
-    <div className="line-chart-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
-      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
+    <div className="line-chart-container" ref={chartRef} tabIndex={0} role="region" aria-label="Scientific chart, scroll horizontally when needed" style={{ width: '100%', maxWidth: maximumWidth * scale, minWidth: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+      {/* Drawn in design units and scaled to the display here, so the chart
+          matches the surrounding interface at any resolution. */}
+      <svg viewBox={`0 0 ${width} ${height}`} width={width * scale} height={height * scale} style={{ display: 'block', overflow: 'visible', maxWidth: 'none' }}>
         {/* Title - left aligned to component edge */}
         {title && (
           <Text

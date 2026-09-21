@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
-import { loadWasm } from '../wasm/loadWasm';
-import type { ValidationReport } from '../contract/generated';
+import { loadWasm } from '@/lib/wasm/loadWasm';
+import type { ValidationReport } from '@/lib/contract/generated';
 import { diagnostic, EXECUTION_BUDGET, type BuildInfo, type Preview, type ValidationRequest, type ValidationResponse } from './protocol';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;

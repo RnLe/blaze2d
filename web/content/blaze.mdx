@@ -1,24 +1,29 @@
 ---
+nav:
+  group: Research
+  order: 0
+layout: wide
+document: "/reports/blaze2d-technical-report.pdf"
 title: "Technical Report"
 card:
-  title: "Technical Report"
+  title: "Release: Blaze2D"
   category: "Research"
-  order: 1
+  order: 0
   size: "2x1"
-  description: "Numerical methods, validation, and benchmarks for two-dimensional photonic crystals."
+  description: "The technical report: numerical methods, validation against MPB, and benchmarks."
   image: "/banners/blaze_intro.webp"
   showDescription: true
-  showDate: false
+  showDate: true
+  date: "2026-01-08"
   showTags: false
   showImage: true
   tags: []
 ---
 
-import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalingChart, SpeedupScalingChart, MemoryUsageChart, MemoryRatioChart, MemoryScalingChart, ResolutionBarChart, ResolutionSpeedupChart, ResolutionScalingChart, IterationBarChart, IterationTimeChart, IterationDistributionChart, EpsilonBarChart, BandsBarChart, BandComparisonChart, DeviationBoxPlotChart } from '../components/charts'
-import { EpsilonGridViewer } from '../components/charts'
-import HeroImage from '../components/HeroImage'
-import { Citation, Reference, References } from '../components/Citation'
-import { getAssetPath } from '../lib/paths'
+import { SingleCorePerformanceChart, MultiCorePerformanceChart, ThroughputScalingChart, SpeedupScalingChart, MemoryUsageChart, MemoryRatioChart, MemoryScalingChart, ResolutionBarChart, ResolutionSpeedupChart, ResolutionScalingChart, IterationBarChart, IterationTimeChart, IterationDistributionChart, EpsilonBarChart, BandsBarChart, BandComparisonChart, DeviationBoxPlotChart, EpsilonGridViewer } from '@/components/charts'
+import { HeroImage } from '@/components/article/Figure'
+import { Citation, Reference, References } from '@/components/article/Citation'
+import DocumentDownload from '@/components/article/DocumentDownload'
 
 
 <HeroImage src="/banners/blaze_intro.webp" alt="Blaze2D photonic crystal calculations" cropHeight={0.85} />
@@ -26,11 +31,13 @@ import { getAssetPath } from '../lib/paths'
 
 <span className="date">January 8, 2026</span>
 
-# Blaze2D: Numerical Methods and Benchmarks
+# Blaze2D: A High-Performance Solver for Photonic Crystals
 
-*Historical measurements of band calculations, memory use, and numerical agreement.*
+*Introducing Blaze: the design, validation, and performance of a Rust-based 2D Maxwell solver.*
 
-<a href={getAssetPath('/reports/blaze2d-technical-report.pdf')} target="_blank" rel="noreferrer">Download the PDF ↗</a>
+<div className="document-actions">
+  <DocumentDownload src="/reports/blaze2d-technical-report.pdf" label="Download the report" />
+</div>
 
 ---
 </div>
@@ -48,7 +55,7 @@ Blaze is a Rust solver using LOBPCG and mixed-precision arithmetic.<Citation id=
   borderRadius: '6px',
   padding: '0.85rem 1.1rem',
   margin: '1.25rem 0',
-  fontSize: '0.9rem',
+  fontSize: '1.1rem',
   lineHeight: 1.6,
 }}>
 These historical benchmarks use square and hexagonal lattice configurations from [Joannopoulos and colleagues' 1997 paper](https://www.nature.com/articles/386143a0).<Citation id={5} /> Unless otherwise specified, all data reflects the square lattice configuration at a resolution of 64, computing the lowest 8 bands with 20 k-points per segment between high-symmetry points. Series 4 and 5 record MPB tolerance `1e-7` and Blaze tolerance `1e-4`. The archived web datasets do not consistently record hardware identifiers or solver revisions, which limits reproducibility and cross-release comparisons.
@@ -61,7 +68,7 @@ These historical benchmarks use square and hexagonal lattice configurations from
 
 The computational cost of PWE solvers is dominated by Fast Fourier Transforms (FFTs).<Citation id={1} /> In this plane-wave formulation, Transverse Electric (TE) modes are more expensive to solve than Transverse Magnetic (TM) modes, because each operator application requires six FFTs rather than two for TM.
 
-In these recorded single-core workloads, the f64 and mixed-precision Blaze runs are faster than the MPB runs. The mixed-precision measurements give an average speed ratio of about ``2.9×``. This ratio depends on the geometry, numerical settings, and execution environment.
+In these recorded single-core workloads, the `f64` and mixed-precision Blaze runs are faster than the MPB runs. The mixed-precision measurements give an average speed ratio of about ``2.9×``. This ratio depends on the geometry, numerical settings, and execution environment.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
@@ -75,7 +82,7 @@ The benchmark compares MPB threading within individual solves with Blaze schedul
 
 Blaze avoids this overhead by parallelizing entire jobs rather than individual operations, a strategy optimized for large-scale parameter sweeps.
 
-The recorded 16-thread runs give an average speed ratio of ``11.9×``. Blaze f64 times are approximately ``240–350 ms``, while mixed-precision times are about ``160 ms``. These timings alone do not identify a unique hardware bottleneck.
+The recorded 16-thread runs give an average speed ratio of ``11.9×``. Blaze `f64` times are approximately ``240–350 ms``, while mixed-precision times are about ``160 ms``. These timings alone do not identify a unique hardware bottleneck.
 </div>
 
 <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
@@ -90,7 +97,7 @@ The recorded 16-thread runs give an average speed ratio of ``11.9×``. Blaze f64
   borderRadius: '6px',
   padding: '0.85rem 1.1rem',
   margin: '1.25rem 0',
-  fontSize: '0.9rem',
+  fontSize: '1.1rem',
   lineHeight: 1.6,
 }}>
   All subsequent benchmarks for Blaze are performed in Mixed Precision mode, unless otherwise specified.
@@ -174,7 +181,7 @@ The comparison computes 20 bands and displays the lowest 10. Frequencies are com
 
 The recorded median relative frequency difference from MPB is about $1 \times 10^{-4}$. The maximum is approximately $4 \times 10^{-4}$ for TM and $3 \times 10^{-4}$ for TE. These discrepancies measure agreement between runs; they are not certified bounds on discretization error.
 
-The f32 and f64 Blaze runs differ by a median of about $1 \times 10^{-7}$ and a maximum below $5 \times 10^{-5}$. Storage precision therefore has a smaller effect than the observed MPB difference in this dataset. Prior mixed-precision eigensolver studies provide related context.<Citation id={4} />
+The `f32` and `f64` Blaze runs differ by a median of about $1 \times 10^{-7}$ and a maximum below $5 \times 10^{-5}$. Storage precision therefore has a smaller effect than the observed MPB difference in this dataset. Prior mixed-precision eigensolver studies provide related context.<Citation id={4} />
 
 </div>
 
@@ -265,7 +272,7 @@ The band-count sweep requests ``4`` to ``20`` bands. Solve time increases for bo
 
 The recorded experiments show lower Blaze wall-clock times and peak process memory for the tested configurations. The reported ratios are specific to those measurements and their numerical settings. A matched comparison of release 0.7 requires new runs with explicit solver revisions, hardware, retained outputs, and residual checks.
 
-Blaze schedules independent configurations and uses mixed-precision storage with f64 critical reductions. These design choices support repeated crystal calculations and scientific data extraction.
+Blaze schedules independent configurations and uses mixed-precision storage with `f64` critical reductions. These design choices support repeated crystal calculations and scientific data extraction.
 
 Blaze exports projected operator and derivative data, including velocity matrices, effective masses, and formulation-specific geometric terms.<Citation id={9} /><Citation id={10} /><Citation id={11} /> MPB also exposes fields, eigenvectors, and group velocities. Blaze integrates parameter studies and projected extraction in one configuration and result contract.
 </div>

@@ -1,104 +1,38 @@
-import { Head } from 'nextra/components'
-import 'nextra-theme-docs/style.css'
-import 'katex/dist/katex.min.css'
-import './global.css'
+import type { Metadata } from 'next';
+import localFont from 'next/font/local';
+import 'katex/dist/katex.min.css';
+import './global.css';
+import { getAssetPath } from '@/lib/paths';
 
-export const metadata = {
-  title: 'Blaze 2D',
+/**
+ * next/font hashes, preloads and serves the UI font, and applies the deployment
+ * base path on its own. Declaring the weights here is what stops the font-swap
+ * flash that appeared when a weight was only fetched the first time it was used.
+ */
+const openAISans = localFont({
+  src: [
+    { path: './fonts/OpenAISans-Regular.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/OpenAISans-Medium.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/OpenAISans-SemiBold.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/OpenAISans-Bold.woff2', weight: '700', style: 'normal' },
+  ],
+  display: 'swap',
+  variable: '--font-sans-loaded',
+  fallback: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+});
+
+export const metadata: Metadata = {
+  title: { default: 'Blaze2D', template: '%s · Blaze2D' },
   description: 'A lightweight 2D Maxwell solver for photonic band structures',
-}
- 
+  icons: { icon: getAssetPath('/favicon.ico') },
+};
 
- 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const base = process.env.NEXT_PUBLIC_BASE_PATH || '';
-  
-  const fontCss = `
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('${base}/fonts/OpenAISans-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('${base}/fonts/OpenAISans-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('${base}/fonts/OpenAISans-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'OpenAI Sans';
-  src: url('${base}/fonts/OpenAISans-Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-`;
+export const viewport = { themeColor: '#000000' };
 
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="en"
-      dir="ltr"
-      suppressHydrationWarning
-      className="dark"
-      data-theme="dark"
-    >
-      <Head>
-        <meta name="theme-color" content="#000000" />
-        <link rel="icon" href={`${base}/favicon.ico`} sizes="any" />
-        {/* Preload the self-hosted UI font weights so they are ready before
-            first paint. Without this the browser only fetches a weight when it
-            is first used, producing a visible font-swap flash when navigating
-            between pages. */}
-        <link
-          rel="preload"
-          href={`${base}/fonts/OpenAISans-Regular.woff2`}
-          as="font"
-          type="font/woff2"
-          crossOrigin="anonymous"
-        />
-        <link
-          rel="preload"
-          href={`${base}/fonts/OpenAISans-Medium.woff2`}
-          as="font"
-          type="font/woff2"
-          crossOrigin="anonymous"
-        />
-        <link
-          rel="preload"
-          href={`${base}/fonts/OpenAISans-SemiBold.woff2`}
-          as="font"
-          type="font/woff2"
-          crossOrigin="anonymous"
-        />
-        <link
-          rel="preload"
-          href={`${base}/fonts/OpenAISans-Bold.woff2`}
-          as="font"
-          type="font/woff2"
-          crossOrigin="anonymous"
-        />
-        <style dangerouslySetInnerHTML={{ __html: fontCss }} />
-      </Head>
-      <body
-        style={{
-          backgroundColor: '#000000',
-          color: '#ffffff',
-          fontFamily:
-            "'OpenAI Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        }}
-      >
-        {children}
-      </body>
+    <html lang="en" dir="ltr" className={openAISans.variable} suppressHydrationWarning>
+      <body>{children}</body>
     </html>
-  )
+  );
 }

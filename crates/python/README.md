@@ -10,7 +10,7 @@ The Rust solver is available through Python, a command-line interface, and the b
 python -m pip install blaze2d
 ```
 
-The package requires CPython 3.10 or later and NumPy. Release wheels cover Linux x86_64, macOS x86_64 and arm64, and Windows x86_64. Plotting and terminal progress are optional:
+The package requires Python 3.10 or later and NumPy. Release wheels cover Linux x86_64, macOS x86_64 and arm64, and Windows x86_64. Plotting and terminal progress are optional:
 
 ```bash
 python -m pip install 'blaze2d[plot,progress]'

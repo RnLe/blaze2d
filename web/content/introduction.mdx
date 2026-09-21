@@ -1,35 +1,263 @@
-import Figure, { FigureRow } from '../components/Figure'
+---
+nav:
+  group: Theory
+  order: 0
+layout: wide
+title: Introduction
+description: From repeating dielectric structures to photonic bands, parameter studies, and projected Maxwell operators.
+---
+
+import IntroductionQuestions from '@/components/introduction-page/IntroductionQuestions'
+import IntroductionFigure from '@/components/introduction-page/IntroductionFigure'
+import BravaisLattices from '@/components/introduction-page/BravaisLattices'
+import '@/components/introduction-page/introduction.css'
+
+<div className="introduction-page">
+
+<div className="narrow">
 
 # Introduction
 
-Blaze2D computes photonic bands and projected Maxwell operators for two-dimensional periodic dielectric structures. It is written in Rust and available through Python, TOML files, a native command, and the browser [Workbench](/workbench).
+Blaze2D computes **photonic bands** and projected Maxwell operators for two-dimensional periodic dielectric structures. It is written in Rust and available through Python, `TOML` files, a native command, and the browser [Workbench](/workbench).
 
-## Photonic bands
+This page builds the physical picture those calculations rest on: what makes a crystal photonic, how a repeating structure is described, and what a band structure actually reports.
 
-A photonic crystal is a periodic arrangement of dielectric material. Its band structure describes the frequencies of electromagnetic waves allowed at each Bloch wavevector.
+<IntroductionQuestions />
 
-<FigureRow>
-  <Figure src="/figures/intro/crystal.svg" alt="A two-dimensional photonic crystal" caption="A periodic dielectric lattice." maxWidth="300px" />
-  <Figure src="/figures/intro/band-structure.svg" alt="A photonic band structure" caption="Allowed frequencies along a path through reciprocal space." maxWidth="430px" />
-</FigureRow>
+## What makes a crystal photonic?
 
-The magnetic-field formulation is
+A photonic crystal is a material whose **dielectric permittivity repeats in space**.
+Alternating glass and air layers are a simple example. Light scattered by the repeated
+interfaces interferes, allowing some waves to travel through the structure while
+excluding others. The pattern and dielectric contrast determine that response.
+
+</div>
+
+<IntroductionFigure
+  src="/figures/intro/periodicity.svg"
+  alt="Three blocks showing dielectric patterns that repeat in one, two, or three directions: layers, an extruded two-dimensional pattern, and a three-dimensional pattern."
+  width={953.344438} height={334.9754}
+  caption="Periodicity in one, two, and three dimensions. In the 2D model used by Blaze, the cross-section repeats in the plane and is unchanged along the third direction."
+/>
+
+<div className="narrow">
+
+To describe a repeating pattern, separate its **lattice** from its **basis**. The lattice
+specifies the translations: integer steps along two primitive vectors,
+$\mathbf{a}_1$ and $\mathbf{a}_2$. The basis is the arrangement of objects repeated
+at each lattice point. There are five Bravais lattice types in two dimensions.
+
+</div>
+
+<BravaisLattices />
+
+<div className="narrow">
+
+Place a dielectric rod at every point, or an air hole in a uniform dielectric, and
+the lattice becomes a photonic crystal. A basis can also contain several objects.
+For example, a honeycomb pattern uses a triangular lattice with two sites per cell.
+The lattice sets the translations; the basis, object sizes, and materials set the
+permittivity within each cell.
+
+## Why does light form bands?
+
+The geometry enters Maxwell's equations through the relative permittivity
+$\varepsilon(\mathbf{x})$. For a lossless, nonmagnetic material without frequency
+dispersion, the magnetic field obeys the **photonic master equation**:
+
+<div className="intro-equation">
 
 $$
 \nabla \times \left(\frac{1}{\varepsilon(\mathbf{x})}\nabla \times \mathbf{H}\right)
 = \frac{\omega^2}{c^2}\mathbf{H}.
 $$
 
-For structures invariant in the third direction, TE and TM polarizations separate into scalar problems. Blaze discretizes these problems on a periodic grid and uses a plane-wave iterative eigensolver. This release supports circle objects and positive scalar dielectric materials.
+</div>
 
-## Parameter studies and research
+Here $\mathbf{H}$ is a mode's magnetic field, $\omega$ its angular frequency, and $c$
+the speed of light in vacuum. This is an **eigenvalue problem**: find the field patterns
+whose shape is unchanged by the operator on the left. The scale factor is the
+eigenvalue $\omega^2/c^2$.
 
-Blaze was developed for [research on photonic moiré crystals](/thesis). The two-scale description requires many local crystal calculations and projected operator data: velocities, effective masses, registry derivatives, and geometric terms. Blaze organizes these calculations as ordered sweeps, registry samples, and k-stencils with explicit coordinate and gauge metadata.
+If you know electronic band theory, the connection is direct. A periodic potential
+acts on an electron's wavefunction in the Schrödinger equation. A periodic
+permittivity acts on an electromagnetic field in Maxwell's equations. Both admit
+Bloch waves and bands, although the fields, operators, and physical observables differ.
 
-[MPB](https://mpb.readthedocs.io/en/latest/Python_User_Interface/) also provides electromagnetic fields, eigenvectors, and group velocities. Blaze's contribution is an integrated workflow for parameter studies and projected operator and derivative extraction.
+</div>
 
-## Using Blaze
+<IntroductionFigure
+  src="/figures/intro/electronic-photonic-crystals.png"
+  alt="Comparison slide: graphene with two carbon sites per cell and the Schrödinger equation on the left; a honeycomb arrangement of air holes in dielectric and the photonic master equation on the right."
+  width={1565} height={801}
+  caption="The same lattice language describes both systems. The electronic model resolves a wavefunction in an atomic potential; the photonic model describes the material through its macroscopic permittivity."
+/>
 
-Start with [Installation](/installation) or a runnable [Example](/examples). A calculation has the same configuration and result names in Python and the Workbench. Advanced Python workflows can also supply dielectric data, reference fields, and resumable checkpoints.
+<div className="narrow">
 
-The [technical report](/blaze) presents measured performance under its stated benchmark conditions. The [API & TOML reference](/configuration) defines the current scientific contract. General geometry, three-dimensional computation, and MPB compatibility remain future work in [Optimization & Roadmap](/roadmap).
+Periodicity lets us write each mode as a plane wave multiplied by a function that
+repeats in every cell:
+
+$$
+\mathbf{H}_{n\mathbf{k}}(\mathbf{x})
+= e^{i\mathbf{k}\cdot\mathbf{x}}\mathbf{u}_{n\mathbf{k}}(\mathbf{x}).
+$$
+
+The **Bloch wavevector** $\mathbf{k}$ sets the phase change from cell to cell.
+For each $\mathbf{k}$, the master equation gives a sequence of allowed frequencies.
+Following the $n$th frequency as $\mathbf{k}$ changes gives a band,
+$\omega_n(\mathbf{k})$.
+
+## How do I read a band diagram?
+
+A band diagram plots those frequencies along a path through the **Brillouin zone**,
+the region of distinct Bloch wavevectors. Labels such as $\Gamma$, $X$, $M$, and $K$
+mark points of lattice symmetry. The horizontal axis is a path in wavevector space,
+not a position inside the crystal.
+
+</div>
+
+<IntroductionFigure
+  src="/figures/intro/band-structure.svg"
+  alt="Photonic bands for square dielectric rods on the left and triangular air holes on the right. Blue curves are TM and orange curves are TE. Shading marks a TM gap on the left and a shared TE and TM gap on the right."
+  width={982.383125} height={321.03625}
+  caption="Square rods in air (left) and a triangular lattice of air holes (right). Insets show the structures and the paths through their Brillouin zones."
+/>
+
+<div className="narrow">
+
+Each curve is one allowed mode frequency. The vertical axis uses
+$\omega a/(2\pi c)=a/\lambda_0$, where $a$ is the lattice constant and $\lambda_0$
+the vacuum wavelength. This normalization makes the diagram independent of the
+overall scale of a nondispersive crystal.
+
+The blue curves are **TM** modes, with the electric field along the invariant
+direction. Orange curves are **TE** modes, with the magnetic field in that direction.
+On the left, the shaded interval excludes TM modes but still contains TE modes.
+On the right, the shaded interval is shared by both polarizations. A complete
+band gap requires an absence of modes throughout the Brillouin zone, so checking
+only the plotted path is not sufficient to establish it.
+
+Band slopes also carry information: $\nabla_{\mathbf{k}}\omega_n$ gives the group
+velocity. A flatter band means slower propagation in the corresponding direction.
+These frequencies and field patterns are the basic results returned by a band solver.
+
+## How does Blaze solve the equation?
+
+[MPB](https://mpb.readthedocs.io/en/latest/Developer_Information/) and Blaze use a **plane-wave expansion**
+(PWE). Once the Bloch phase is separated out, the remaining field is periodic.
+It can therefore be represented by a finite set of Fourier components, labelled
+by reciprocal lattice vectors $\mathbf{G}$:
+
+<div className="intro-equation">
+
+$$
+\begin{aligned}
+u_{n\mathbf{k}}(\mathbf{x})
+&\approx \sum_{\mathbf{G}} c_{n\mathbf{G}}(\mathbf{k})\,e^{i\mathbf{G}\cdot\mathbf{x}},\\[0.6em]
+A(\mathbf{k})\,\mathbf{c}_n
+&= \frac{\omega_n^2(\mathbf{k})}{c^2}\,B\,\mathbf{c}_n.
+\end{aligned}
+$$
+
+</div>
+
+For Blaze's 2D scalar problems, $u$ is the periodic part of $H_z$ for TE or $E_z$ for TM.
+The coefficients $\mathbf{c}_n$ are the unknowns. $A$ represents the differential
+operator; $B$ is the identity for TE and the dielectric weight for TM.
+An iterative eigensolver finds the requested bands at each wavevector. Increasing
+the grid resolution adds Fourier components, and convergence checks show whether
+the chosen resolution is sufficient.
+
+<ol className="intro-solver-steps" aria-label="Band calculation steps">
+  <li><span>01</span><strong>Define the cell</strong><small>Lattice, objects, permittivity</small></li>
+  <li><span>02</span><strong>Solve at each k</strong><small>Periodic fields and frequencies</small></li>
+  <li><span>03</span><strong>Trace the bands</strong><small>Dispersion, gaps, mode profiles</small></li>
+</ol>
+
+Blaze currently supports two-dimensional circles and positive scalar dielectric
+materials. This covers rods, holes, and multi-object bases on any 2D Bravais lattice.
+Its rods and holes extend uniformly along the third direction.
+
+## Why calculate many different crystals?
+
+One band diagram answers a question about one configuration. Designing a crystal
+or building a model often requires a **parameter study**: repeat the calculation
+while changing the geometry or material.
+
+<div className="intro-parameter-cards">
+  <div><strong>Rod or hole radius</strong><span>Where does a gap open or close?</span></div>
+  <div><strong>Positions in the basis</strong><span>How do alignment and symmetry change the bands?</span></div>
+  <div><strong>Dielectric constant</strong><span>How does material contrast shift the frequencies?</span></div>
+</div>
+
+In many short solves, geometry setup can become a substantial repeated cost.
+MPB's [geometry initialization](https://mpb.readthedocs.io/en/latest/Developer_Information/#dielectric-function-computation)
+samples and averages the dielectric near interfaces.
+Blaze targets this overhead with specialized circle geometry and analytic boundary
+area fractions, and schedules independent configurations across CPU cores. Its
+ordered sweeps retain the parameter values alongside each result.
+
+The [technical report](/blaze) compares complete calculation times against MPB
+under stated settings. Those timings include both setup and solving; the benefit
+depends on the geometry, resolution, and number of requested bands.
+
+## What can operator data tell us?
+
+A band diagram shows where the modes lie. It does not, by itself, tell us how two
+modes couple when a structure changes. That requires matrix elements of the
+operator and its derivatives between the computed fields.
+
+MPB already exposes frequencies, electromagnetic fields, raw eigenvectors, and
+group velocities through its [Python interface](https://mpb.readthedocs.io/en/latest/Python_User_Interface/).
+It does not provide Blaze's prepared collection of projected derivative matrices
+and associated coordinate and phase-convention metadata. Deriving these from MPB
+output requires an additional extraction workflow.
+
+Both solvers use **matrix-free operator application**: they evaluate $A\mathbf{v}$
+for a trial field without storing the full matrix $A$. Fourier transforms connect
+spatial derivatives to material multiplication. This saves memory, and it still
+allows small projected matrices to be computed by applying an operator to selected
+fields and taking their inner products.
+
+For example, let $L$ be the periodic TE operator. A parameter $p$ such as a wavevector
+component or an object's displacement gives the derivative matrix
+
+<div className="intro-equation">
+
+$$
+\begin{aligned}
+D^{(p)}_{mn}
+&= \left\langle u_m,\frac{\partial L}{\partial p}\,u_n\right\rangle,\\[0.6em]
+L u_n&=\lambda_n u_n,\qquad \lambda_n=\frac{\omega_n^2}{c^2}.
+\end{aligned}
+$$
+
+</div>
+
+Here the fields are normalized within the unit cell. Away from degeneracies,
+diagonal entries describe the first-order change in an eigenvalue; off-diagonal
+entries describe mixing between different modes. Near a degeneracy, the coupled
+bands must be treated together.
+
+| Data available in Blaze | Physical use |
+| --- | --- |
+| Wavevector derivatives and curvature matrices | Propagation, coupling between bands, and effective masses understood as band curvature |
+| Derivatives with respect to object displacement | Perturbations caused by changing the relative alignment of objects in a cell |
+| Cross-band matrix elements and overlaps between sampled states | Reduced models that retain selected bands and track changes in their basis |
+
+For TM, the dielectric weight and its derivatives must also be included; Blaze
+records those separately. The [operator reference](/configuration#operators-registry-studies-and-stencils)
+specifies the available quantities and conventions.
+
+This is the connection to the [master's thesis](/thesis). A twisted photonic crystal
+can be described through many locally periodic crystals whose alignment changes
+slowly in space. Their bands supply the local frequencies. Their projected operator
+data supply coefficients for an effective model of the slow variation. Blaze was
+built to make both parts of that calculation practical.
+
+To calculate a first band diagram, open an [example](/workbench?view=examples) or follow the
+[installation guide](/installation).
+
+</div>
+</div>

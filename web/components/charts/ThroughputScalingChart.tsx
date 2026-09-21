@@ -2,13 +2,15 @@
 
 import { useMemo } from 'react';
 import LineChart, { LineSeries } from './LineChart';
-import { useSeries7Benchmarks } from '../../lib/use-benchmarks';
+import { useSeries7Benchmarks } from '@/lib/use-benchmarks';
+import ChartPlaceholder from './ChartPlaceholder';
+import { series, theme } from '@/lib/theme';
 
 // Colors matching the bar chart style
 const COLORS = {
-  Blaze: '#eaf1fe',       // Light blue-white (same as bar charts)
-  MPB: '#5477c4',         // Blue-gray (MPB OMP - same as bar charts)
-  MPB_Multiproc: '#a3befa', // Light blue for MPB Multiprocessor
+  Blaze: series.highlight,       // Light blue-white (same as bar charts)
+  MPB: series.reference,         // Blue-gray (MPB OMP - same as bar charts)
+  MPB_Multiproc: series.primary, // Light blue for MPB Multiprocessor
 };
 
 interface ThroughputScalingChartProps {
@@ -101,9 +103,7 @@ export default function ThroughputScalingChart({
 
   if (loading) {
     return (
-      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-        Loading benchmark data...
-      </div>
+      <ChartPlaceholder width={width} height={height} />
     );
   }
 
@@ -144,7 +144,7 @@ export default function ThroughputScalingChart({
       <p style={{
         marginTop: '1rem',
         fontSize: '0.875rem',
-        color: '#888',
+        color: theme.textSubtle,
         lineHeight: 1.5,
         fontFamily: 'var(--font-sans), system-ui, sans-serif',
         fontStyle: 'italic',

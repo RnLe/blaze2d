@@ -8,14 +8,16 @@ import { scaleLog } from '@visx/scale';
 import { AxisLeft, AxisBottom } from '@visx/axis';
 import { GridRows, GridColumns } from '@visx/grid';
 import { Text } from '@visx/text';
-import { useSeries3Benchmarks } from '../../lib/use-benchmarks';
+import { useSeries3Benchmarks } from '@/lib/use-benchmarks';
 import { CHART_STYLES } from './BarChart';
+import ChartPlaceholder from './ChartPlaceholder';
+import { series, theme } from '@/lib/theme';
 
 // Colors matching other charts
 const COLORS = {
-  mpb: '#5477c4',     // Blue-gray
-  blaze: '#eaf1fe',   // Light blue-white
-  refLine: '#999',    // Gray for reference lines
+  mpb: series.reference,     // Blue-gray
+  blaze: series.highlight,   // Light blue-white
+  refLine: theme.guideLine,    // Gray for reference lines
 };
 
 // Marker size
@@ -34,7 +36,7 @@ export default function ResolutionScalingChart({
   const { data: benchmarkData, loading } = useSeries3Benchmarks();
 
   // Transform data for the log-log plot
-  const { tmData, teData, refLines } = useMemo(() => {
+  const { tmData, teData } = useMemo(() => {
     const tm = {
       resolutions: benchmarkData.TM.resolution,
       mpb: benchmarkData.TM.mpb.map((d, i) => ({
@@ -63,24 +65,12 @@ export default function ResolutionScalingChart({
       })).filter(d => d.y > 0),
     };
 
-    // Compute reference lines O(N²) and O(N³)
-    const midIdx = Math.floor(tm.blaze.length / 2);
-    const refX = tm.blaze[midIdx]?.x || 64;
-    const refY = tm.blaze[midIdx]?.y || 600;
-    
-    const refLines = {
-      n2: { refX, refY },
-      n3: { refX, refY: refY / 5 },
-    };
-
-    return { tmData: tm, teData: te, refLines };
+    return { tmData: tm, teData: te };
   }, [benchmarkData]);
 
   if (loading) {
     return (
-      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-        Loading benchmark data...
-      </div>
+      <ChartPlaceholder width={width} height={height} />
     );
   }
 

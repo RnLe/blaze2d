@@ -1,74 +1,62 @@
 import type { NextConfig } from 'next';
-import nextra from 'nextra'
-import { readFileSync } from 'node:fs'
+import createMDX from '@next/mdx';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
+/**
+ * The deployment base path. GitHub Pages serves the site from /blaze2d, which is
+ * the default; set NEXT_BASE_PATH to an empty string to serve from the root.
+ *
+ * It is read from the environment rather than a .env file because Next applies
+ * .env after the shell environment, so a file silently wins over an explicit
+ * export and the root-path build would quietly come out prefixed.
+ */
 const base = process.env.NEXT_BASE_PATH ?? '/blaze2d';
+
+/** Written by scripts/build-wasm.mjs; ties the page to the solver it ships. */
 const build = JSON.parse(readFileSync('./public/wasm-blaze/build.json', 'utf8'));
 
-/** @type {import('next').NextConfig} */
 const nextConfig: NextConfig = {
+  // A static export: no server at runtime, so every route is prerendered and
+  // every asset is addressed relative to `base`.
+  output: 'export',
+  basePath: base,
+  assetPrefix: base ? `${base}/` : '',
+  // Emit /about/index.html rather than /about.html, which is what a static host
+  // needs in order to serve /about/ directly.
+  trailingSlash: true,
 
-    // EXPORT RELATED CONFIG
-    output: 'export',
-    // when exporting to gh pages, prefix all routes/assets with /blaze2d
-    basePath: base,
-    assetPrefix: base ? `${base}/` : '',
-    trailingSlash: true,         // output /about/index.html instead of about.html
-    
-    // Make base path available to client-side code
-    env: {
-        NEXT_PUBLIC_BASE_PATH: base,
-        NEXT_PUBLIC_BLAZE_REVISION: build.source_revision,
-        NEXT_PUBLIC_BLAZE_VERSION: build.version,
+  // Mirrors of build-time facts that client components need; see lib/paths.ts.
+  env: {
+    NEXT_PUBLIC_BASE_PATH: base,
+    NEXT_PUBLIC_BLAZE_REVISION: build.source_revision,
+    NEXT_PUBLIC_BLAZE_VERSION: build.version,
+  },
+
+  turbopack: {
+    resolveAlias: {
+      // The PDF viewer reaches for the Node-only `canvas` package; the browser
+      // build must not try to resolve it.
+      canvas: './empty-module.ts',
+      'next-mdx-import-source-file': './mdx-components.tsx',
     },
-    
-    // FUNCTIONALITY RELATED CONFIG
-    transpilePackages: [],
-    serverExternalPackages: ['pino'],
-    turbopack: {
-        resolveAlias: {
-            canvas: "./empty-module.ts",
-            'next-mdx-import-source-file': './mdx-components.jsx'
-        }
-    },
-    // Webpack fallback for production builds
-    webpack(config) {
-        // Stub out 'canvas' for client and server bundles via fallback
-        config.resolve.fallback = {
-            ...(config.resolve.fallback ?? {}),
-            canvas: false,
-        };
-        
-        // Enable WASM support
-        config.experiments = {
-            ...config.experiments,
-            asyncWebAssembly: true,
-            layers: true,
-        };
-        
-        // Handle WASM files properly for Next.js
-        config.module.rules.push({
-            test: /\.wasm$/,
-            type: 'asset/resource',
-        });
-        
-        // Resolve WASM imports
-        config.resolve.extensions.push('.wasm');
-        
-        return config;
-    },
-    images: {
-        unoptimized: true,          // disable image optimization. Necessary for GitHub Pages
-    },
-    pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],
+  },
+
+  // GitHub Pages has no image optimizer.
+  images: { unoptimized: true },
+
+  pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],
 };
 
-// Set up Nextra with its configuration
-const withNextra = nextra({
-// pick either preset; KaTeX is pre-rendered, MathJax hydrates client-side
-  latex: true,                 // shorthand → { renderer: 'katex' }
-  // latex: { renderer: 'mathjax' },
-})
- 
-// Export the final Next.js config with Nextra included
-export default withNextra(nextConfig)
+const withMDX = createMDX({
+  extension: /\.mdx?$/,
+  options: {
+    remarkPlugins: ['remark-frontmatter', resolve('scripts/content.mjs'), 'remark-gfm', 'remark-math'],
+    rehypePlugins: [
+      'rehype-katex',
+      ['rehype-pretty-code', { theme: 'github-dark-default', keepBackground: false }],
+    ],
+  },
+});
+
+export default withMDX(nextConfig);

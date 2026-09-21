@@ -3,20 +3,22 @@
 import { useMemo } from 'react';
 import { useChartWidth } from './useChartWidth';
 import { Group } from '@visx/group';
-import { LinePath, Line } from '@visx/shape';
+import { LinePath } from '@visx/shape';
 import { scaleLog } from '@visx/scale';
 import { AxisLeft, AxisBottom } from '@visx/axis';
 import { GridRows, GridColumns } from '@visx/grid';
 import { Text } from '@visx/text';
-import { useSeries5Benchmarks } from '../../lib/use-benchmarks';
+import { useSeries5Benchmarks } from '@/lib/use-benchmarks';
 import { CHART_STYLES } from './BarChart';
+import ChartPlaceholder from './ChartPlaceholder';
+import { series, theme } from '@/lib/theme';
 
 // Colors matching other charts
 const COLORS = {
-  mpb: '#5477c4',     // Blue-gray
-  blaze: '#eaf1fe',   // Light blue-white
-  frozen: '#7183ad',  // Slightly lighter blue-gray than mpb
-  fit: '#888',        // Gray for fit lines
+  mpb: series.reference,     // Blue-gray
+  blaze: series.highlight,   // Light blue-white
+  frozen: series.reference,  // Slightly lighter blue-gray than mpb
+  fit: theme.textSubtle,        // Gray for fit lines
 };
 
 // Marker size
@@ -85,9 +87,7 @@ export default function MemoryScalingChart({
 
   if (loading) {
     return (
-      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-        Loading benchmark data...
-      </div>
+      <ChartPlaceholder width={width} height={height} />
     );
   }
 
@@ -482,7 +482,7 @@ export default function MemoryScalingChart({
       <p style={{
         marginTop: '1rem',
         fontSize: '0.875rem',
-        color: '#888',
+        color: theme.textSubtle,
         lineHeight: 1.5,
         fontFamily: 'var(--font-sans), system-ui, sans-serif',
         fontStyle: 'italic',

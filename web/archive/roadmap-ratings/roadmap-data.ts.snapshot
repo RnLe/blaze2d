@@ -1,0 +1,115 @@
+export type ModuleStatus = 'Done' | 'In Development' | 'Planned';
+export type Rating = 0 | 0.5 | 1 | 1.5 | 2 | 2.5 | 3 | 3.5 | 4 | 4.5 | 5;
+
+type Module = {
+  title: string;
+  anchor: string;
+  description: string;
+  status: ModuleStatus;
+  complexity: Rating;
+  scope: Rating;
+  complexityReason: string;
+  scopeReason: string;
+  motivation: string;
+};
+
+// Relative assessments of the stated module, including work already delivered.
+// Scientific/validation demands and total work volume are deliberately separate.
+export const modules = {
+  core: {
+    title: '2D research core', anchor: '2d-research-core',
+    description: 'Bands, parameter sweeps, and operator data.', status: 'Done',
+    complexity: 4.5, scope: 4.5,
+    complexityReason: 'Consistent Maxwell formulations, material treatment, eigensolver convergence, and projected operators require substantial theory and checks of normalization, gauge, and degeneracies.',
+    scopeReason: 'A complete Rust solver, CPU and browser backends, research-data extraction, shared interfaces, and reference comparisons form a large body of work.',
+    motivation: 'Make repeated band calculations and projected Maxwell operators available in one reproducible research workflow. This is the foundation the later modules extend.',
+  },
+  symmetries: {
+    title: 'Symmetries', anchor: 'symmetries',
+    description: 'Reuse equivalent wavevectors and reduce modes.', status: 'Planned',
+    complexity: 4, scope: 3.5,
+    complexityReason: 'The geometry, material grid, wavevector, and field transformation must agree. Degenerate modes, symmetry sectors, and real representations need separate validation.',
+    scopeReason: 'Implement transformations, symmetry checks, equivalent-point reuse, and compatible reductions within the existing 2D solver, including a safe fallback.',
+    motivation: 'Avoid solving equivalent problems and reduce eligible mode spaces. Using the crystal’s symmetry can save computation before adding new hardware or dimensions.',
+  },
+  warm: {
+    title: 'Configuration warm starts', anchor: 'configuration-warm-starts',
+    description: 'Reuse a solution when the geometry changes.', status: 'Planned',
+    complexity: 4, scope: 3.5,
+    complexityReason: 'Moving interfaces and crossings can make a previous subspace incomplete. Reweighting, residual checks, enrichment, and fallback must preserve the requested bands.',
+    scopeReason: 'Build on existing k-path reuse, then add cross-configuration state transfer, sweep scheduling, and comparisons with independent cold starts.',
+    motivation: '',
+  },
+  evidence: {
+    title: 'Theory and benchmarks', anchor: 'theory-and-benchmarks',
+    description: 'Document the science and measure each change.', status: 'In Development',
+    complexity: 3, scope: 3,
+    complexityReason: 'Fair comparisons require matched physical problems, explicit error controls, and a separation of solver, discretization, and implementation effects.',
+    scopeReason: 'Curate explanations, reference cases, profiling, and reproducible plots. This estimates the core documentation and benchmark suite; maintenance continues.',
+    motivation: 'Make numerical results easier to trust and performance claims easier to reproduce. Profiling also identifies which improvements are worth implementing next.',
+  },
+  geometry: {
+    title: 'General geometry', anchor: 'general-geometry',
+    description: 'Add polygons, cutouts, and dielectric grids.', status: 'Planned',
+    complexity: 3.5, scope: 4,
+    complexityReason: 'Accurate interfaces, overlap rules, and non-orthogonal cells must remain consistent with the discrete material operator.',
+    scopeReason: 'New shapes and grid import touch material construction, configuration, bindings, browser controls, and a broad geometry validation suite.',
+    motivation: 'Represent etched shapes, composite inclusions, and imported designs directly. Researchers can then study structures that cannot be expressed as circles.',
+  },
+  solver: {
+    title: 'Solver optimization', anchor: 'solver-optimization',
+    description: 'Lower iteration cost; target chosen frequencies.', status: 'Planned',
+    complexity: 4.5, scope: 4,
+    complexityReason: 'Preconditioning and interior eigenvalues are sensitive to clustering, contrast, and near-zero modes. Acceleration must preserve residual accuracy and band coverage.',
+    scopeReason: 'Profile and tune the existing block solver, memory layout, and precision choices, then implement and benchmark a targeted-frequency path.',
+    motivation: 'Reduce the cost of each solve and reach defect or cavity modes near a chosen frequency without computing every lower band first.',
+  },
+  gradients: {
+    title: 'Gradients and inverse design', anchor: 'gradients-and-inverse-design',
+    description: 'Use sensitivities to optimize a crystal.', status: 'Planned',
+    complexity: 4.5, scope: 4,
+    complexityReason: 'Differentiate the actual discrete operators and interfaces, account for eigenvector gauge and degeneracies, and verify gradients independently.',
+    scopeReason: 'Connect parameter derivatives, objective functions, and optimization loops to the existing operator workflow, with examples and gradient validation.',
+    motivation: 'Use the direction of a parameter’s effect to improve a band gap or dispersion curve. This can guide searches more efficiently than exhaustive parameter grids.',
+  },
+  compatibility: {
+    title: 'MPB compatibility', anchor: 'mpb-compatibility',
+    description: 'Translate and validate established workflows.', status: 'Planned',
+    complexity: 3, scope: 4,
+    complexityReason: 'Geometry semantics, units, coordinates, band ordering, and field normalization must match. The main burden is faithful translation and comparison.',
+    scopeReason: 'A scoped Python adapter, configuration conversion, field exports, and workflow tests cover many interfaces. General Scheme compatibility is a later extension.',
+    motivation: 'Lower the effort needed to try Blaze on an existing calculation, and make comparisons with MPB straightforward and reproducible.',
+  },
+  gpu: {
+    title: 'GPU execution', anchor: 'gpu-execution',
+    description: 'Keep complete solves on the GPU.', status: 'Planned',
+    complexity: 4, scope: 5,
+    complexityReason: 'The physics stays the same, but precision, reductions, convergence, and device memory must be validated across the full eigensolver.',
+    scopeReason: 'The current CUDA backend is a stub. Device memory, FFTs, block algebra, scheduling, error handling, and platform testing make this a major implementation.',
+    motivation: '',
+  },
+  maxwell3d: {
+    title: 'Full 3D Maxwell', anchor: 'full-3d-maxwell',
+    description: 'Solve vector fields in periodic 3D media.', status: 'Planned',
+    complexity: 5, scope: 5,
+    complexityReason: 'A full vector formulation must enforce transversality and handle the null space. Material sampling, degeneracies, and convergence need new 3D reference cases.',
+    scopeReason: 'Extend grids, geometry, field storage, operators, FFTs, preconditioners, exports, and interfaces, with substantially larger memory and validation demands.',
+    motivation: 'Study three-dimensional photonic crystals and polarization coupling beyond the 2D TE/TM split.',
+  },
+  slabs: {
+    title: 'Photonic slabs', anchor: 'photonic-slabs',
+    description: 'Resolve finite thickness and confinement.', status: 'Planned',
+    complexity: 4.5, scope: 4.5,
+    complexityReason: 'A guided-mode basis, layered-media normalization, mode cutoffs, and perturbative radiation losses introduce a distinct set of approximations to validate.',
+    scopeReason: 'Build a slab-specific formulation, basis construction, matrix elements, field reconstruction, and radiative outputs, with Legume as a reference.',
+    motivation: 'Include vertical confinement and radiation when studying patterned films. A slab-specific method offers these observables without requiring a general 3D grid.',
+  },
+} satisfies Record<string, Module>;
+
+export type ModuleId = keyof typeof modules;
+
+export const stages: { number: 1 | 2 | 3; title: string; anchor: string; description: string; items: ModuleId[] }[] = [
+  { number: 1, title: 'Research foundation', anchor: 'stage-1-research-foundation', description: 'Establish a reliable research core and use the structure of the physics.', items: ['core', 'symmetries', 'warm', 'evidence'] },
+  { number: 2, title: 'Generalize and optimize 2D', anchor: 'stage-2-generalize-and-optimize-2d', description: 'Broaden geometry, improve solving, and support design workflows.', items: ['geometry', 'solver', 'gradients', 'compatibility'] },
+  { number: 3, title: 'GPU, 3D, and slabs', anchor: 'stage-3-gpu-3d-and-slabs', description: 'Add GPU execution and extend the physical models beyond 2D.', items: ['gpu', 'maxwell3d', 'slabs'] },
+];

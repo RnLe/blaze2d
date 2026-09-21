@@ -1,0 +1,122 @@
+/**
+ * Design tokens.
+ *
+ * Every colour, radius and layout measure used anywhere on the site is defined
+ * here once. Nothing else in the codebase should contain a raw hex value: the
+ * documentation shell, the Workbench, the pitch page and the charts all read
+ * from this file, which is what keeps them looking like one product.
+ *
+ * The palette is a neutral grey scale plus a single blue accent. If you want to
+ * re-theme the site, change `--accent*` here and nothing else.
+ */
+:root {
+  color-scheme: dark;
+
+  /* ---- UI scale -----------------------------------------------------------
+   * The desktop layout is expressed entirely in rem, so scaling the root font
+   * size scales the whole interface at once: type, spacing, icons, radii,
+   * column widths and image boxes stay in exactly the same proportion.
+   *
+   * The anchor is a 2560x1440 viewport, where the root keeps the 16px the
+   * design was drawn at. A 1920x1080 screen therefore renders the same layout
+   * at 0.75x and a 3840x2160 screen at 1.5x -- same composition, same relative
+   * weights, no reflow between them.
+   *
+   * Scaling takes the smaller of the two axes so a short or ultrawide window
+   * shrinks rather than overflowing; this is what stops the sidebar growing a
+   * scrollbar on a 1080p screen at 125% system scaling. The floor keeps small
+   * windows legible and the ceiling stops very large ones overshooting.
+   *
+   * Retarget the design by changing --ui-anchor-w and --ui-anchor-h alone.
+   */
+  --ui-anchor-w: 2560;
+  --ui-anchor-h: 1440;
+
+  /* ---- Surfaces, darkest first ------------------------------------------ */
+  --surface-base: #000000; /* page background */
+  --surface-sunken: #090909; /* code blocks and other wells */
+  --surface-raised: #0a0a0a; /* cards and panels */
+  --surface-overlay: #0c0c0c; /* dialogs and popovers */
+  --surface-inset: #101010; /* inline code and inset chips */
+  --surface-hover: #161616; /* hovered rows and list items */
+
+  /* ---- Borders, faintest first ------------------------------------------ */
+  --border-subtle: #202020; /* structural rules: header, sidebar */
+  --border-default: #292929; /* cards, tables, code blocks */
+  --border-strong: #3b3b3b; /* dialogs and emphasised edges */
+
+  /* ---- Text, brightest first -------------------------------------------- */
+  --text-heading: #f1f1f1;
+  --text-primary: #ededed;
+  --text-secondary: #b5b5b5;
+  --text-muted: #a1a1a1;
+  --text-subtle: #8f8f8f;
+
+  /* ---- Accent ------------------------------------------------------------
+   * `--accent` is the one brand colour. `--accent-contrast` is the only text
+   * colour that may sit on top of a solid `--accent` fill (8.9:1).
+   */
+  --accent: #59b6ff;
+  --accent-hover: #8acfff;
+  --accent-soft: #7bc5ff; /* accent text on a dark tinted background */
+  --accent-border: #3890d1;
+  --accent-surface: #071929; /* tinted background behind accent text */
+  --accent-surface-hover: #0a2133;
+  --accent-contrast: #04121e;
+
+  /* ---- Brand mark --------------------------------------------------------
+   * The orange of the Blaze2D logo. Artwork that quotes the mark uses it --
+   * the moiré loop's dots, the console card's results. Interface chrome uses
+   * `--accent` and never this.
+   */
+  --brand-orange: #eb7929;
+  --brand-blue: #317cb8;
+  --figure-paper: #ffffff;
+
+  /* ---- Status ----------------------------------------------------------- */
+  --warning: #edce98;
+  --warning-border: #96753e;
+  --warning-surface: #282117;
+  --danger: #ffc3bf;
+  --danger-border: #9a5555;
+  --danger-surface: #281a1a;
+  --success: #6ee7a8;
+
+  /* ---- Data series -------------------------------------------------------
+   * Shared by the benchmark charts, the Workbench band plot and the pitch
+   * animations so that "the reference implementation" and "Blaze" are always
+   * the same two colours wherever a reader meets them.
+   */
+  --series-reference: #5477c4; /* MPB, or any external baseline */
+  --series-primary: #a3befa; /* Blaze, full precision */
+  --series-highlight: #eaf1fe; /* Blaze, mixed precision */
+  --series-accent: var(--accent); /* the interactive/selected series */
+  --series-grid: #ffffff15;
+  --series-axis: #555555;
+  --series-label: #a6a0af;
+
+  /* ---- Typography -------------------------------------------------------- */
+  /* next/font appends the fallback stack to the generated family name, so this
+     must not repeat it. */
+  --font-sans: var(--font-sans-loaded, system-ui), sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* ---- Radii -------------------------------------------------------------- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-pill: 999px;
+
+  /* ---- Layout ------------------------------------------------------------- */
+  --reading-width: 72ch;
+  --sidebar-width: 18rem;
+  --header-height: 4.5rem;
+  --toc-width: 15.5rem;
+  --content-max-width: 108rem;
+  --page-gutter: 1.65rem; /* ~20px at 1080p */
+  /* Where an anchored heading parks: clear of the sticky header, with a little
+     air under it. Declared once -- `scroll-padding-top` on the scroll container
+     already covers every anchor, so targets must not repeat it as
+     `scroll-margin-top`, which would add to it rather than replace it. */
+  --scroll-offset: calc(var(--header-height) + 1rem);
+}

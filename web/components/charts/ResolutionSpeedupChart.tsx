@@ -8,13 +8,15 @@ import { scaleBand, scaleLinear } from '@visx/scale';
 import { AxisLeft, AxisBottom } from '@visx/axis';
 import { GridRows } from '@visx/grid';
 import { Text } from '@visx/text';
-import { useSeries3Benchmarks } from '../../lib/use-benchmarks';
+import { useSeries3Benchmarks } from '@/lib/use-benchmarks';
 import { CHART_STYLES } from './BarChart';
+import ChartPlaceholder from './ChartPlaceholder';
+import { series, theme } from '@/lib/theme';
 
 // Colors for speedup
 const COLORS = {
-  positive: '#eaf1fe',  // Frost for speedup > 1
-  negative: '#ef4444',  // Red for speedup < 1
+  positive: series.highlight,  // Frost for speedup > 1
+  negative: theme.negative,  // Red for speedup < 1
 };
 
 interface ResolutionSpeedupChartProps {
@@ -50,9 +52,7 @@ export default function ResolutionSpeedupChart({
 
   if (loading) {
     return (
-      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-        Loading benchmark data...
-      </div>
+      <ChartPlaceholder width={width} height={height} />
     );
   }
 

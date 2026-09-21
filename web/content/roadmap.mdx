@@ -1,50 +1,280 @@
 ---
+nav:
+  group: Project
+  order: 0
+layout: wide
 title: Optimization & Roadmap
-description: Current scope and planned scientific and performance work.
+description: "A staged roadmap for Blaze: a research foundation, broader and faster 2D calculations, then GPU execution, 3D crystals, and slabs."
 ---
+
+import { Citation, References, Reference } from '@/components/article/Citation'
+import { DevelopmentSequence, StatusLabel, ModuleStatusTag, Motivation } from '@/components/roadmap-page/RoadmapFigures'
+import ModuleBanner from '@/components/roadmap-page/ModuleBanner'
+import '@/components/roadmap-page/roadmap.css'
+
+<div className="roadmap-page">
+<div className="narrow">
+
+<span className="roadmap-status"><span aria-hidden="true" />Actively developed</span>
 
 # Optimization & Roadmap
 
-Blaze2D focuses on parameter studies of two-dimensional photonic crystals and
-projected operator and derivative extraction. The shared configuration and result
-contracts connect the native solver, Python, and the browser Workbench.
+<p className="roadmap-introduction">This page maps the development of Blaze into stages, grouping related modules so that later work can build on a mature foundation. Each module is marked <StatusLabel status="Done" />, <StatusLabel status="In Development" />, or <StatusLabel status="Planned" />.</p>
 
-## Current scope
+Blaze was built specifically for a [master's thesis](/thesis), with a narrower
+application than established reference solvers: two-dimensional photonic crystals,
+repeated parameter studies, and projected Maxwell operators. It remains actively
+developed, with broader capabilities and further optimization as the next
+research priorities.
 
-- Two-dimensional periodic lattices with circular inclusions and positive scalar permittivity.
-- TE and TM band structures, explicit sampling paths, and ordered parameter sweeps.
-- Projected velocity, mass, registry derivatives, and the existing TE/TM research quantities.
-- Registry studies and k-stencils with recorded gauge conventions and residual certification.
-- Native f32 and f64 calculations; f64 calculations in the browser.
+**MPB remains Blaze's strongest reference and principal validation target.**
+Adopting and optimizing MPB's capabilities is a natural direction,
+while retaining Blaze's emphasis on sweeps and operator data.<Citation id={1} />
 
-## Numerical and performance work
+</div>
 
-Performance changes need comparisons at matched discretization, solver settings,
-convergence requirements, precision, and retained outputs. Priorities include:
+<DevelopmentSequence />
 
-- Stronger residual-based stopping and certification studies, especially for remote bands.
-- Preconditioner and block-size studies for difficult dielectric contrasts and clustered eigenvalues.
-- Warm starts between related parameter configurations, with explicit gauge and failure handling.
-- Memory layout, FFT scheduling, and symmetry reduction where measured workloads justify them.
-- GPU execution where arithmetic intensity and data residency outweigh transfer and launch costs.
+<section className="narrow roadmap-stage-section" data-stage="1">
 
-The current solver uses LOBPCG. Alternative eigensolvers and electromagnetic
-formulations require separate numerical validation. Browser execution is already
-available; it uses the same scientific contract as the native interfaces.
+# Stage 1: Research foundation
 
-## Geometry, dimensions, and compatibility
+Establish a reliable research core.
+Symmetries and configuration warm starts are the next solver features.
 
-Future work includes additional geometry and material variants, general three-dimensional
-Maxwell calculations, and an MPB compatibility adapter. These are planned extensions,
-not capabilities of the current release. Tagged types, dimension-aware coordinates,
-and explicit capabilities keep their future interfaces separate from current field meanings.
+<section className="roadmap-module" data-module="core">
+<div className="roadmap-module-heading">
 
-MPB-compatible geometry also requires a dedicated study of overlap precedence,
-material sampling, boundary interfaces, and numerical convergence. The current
-circle rasterizer does not promise MPB overlap semantics.
+## 2D research core
 
-MPB already exposes fields, eigenvectors, and group velocities. Blaze's research
-focus is the integration of configuration sweeps with projected operator and
-derivative datasets for multiband models. See the
-[MPB Python interface](https://mpb.readthedocs.io/en/latest/Python_User_Interface/)
-for the reference capabilities.
+<ModuleStatusTag module="core" />
+</div>
+
+Blaze's research core computes TE and TM bands for circular inclusions in positive
+scalar dielectrics, runs parameter sweeps, and projects Maxwell operators. Native and browser
+execution share a configuration format. MPB comparisons and convergence metadata
+provide the baseline for further work.
+
+<ModuleBanner module="core" />
+</section>
+
+<section className="roadmap-module" data-module="symmetries">
+<div className="roadmap-module-heading">
+
+## Symmetries
+
+<ModuleStatusTag module="symmetries" />
+</div>
+
+Start with rotations and reflections that preserve the sampled crystal.
+Equivalent wavevectors can then share a solve. Symmetry sectors and real-valued
+representations offer further reductions where the material and discretization
+allow them.
+
+<ModuleBanner module="symmetries" />
+<Motivation module="symmetries" />
+</section>
+
+<section className="roadmap-module" data-module="warm">
+<div className="roadmap-module-heading">
+
+## Configuration warm starts
+
+<ModuleStatusTag module="warm" />
+</div>
+
+Independent geometry jobs currently start afresh in Blaze. MPB's standard run also
+resets fields, although explicit reuse is possible.<Citation id={2} /> Blaze already
+reuses fields along k-paths and accepts native warm-start inputs. The planned step
+is automatic reuse between configurations: correct the old subspace for the new
+material and check its residual. Published methods for tracking Maxwell modes as
+geometry changes provide a starting point.<Citation id={3} />
+
+<ModuleBanner module="warm" />
+<Motivation module="warm">Warm starts already matter within a single crystal's k-space workflow; published Bloch-Maxwell work demonstrates substantial iteration reductions.<Citation id={4} /> Extending reuse to nearby geometries offers significant speed-up potential, to be measured at equal accuracy across a full sweep.</Motivation>
+</section>
+
+<section className="roadmap-module" data-module="evidence">
+<div className="roadmap-module-heading">
+
+## Theory and benchmarks
+
+<ModuleStatusTag module="evidence" />
+</div>
+
+Keep this website up-to-date with the theory, implementation reasoning, and reproducible
+measurements. Profile setup, FFTs, orthogonalization, allocations, and memory. Compare
+total runtime at equal accuracy, with configurations, hardware, and tolerances
+reported alongside the results.
+
+<ModuleBanner module="evidence" />
+<Motivation module="evidence" />
+</section>
+</section>
+
+<section className="narrow roadmap-stage-section" data-stage="2">
+
+# Stage 2: Generalize and optimize 2D
+
+Fully generalize 2D geometry, improve solving, and support MPB workflows.
+MPB remains the reference for the extended capabilities.
+
+<section className="roadmap-module" data-module="geometry">
+<div className="roadmap-module-heading">
+
+## General geometry
+
+<ModuleStatusTag module="geometry" />
+</div>
+
+Add polygons, composite shapes, and imported dielectric grids, with clear overlap
+rules and accurate material-interface sampling. Initially retain positive scalar
+permittivity. Tensor materials, loss, and dispersion would need separate extensions
+to the physical formulation.
+
+<ModuleBanner module="geometry" />
+<Motivation module="geometry" />
+</section>
+
+<section className="roadmap-module" data-module="solver">
+<div className="roadmap-module-heading">
+
+## Solver optimization
+
+<ModuleStatusTag module="solver" />
+</div>
+
+Tune the existing block eigensolver, preconditioning, memory layout, and precision
+choices. Then add calculations near a chosen frequency, a capability MPB already
+offers. Evaluate alternative algorithms against difficult or clustered bands,
+with the same residual accuracy and requested band coverage.
+
+<ModuleBanner module="solver" />
+<Motivation module="solver" />
+</section>
+
+<section className="roadmap-module" data-module="gradients">
+<div className="roadmap-module-heading">
+
+## Gradients and inverse design
+
+<ModuleStatusTag module="gradients" />
+</div>
+
+Extend operator workflows with geometry and material derivatives. Minkov and
+colleagues demonstrated photonic-crystal inverse design through automatic
+differentiation.<Citation id={5} /> Blaze needs derivatives consistent with its
+discrete operators, including careful treatment of interfaces and degenerate modes.
+
+<ModuleBanner module="gradients" />
+<Motivation module="gradients" />
+</section>
+
+<section className="roadmap-module" data-module="compatibility">
+<div className="roadmap-module-heading">
+
+## MPB compatibility
+
+<ModuleStatusTag module="compatibility" />
+</div>
+
+Begin with equivalent examples, geometry conversion, and a scoped Python adapter.
+Match units, field normalization, metadata, and required exports such as HDF5.
+Broader Python or Scheme compatibility can follow as tested workflows expand.
+
+<ModuleBanner module="compatibility" />
+<Motivation module="compatibility" />
+</section>
+</section>
+
+<section className="narrow roadmap-stage-section" data-stage="3">
+
+# Stage 3: GPU, 3D, and slabs
+
+Build on the optimized 2D core to make large parameter studies more practical and
+study structures beyond the 2D TE/TM model. GPU parallelism targets faster band
+calculations, while 3D and slab models add polarization coupling and vertical
+confinement.
+
+<section className="roadmap-module" data-module="gpu">
+<div className="roadmap-module-heading">
+
+## GPU execution
+
+<ModuleStatusTag module="gpu" />
+</div>
+
+Keep FFTs, material operations, preconditioning, and block algebra on the device
+throughout a solve. Jin and Xie report **over 40× average acceleration** for their
+3D finite-difference solver using CuPy on an RTX 4090 D against a NumPy CPU
+implementation.<Citation id={6} /> Blaze's plane-wave solver needs its own measurements.
+
+<ModuleBanner module="gpu" />
+<Motivation module="gpu">Higher throughput could make large sweeps and training datasets more affordable. For example, Feng's neural waveguide design study trains on MPB band diagrams across varying geometries.<Citation id={7} /> Faster dataset generation is a useful application of a GPU backend.</Motivation>
+</section>
+
+<section className="roadmap-module" data-module="maxwell3d">
+<div className="roadmap-module-heading">
+
+## Full 3D Maxwell
+
+<ModuleStatusTag module="maxwell3d" />
+</div>
+
+Extend to lossless periodic 3D crystals with vector fields, 3D FFTs, and material
+sampling. The scalar TE/TM split no longer applies: enforce transverse fields and
+handle the curl operator's null space, with a larger memory budget.
+
+<ModuleBanner module="maxwell3d" />
+<Motivation module="maxwell3d" />
+</section>
+
+<section className="roadmap-module" data-module="slabs">
+<div className="roadmap-module-heading">
+
+## Photonic slabs
+
+<ModuleStatusTag module="slabs" />
+</div>
+
+Guided-mode expansion uses the modes of an unpatterned waveguide as a reduced basis
+for efficient slab band calculations, combining periodicity in the plane with vertical
+confinement. **Legume implements this for photonic crystal slabs.**<Citation id={8} />
+A similar extension could expose slab bands, fields, and radiative losses, within
+the method's basis and perturbative radiation approximations.
+
+<ModuleBanner module="slabs" />
+<Motivation module="slabs" />
+</section>
+</section>
+
+<p className="narrow roadmap-invitation">Ideas and contributions are warmly welcome, whether a useful test case, a numerical method, or a clearer explanation. <a href="https://github.com/RnLe/blaze2d">Join the project on GitHub.</a></p>
+
+<References>
+  <Reference id={1}>
+    S. G. Johnson and J. D. Joannopoulos, "Block-iterative frequency-domain methods for Maxwell's equations in a planewave basis," <em>Optics Express</em> 8, 173–190 (2001). [<a href="https://doi.org/10.1364/OE.8.000173" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={2}>
+    MPB developers, "User Interface: run_parity," <em>MPB Documentation</em>, accessed September 2026. [<a href="https://mpb.readthedocs.io/en/latest/Python_User_Interface/#run-functions" target="_blank" rel="noopener noreferrer">Documentation</a>]
+  </Reference>
+  <Reference id={3}>
+    N. Georg, W. Ackermann, J. Corno and S. Schöps, "Uncertainty Quantification for Maxwell's Eigenproblem based on Isogeometric Analysis and Mode Tracking," <em>Computer Methods in Applied Mechanics and Engineering</em> 350, 228–244 (2019). [<a href="https://doi.org/10.1016/j.cma.2019.03.002" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={4}>
+    S. Börm, R. Köhl and N. Talebi, "Computing Maxwell eigenmodes with Bloch boundary conditions," <em>arXiv</em>:2304.00337, preprint (2023). [<a href="https://arxiv.org/abs/2304.00337" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={5}>
+    M. Minkov, I. A. D. Williamson, L. C. Andreani, D. Gerace, B. Lou, A. Y. Song, T. W. Hughes and S. Fan, "Inverse Design of Photonic Crystals through Automatic Differentiation," <em>ACS Photonics</em> 7, 1729–1741 (2020). [<a href="https://doi.org/10.1021/acsphotonics.0c00327" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={6}>
+    C. Jin and H. Xie, "A Robust GPU-Accelerated Kernel Compensation Solver with Novel Discretization for Photonic Crystals in Anisotropic Media," <em>arXiv</em>:2511.17107v3, preprint (2026). [<a href="https://arxiv.org/abs/2511.17107v3" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={7}>
+    L. Feng, "Inverse Design of Photonic Crystal Waveguides Using Neural Networks and Dispersion Optimization," <em>arXiv</em>:2410.06374, preprint (2024). [<a href="https://arxiv.org/abs/2410.06374" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={8}>
+    S. Zanotti, M. Minkov, D. Nigro, D. Gerace, S. Fan and L. C. Andreani, "Legume: A free implementation of the guided-mode expansion method for photonic crystal slabs," <em>Computer Physics Communications</em> 304, 109286 (2024). [<a href="https://doi.org/10.1016/j.cpc.2024.109286" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+</References>
+
+</div>

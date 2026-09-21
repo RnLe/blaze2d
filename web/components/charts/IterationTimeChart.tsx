@@ -8,13 +8,15 @@ import { scaleBand, scaleLinear } from '@visx/scale';
 import { AxisLeft, AxisBottom } from '@visx/axis';
 import { GridRows } from '@visx/grid';
 import { Text } from '@visx/text';
-import { useSeries4Benchmarks } from '../../lib/use-benchmarks';
+import { useSeries4Benchmarks } from '@/lib/use-benchmarks';
 import { CHART_STYLES } from './BarChart';
+import ChartPlaceholder from './ChartPlaceholder';
+import { series } from '@/lib/theme';
 
 // Colors matching other charts
 const COLORS = {
-  mpb: '#5477c4',     // Blue-gray
-  blaze: '#eaf1fe',   // Light blue-white
+  mpb: series.reference,     // Blue-gray
+  blaze: series.highlight,   // Light blue-white
 };
 
 interface IterationTimeChartProps {
@@ -79,9 +81,7 @@ export default function IterationTimeChart({
 
   if (loading) {
     return (
-      <div style={{ width: '100%', maxWidth: width, minWidth: 0, height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-        Loading benchmark data...
-      </div>
+      <ChartPlaceholder width={width} height={height} />
     );
   }
 

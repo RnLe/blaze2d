@@ -41,7 +41,9 @@ const promiseCache = new Map<number, Promise<EpsilonGridData>>();
 // All supported resolutions (16 to 256, step 16)
 const ALL_RESOLUTIONS = Array.from({ length: 16 }, (_, i) => (i + 1) * 16);
 
-import { getAssetPath } from '../../lib/paths';
+import { getAssetPath } from '@/lib/paths';
+import { series, theme } from '@/lib/theme';
+import { useUiScale } from '@/lib/use-ui-scale';
 
 // Helper to load data with caching and deduplication
 function loadResolution(res: number): Promise<EpsilonGridData> {
@@ -65,7 +67,7 @@ function loadResolution(res: number): Promise<EpsilonGridData> {
 
 export default function EpsilonGridViewer({
   initialResolution = 64,
-  size = 300,
+  size: designSize = 300,
   showSlider = true,
 }: EpsilonGridViewerProps) {
   // Snap to nearest valid resolution (multiple of 16, 16-256)
@@ -73,6 +75,9 @@ export default function EpsilonGridViewer({
     const snapped = Math.round(r / 16) * 16;
     return Math.min(256, Math.max(16, snapped));
   }, []);
+
+  // Rendered size follows the UI scale, like every other box on the page.
+  const size = designSize * useUiScale();
 
   const [resolution, setResolution] = useState(() => snapResolution(initialResolution));
   const [data, setData] = useState<EpsilonGridData | null>(null);
@@ -189,7 +194,7 @@ export default function EpsilonGridViewer({
           width: '100%', maxWidth: size, 
           height: size, 
           position: 'relative',
-          backgroundColor: '#f0f0f0',
+          backgroundColor: theme.paper,
           borderRadius: '4px',
           overflow: 'hidden',
         }}
@@ -201,7 +206,7 @@ export default function EpsilonGridViewer({
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
-            color: '#666',
+            color: theme.paperInk,
             fontSize: '14px',
           }}>
             Loading...
@@ -214,7 +219,7 @@ export default function EpsilonGridViewer({
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
-            color: '#800',
+            color: theme.negative,
             fontSize: '12px',
             padding: '16px',
             textAlign: 'center',
@@ -252,7 +257,7 @@ export default function EpsilonGridViewer({
               width: '100%',
               height: '4px',
               appearance: 'none',
-              backgroundColor: '#e0e0e0',
+              backgroundColor: theme.paper,
               borderRadius: '2px',
               outline: 'none',
               cursor: 'pointer',
@@ -275,7 +280,7 @@ export default function EpsilonGridViewer({
                   left: `${percent}%`,
                   transform: 'translateX(-50%)',
                   fontSize: '10px',
-                  color: resolution === value ? '#435f9d' : '#999',
+                  color: resolution === value ? series.reference : theme.guideLine,
                   fontWeight: resolution === value ? 600 : 400,
                   transition: 'color 0.15s ease',
                   fontVariantNumeric: 'tabular-nums',
@@ -291,9 +296,9 @@ export default function EpsilonGridViewer({
             textAlign: 'center',
             marginTop: '8px',
             fontSize: '12px',
-            color: '#666',
+            color: theme.paperInk,
           }}>
-            Resolution: <span style={{ fontWeight: 600, color: '#a3befa' }}>{resolution}×{resolution}</span>
+            Resolution: <span style={{ fontWeight: 600, color: series.primary }}>{resolution}×{resolution}</span>
           </div>
         </div>
       )}

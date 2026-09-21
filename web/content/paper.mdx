@@ -1,39 +1,56 @@
 ---
+nav:
+  group: Research
+  order: 2
+  document: true
+layout: wide
+document: "/paper/blaze2d.pdf"
 title: "Manuscript"
 card:
   title: "Manuscript"
   category: "Research"
-  order: 2
+  order: 6
   size: "2x1"
-  description: "Operator construction, MPB comparisons, and mixed-precision calculations."
-  image: "/banners/blaze_paper.webp"
+  description: "An unpublished, unofficial account of the architectural choices behind Blaze, validated against MPB."
+  image: ""
   showDescription: true
   showDate: false
   showTags: false
-  showImage: true
+  showImage: false
   tags: []
 ---
 
-import PdfViewer from '../components/PdfViewer'
-import { getAssetPath } from '../lib/paths'
+import PdfViewer from '@/components/article/PdfViewer'
+import DocumentDownload from '@/components/article/DocumentDownload'
 
-<div className="narrow-centered">
+<div className="document-layout">
 
-<span className="date">Standalone manuscript · TU Dortmund University · July 2026</span>
+<div className="document-summary">
 
-# Blaze2D: A Custom Plane-Wave Eigensolver for Photonic Crystals
+<div className="document-meta">
+  <span>Standalone manuscript</span>
+  <span>TU Dortmund University</span>
+  <span>July 2026</span>
+</div>
 
-*Design choices, operator construction, MPB validation, and mixed-precision
-benchmarks in one self-contained manuscript.*
+# A Custom Plane-Wave Eigensolver for Photonic Crystals
 
-**Note:** this manuscript is a work in progress and has not been submitted or published yet.
+Design choices, operator construction, MPB validation, and mixed-precision
+benchmarks, in one self-contained manuscript. It is the most complete written
+account of how Blaze2D works and why it is built the way it is.
 
-<a href={getAssetPath('/paper/blaze2d.pdf')} target="_blank" rel="noreferrer">Download the PDF ↗</a>
+<div className="document-note">
 
----
+**Work in progress.** This manuscript has not been submitted or published.
 
 </div>
 
-<div className="manuscript-viewer">
-  <PdfViewer src="/paper/blaze2d.pdf" height="80dvh" />
+<div className="document-actions">
+  <DocumentDownload src="/paper/blaze2d.pdf" />
+</div>
+
+</div>
+
+<PdfViewer src="/paper/blaze2d.pdf" />
+
 </div>

@@ -13,7 +13,7 @@
  *   - blaze2d must be built: cargo build --release -p blaze2d-cli
  */
 
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -175,7 +175,7 @@ async function exportEpsilonForResolution(resolution) {
   fs.writeFileSync(jsonPath, JSON.stringify(output));
   
   const stats = fs.statSync(jsonPath);
-  console.log(`  ✅ Wrote ${jsonPath} (${(stats.size / 1024).toFixed(1)} KB)`);
+  console.log(`  Wrote ${jsonPath} (${(stats.size / 1024).toFixed(1)} KB)`);
   
   // Clean up temp files
   fs.unlinkSync(tomlPath);
@@ -201,7 +201,7 @@ function generateIndex(results) {
   };
   
   fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
-  console.log(`\n✅ Generated index: ${indexPath}`);
+  console.log(`\nGenerated index: ${indexPath}`);
 }
 
 async function main() {
@@ -217,8 +217,8 @@ async function main() {
       cwd: REPO_ROOT,
       stdio: ['pipe', 'pipe', 'pipe']
     });
-    console.log('\n✅ blaze2d-cli built successfully');
-  } catch (error) {
+    console.log('\nBuilt blaze2d-cli');
+  } catch {
     console.error('Failed to build blaze2d-cli');
     process.exit(1);
   }
@@ -236,16 +236,16 @@ async function main() {
   
   if (results.length > 0) {
     generateIndex(results);
-    console.log(`\n✅ Generated ${results.length} epsilon grids`);
+    console.log(`\nGenerated ${results.length} epsilon grids`);
   } else {
-    console.error('\n❌ No epsilon grids were generated');
+    console.error('\nNo epsilon grids were generated');
     process.exit(1);
   }
   
   // Clean up temp directory
   try {
     fs.rmdirSync(TEMP_DIR);
-  } catch (e) {
+  } catch {
     // Ignore cleanup errors
   }
 }

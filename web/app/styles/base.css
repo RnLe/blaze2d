@@ -1,0 +1,128 @@
+/**
+ * Document defaults and accessibility helpers.
+ *
+ * Everything that applies to the page as a whole rather than to one component.
+ */
+
+html {
+  /* Anchored headings must clear the sticky header. */
+  scroll-padding-top: var(--scroll-offset);
+}
+
+/**
+ * UI scale.
+ *
+ * 16px at the 2560x1440 anchor, scaled proportionally either side of it; see
+ * the note in tokens.css. The bounds are deliberately absolute pixels: they are
+ * legibility limits, not lengths that should scale with the thing they bound.
+ *
+ * Applied only above the layout breakpoint. Below it the single-column phone
+ * layout is drawn against a real 16px root and is tuned on its own terms;
+ * scaling it here would shrink it against a viewport with no room to give.
+ */
+@media (min-width: 900px) {
+  html {
+    font-size: clamp(
+      12px,
+      min(calc(100vw * 16 / var(--ui-anchor-w)), calc(100vh * 16 / var(--ui-anchor-h))),
+      26px
+    );
+  }
+}
+
+body {
+  min-width: 0;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+button,
+summary,
+select {
+  cursor: pointer;
+}
+
+a {
+  text-underline-offset: 0.2em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0.1875rem;
+}
+
+/* Visible to screen readers, not to the eye. */
+.sr-only {
+  position: absolute;
+  width: 0.0625rem;
+  height: 0.0625rem;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: 1rem;
+  z-index: 100;
+  padding: 0.65rem 1rem;
+  background: var(--text-primary);
+  color: var(--surface-base);
+  border-radius: var(--radius-sm);
+}
+.skip-link:focus {
+  top: 0.5rem;
+}
+
+/* Horizontal-scroll containers keep their own scroll chaining contained so a
+   wide table or code block never scrolls the page sideways. */
+.scroll-x {
+  max-width: 100%;
+  overflow: auto;
+  overscroll-behavior-inline: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- Not found --------------------------------------------------------------- */
+
+.not-found {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  text-align: center;
+}
+.not-found > p:first-child {
+  font-size: 0.85rem;
+  letter-spacing: 0.25em;
+  color: var(--text-subtle);
+}
+.not-found h1 {
+  font-size: 2.4rem;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+  color: var(--text-heading);
+}
+.not-found p {
+  color: var(--text-muted);
+}
+.not-found a {
+  margin-top: 1rem;
+  color: var(--accent);
+  text-decoration: underline;
+}

@@ -6,11 +6,12 @@ import { Group } from '@visx/group';
 import { LinePath } from '@visx/shape';
 import { scaleLinear } from '@visx/scale';
 import { AxisLeft, AxisBottom } from '@visx/axis';
-import { GridRows, GridColumns } from '@visx/grid';
+import { GridRows } from '@visx/grid';
 import { Text } from '@visx/text';
 import useSWR from 'swr';
 import { CHART_STYLES } from './BarChart';
-import { getAssetPath } from '../../lib/paths';
+import { getAssetPath } from '@/lib/paths';
+import { series, theme } from '@/lib/theme';
 
 interface KPointData {
   k_distance: number;
@@ -50,9 +51,9 @@ export interface BandComparisonChartProps {
 const defaultMargin = { top: 60, right: 30, bottom: 60, left: 70 };
 
 // Colors
-const MPB_COLOR = '#435f9d';  // Reference blue
-const F64_COLOR = '#4caf50';  // Full precision - green
-const F32_COLOR = '#bbc1cb';  // Mixed precision - gray
+const MPB_COLOR = series.reference;  // Reference blue
+const F64_COLOR = theme.accent;  // Full precision - green
+const F32_COLOR = series.muted;  // Mixed precision - gray
 
 // Marker sizes
 const F64_MARKER_SIZE = 3;
@@ -109,11 +110,12 @@ export default function BandComparisonChart({
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
 
-  // Extract data for the selected polarization
+  // Extract data for the selected polarization. Memoised because the `|| []`
+  // fallbacks would otherwise hand a new array to every scale on each render.
   const polData = data?.[polarization];
-  const mpbData = polData?.mpb || [];
-  const f32Data = polData?.blaze_f32 || [];
-  const f64Data = polData?.blaze_f64 || [];
+  const mpbData = useMemo(() => polData?.mpb ?? [], [polData]);
+  const f32Data = useMemo(() => polData?.blaze_f32 ?? [], [polData]);
+  const f64Data = useMemo(() => polData?.blaze_f64 ?? [], [polData]);
   const numBands = data?.parameters?.num_bands || 8;
 
   // Compute scales

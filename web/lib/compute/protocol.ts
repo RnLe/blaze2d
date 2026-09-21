@@ -1,5 +1,5 @@
-import type { Config, Diagnostic, PlanSummary, ValidationReport } from '../contract/generated';
-import type { RunEvent } from '../contract/records';
+import type { Config, Diagnostic, PlanSummary, ValidationReport } from '@/lib/contract/generated';
+import type { RunEvent } from '@/lib/contract/records';
 
 export const EXECUTION_BUDGET = 512 * 1024 * 1024;
 export type BuildInfo = { version: string; source_revision: string; config_schema: string; result_schema: string };

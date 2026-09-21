@@ -1,4 +1,4 @@
-import { getExample } from '../../lib/examples/registry';
+import { getExample } from '@/lib/examples/registry';
 import CodeWindow from './CodeWindow';
 
 export default function ExampleSource({ slug, language }: { slug: string; language: 'python' | 'toml' }) {

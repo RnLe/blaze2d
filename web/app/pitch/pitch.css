@@ -1,0 +1,480 @@
+/**
+ * Pitch page.
+ *
+ * A scrolling landing page that sits outside the documentation shell: animated
+ * band background, two recorded-data plots, a live browser calculation and the
+ * install card. It borrows the Workbench stylesheet for the live demo, so the
+ * `.pitch-demo` rules below only adjust that shell to a smaller frame.
+ *
+ * Colours come from app/styles/tokens.css.
+ */
+
+.pitch-layout {
+  min-height: 100svh;
+  width: 100%;
+  min-width: 0;
+}
+.pitch-sections {
+  position: relative;
+  z-index: 1;
+  min-height: 100svh;
+}
+.pitch-section {
+  position: relative;
+  z-index: 1;
+  padding: 4rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pitch-section h2 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 600;
+  color: var(--text-heading);
+  text-align: center;
+  margin-bottom: 1rem;
+  letter-spacing: -0.02em;
+}
+.pitch-section > p {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  text-align: center;
+  max-width: 100%;
+  margin-bottom: 3rem;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Masthead ---------------------------------------------------------------- */
+
+.pitch-brand {
+  position: fixed;
+  left: 2rem;
+  top: 2rem;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-heading);
+  font-weight: 600;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  transition: opacity 0.2s ease;
+}
+.pitch-brand:hover {
+  opacity: 0.8;
+}
+.pitch-brand img {
+  height: 1.5rem;
+  width: auto;
+}
+
+.pitch-hero {
+  min-height: 100svh;
+  justify-content: center;
+  padding: 2rem;
+}
+.pitch-hero h1 {
+  font-size: clamp(3.5rem, 14vw, 16rem);
+  font-weight: 200;
+  letter-spacing: -0.04em;
+  color: var(--text-heading);
+  text-align: center;
+  line-height: 0.9;
+  text-shadow: 0 0 80px rgb(89 182 255 / 0.15);
+}
+.pitch-hero p {
+  font-size: clamp(0.5625rem, 2.4vw, 1.25rem);
+  white-space: nowrap;
+  color: var(--text-muted);
+  text-align: center;
+  max-width: 100%;
+  margin-top: 2rem;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+}
+.pitch-scroll-hint {
+  margin-top: 3rem;
+  color: var(--text-subtle);
+  font-size: 0.875rem;
+}
+
+/* ---- Plots -------------------------------------------------------------------- */
+
+.pitch-comparison,
+.pitch-speed {
+  width: 100%;
+  max-width: 62.5rem;
+  min-width: 0;
+}
+.pitch-comparison {
+  max-width: 67.5rem;
+}
+.pitch-plot-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin: 0 0 1.3rem;
+  color: var(--text-primary);
+  flex-wrap: wrap;
+  font-size: 1.05rem;
+}
+.pitch-plot-controls button {
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  min-height: 2.25rem;
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8rem;
+}
+.pitch-plot-controls .pitch-replay {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  margin-left: auto;
+  color: var(--text-muted);
+  border-color: transparent;
+  background: transparent;
+}
+.pitch-plot-controls .pitch-replay:hover {
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+.pitch-band-stage,
+.pitch-speed-stage {
+  width: 100%;
+  min-width: 0;
+  background: #000e;
+  border-radius: 0.625rem;
+}
+.pitch-band-stage svg,
+.pitch-speed-stage svg {
+  max-width: 100%;
+  font-family: inherit;
+}
+.pitch-legend {
+  position: relative;
+  display: flex;
+  gap: 1.3rem;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+  justify-content: center;
+  margin: 1.5rem 0 1rem;
+  background: #000c;
+  border-radius: 0.375rem;
+  padding: 0.4rem;
+}
+.pitch-comparison-state {
+  color: var(--text-muted);
+}
+/* One column per solver, its two polarizations stacked, matching how the plot
+   splits: everything MPB drew is in one column, everything Blaze drew in the
+   next. */
+.pitch-comparison .pitch-legend span {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+}
+.pitch-comparison .pitch-legend b {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: inherit;
+}
+.pitch-comparison .pitch-legend svg {
+  flex: none;
+  width: 2.2em;
+  height: 0.9em;
+  overflow: visible;
+}
+.pitch-caption {
+  position: relative;
+  font-size: 0.79rem;
+  color: var(--text-muted);
+  line-height: 1.75;
+  max-width: 100%;
+  margin: 1.5rem auto 0;
+  text-align: center;
+  background: #000c;
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.7rem;
+  width: max-content;
+}
+/* It is a single run of dot-separated facts, so a wrap splits one of them
+   across two lines. Held on one line from the width where the root font size
+   starts scaling with the viewport: above it the caption and its column grow
+   together, so the fit holds at every size. Below it the root is a fixed 16px
+   against a narrowing column, and the line has to be allowed to wrap. */
+@media (min-width: 900px) {
+  .pitch-caption {
+    white-space: nowrap;
+  }
+}
+.pitch-caption a {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+.pitch-benchmark-details a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.pitch-speed-headline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  margin: 1rem 0 3rem;
+}
+.pitch-speed-headline > strong {
+  font-size: clamp(4rem, 9vw, 8rem);
+  font-weight: 450;
+  letter-spacing: -0.07em;
+  line-height: 1;
+  /* The gradient is clipped to the glyphs, so the box has to reach past the
+     last one: negative tracking pulls the multiplication sign into its own
+     right side bearing and the clip would cut its arm off. */
+  padding-right: 0.12em;
+  background: linear-gradient(120deg, var(--series-reference), var(--accent));
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.pitch-speed-headline > strong > span {
+  font-size: 0.65em;
+  margin-left: 0.05em;
+  letter-spacing: normal;
+}
+.pitch-speed-headline > div {
+  font-size: 1.45rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.pitch-unit {
+  color: var(--text-primary);
+}
+.pitch-speed-conditions {
+  position: relative;
+  margin: 1.5rem auto 0;
+  padding: 0.4rem;
+  width: max-content;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  text-align: center;
+  background: #000c;
+  border-radius: 0.375rem;
+}
+
+.pitch-benchmark-details {
+  border-top: 1px solid var(--border-default);
+  margin-top: 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+.pitch-benchmark-details summary {
+  padding: 1rem 0;
+}
+.pitch-benchmark-details p {
+  line-height: 1.7;
+  margin: 1rem 0;
+}
+.pitch-benchmark-details table {
+  width: 100%;
+  text-align: left;
+}
+.pitch-benchmark-details th,
+.pitch-benchmark-details td {
+  padding: 0.7rem;
+  border-bottom: 1px solid var(--border-default);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* ---- Install cards ------------------------------------------------------------- */
+
+.pitch-install-cards {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1.5rem;
+  width: 100%;
+}
+.pitch-install {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  /* Equal cards, wrapping when the viewport cannot fit all three. */
+  flex: 1 1 19rem;
+  max-width: 25rem;
+  padding: 2rem 2.5rem;
+  background: rgb(255 255 255 / 0.03);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 1rem;
+  backdrop-filter: blur(10px);
+}
+.pitch-install img {
+  width: 4rem;
+  height: 4rem;
+}
+.pitch-install h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-heading);
+  text-align: center;
+}
+.pitch-install > a,
+.pitch-install-cta {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  transition: color 0.2s ease;
+}
+.pitch-install > a:hover,
+.pitch-install-link:hover .pitch-install-cta {
+  color: var(--accent);
+}
+/* The GitHub card is itself the link, so the whole surface reacts rather than
+   the line at its foot. `margin-top: auto` keeps that line on the baseline of
+   the taller card beside it. */
+.pitch-install-link {
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+.pitch-install-link:hover {
+  border-color: var(--accent-border);
+  background: rgb(255 255 255 / 0.05);
+}
+.pitch-install-link svg {
+  color: var(--text-primary);
+}
+.pitch-install-name {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.pitch-install-description { color: var(--text-secondary); text-align: center; }
+.pitch-install-cta {
+  margin-top: auto;
+}
+
+/* ---- Live demo ------------------------------------------------------------------ */
+
+.workbench-shell.pitch-demo {
+  width: 100%;
+  max-width: 78.125rem;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 0.875rem;
+  background: #000d;
+}
+.pitch-demo-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+.pitch-demo-top small {
+  color: var(--text-muted);
+  margin-left: 0.5rem;
+}
+.pitch-demo-top a {
+  font-size: 0.77rem;
+}
+.pitch-demo-grid {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+}
+.pitch-demo-model {
+  padding: 0.85rem;
+  border-right: 1px solid var(--border-default);
+}
+.pitch-demo-preview { position: relative; width: 100%; max-width: 13rem; aspect-ratio: 1; margin: 0 auto 0.65rem; overflow: hidden; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-base); }
+.pitch-demo-preview > svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.pitch-demo-crystals, .pitch-demo-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
+.pitch-demo-crystals { margin-bottom: 0.6rem; }
+.pitch-demo-crystals button, .pitch-demo-layout button { font-weight: 600; }
+.workbench-shell.pitch-demo :is(.pitch-demo-crystals, .pitch-demo-layout) button[aria-pressed="true"] { border-color: var(--brand-blue); background: color-mix(in srgb, var(--brand-blue) 17%, var(--surface-base)); color: var(--text-heading); }
+.pitch-demo-sliders { display: grid; gap: 0.35rem; }
+.pitch-demo-slider { min-width: 0; }
+.pitch-demo-slider.is-inactive { opacity: 0.5; }
+.pitch-demo-slider label { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; font-size: 0.9em; }
+.pitch-demo-slider output { width: 4.5ch; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-heading); }
+.workbench-shell .pitch-demo-slider input[type="range"] { display: block; width: 100%; height: 1.65rem; min-height: 0; margin: 0.15rem 0 0; border: 0; background: transparent; }
+.pitch-demo-model > .wb-run { width: 100%; margin: 0.55rem 0 0; }
+.workbench-shell .pitch-demo-resolution { min-height: 1.5em; font-size: 0.8em; text-align: center; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.pitch-demo-results { padding: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.pitch-demo-results-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem; }
+.pitch-demo-layout { width: 18rem; max-width: 100%; }
+.pitch-demo-polarizations { display: flex; align-items: center; gap: 1rem; font-size: 0.86em; }
+.pitch-demo-polarizations > span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.pitch-demo-polarizations > span::before { content: ''; width: 1.2rem; height: 0.16rem; background: var(--polarization-color); }
+.pitch-demo-polarizations .is-tm { --polarization-color: var(--brand-blue); }
+.pitch-demo-polarizations .is-te { --polarization-color: var(--brand-orange); }
+.workbench-shell .pitch-demo-status { min-height: 1.5em; margin: 0; color: var(--text-muted); font-size: 0.86em; font-variant-numeric: tabular-nums; }
+.pitch-demo-charts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; flex: 1; min-height: 24rem; }
+.pitch-demo-charts.is-separated { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pitch-demo-plot { display: flex; flex-direction: column; min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-raised); }
+.pitch-demo-plot-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.65rem; min-height: 2.75rem; }
+.workbench-shell .pitch-demo-plot-heading h3 { font-size: 0.9em; }
+.pitch-demo-plot-heading button { font-size: 0.78em; }
+.pitch-demo-plot-stage { position: relative; flex: 1; min-height: 18rem; }
+.pitch-demo-plot-stage > svg { position: absolute; inset: 0; display: block; max-width: 100%; font-family: var(--font-sans); }
+.workbench-shell .pitch-demo-plot-placeholder { position: absolute; left: 18%; right: 8%; top: 44%; margin: 0; color: var(--text-muted); font-size: 0.85em; text-align: center; pointer-events: none; }
+
+/* ---- Responsive -------------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .pitch-demo-grid {
+    grid-template-columns: 17.5rem minmax(0, 1fr);
+  }
+}
+@media (max-width: 700px) {
+  .pitch-demo-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pitch-demo-model {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .pitch-demo-preview { max-width: 11rem; }
+  .pitch-demo-results { padding: 0.75rem; }
+  .pitch-demo-charts { min-height: 22rem; gap: 0.5rem; }
+  .pitch-demo-plot-stage { min-height: 18rem; }
+  .pitch-demo-charts.is-separated .pitch-demo-plot-heading { flex-wrap: wrap; min-height: 4.5rem; }
+  .pitch-demo-charts.is-separated .pitch-demo-plot-heading button { width: 100%; }
+}
+@media (max-width: 600px) {
+  .pitch-section {
+    padding-inline: 1rem;
+  }
+  .pitch-speed-headline {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
+  }
+  .pitch-plot-controls {
+    gap: 0.65rem;
+    font-size: 0.78rem;
+  }
+  .pitch-legend {
+    gap: 0.75rem;
+    font-size: 0.74rem;
+  }
+  .pitch-caption {
+    font-size: 0.74rem;
+  }
+}

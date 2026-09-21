@@ -315,7 +315,7 @@ def run_series(output_dir: Path, quick: bool = False):
                 parts.append(f"MPB={np.mean(mpb_times):.1f}ms")
             if blaze_times:
                 parts.append(f"Blaze={np.mean(blaze_times):.1f}ms")
-            print(f" → {', '.join(parts)}")
+            print(f"  {', '.join(parts)}")
     
     # Save results
     results_file = output_dir / "series3_resolution_results.json"

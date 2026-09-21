@@ -1,8 +1,14 @@
-// app/not-found.tsx
+import Link from 'next/link';
+
+export const metadata = { title: 'Page not found' };
+
 export default function NotFound() {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center p-8">
-        <h1 className="text-4xl font-bold">404 – Page Not Found</h1>
-      </div>
-    )
-}  
+  return (
+    <main className="not-found">
+      <p>404</p>
+      <h1>This page does not exist</h1>
+      <p>The page may have moved, or the link may be out of date.</p>
+      <Link href="/">Back to the documentation</Link>
+    </main>
+  );
+}

@@ -1,38 +1,29 @@
 'use client';
 
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
+import vscDarkPlus from 'react-syntax-highlighter/dist/esm/styles/prism/vsc-dark-plus';
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import toml from 'react-syntax-highlighter/dist/esm/languages/prism/toml';
+
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('toml', toml);
+
+export type CodeLanguage = 'python' | 'toml';
 
 export interface CodeBlockProps {
   code: string;
-  language?: string;
-  /** Compact card preview vs. full runner view. */
-  variant?: 'card' | 'full';
-  /** Show line numbers (full view only). */
+  language?: CodeLanguage;
   showLineNumbers?: boolean;
-  /** Override the font size. */
-  fontSize?: string;
-  /** Override padding. */
-  padding?: string;
 }
 
 /**
- * Syntax-highlighted code block, matching the markdown python code colouring
- * used elsewhere in the docs (Prism + vscDarkPlus theme).
+ * Runtime-highlighted listing.
  *
- * The `blaze-syntax` class is required: a global rule on docs pages strips
- * inline token colours (`code span { color: inherit !important }`), so
- * `app/global.css` re-asserts a scoped vscode-dark theme under `.blaze-syntax`.
- * That same class also hides the scrollbars while keeping the block scrollable.
+ * Fenced code blocks in MDX are highlighted at build time by rehype-pretty-code
+ * instead; this component exists for source that is only known at runtime, such
+ * as an example's TOML read from the generated catalogue.
  */
-export default function CodeBlock({
-  code,
-  language = 'python',
-  variant = 'full',
-  showLineNumbers = false,
-  fontSize,
-  padding,
-}: CodeBlockProps) {
+export default function CodeBlock({ code, language = 'python', showLineNumbers = false }: CodeBlockProps) {
   return (
     <SyntaxHighlighter
       language={language}
@@ -42,20 +33,17 @@ export default function CodeBlock({
       className="blaze-syntax"
       customStyle={{
         margin: 0,
-        borderRadius: variant === 'card' ? '0' : '0',
-        background: '#0d1117',
-        fontSize: fontSize ?? (variant === 'card' ? '0.74rem' : '0.82rem'),
+        borderRadius: 0,
+        background: 'var(--surface-sunken)',
+        fontSize: '0.82rem',
         lineHeight: 1.55,
-        padding: padding ?? (variant === 'card' ? '14px 16px' : '16px 18px'),
-        // Let the surrounding scroll container (CodeWindow's `.subtle-scroll`
-        // div) own the vertical scroll + scrollbar. If the highlighter scrolls
-        // itself, the `.blaze-syntax` class hides that scrollbar entirely.
+        padding: '16px 18px',
+        // The surrounding `.code-window-body` owns the scrollbar; if the
+        // highlighter scrolled itself the outer container would never overflow.
         height: 'auto',
         overflow: 'visible',
       }}
-      codeTagProps={{
-        style: { fontFamily: 'var(--font-mono, ui-monospace, monospace)' },
-      }}
+      codeTagProps={{ style: { fontFamily: 'var(--font-mono)' } }}
     >
       {code}
     </SyntaxHighlighter>
