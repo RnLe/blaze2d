@@ -115,6 +115,7 @@ numerical defaults into frontend code.
 pnpm typecheck
 pnpm lint
 pnpm build:local     # static export served from the root
+pnpm test:smoke      # eight essential Chromium checks for deployment
 pnpm test:browser    # Playwright, all three browsers, against that export
 ```
 
@@ -132,8 +133,18 @@ site tests are about 33s of work, but a managed run has been seen to add over
 two minutes of stall on top of them.
 
 The production base path is `/blaze2d`, set in `next.config.ts`. Export from the
-domain root with `NEXT_BASE_PATH=`, which is what `build:local` and `dev` do. CI
-builds both.
+domain root with `NEXT_BASE_PATH=`, which is what `build:local` and `dev` do.
+
+Pushes to `main` build the production `/blaze2d` export once, check types and
+prose, and run eight `@smoke` tests in Chromium before publishing that same
+artifact. These cover navigation, mobile reflow, static links, example redirects,
+TOML validation/normalization, and real solver runs and exports.
+
+Pull requests, package releases, and manual **Website checks** runs default to
+the full suite in Chromium, Firefox, and WebKit for both base paths. To run this
+before a larger direct-to-main release, use `gh workflow run site-checks.yml`.
+The workflow caches Cargo dependencies, compiled outputs, and `wasm-pack`; it
+still builds and verifies the solver's source revision on every run.
 
 ## Known follow-ups
 

@@ -12,6 +12,8 @@ concurrency:
 jobs:
   acceptance:
     uses: ./.github/workflows/site-checks.yml
+    with:
+      mode: smoke
   deploy:
     needs: acceptance
     runs-on: ubuntu-22.04

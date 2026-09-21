@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 const base = process.env.NEXT_BASE_PATH ?? '';
 
-test('article search, generated heading links, and mobile navigation', async ({ page }) => {
+test('article search, generated heading links, and mobile navigation', { tag: '@smoke' }, async ({ page }) => {
   await page.goto(`${base}/`);
   await page.getByRole('button', { name: 'Search', exact: false }).click();
   const dialog = page.getByRole('dialog', { name: 'Search documentation' });
@@ -60,7 +60,7 @@ test('Cartesian object edits preserve fractional coordinates for an oblique non-
   await expect(page.getByRole('group', { name: 'Preview periods' }).getByRole('button', { name: '5 × 5' })).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('pitch overlays independent data and calculates both polarizations', async ({ page }) => {
+test('pitch overlays independent data and calculates both polarizations', { tag: '@smoke' }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(`${base}/pitch/`);
   const comparison = page.locator('.pitch-comparison');

@@ -37,7 +37,7 @@ test('UTF-8 diagnostic spans identify Unicode source accurately', () => {
   expect(editorSpan(source, [offset, offset + 7])).toEqual([source.indexOf('invalid'), source.length]);
 });
 
-test('invalid drafts survive reload and cannot overwrite the applied model', async ({ page }) => {
+test('invalid drafts survive reload and cannot overwrite the applied model', { tag: '@smoke' }, async ({ page }) => {
   await open(page); await apply(page, bands);
   const invalid = bands + '\n# Unicode Γ 🔬\n[unsupported]\nfield = true\n';
   await page.locator('input[type=file]').setInputFiles({ name: 'invalid.toml', mimeType: 'text/plain', buffer: Buffer.from(invalid) });
@@ -52,7 +52,7 @@ test('invalid drafts survive reload and cannot overwrite the applied model', asy
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
 });
 
-test('bands export complete arrays and preserve a historical snapshot', async ({ page }) => {
+test('bands export complete arrays and preserve a historical snapshot', { tag: '@smoke' }, async ({ page }) => {
   await open(page); await apply(page, bands); await run(page);
   const first = JSON.parse((await exported(page, 'json')).toString());
   expect(first.results[0].arrays.frequencies.shape).toEqual([7, 8]);
@@ -220,7 +220,7 @@ test('all examples load their complete configuration in one workspace', async ({
   }
 });
 
-test('legacy example links open the inspectable library without a second workbench', async ({ page }) => {
+test('legacy example links open the inspectable library without a second workbench', { tag: '@smoke' }, async ({ page }) => {
   for (const slug of ['square-rods', 'first-band-diagram']) {
     await page.goto(`${base}/examples/${slug}/`);
     await expect(page).toHaveURL(/workbench\/?\?view=examples&inspect=square-rods/);
@@ -304,7 +304,7 @@ test('instant band tooltips follow the actual point and job polarization without
   }
 });
 
-test('normalizing an edited valid draft preserves its calculation and remains runnable', async ({ page }) => {
+test('normalizing an edited valid draft preserves its calculation and remains runnable', { tag: '@smoke' }, async ({ page }) => {
   await open(page);
   await page.locator('input[type=file]').setInputFiles({ name: 'normalize.toml', mimeType: 'text/plain', buffer: Buffer.from(bands.replace('radius = 0.20', 'radius = 0.23')) });
   await expect(page.getByRole('button', { name: 'Normalize', exact: true })).toBeEnabled();

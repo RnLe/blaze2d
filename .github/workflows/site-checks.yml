@@ -1,7 +1,18 @@
 name: Website checks
 on:
   workflow_call:
+    inputs:
+      mode:
+        description: 'smoke for publication, full for cross-browser regression checks'
+        type: string
+        default: full
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Check coverage
+        type: choice
+        options: [full, smoke]
+        default: full
   pull_request:
     paths: ['web/**', 'crates/**', 'examples/calculations/**', 'Cargo.*', '.github/workflows/site-checks.yml']
 permissions:
@@ -9,14 +20,16 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-22.04
+    timeout-minutes: ${{ inputs.mode == 'smoke' && 15 || 30 }}
     strategy:
       fail-fast: false
       matrix:
-        base: ['', '/blaze2d']
+        base: ${{ fromJSON(inputs.mode == 'smoke' && '["/blaze2d"]' || '["", "/blaze2d"]') }}
     env:
       NEXT_BASE_PATH: ${{ matrix.base }}
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
+      BLAZE_SOURCE_REVISION: ${{ github.sha }}
     defaults:
       run:
         working-directory: web
@@ -30,20 +43,46 @@ jobs:
           node-version: '22.23.2'
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - name: Install Rust and browser build tools
+      - name: Cache wasm-pack
+        id: wasm-pack
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-0.13.1-rust-1.91.1
+      - name: Cache Rust dependencies and compilation
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/.wasm-pack
+            target
+          key: ${{ runner.os }}-website-rust-1.91.1-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}-${{ hashFiles('crates/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-website-rust-1.91.1-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}-
+      - name: Install Rust
         run: |
           rustup toolchain install 1.91.1 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain 1.91.1
-          cargo install wasm-pack --version 0.13.1 --locked
+      - name: Install wasm-pack
+        if: steps.wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.13.1 --locked
+      - name: Install website and browser dependencies
+        run: |
           pnpm install --frozen-lockfile
-          pnpm exec playwright install --with-deps chromium firefox webkit
+          pnpm exec playwright install --with-deps ${{ inputs.mode == 'smoke' && 'chromium' || 'chromium firefox webkit' }}
       - name: Check public prose
         run: python3 ../scripts/check-public-prose.py
-      - name: Build and verify the production export
+      - name: Build the production export
         run: |
           pnpm build
           pnpm exec tsc --noEmit
-          pnpm test:browser
+      - name: Run deployment smoke checks
+        if: inputs.mode == 'smoke'
+        run: pnpm test:smoke
+      - name: Run full regression checks
+        if: inputs.mode != 'smoke'
+        run: pnpm test:browser
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: matrix.base == ''
         with:

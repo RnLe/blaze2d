@@ -24,6 +24,7 @@
     "serve:test": "NEXT_BASE_PATH= PORT=3211 node scripts/serve-export.mjs",
     "start": "next start",
     "test:browser": "playwright test",
+    "test:smoke": "playwright test --project=chromium --grep @smoke",
     "test:quick": "BLAZE_TEST_URL=http://127.0.0.1:3211 playwright test --project=chromium tests/reflow.spec.ts tests/site.spec.ts",
     "typecheck": "tsc --noEmit"
   },

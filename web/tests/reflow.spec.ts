@@ -7,7 +7,7 @@ const base = process.env.NEXT_BASE_PATH ?? '';
 const routes = ['', 'installation', 'introduction', 'configuration', 'examples', 'thesis', 'blaze', 'paper', 'roadmap', 'potential', 'workbench-guide', 'pitch', 'workbench',
   ...JSON.parse(readFileSync('../examples/calculations/catalog.json', 'utf8')).map((item: {slug: string}) => 'examples/' + item.slug)];
 
-for (const width of [320, 1920]) test(`public routes reflow at ${width}px`, async ({ page }) => {
+for (const width of [320, 1920]) test(`public routes reflow at ${width}px`, { tag: width === 320 ? '@smoke' : [] }, async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width, height: width === 320 ? 740 : 1080 });
   const failures: string[] = [];
@@ -62,7 +62,7 @@ test('primary workflows have accessible controls and contrast', async ({ page })
   }
 });
 
-test('static export keeps relocation pages and excludes Architecture', () => {
+test('static export keeps relocation pages and excludes Architecture', { tag: '@smoke' }, () => {
   const root = path.resolve('out');
   expect(existsSync(path.join(root, 'architecture'))).toBe(false);
   const pages = readdirSync(root, { recursive: true }).filter(file => typeof file === 'string' && file.endsWith('.html')) as string[];
