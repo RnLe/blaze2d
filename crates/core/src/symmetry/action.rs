@@ -89,6 +89,7 @@ impl BlochActionPlan {
     pub fn polarization(&self)->Polarization {self.polarization}
     pub fn folding(&self)->[i64;2] {self.folding}
     pub fn spatial_permutation(&self)->&[usize] {&self.spatial_source}
+    pub fn spatial_phases(&self)->&[Complex64] {&self.spatial_phase}
     pub fn fourier_phases(&self)->&[Complex64] {&self.fourier_phase}
     pub fn fourier_permutation(&self)->&[usize] {&self.fourier_destination}
     /// Trace of a unitary sampled action, including fixed-node Bloch phases.

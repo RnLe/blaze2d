@@ -174,6 +174,9 @@ pub enum SectorPolicy { #[default] Off, ConservativeMirror, AdaptiveMirror, Cons
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
 pub enum SymmetryArithmetic { #[default] SpatialComplex, FourierComplex, PtReal }
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum SectorStorage { #[default] FullGrid, Orbit }
 fn symmetry_cache_bytes()->usize {64*1024*1024}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -191,11 +194,13 @@ pub struct Symmetry {
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub sector_guard_budget: Option<usize>,
     #[serde(default)]
+    pub sector_storage: SectorStorage,
+    #[serde(default)]
     pub reconstruct_partners: bool,
     #[serde(default)]
     pub arithmetic: SymmetryArithmetic,
 }
-impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:symmetry_cache_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,sectors:SectorPolicy::Off,sector_guard_budget:None,reconstruct_partners:false,arithmetic:SymmetryArithmetic::SpatialComplex}}}
+impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:symmetry_cache_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,sectors:SectorPolicy::Off,sector_guard_budget:None,sector_storage:SectorStorage::FullGrid,reconstruct_partners:false,arithmetic:SymmetryArithmetic::SpatialComplex}}}
 
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

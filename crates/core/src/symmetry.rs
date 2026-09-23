@@ -111,3 +111,4 @@ pub const RECT_GXSYG: [[f64; 2]; 5] = [
 pub mod sectors;
 
 pub mod fourier;
+pub mod reduced;

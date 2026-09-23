@@ -27,9 +27,13 @@ def main():
     p.add_argument("--polarization", choices=["TE", "TM"], default="TM")
     p.add_argument("--pairs", type=int, default=20)
     p.add_argument("--cpu", type=int, default=0)
+    p.add_argument("--tolerance", type=float, help="Common stopping tolerance; requires a binary supporting the seventh argument")
+    p.add_argument("--stop-on-quality-failure", action="store_true", help="Stop after a failed completed pair; retain it and make no acceptance claim")
     p.add_argument("--snapshot", help="Use a frozen seed input instead of a k-path")
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
+    if args.tolerance is not None and (args.snapshot or not math.isfinite(args.tolerance) or args.tolerance<=0):
+        p.error("a finite positive --tolerance is supported only for path runs")
     rng = random.Random(20260923)
     env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1", RAYON_NUM_THREADS="1")
     manifest = vars(args).copy()
@@ -46,6 +50,8 @@ def main():
         binary = getattr(args, label)
         mode = getattr(args, label + "_mode")
         cmd = ["taskset", "-c", str(args.cpu), binary, args.case, str(args.grid), str(args.bands), args.polarization, mode]
+        if args.tolerance is not None:
+            cmd.append(str(args.tolerance))
         if args.snapshot:
             cmd = ["taskset", "-c", str(args.cpu), binary, mode, args.snapshot, str(args.grid), str(args.bands), args.polarization]
         t = time.perf_counter()
@@ -59,6 +65,8 @@ def main():
             else:
                 record["result"] = json.loads(result.stdout.strip().splitlines()[-1])
                 r = record["result"]
+                if args.tolerance is not None and r.get("tolerance") != args.tolerance:
+                    raise ValueError("binary did not report the requested common stopping tolerance")
                 if args.snapshot:
                     r["spectrum"] = [r["eigenvalues"]]
                     r["points"] = [dict(k=r["target_k"], residuals=r["residuals"], absolute_residuals=[], b_orthogonality_defect=r["orthogonality"], converged=r["converged"], field_count=len(r["eigenvalues"]))]
@@ -88,18 +96,24 @@ def main():
         samples.extend(records)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(dict(manifest=manifest,samples=samples),indent=2)+"\n")
+        if args.stop_on_quality_failure and not all(r["valid"] for r in records):
+            break
 
-    pairs = [[r for r in samples if r["pair"] == i] for i in range(args.pairs)]
+    completed = len([r for r in samples if not r["warmup"]]) // 2
+    pairs = [[r for r in samples if r["pair"] == i] for i in range(completed)]
     valid = [pair for pair in pairs if len(pair) == 2 and all(r["valid"] for r in pair)]
     logs = []
     for pair in valid:
         d = {r["label"]: r["result"]["seconds"] for r in pair}
         logs.append(math.log(d["baseline"]/d["candidate"]))
-    summary = dict(valid_pairs=len(valid),failed_pairs=len(pairs)-len(valid),declared_pairs=args.pairs,minimum_practical_speedup=1.02)
+    summary = dict(valid_pairs=len(valid),failed_pairs=len(pairs)-len(valid),declared_pairs=args.pairs,completed_pairs=completed,early_stopped=completed<args.pairs,minimum_practical_speedup=1.02,
+                   quality_decision="pass" if len(valid)==args.pairs else "fail" if len(valid)<completed else "incomplete")
     if logs:
         boot = sorted(math.exp(statistics.mean(rng.choices(logs,k=len(logs)))) for _ in range(10000))
         summary.update(geometric_speedup=math.exp(statistics.mean(logs)), ci95=[boot[250],boot[9749]])
-        summary["latency_decision"] = "accepted" if len(valid)==len(pairs) and boot[250]>1.02 else "regression" if boot[9749]<1 else "inconclusive"
+        summary["latency_decision"] = "quality_failure" if len(valid)<completed else "incomplete" if completed<args.pairs else "accepted" if boot[250]>1.02 else "regression" if boot[9749]<1 else "inconclusive"
+    else:
+        summary["latency_decision"] = "quality_failure"
     args.output.write_text(json.dumps(dict(manifest=manifest,summary=summary,samples=samples),indent=2)+"\n")
     print(json.dumps(summary))
 

@@ -150,7 +150,7 @@ pub struct KPointResult {
     pub distance: f64,
     /// Computed eigenfrequencies ω (not ω²) for this k-point.
     pub omegas: Vec<f64>,
-    /// Eigensolver iterations used for this solve.
+    /// All eigensolver iterations at this point, including rejected attempts.
     pub iterations: usize,
     /// Solver convergence state and relative residuals in returned band order.
     pub converged: bool,
@@ -753,6 +753,7 @@ fn run_core<B: SpectralBackend + Clone>(
 
         crate::profiler::stop_timer("run.preconditioner_setup");
 
+        let iteration_start=crate::eigensolver::iteration_total();
         let mut sector_result=None;
         if reused.is_none() && options.symmetry.sectors!=crate::symmetry::sectors::SectorPolicy::Off {
             use crate::symmetry::{sectors::SectorPolicy,affine::{AffineGroup,Rational}};
@@ -768,7 +769,10 @@ fn run_core<B: SpectralBackend + Clone>(
                 }
             }
             for group in groups {
-                match crate::symmetry::sectors::solve_conservative(&mut theta,&job.geom.lattice,k_frac,group,&job.eigensolver,warm_slice,&options.symmetry,preconditioner_opt.as_mut().map(|p|&mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>)) {
+                let attempt_start=crate::eigensolver::iteration_total();
+                let attempt=crate::symmetry::sectors::solve_conservative(&mut theta,&job.geom.lattice,k_frac,group,&job.eigensolver,warm_slice,&options.symmetry,preconditioner_opt.as_mut().map(|p|&mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>));
+                reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {method:"sectors",iterations:crate::eigensolver::iteration_total().wrapping_sub(attempt_start),retained:attempt.is_ok(),rejection:attempt.as_ref().err().cloned()});
+                match attempt {
                     Ok(result)=>{reuse_report.sectors=Some(result.report.clone());sector_result=Some(result);break;},
                     Err(reason)=>reuse_report.rejected.push(reason),
                 }
@@ -777,7 +781,10 @@ fn run_core<B: SpectralBackend + Clone>(
         }
 
         let coordinate_result=if reused.is_none() && sector_result.is_none() && options.symmetry.arithmetic!=crate::symmetry::fourier::Arithmetic::SpatialComplex {
-            match crate::symmetry::fourier::solve_fourier(&mut theta,&job.geom.lattice,k_frac,&job.eigensolver,warm_slice,&options.symmetry,preconditioner_opt.as_mut().map(|p|&mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>)) {
+            let attempt_start=crate::eigensolver::iteration_total();
+            let attempt=crate::symmetry::fourier::solve_fourier(&mut theta,&job.geom.lattice,k_frac,&job.eigensolver,warm_slice,&options.symmetry,preconditioner_opt.as_mut().map(|p|&mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>));
+            reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {method:"fourier",iterations:crate::eigensolver::iteration_total().wrapping_sub(attempt_start),retained:attempt.is_ok(),rejection:attempt.as_ref().err().cloned()});
+            match attempt {
                 Ok(result)=>{reuse_report.coordinates=Some(result.report.clone());Some(result)},
                 Err(reason)=>{reuse_report.rejected.push(reason);None},
             }
@@ -789,6 +796,8 @@ fn run_core<B: SpectralBackend + Clone>(
         // `solve_with_diagnostics` (eager residual norms + per-iteration
         // snapshots), the plain path uses `solve`. Both use the same stopping
         // rule, while the plain path avoids recording iteration snapshots.
+        let unrestricted=reused.is_none() && sector_result.is_none() && coordinate_result.is_none();
+        let unrestricted_start=crate::eigensolver::iteration_total();
         let k_iterations;
         let k_converged;
         let mut k_residuals;
@@ -860,6 +869,13 @@ fn run_core<B: SpectralBackend + Clone>(
             final_evals = result.eigenvalues;
             eigenvectors = solver.all_eigenvectors();
         }
+
+        if unrestricted {
+            reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {method:"unrestricted",iterations:crate::eigensolver::iteration_total().wrapping_sub(unrestricted_start),retained:true,rejection:None});
+        }
+        reuse_report.retained_iterations=k_iterations;
+        reuse_report.attempted_iterations=crate::eigensolver::iteration_total().wrapping_sub(iteration_start);
+        let k_iterations=reuse_report.attempted_iterations;
 
         // The iteration cache contains soft-lock placeholders. Certify the
         // returned fields without altering eigenvalues, gauges, or warm starts.

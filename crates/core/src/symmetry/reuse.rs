@@ -21,6 +21,7 @@ pub struct SymmetryOptions {
     pub seed_transfer:super::seed::SeedTransfer,
     pub sectors:super::sectors::SectorPolicy,
     pub sector_guard_budget:Option<usize>,
+    pub sector_storage:super::reduced::SectorStorage,
     pub reconstruct_partners:bool,
     pub arithmetic:super::fourier::Arithmetic,
     pub pt_operation:Option<AffineOp>,
@@ -31,11 +32,23 @@ pub struct SymmetryOptions {
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,reconstruct_partners:false,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,sector_storage:super::reduced::SectorStorage::FullGrid,reconstruct_partners:false,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+}
+#[derive(Debug,Clone,Serialize)]
+pub struct SolveAttempt {
+    pub method: &'static str,
+    pub iterations: usize,
+    /// Whether this attempt supplies the output; convergence and residual
+    /// quality are separate fields on the enclosing point result.
+    pub retained: bool,
+    pub rejection: Option<String>,
 }
 #[derive(Debug,Clone,Default,Serialize)]
 pub struct ReuseReport {
     pub requested:KReuse,
+    pub retained_iterations:usize,
+    pub attempted_iterations:usize,
+    pub solver_attempts:Vec<SolveAttempt>,
     pub source_index:Option<usize>,
     pub operation:Option<AffineOp>,
     pub cache_bytes:usize,

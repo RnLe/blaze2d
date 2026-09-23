@@ -18,6 +18,32 @@ fn exact_reuse_retains_fields_and_tracking_and_counts_only_executed_iterations()
 #[test]
 fn zero_cache_budget_preserves_unrestricted_solves() {let points=run(KReuse::Identical,0,false);assert!(points.iter().all(|p|p.iterations>0 && p.symmetry.source_index.is_none() && p.symmetry.cache_bytes==0));}
 
+#[test]
+fn fallback_reports_count_discarded_iterations_without_profiling() {
+    use blaze2d_core::symmetry::{fourier::Arithmetic,sectors::SectorPolicy};
+    for sectors in [false,true] {
+        let job=BandStructureJob {geom:Geometry2D {lattice:Lattice2D::square(1.0),eps_bg:1.0,
+            atoms:vec![BasisAtom {pos:[0.0;2],radius:0.2,eps_inside:8.9}]},
+            grid:Grid2D::new(13,13,1.0,1.0),pol:Polarization::TM,k_path:vec![[0.17,0.0]],
+            eigensolver:EigensolverConfig {n_bands:4,tol:1e-14,max_iter:500,..Default::default()},dielectric:Default::default()};
+        let options=RunOptions {reuse_gamma:false,symmetry:SymmetryOptions {
+            arithmetic:if sectors {Arithmetic::SpatialComplex} else {Arithmetic::PtRealTe},
+            sectors:if sectors {SectorPolicy::ConservativeMirror} else {SectorPolicy::Off},
+            // Deliberately fail the optimization's final quality gate after
+            // performing its solve. The unrestricted result is still returned.
+            max_relative_residual:0.0,..Default::default()},..Default::default()};
+        let mut points=Vec::new();
+        run_with_k_streaming(CpuBackend::<f64>::new(),&job,options,|p|points.push(p));
+        let point=&points[0];let report=&point.symmetry;
+        assert!(point.converged);
+        assert!(report.solver_attempts.iter().any(|a|!a.retained && a.iterations>0));
+        assert_eq!(report.solver_attempts.last().unwrap().method,"unrestricted");
+        assert_eq!(report.solver_attempts.iter().map(|a|a.iterations).sum::<usize>(),point.iterations);
+        assert_eq!(report.attempted_iterations,point.iterations);
+        assert!(point.iterations>report.retained_iterations);
+    }
+}
+
 fn star(policy:KReuse,n:usize,center:[f64;2],pol:Polarization)->Vec<KPointResult> {
     let job=BandStructureJob {geom:Geometry2D{lattice:Lattice2D::square(1.0),eps_bg:1.0,atoms:vec![BasisAtom{pos:center,radius:0.2,eps_inside:8.9}]},grid:Grid2D::new(n,n,1.0,1.0),pol,
         k_path:vec![[0.13,0.21],[-0.21,0.13],[-0.13,-0.21],[0.21,-0.13],[0.13,-0.21],[0.21,0.13],[-0.13,0.21],[-0.21,-0.13]],eigensolver:EigensolverConfig{n_bands:4,tol:1e-12,max_iter:500,..Default::default()},dielectric:Default::default()};

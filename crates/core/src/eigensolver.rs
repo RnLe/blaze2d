@@ -78,6 +78,17 @@ use crate::grid::Grid2D;
 use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
 
+thread_local! { static ITERATION_TOTAL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+/// Monotonic worker-local accounting, also available without profiling. A
+/// difference around an attempted solve includes work discarded by fallback.
+pub(crate) fn iteration_total() -> usize { ITERATION_TOTAL.with(std::cell::Cell::get) }
+#[inline]
+fn record_iteration() {
+    ITERATION_TOTAL.with(|n| n.set(n.get().wrapping_add(1)));
+    crate::profiler::count("iterations", 1);
+}
+
+
 // ============================================================================
 // Progress Reporting
 // ============================================================================
@@ -1742,7 +1753,7 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
-            crate::profiler::count("iterations", 1);
+            record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
             crate::profiler::count("search_P.columns", self.w_block.len());
 
@@ -2274,7 +2285,7 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
-            crate::profiler::count("iterations", 1);
+            record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
             crate::profiler::count("search_P.columns", self.w_block.len());
 
@@ -2632,7 +2643,7 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
-            crate::profiler::count("iterations", 1);
+            record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
             crate::profiler::count("search_P.columns", self.w_block.len());
 
