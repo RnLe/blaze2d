@@ -24,6 +24,8 @@ pub mod action;
 pub mod qualification;
 pub mod representation;
 pub mod reuse;
+pub mod cache;
+pub mod seed;
 
 // ============================================================================
 // K-Path Types

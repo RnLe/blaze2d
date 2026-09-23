@@ -165,6 +165,9 @@ impl Default for Bands {
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
 pub enum KReuse { #[default] Off, Identical, Unitary, TimeReversal }
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum SeedTransfer { #[default] Copy, RankAware }
 fn symmetry_cache_bytes()->usize {64*1024*1024}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -175,8 +178,10 @@ pub struct Symmetry {
     pub max_cache_bytes: usize,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub plane_group: Option<String>,
+    #[serde(default)]
+    pub seed_transfer: SeedTransfer,
 }
-impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:symmetry_cache_bytes(),plane_group:None}}}
+impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:symmetry_cache_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy}}}
 
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

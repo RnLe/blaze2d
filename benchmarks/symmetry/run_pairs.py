@@ -27,6 +27,7 @@ def main():
     p.add_argument("--polarization", choices=["TE", "TM"], default="TM")
     p.add_argument("--pairs", type=int, default=20)
     p.add_argument("--cpu", type=int, default=0)
+    p.add_argument("--snapshot", help="Use a frozen seed input instead of a k-path")
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
     rng = random.Random(20260923)
@@ -37,12 +38,16 @@ def main():
                     load_average=os.getloadavg(), harness_sha256=file_digest(__file__),
                     baseline_sha256=file_digest(args.baseline),
                     candidate_sha256=file_digest(args.candidate))
+    if args.snapshot:
+        manifest["snapshot_sha256"] = file_digest(args.snapshot)
     samples = []
 
     def run(label, warmup=False):
         binary = getattr(args, label)
         mode = getattr(args, label + "_mode")
         cmd = ["taskset", "-c", str(args.cpu), binary, args.case, str(args.grid), str(args.bands), args.polarization, mode]
+        if args.snapshot:
+            cmd = ["taskset", "-c", str(args.cpu), binary, mode, args.snapshot, str(args.grid), str(args.bands), args.polarization]
         t = time.perf_counter()
         load_before = os.getloadavg()
         try:
@@ -54,6 +59,9 @@ def main():
             else:
                 record["result"] = json.loads(result.stdout.strip().splitlines()[-1])
                 r = record["result"]
+                if args.snapshot:
+                    r["spectrum"] = [r["eigenvalues"]]
+                    r["points"] = [dict(k=r["target_k"], residuals=r["residuals"], absolute_residuals=[], b_orthogonality_defect=r["orthogonality"], converged=r["converged"], field_count=len(r["eigenvalues"]))]
                 residuals = [v for x in r["points"] for v in x["residuals"][1 if x["k"] == [0.0,0.0] else 0:]]
                 absolute = [x["absolute_residuals"][0] for x in r["points"] if x["k"] == [0.0,0.0] and x["absolute_residuals"]]
                 record["valid"] = (all(x["converged"] and x["field_count"] == args.bands for x in r["points"])

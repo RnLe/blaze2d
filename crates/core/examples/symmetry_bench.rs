@@ -40,8 +40,8 @@ fn main() {
         dielectric: DielectricOptions::default(),
     };
     let mode = args.get(5).map(String::as_str).unwrap_or("off");
-    let reuse = match mode { "off" => blaze2d_core::symmetry::reuse::KReuse::Off, "identical" => blaze2d_core::symmetry::reuse::KReuse::Identical, "unitary" => blaze2d_core::symmetry::reuse::KReuse::Unitary, "time_reversal" => blaze2d_core::symmetry::reuse::KReuse::TimeReversal, _ => panic!("unknown reuse mode") };
-    let options = RunOptions { symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions { k_reuse: reuse, ..Default::default() }, reuse_gamma: false, disable_band_tracking: true, retain_eigenvectors: true, ..Default::default() };
+    let reuse = match mode { "off" | "rank" => blaze2d_core::symmetry::reuse::KReuse::Off, "identical" => blaze2d_core::symmetry::reuse::KReuse::Identical, "unitary" => blaze2d_core::symmetry::reuse::KReuse::Unitary, "time_reversal" => blaze2d_core::symmetry::reuse::KReuse::TimeReversal, _ => panic!("unknown reuse mode") };
+    let options = RunOptions { symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions { k_reuse: reuse, seed_transfer: if mode=="rank" {blaze2d_core::symmetry::seed::SeedTransfer::RankAware} else {Default::default()}, ..Default::default() }, reuse_gamma: false, disable_band_tracking: true, retain_eigenvectors: true, ..Default::default() };
     let mut points = Vec::new();
     let start = std::time::Instant::now();
     let result = run_with_k_streaming(CpuBackend::<f64>::new(), &job, options, |p| {

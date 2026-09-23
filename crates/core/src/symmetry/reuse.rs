@@ -18,13 +18,15 @@ pub struct SymmetryOptions {
     /// An explicit primitive setting, still subject to all numerical checks.
     /// None enumerates metric candidates with zero translation and entries ±2.
     pub plane_group:Option<PlaneGroup>,
+    pub seed_transfer:super::seed::SeedTransfer,
+    pub relative_rank_tolerance:f64,
     pub qualification_tolerance:f64,
     pub max_relative_residual:f64,
     pub max_zero_mode_absolute_residual:f64,
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
 }
 #[derive(Debug,Clone,Default,Serialize)]
 pub struct ReuseReport {
@@ -36,6 +38,7 @@ pub struct ReuseReport {
     pub candidate_operation_count:usize,
     pub qualification_attempts:usize,
     pub qualification:Option<super::qualification::QualificationReport>,
+    pub seed:Option<super::seed::SeedReport>,
     pub rejected:Vec<String>,
 }
 #[derive(Debug,Clone)]

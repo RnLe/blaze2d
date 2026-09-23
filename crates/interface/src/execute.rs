@@ -67,6 +67,7 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                     symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
                         k_reuse: match b.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},
                         plane_group:b.symmetry.plane_group.as_ref().map(|s|serde_json::from_value(json!(s)).expect("validated plane group")),
+                        seed_transfer:match b.symmetry.seed_transfer {crate::SeedTransfer::Copy=>blaze2d_core::symmetry::seed::SeedTransfer::Copy,crate::SeedTransfer::RankAware=>blaze2d_core::symmetry::seed::SeedTransfer::RankAware},
                         max_cache_bytes:b.symmetry.max_cache_bytes,..Default::default()
                     },
                     retain_eigenvectors: job.resolved.config.results.eigenvectors, ..Default::default() }, |point| {

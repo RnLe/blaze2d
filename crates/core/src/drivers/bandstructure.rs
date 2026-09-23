@@ -693,6 +693,14 @@ fn run_core<B: SpectralBackend + Clone>(
         if reused.is_none() && matches!(options.symmetry.k_reuse,KReuse::Unitary|KReuse::TimeReversal) {
             reused = symmetry_cache.related(&mut theta,&job.geom.lattice,&dielectric,k_frac,&symmetry_operations,&options.symmetry,&mut reuse_report);
         }
+        let rank_seed = if reused.is_none() && options.symmetry.seed_transfer==crate::symmetry::seed::SeedTransfer::RankAware {
+            warm_slice.and_then(|input|match crate::symmetry::seed::rank_aware_seed(&mut theta,input,options.symmetry.relative_rank_tolerance) {
+                Ok(seed)=>{reuse_report.seed=Some(seed.report.clone());Some(seed)},
+                Err(error)=>{reuse_report.rejected.push(error.to_string());None},
+            })
+        } else {None};
+        let warm_slice=rank_seed.as_ref().map(|s|s.fields.as_slice()).or(warm_slice);
+        let warm_start_used=warm_start_used && warm_slice.is_some_and(|s|!s.is_empty());
 
         // Build preconditioner for this operator
         // Use band-window shift if enabled AND we have previous eigenvalues,
