@@ -285,6 +285,8 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     config: &SvqbConfig,
 ) -> SvqbResult {
     let p = vectors.len();
+    crate::profiler::count("svqb_gram.elements", p * p);
+    crate::profiler::count("svqb_gram.multiply_terms", p * p * vectors.first().map_or(0, |v| v.as_slice().len()));
 
     if p == 0 {
         return SvqbResult {

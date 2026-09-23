@@ -395,6 +395,8 @@ fn run_core<B: SpectralBackend + Clone>(
     mut study: Option<&mut ConvergenceStudy>,
     mut on_k_point: Option<&mut dyn FnMut(KPointResult)>,
 ) -> BandStructureResult {
+    crate::profile_scope!("run.wall");
+    crate::profiler::start_timer("run.setup");
     // ========================================================================
     // Setup Phase
     // ========================================================================
@@ -454,7 +456,8 @@ fn run_core<B: SpectralBackend + Clone>(
             let bloch = reciprocal.fractional_to_cartesian(k_frac);
 
             // Create temporary operator for diagnostics
-            let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
+            crate::profiler::start_timer("run.operator_setup");
+        let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
             // Build preconditioner for diagnostics (always using adaptive shift)
             let mut preconditioner_opt: Option<
@@ -583,7 +586,9 @@ fn run_core<B: SpectralBackend + Clone>(
     // Start timing the solve phase (excludes setup/diagnostics)
     let solve_start = crate::timing::Timer::start();
 
+    crate::profiler::stop_timer("run.setup");
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
+        crate::profile_scope!("run.k_point");
         // Check if this is a Γ-point (k ≈ 0)
         // At Γ, the constant mode (DC) is deflated by the eigensolver.
         let is_gamma = is_gamma_point(k_frac);
@@ -710,6 +715,8 @@ fn run_core<B: SpectralBackend + Clone>(
                 unimplemented!("Multigrid preconditioner not yet implemented")
             }
         };
+
+        crate::profiler::stop_timer("run.operator_setup");
 
         // Solve the eigenproblem at this k-point.
         //
@@ -854,6 +861,7 @@ fn run_core<B: SpectralBackend + Clone>(
             }
         }
 
+        crate::profiler::start_timer("run.cache_update");
         // Store eigenvectors for band tracking at next k-point
         prev_eigenvectors = Some(eigenvectors.clone());
 
@@ -875,6 +883,8 @@ fn run_core<B: SpectralBackend + Clone>(
                 warm_start_store.push(vec.clone());
             }
         }
+
+        crate::profiler::stop_timer("run.cache_update");
 
         // Store first Γ-point result for potential reuse at end of path
         if reuse_gamma && k_idx == 0 && is_gamma {

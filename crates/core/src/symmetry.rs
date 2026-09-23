@@ -82,8 +82,8 @@ pub const SQUARE_GXMG: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0
 /// High-symmetry points (fractional coordinates):
 /// - Γ = (0, 0) - zone center
 /// - M = (1/2, 0) - zone edge midpoint
-/// - K = (1/3, 1/3) - zone corner (Dirac point)
-pub const HEX_GMK: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [1.0 / 3.0, 1.0 / 3.0], [0.0, 0.0]];
+/// - K = (2/3, 1/3) - zone corner (Dirac point)
+pub const HEX_GMK: [[f64; 2]; 4] = [[0.0, 0.0], [0.5, 0.0], [2.0 / 3.0, 1.0 / 3.0], [0.0, 0.0]];
 
 /// Standard k-path for rectangular lattice: Γ → X → S → Y → Γ
 ///

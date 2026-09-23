@@ -663,6 +663,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
     fn apply_te(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         crate::profiler::start_timer("apply_te");
+        crate::profiler::count("operator_A.columns", 1);
+        crate::profiler::count("operator_A.elements", self.grid.len());
 
         copy_buffer(&mut self.scratch, input);
         self.backend.forward_fft_2d(&mut self.scratch);
@@ -702,6 +704,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 
     fn apply_tm(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         crate::profiler::start_timer("apply_tm");
+        crate::profiler::count("operator_A.columns", 1);
+        crate::profiler::count("operator_A.elements", self.grid.len());
 
         // Optimization: Work directly on output buffer to save a copy
         copy_buffer(output, input);
@@ -1543,6 +1547,8 @@ impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
     }
 
     fn apply_mass(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
+        crate::profiler::count("operator_B.columns", 1);
+        crate::profiler::count("operator_B.elements", self.grid.len());
         match self.polarization {
             Polarization::TE => copy_buffer(output, input),
             Polarization::TM => {

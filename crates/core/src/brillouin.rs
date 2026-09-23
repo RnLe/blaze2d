@@ -35,7 +35,7 @@
 //! ## Triangular/Hexagonal Lattice (60° convention)
 //! - Γ = (0, 0) - Zone center
 //! - M = (1/2, 0) - Zone edge midpoint
-//! - K = (1/3, 1/3) - Zone corner (Dirac point in graphene)
+//! - K = (2/3, 1/3) - Zone corner (Dirac point in graphene)
 //!
 //! ## Oblique Lattice
 //! - No standard path (must specify explicitly)
@@ -85,8 +85,8 @@ pub const Y_RECT: HighSymmetryPoint = HighSymmetryPoint::new("Y", [0.0, 0.5]);
 // Triangular/hexagonal lattice points
 /// M = (0.5, 0) - edge midpoint for triangular lattice
 pub const M_HEX: HighSymmetryPoint = HighSymmetryPoint::new("M", [0.5, 0.0]);
-/// K = (1/3, 1/3) - corner for triangular lattice
-pub const K_HEX: HighSymmetryPoint = HighSymmetryPoint::new("K", [1.0 / 3.0, 1.0 / 3.0]);
+/// K = (2/3, 1/3) - corner for triangular lattice
+pub const K_HEX: HighSymmetryPoint = HighSymmetryPoint::new("K", [2.0 / 3.0, 1.0 / 3.0]);
 
 // ============================================================================
 // Path Type
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(points.len(), 4);
         assert_eq!(points[0], [0.0, 0.0]); // Γ
         assert_eq!(points[1], [0.5, 0.0]); // M
-        assert!((points[2][0] - 1.0 / 3.0).abs() < 1e-10); // K
+        assert!((points[2][0] - 2.0 / 3.0).abs() < 1e-10); // K
         assert!((points[2][1] - 1.0 / 3.0).abs() < 1e-10);
         assert_eq!(points[3], [0.0, 0.0]); // Γ
     }

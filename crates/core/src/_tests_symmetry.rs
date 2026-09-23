@@ -43,7 +43,7 @@ fn hexagonal_path_endpoints() {
 
     assert_point_close(path[0], [0.0, 0.0]); // Γ
     assert_point_close(path[3], [0.5, 0.0]); // M
-    assert_point_close(path[6], [1.0 / 3.0, 1.0 / 3.0]); // K
+    assert_point_close(path[6], [2.0 / 3.0, 1.0 / 3.0]); // K
     assert_point_close(*path.last().unwrap(), [0.0, 0.0]); // Γ
 }
 

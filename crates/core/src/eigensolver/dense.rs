@@ -69,6 +69,10 @@ impl DenseEigenResult {
 /// # Panics
 /// Panics if `a_matrix.len() != dim * dim`.
 pub fn solve_hermitian_eigen(a_matrix: &[Complex64], dim: usize) -> DenseEigenResult {
+    crate::profile_scope!("dense_ritz");
+    crate::profiler::count("dense_ritz.calls", 1);
+    crate::profiler::count("dense_ritz.dimension_sum", dim);
+    crate::profiler::count("dense_ritz.dimension_cubes", dim * dim * dim);
     assert_eq!(a_matrix.len(), dim * dim, "Matrix size mismatch");
 
     if dim == 0 {

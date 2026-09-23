@@ -40,7 +40,7 @@
 //! With the 60° convention, the Brillouin zone high-symmetry points are:
 //! - Γ = (0, 0)
 //! - M = (1/2, 0)
-//! - K = (1/3, 1/3)
+//! - K = (2/3, 1/3)
 
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
@@ -75,7 +75,7 @@ pub enum LatticeType {
     /// - Both basis vectors have equal length: |a₁| = |a₂| = a
     /// - Vectors at 60° angle: a₁ = [a, 0], a₂ = [a/2, a√3/2]
     /// - High-symmetry path: Γ → M → K → Γ
-    /// - High-symmetry points: M = (1/2, 0), K = (1/3, 1/3)
+    /// - High-symmetry points: M = (1/2, 0), K = (2/3, 1/3)
     Triangular,
 
     /// Oblique lattice with C₂ point group symmetry.
@@ -339,7 +339,7 @@ impl BravaisLattice {
     /// interface. The high-symmetry points in this convention are:
     /// - Γ = (0, 0)
     /// - M = (1/2, 0)
-    /// - K = (1/3, 1/3)
+    /// - K = (2/3, 1/3)
     ///
     /// # Arguments
     /// - `a`: Lattice constant (default: 1.0)

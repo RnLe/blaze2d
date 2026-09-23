@@ -209,6 +209,7 @@ where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
+    crate::profile_scope!("final_certification");
     let n = eigenvalues.len().min(eigenvectors.len());
     let fields: Vec<B::Buffer> = eigenvectors[..n]
         .iter()

@@ -117,18 +117,21 @@ fn reciprocal_fractional_to_cartesian_hexagonal_lattice() {
         "M-point y should be -π/√3"
     );
 
-    // K-point: (1/3, 1/3) → [(2/3)π, (2/3)π/√3]
-    // k = (1/3)*b1 + (1/3)*b2 = (1/3)*[2π, -2π/√3] + (1/3)*[0, 4π/√3]
-    //   = [(2/3)π, -(2/3)π/√3 + (4/3)π/√3] = [(2/3)π, (2/3)π/√3]
-    let k_point = recip.fractional_to_cartesian([1.0 / 3.0, 1.0 / 3.0]);
-    assert!(
-        (k_point[0] - 2.0 * std::f64::consts::PI / 3.0).abs() < 1e-10,
-        "K-point x should be 2π/3"
-    );
-    assert!(
-        (k_point[1] - 2.0 * std::f64::consts::PI / (3.0 * sqrt3)).abs() < 1e-10,
-        "K-point y should be 2π/(3√3)"
-    );
+    // A BZ corner is equidistant from 0, b1 and b1+b2.
+    let k_point = recip.fractional_to_cartesian(crate::brillouin::K_HEX.k_frac);
+    assert!((k_point[0] - 4.0 * std::f64::consts::PI / 3.0).abs() < 1e-10);
+    assert!(k_point[1].abs() < 1e-10);
+    let norm2 = |v: [f64; 2]| v[0]*v[0] + v[1]*v[1];
+    for g in [recip.b1, [recip.b1[0]+recip.b2[0], recip.b1[1]+recip.b2[1]]] {
+        assert!((norm2(k_point)-norm2([k_point[0]-g[0],k_point[1]-g[1]])).abs() < 1e-10);
+    }
+    // Every nearby reciprocal site lies outside or on the same BZ facets.
+    for m in -2..=2 {
+        for n in -2..=2 {
+            let g = recip.fractional_to_cartesian([m as f64,n as f64]);
+            assert!(norm2(k_point) <= norm2([k_point[0]-g[0],k_point[1]-g[1]]) + 1e-10);
+        }
+    }
 }
 
 // =============================================================================

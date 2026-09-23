@@ -269,7 +269,7 @@ impl ReciprocalLattice2D {
     ///
     /// For a hexagonal lattice (60° convention): b1 ≈ [2π, -2π/√3], b2 = [0, 4π/√3]
     ///   - M-point (0.5, 0) → [π, -π/√3] (NOT [π, 0]!)
-    ///   - K-point (1/3, 1/3) → [(2/3)π, (2/3)π/√3]
+    ///   - K-point (2/3, 1/3) → [4π/3, 0]
     #[inline]
     pub fn fractional_to_cartesian(&self, k_frac: [f64; 2]) -> [f64; 2] {
         [

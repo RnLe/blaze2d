@@ -404,10 +404,14 @@ impl<R: Real + FftNum> SpectralBackend for CpuBackend<R> {
     }
 
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer) {
+        blaze2d_core::profiler::count("fft.forward.vectors", 1);
+        blaze2d_core::profiler::count("fft.forward.elements", buffer.len());
         self.fft_2d(buffer, FftDirection::Forward);
     }
 
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer) {
+        blaze2d_core::profiler::count("fft.inverse.vectors", 1);
+        blaze2d_core::profiler::count("fft.inverse.elements", buffer.len());
         self.fft_2d(buffer, FftDirection::Inverse);
     }
 
@@ -443,10 +447,14 @@ impl<R: Real + FftNum> SpectralBackend for CpuBackend<R> {
     }
 
     fn batch_forward_fft_2d(&self, buffers: &mut [Self::Buffer]) {
+        blaze2d_core::profiler::count("fft.forward.vectors", buffers.len());
+        blaze2d_core::profiler::count("fft.forward.elements", buffers.iter().map(|b| b.len()).sum());
         self.batch_fft_2d(buffers, FftDirection::Forward);
     }
 
     fn batch_inverse_fft_2d(&self, buffers: &mut [Self::Buffer]) {
+        blaze2d_core::profiler::count("fft.inverse.vectors", buffers.len());
+        blaze2d_core::profiler::count("fft.inverse.elements", buffers.iter().map(|b| b.len()).sum());
         self.batch_fft_2d(buffers, FftDirection::Inverse);
     }
 }

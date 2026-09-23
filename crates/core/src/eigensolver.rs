@@ -522,6 +522,7 @@ where
     /// 2. It's always degenerate with other modes in the null space
     /// 3. Including it in the active block would waste computational effort
     pub fn initialize(&mut self) {
+        crate::profile_scope!("initialization");
         if self.initialized {
             return;
         }
@@ -860,6 +861,7 @@ where
         // 2. Apply preconditioner in batch to leverage optimized backends
         if !p_block.is_empty() {
             if let Some(ref mut precond) = self.preconditioner {
+                crate::profiler::count("preconditioner.columns", p_block.len());
                 precond.batch_apply(backend, &mut p_block);
             }
         }
@@ -1252,6 +1254,8 @@ where
         aq_block: &[B::Buffer],
     ) -> Vec<num_complex::Complex64> {
         crate::profiler::start_timer("project_operator");
+        crate::profiler::count("ritz_gram.elements", q_block.len() * q_block.len());
+        crate::profiler::count("ritz_gram.multiply_terms", q_block.len() * q_block.len() * self.operator.grid().len());
 
         let r = q_block.len();
         if r == 0 {
@@ -1699,6 +1703,7 @@ where
     /// # Returns
     /// An `EigensolverResult` containing the computed eigenvalues and convergence info.
     pub fn solve(&mut self) -> EigensolverResult {
+        crate::profile_scope!("eigensolve");
         // Initialize faer with sequential execution (see lib.rs for rationale)
         crate::init_faer_sequential();
 
@@ -1707,6 +1712,7 @@ where
             self.initialize();
         }
 
+        crate::profiler::count("eigensolve.calls", 1);
         let n_bands_requested = self.config.n_bands;
         let n_bands = n_bands_requested.min(self.x_block.len());
         let mut convergence = ConvergenceInfo::new(n_bands);
@@ -1716,6 +1722,9 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
+            crate::profiler::count("iterations", 1);
+            crate::profiler::count("active_X.columns", self.x_block.len());
+            crate::profiler::count("search_P.columns", self.w_block.len());
 
             // Track the number of active bands (may shrink due to locking)
             let n_active = self.x_block.len();
@@ -2233,6 +2242,7 @@ where
             self.initialize();
         }
 
+        crate::profiler::count("eigensolve.calls", 1);
         let n_bands_requested = self.config.n_bands;
         let n_bands = n_bands_requested.min(self.x_block.len());
         let mut convergence = ConvergenceInfo::new(n_bands);
@@ -2244,6 +2254,9 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
+            crate::profiler::count("iterations", 1);
+            crate::profiler::count("active_X.columns", self.x_block.len());
+            crate::profiler::count("search_P.columns", self.w_block.len());
 
             let n_active = self.x_block.len();
             if n_active == 0 {
@@ -2571,6 +2584,7 @@ where
     /// std::fs::write("convergence.json", json)?;
     /// ```
     pub fn solve_with_diagnostics(&mut self, label: impl Into<String>) -> DiagnosticResult {
+        crate::profile_scope!("eigensolve");
         // Initialize faer with sequential execution (see lib.rs for rationale)
         crate::init_faer_sequential();
 
@@ -2579,6 +2593,7 @@ where
             self.initialize();
         }
 
+        crate::profiler::count("eigensolve.calls", 1);
         let n_bands_requested = self.config.n_bands;
         let n_bands = n_bands_requested.min(self.x_block.len());
         let mut convergence = ConvergenceInfo::new(n_bands);
@@ -2597,6 +2612,9 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
+            crate::profiler::count("iterations", 1);
+            crate::profiler::count("active_X.columns", self.x_block.len());
+            crate::profiler::count("search_P.columns", self.w_block.len());
 
             // Track the number of active bands (may shrink due to locking)
             let n_active = self.x_block.len();
