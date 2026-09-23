@@ -529,7 +529,7 @@ where
 
         // Step 1: Check if we're at the Γ-point and add constant mode to deflation
         let bloch = self.operator.bloch();
-        if initialization::is_gamma_point(bloch, initialization::GAMMA_TOLERANCE) {
+        if self.operator.owns_gamma_kernel() && initialization::is_gamma_point(bloch, initialization::GAMMA_TOLERANCE) {
             if ENABLE_GAMMA_DEFLATION {
                 // Create B-normalized constant mode y₀
                 let (y0, by0, _norm) = initialization::create_gamma_mode(self.operator);
@@ -574,7 +574,7 @@ where
         }
 
         // Step 2: Create initial block X_0
-        let block_size = self.config.effective_block_size();
+        let block_size = self.config.effective_block_size().min(self.operator.subspace_dimension().saturating_sub(self.deflation.len()));
         let init_config = InitializationConfig {
             block_size,
             max_random_attempts: block_size * 8,
@@ -582,7 +582,7 @@ where
         };
 
         let (mut x_block, _init_result) =
-            initialization::initialize_block(self.operator, &init_config, self.warm_start);
+            initialization::initialize_block_with_deflation(self.operator, &init_config, self.warm_start, Some(&self.deflation));
 
         // Step 3: Project initial block against Γ mode (if present)
         // We must handle the projection and re-application carefully to avoid borrow conflicts
@@ -866,6 +866,7 @@ where
             }
         }
 
+        for vector in &mut p_block { self.operator.constrain(vector); }
         p_block
     }
 

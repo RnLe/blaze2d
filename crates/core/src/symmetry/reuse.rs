@@ -19,6 +19,9 @@ pub struct SymmetryOptions {
     /// None enumerates metric candidates with zero translation and entries ±2.
     pub plane_group:Option<PlaneGroup>,
     pub seed_transfer:super::seed::SeedTransfer,
+    pub sectors:super::sectors::SectorPolicy,
+    pub sector_guard_budget:Option<usize>,
+    pub reconstruct_partners:bool,
     pub relative_rank_tolerance:f64,
     pub qualification_tolerance:f64,
     pub max_relative_residual:f64,
@@ -26,7 +29,7 @@ pub struct SymmetryOptions {
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,reconstruct_partners:false,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
 }
 #[derive(Debug,Clone,Default,Serialize)]
 pub struct ReuseReport {
@@ -39,6 +42,7 @@ pub struct ReuseReport {
     pub qualification_attempts:usize,
     pub qualification:Option<super::qualification::QualificationReport>,
     pub seed:Option<super::seed::SeedReport>,
+    pub sectors:Option<super::sectors::CoverageReport>,
     pub rejected:Vec<String>,
 }
 #[derive(Debug,Clone)]

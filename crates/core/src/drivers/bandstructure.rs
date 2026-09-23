@@ -749,6 +749,29 @@ fn run_core<B: SpectralBackend + Clone>(
 
         crate::profiler::stop_timer("run.operator_setup");
 
+        let mut sector_result=None;
+        if reused.is_none() && options.symmetry.sectors!=crate::symmetry::sectors::SectorPolicy::Off {
+            use crate::symmetry::{sectors::SectorPolicy,affine::{AffineGroup,Rational}};
+            let mut groups=Vec::new();
+            if matches!(options.symmetry.sectors,SectorPolicy::ConservativeGroup|SectorPolicy::AdaptiveGroup) {
+                if let Some(group)=options.symmetry.plane_group {
+                    if let Ok(little)=group.group().little_group(k_frac,1e-12) {if little.order()>1 {groups.push(little);}}
+                } else {reuse_report.rejected.push("group sectors require an explicit plane_group setting".into());}
+            } else {
+                for op in crate::symmetry::reuse::candidate_operations(&job.geom.lattice,options.symmetry.plane_group).into_iter().filter(|op|op.determinant()==-1 && op.translation()==[Rational::ZERO;2]) {
+                    let group=AffineGroup::from_generators(&[op],2).expect("order-two mirror");
+                    if group.little_group(k_frac,1e-12).is_ok_and(|g|g.order()==2) {groups.push(group);}
+                }
+            }
+            for group in groups {
+                match crate::symmetry::sectors::solve_conservative(&mut theta,&job.geom.lattice,k_frac,group,&job.eigensolver,warm_slice,&options.symmetry,preconditioner_opt.as_mut().map(|p|&mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>)) {
+                    Ok(result)=>{reuse_report.sectors=Some(result.report.clone());sector_result=Some(result);break;},
+                    Err(reason)=>reuse_report.rejected.push(reason),
+                }
+            }
+            if sector_result.is_none() {reuse_report.rejected.push("no qualified sector solve; using unrestricted solver".into());}
+        }
+
         // Solve the eigenproblem at this k-point.
         //
         // Branch on diagnostics: the recording path uses
@@ -769,6 +792,10 @@ fn run_core<B: SpectralBackend + Clone>(
             final_evals = entry.eigenvalues.clone();
             eigenvectors = entry.fields.clone();
             crate::profiler::count("symmetry.reused_solves", 1);
+        } else if let Some(result)=sector_result {
+            k_iterations=result.iterations;k_converged=true;
+            k_residuals=result.spectrum.residuals;k_absolute_residuals=result.spectrum.absolute_residuals;
+            final_evals=result.spectrum.eigenvalues;eigenvectors=result.spectrum.fields;
         } else if let Some(study) = study.as_deref_mut() {
             let mut cfg = job.eigensolver.clone();
             cfg.k_index = Some(k_idx);

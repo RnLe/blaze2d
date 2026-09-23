@@ -90,6 +90,11 @@ impl BlochActionPlan {
     pub fn folding(&self)->[i64;2] {self.folding}
     pub fn spatial_permutation(&self)->&[usize] {&self.spatial_source}
     pub fn fourier_permutation(&self)->&[usize] {&self.fourier_destination}
+    /// Trace of a unitary sampled action, including fixed-node Bloch phases.
+    pub fn spatial_trace(&self)->Complex64 {
+        assert!(!self.operation.conjugates());
+        self.spatial_source.iter().enumerate().filter_map(|(i,&j)|(i==j).then_some(self.spatial_phase[i])).sum()
+    }
     pub fn storage_bytes(&self)->usize { self.grid.len()*(2*std::mem::size_of::<usize>()+2*std::mem::size_of::<Complex64>()) }
     pub fn apply_spatial<F:SpectralBuffer>(&self,input:&F,output:&mut F) {
         assert_eq!((input.grid().nx,input.grid().ny),(self.grid.nx,self.grid.ny));

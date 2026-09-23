@@ -107,3 +107,5 @@ pub const RECT_GXSYG: [[f64; 2]; 5] = [
     [0.0, 0.5], // Y
     [0.0, 0.0], // Γ
 ];
+
+pub mod sectors;

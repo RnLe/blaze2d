@@ -24,6 +24,7 @@ fn main() {
     };
     let lattice = if case.starts_with("hex") { Lattice2D::hexagonal(1.0) } else { Lattice2D::square(1.0) };
     let path = match case {
+        "gamma" => vec![[0.0;2]],
         "square-path" => generate_path(&BrillouinPath::Square, 3),
         "hex-path" => generate_path(&BrillouinPath::Hexagonal, 3),
         "square-star" | "broken-star" => vec![[0.13,0.21],[-0.21,0.13],[-0.13,-0.21],[0.21,-0.13],[0.13,-0.21],[0.21,0.13],[-0.13,0.21],[-0.21,-0.13]],
@@ -40,8 +41,8 @@ fn main() {
         dielectric: DielectricOptions::default(),
     };
     let mode = args.get(5).map(String::as_str).unwrap_or("off");
-    let reuse = match mode { "off" | "rank" => blaze2d_core::symmetry::reuse::KReuse::Off, "identical" => blaze2d_core::symmetry::reuse::KReuse::Identical, "unitary" => blaze2d_core::symmetry::reuse::KReuse::Unitary, "time_reversal" => blaze2d_core::symmetry::reuse::KReuse::TimeReversal, _ => panic!("unknown reuse mode") };
-    let options = RunOptions { symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions { k_reuse: reuse, seed_transfer: if mode=="rank" {blaze2d_core::symmetry::seed::SeedTransfer::RankAware} else {Default::default()}, ..Default::default() }, reuse_gamma: false, disable_band_tracking: true, retain_eigenvectors: true, ..Default::default() };
+    let reuse = match mode { "off" | "rank" | "mirror" | "adaptive" | "guards" | "group" | "partners" => blaze2d_core::symmetry::reuse::KReuse::Off, "identical" => blaze2d_core::symmetry::reuse::KReuse::Identical, "unitary" => blaze2d_core::symmetry::reuse::KReuse::Unitary, "time_reversal" => blaze2d_core::symmetry::reuse::KReuse::TimeReversal, _ => panic!("unknown reuse mode") };
+    let options = RunOptions { symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions { k_reuse: reuse, plane_group:if mode=="group" || mode=="partners" {Some(blaze2d_core::symmetry::affine::PlaneGroup::P4m)} else {None}, reconstruct_partners:mode=="partners", sector_guard_budget:if mode=="guards" {Some(2)} else {None}, sectors:if mode=="group" || mode=="partners" {blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeGroup} else if mode=="adaptive" || mode=="guards" {blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveMirror} else if mode=="mirror" {blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeMirror} else {Default::default()}, seed_transfer: if mode=="rank" {blaze2d_core::symmetry::seed::SeedTransfer::RankAware} else {Default::default()}, ..Default::default() }, reuse_gamma: false, disable_band_tracking: true, retain_eigenvectors: true, ..Default::default() };
     let mut points = Vec::new();
     let start = std::time::Instant::now();
     let result = run_with_k_streaming(CpuBackend::<f64>::new(), &job, options, |p| {

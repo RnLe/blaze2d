@@ -113,6 +113,17 @@ pub trait LinearOperator<B: SpectralBackend> {
     /// Get the Bloch wavevector (k-point) for this operator.
     fn bloch(&self) -> [f64; 2];
 
+    /// Constrain a new search direction before mass weighting or normalization.
+    /// The default leaves unrestricted solvers unchanged. A constrained wrapper
+    /// must project seeds and preconditioned corrections into the same space.
+    fn constrain(&mut self, _vector: &mut B::Buffer) {}
+
+    /// Whether the analytic constant Γ kernel belongs to this solver's space.
+    fn owns_gamma_kernel(&self) -> bool { true }
+
+    /// Finite dimension of a constrained search space, including its kernel.
+    fn subspace_dimension(&self) -> usize { self.grid().len() }
+
     /// Get the transformation factor for Γ-point kernel basis.
     ///
     /// For operators using a similarity transform (like transformed TE where

@@ -254,6 +254,13 @@ where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
+    initialize_block_with_deflation(operator,config,warm_start,None)
+}
+
+/// Project known locked modes before rank decisions, so a warm-started kernel
+/// cannot occupy a slot that becomes zero only after block construction.
+pub(crate) fn initialize_block_with_deflation<O,B>(operator:&mut O,config:&InitializationConfig,warm_start:Option<&[Field2D]>,deflation:Option<&super::deflation::DeflationSubspace<B>>)->(Vec<BlockEntry<B>>,InitializationResult)
+where O:LinearOperator<B>, B:SpectralBackend {
     let mut entries: Vec<BlockEntry<B>> = Vec::with_capacity(config.block_size);
     let mut warm_hits = 0usize;
 
@@ -261,7 +268,7 @@ where
     if let Some(seeds) = warm_start {
         for field in seeds.iter().take(config.block_size) {
             if let Some(entry) =
-                build_entry_from_field(operator, field, &entries, config.zero_tolerance)
+                build_entry_from_field(operator, field, &entries, config.zero_tolerance, deflation)
             {
                 entries.push(entry);
                 warm_hits += 1;
@@ -282,7 +289,7 @@ where
         phase += 1.0;
 
         if let Some(entry) =
-            build_entry_from_buffer(operator, vector, &entries, config.zero_tolerance)
+            build_entry_from_buffer(operator, vector, &entries, config.zero_tolerance, deflation)
         {
             entries.push(entry);
         } else {
@@ -306,6 +313,7 @@ fn build_entry_from_field<O, B>(
     field: &Field2D,
     existing: &[BlockEntry<B>],
     zero_tol: f64,
+    deflation:Option<&super::deflation::DeflationSubspace<B>>,
 ) -> Option<BlockEntry<B>>
 where
     O: LinearOperator<B>,
@@ -319,7 +327,7 @@ where
             <B::Real as Real>::from_accum(s.im),
         );
     }
-    build_entry_from_buffer(operator, vector, existing, zero_tol)
+    build_entry_from_buffer(operator, vector, existing, zero_tol, deflation)
 }
 
 /// Build a block entry from a raw buffer, orthogonalizing against existing entries.
@@ -328,14 +336,19 @@ fn build_entry_from_buffer<O, B>(
     mut vector: B::Buffer,
     existing: &[BlockEntry<B>],
     zero_tol: f64,
+    deflation:Option<&super::deflation::DeflationSubspace<B>>,
 ) -> Option<BlockEntry<B>>
 where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
+    // Constraints apply to both warm starts and random rank repair.
+    operator.constrain(&mut vector);
     // Compute mass vector
     let mut mass = operator.alloc_field();
     operator.apply_mass(&vector, &mut mass);
+
+    if let Some(locked)=deflation {locked.project_single(operator.backend(),&mut vector,&mut mass);}
 
     // Project out components along existing basis vectors (B-orthogonalization)
     for entry in existing {

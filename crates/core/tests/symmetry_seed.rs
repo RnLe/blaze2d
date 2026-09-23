@@ -39,3 +39,14 @@ fn rank_transfer_preserves_the_natural_path_spectrum_and_fields() {
         for (a,b) in full.iter().zip(&ranked) {assert!(b.converged);assert_eq!(b.eigenvectors.as_ref().unwrap().len(),5);assert!(b.b_orthogonality_defect<1e-8);for (&x,&y) in a.omegas.iter().zip(&b.omegas) {assert!((x-y).abs()<1e-6,"{pol:?}: {x} {y}");}}
     }
 }
+
+#[test]
+fn warm_gamma_kernel_is_removed_before_initial_block_rank_decisions() {
+    use blaze2d_core::eigensolver::{Eigensolver,EigensolverConfig};
+    let grid=Grid2D::new(7,7,1.0,1.0);let d=Dielectric2D::from_geometry(&Geometry2D{lattice:Lattice2D::square(1.0),eps_bg:2.0,atoms:vec![]},grid,&Default::default());
+    let mut op=ThetaOperator::new(CpuBackend::<f64>::new(),d,Polarization::TM,[0.0;2]);
+    let mut constant=Field2D::zeros(grid);constant.as_mut_slice().fill(C::ONE);
+    let warm=[constant];let mut solver=Eigensolver::new(&mut op,EigensolverConfig{n_bands:4,..Default::default()},None,Some(&warm));solver.initialize();
+    let active=solver.eigenvectors();assert_eq!(active.len(),4);
+    for v in active {let norm=v.as_slice().iter().map(|z|2.0*z.norm_sqr()).sum::<f64>();assert!((norm-1.0).abs()<1e-10);assert!(v.as_slice().iter().sum::<C>().norm()<1e-10);}
+}
