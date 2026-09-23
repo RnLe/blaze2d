@@ -4,7 +4,11 @@
 //! when it exits (or explicitly calls `flush_worker`); snapshots include the
 //! calling worker and published workers. Join live workers before taking a full
 //! run snapshot. Hot events never acquire the aggregation mutex.
-use std::{cell::RefCell, collections::BTreeMap, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
+use std::{cell::RefCell, collections::BTreeMap, sync::{Mutex, OnceLock}, time::Duration};
+#[cfg(not(target_arch="wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch="wasm32")]
+use web_time::Instant;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Default, Serialize)]

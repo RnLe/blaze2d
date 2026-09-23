@@ -24,6 +24,7 @@ default = []
 wasm-linalg = ["blaze2d-core/wasm-linalg", "blaze2d-interface/wasm-linalg", "blaze2d-backend-cpu/wasm-linalg"]
 bindings = ["dep:wasm-bindgen", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:web-sys", "dep:console_error_panic_hook"]
 streaming = ["bindings"]
+profiling = ["blaze2d-core/profiling"]
 
 [dependencies]
 blaze2d-core = { path = "../core", default-features = false }

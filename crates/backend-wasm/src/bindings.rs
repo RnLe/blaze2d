@@ -41,6 +41,21 @@ fn result_to_js(result: api::ResultRecord) -> Result<JsValue,JsValue> {
 
 #[wasm_bindgen(js_name=buildInfo, unchecked_return_type="BuildInfo")]
 pub fn build_info() -> Result<JsValue,JsValue> { js(&api::build_info()) }
+
+/// Explanatory profiles are separate builds; ordinary browser modules expose
+/// no instrumentation or reset API. Call outside active calculations.
+#[cfg(feature="profiling")]
+#[wasm_bindgen(js_name=resetProfile)]
+pub fn reset_profile() { blaze2d_core::profiler::reset(); }
+
+#[cfg(feature="profiling")]
+#[wasm_bindgen(js_name=profileSnapshot)]
+pub fn profile_snapshot() -> Result<JsValue,JsValue> {
+    let timings:serde_json::Value = serde_json::from_str(&blaze2d_core::profiler::get_profile_json())
+        .map_err(|e|JsValue::from_str(&e.to_string()))?;
+    js(&serde_json::json!({"counters":blaze2d_core::profiler::get_all_counters(),
+        "stage_counters":blaze2d_core::profiler::get_all_stage_counters(),"timings":timings}))
+}
 #[wasm_bindgen(unchecked_return_type="Capabilities")]
 pub fn capabilities() -> Result<JsValue,JsValue> { js(&api::capabilities(api::Platform::Browser)) }
 #[wasm_bindgen(js_name=initPanicHook)]

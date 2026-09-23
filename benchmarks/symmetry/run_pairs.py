@@ -10,6 +10,7 @@ import random
 import statistics
 import subprocess
 import time
+from interface_contract import physical_configuration, same_interface_jobs
 
 def file_digest(path):
     with open(path, "rb") as source:
@@ -25,7 +26,7 @@ def spectrum_passes(result, bands):
             and all(isinstance(row, list) and len(row) == bands
                     and all(finite_number(v) and v >= 0 for v in row) for row in rows))
 
-def quality_passes(result, bands):
+def quality_passes(result, bands, field_output=True):
     if not spectrum_passes(result, bands):
         return False
     points = result["points"]
@@ -36,7 +37,8 @@ def quality_passes(result, bands):
         absolute = point.get("absolute_residuals")
         k = point.get("k")
         orthogonality = point.get("b_orthogonality_defect")
-        if (point.get("converged") is not True or point.get("field_count") != bands
+        if (point.get("converged") is not True or type(point.get("field_count")) is not int
+                or point["field_count"] != (bands if field_output else 0)
                 or not isinstance(k, list) or len(k) != 2 or not all(finite_number(v) for v in k)
                 or not isinstance(residuals, list) or len(residuals) != bands
                 or not all(finite_number(v) and v >= 0 for v in residuals)
@@ -92,6 +94,8 @@ def main():
     p.add_argument("--require-sector-success", action="store_true", help="Require sector output at every point; a correct unrestricted fallback is not a sector-stage acceptance")
     p.add_argument("--require-requested-path", action="store_true", help="Require an explicit requested_path_success report; fallback output alone cannot accept the feature")
     p.add_argument("--require-job-identity", action="store_true", help="Require identical ordered job IDs and parameter coordinates in paired sweep outputs")
+    p.add_argument("--require-interface-contract", action="store_true", help="Require matching complete physical configurations and ordered points, plus actual returned array shapes/payloads")
+    p.add_argument("--output-contract", choices=["fields", "values"], default="fields", help="Declared returned output; values still requires fresh physical certificates")
     p.add_argument("--snapshot", help="Use a frozen seed input instead of a k-path")
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
@@ -101,7 +105,7 @@ def main():
     env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1", RAYON_NUM_THREADS="1")
     manifest = vars(args).copy()
     manifest["output"] = str(args.output)
-    manifest.update(seed=20260923, timestamp=time.time(), cold="numerical and process; OS/hardware caches uncontrolled", field_output=True,
+    manifest.update(seed=20260923, timestamp=time.time(), cold="numerical and process; OS/hardware caches uncontrolled", field_output=args.output_contract=="fields",
                     load_average=os.getloadavg(), harness_sha256=file_digest(__file__),
                     baseline_sha256=file_digest(args.baseline),
                     candidate_sha256=file_digest(args.candidate))
@@ -134,7 +138,16 @@ def main():
                     r["spectrum"] = [r["eigenvalues"]]
                     r["points"] = [dict(k=r["target_k"], residuals=r["residuals"], absolute_residuals=[], b_orthogonality_defect=r["orthogonality"], converged=r["converged"], field_count=len(r["eigenvalues"]))]
                 record["spectrum_valid"] = spectrum_passes(r, args.bands)
-                record["valid"] = quality_passes(r, args.bands)
+                record["valid"] = quality_passes(r, args.bands, args.output_contract=="fields")
+                if args.output_contract == "values":
+                    record["valid"] &= r.get("field_output") is False
+                if args.require_interface_contract:
+                    record["interface_contract_valid"] = (physical_configuration(r) is not None
+                        and r.get("grid") == [args.grid,args.grid] and r.get("bands") == args.bands
+                        and r.get("polarization") == args.polarization
+                        and r.get("field_output") is (args.output_contract=="fields"))
+                    record["valid"] &= record["interface_contract_valid"]
+                record["valid"] &= finite_number(r.get("seconds")) and r["seconds"] > 0
                 record["output_valid"] = record["valid"]
                 if args.require_job_identity:
                     record["job_identity_valid"] = parameter_job_identity(r) is not None
@@ -155,6 +168,11 @@ def main():
         labels = ["baseline", "candidate"]
         rng.shuffle(labels)
         records = [dict(pair=pair, **run(label)) for label in labels]
+        if args.require_interface_contract:
+            same_jobs = same_interface_jobs(*(r.get("result", {}) for r in records))
+            for r in records:
+                r["same_interface_jobs"] = same_jobs
+                r["valid"] &= same_jobs
         if args.require_job_identity:
             identities = [parameter_job_identity(r.get("result", {})) for r in records]
             same_jobs = identities[0] is not None and identities[0] == identities[1]

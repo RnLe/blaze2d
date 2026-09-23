@@ -51,6 +51,14 @@ class PhysicalQualityGate(unittest.TestCase):
         b["points"][0]["job"]["parameters"] = [float('nan')]
         self.assertIsNone(parameter_job_identity(b))
 
+    def test_values_output_requires_an_explicit_different_contract(self):
+        result = copy.deepcopy(self.result)
+        result['points'][0]['field_count'] = 0
+        self.assertFalse(quality_passes(result, 2))
+        self.assertTrue(quality_passes(result, 2, field_output=False))
+        result['points'][0]['residuals'][1] = 1e-2
+        self.assertFalse(quality_passes(result, 2, field_output=False))
+
 
 if __name__ == '__main__':
     unittest.main()
