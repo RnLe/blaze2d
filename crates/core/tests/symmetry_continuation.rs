@@ -8,7 +8,8 @@ use blaze2d_core::{
     operators::ThetaOperator,
     polarization::Polarization,
     symmetry::{
-        continuation::{GeometryContinuationCache, SeedHistory},
+        continuation::{GeometryContinuationCache, GeometryEviction, SeedHistory},
+        parameter::ParameterMetric,
         reuse::CachedSpectrum,
     },
 };
@@ -35,6 +36,166 @@ fn operator(eps: f64, pol: Polarization, k: [f64; 2]) -> ThetaOperator<CpuBacken
         pol,
         lattice.reciprocal().fractional_to_cartesian(k),
     )
+}
+
+#[test]
+fn eviction_controls_preserve_exact_identity_and_target_metric_seeds() {
+    let k = [0.13, 0.17];
+    let metric = ParameterMetric::new(vec![1.0]).unwrap();
+    let mut ops: Vec<_> = [4.0, 6.0, 8.0]
+        .into_iter()
+        .map(|p| operator(p, Polarization::TM, k))
+        .collect();
+    let entries: Vec<_> = ops.iter_mut().map(|op| source(op, k)).collect();
+    let mut probe = GeometryContinuationCache::new(usize::MAX);
+    let width = probe
+        .insert(
+            &mut ops[0],
+            "a".into(),
+            vec![4.0],
+            entries[0].clone(),
+            &Default::default(),
+        )
+        .unwrap()
+        .entry_payload_bytes;
+    for (policy, expected_victim) in [
+        (GeometryEviction::Fifo, "a"),
+        (GeometryEviction::LeastRecentlyUsed, "b"),
+        (
+            GeometryEviction::FarthestFromIncoming {
+                metric: metric.clone(),
+            },
+            "a",
+        ),
+    ] {
+        let mut cache = GeometryContinuationCache::with_eviction(2 * width, policy);
+        for i in 0..2 {
+            cache
+                .insert(
+                    &mut ops[i],
+                    ["a", "b"][i].into(),
+                    vec![[4.0, 6.0][i]],
+                    entries[i].clone(),
+                    &Default::default(),
+                )
+                .unwrap();
+        }
+        let exact = cache
+            .reuse_exact(&mut ops[0], k, 4, &Default::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(exact.source_id, "a");
+        assert_eq!(exact.spectrum.eigenvalues, entries[0].eigenvalues);
+        assert!(exact.spectrum.passes(&Default::default()));
+        assert!(
+            cache
+                .reuse_exact(&mut ops[2], k, 4, &Default::default())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .reuse_exact(&mut ops[0], k, 3, &Default::default())
+                .unwrap()
+                .is_none()
+        );
+        let mut other_k = operator(4.0, Polarization::TM, [0.21, 0.17]);
+        assert!(
+            cache
+                .reuse_exact(&mut other_k, [0.21, 0.17], 4, &Default::default())
+                .unwrap()
+                .is_none()
+        );
+        let insertion = cache
+            .insert(
+                &mut ops[2],
+                "c".into(),
+                vec![8.0],
+                entries[2].clone(),
+                &Default::default(),
+            )
+            .unwrap();
+        assert_eq!(insertion.evicted_ids, [expected_victim]);
+        assert!(cache.payload_bytes() <= 2 * width);
+    }
+
+    let mut cache =
+        GeometryContinuationCache::with_eviction(2 * width, GeometryEviction::LeastRecentlyUsed);
+    for i in 0..2 {
+        cache
+            .insert(
+                &mut ops[i],
+                ["a", "b"][i].into(),
+                vec![[4.0, 6.0][i]],
+                entries[i].clone(),
+                &Default::default(),
+            )
+            .unwrap();
+    }
+    let mut target = operator(4.2, Polarization::TM, k);
+    let seed = cache
+        .prepare_tracked(
+            &mut target,
+            &[4.2],
+            &metric,
+            SeedHistory::Nearest { snapshots: 1 },
+            4,
+            1e-9,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(seed.report.sources, ["a"]);
+    assert!(seed.report.rank.b_orthogonality_defect < 1e-8);
+    let mut preconditioner = target.build_homogeneous_preconditioner_adaptive();
+    let corrected = solve_with_warmstart(
+        &mut target,
+        Some(&mut preconditioner),
+        &SingleSolveJob::new(4)
+            .with_tolerance(1e-14)
+            .with_max_iterations(500),
+        &seed.fields,
+    );
+    assert!(corrected.converged && corrected.final_residuals.iter().all(|r| *r < 1e-5));
+    // A tracked seed access refreshes LRU, but cannot convert changed material
+    // into an exact hit. Equal parameter labels alone are insufficient.
+    assert!(
+        cache
+            .reuse_exact(&mut target, k, 4, &Default::default())
+            .unwrap()
+            .is_none()
+    );
+    let insertion = cache
+        .insert(
+            &mut ops[2],
+            "c".into(),
+            vec![8.0],
+            entries[2].clone(),
+            &Default::default(),
+        )
+        .unwrap();
+    assert_eq!(insertion.evicted_ids, ["b"]);
+    let ids = cache
+        .resident_ids()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut broken = entries[0].clone();
+    broken.fields[0].as_mut_slice()[0].re = f64::NAN;
+    assert!(
+        cache
+            .insert(
+                &mut ops[0],
+                "bad".into(),
+                vec![4.0],
+                broken,
+                &Default::default()
+            )
+            .is_err()
+    );
+    assert_eq!(
+        cache.resident_ids(),
+        ids.iter().map(String::as_str).collect::<Vec<_>>()
+    );
 }
 
 fn source(op: &mut ThetaOperator<CpuBackend<f64>>, k: [f64; 2]) -> CachedSpectrum {

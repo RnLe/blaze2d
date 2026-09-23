@@ -89,6 +89,12 @@ pub(crate) fn record_iteration() {
     crate::profiler::count("iterations", 1);
 }
 
+/// Transfer completed child-worker attempts into the calling driver's tally.
+/// Profiling counters publish separately on thread exit and must not be added twice.
+pub(crate) fn absorb_worker_iterations(iterations: usize) {
+    ITERATION_TOTAL.with(|n| n.set(n.get().wrapping_add(iterations)));
+}
+
 fn record_subspace_rank(result: &normalization::SvqbResult) {
     crate::profiler::count("subspace.input_columns", result.input_count);
     crate::profiler::count("subspace.retained_columns", result.output_rank);

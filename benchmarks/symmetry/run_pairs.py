@@ -54,6 +54,26 @@ def quality_passes(result, bands):
                 return False
     return True
 
+def parameter_job_identity(result):
+    """Ordered physical parameter-job labels, or None for malformed output."""
+    points = result.get("points")
+    if not isinstance(points, list) or not points:
+        return None
+    identity, ids = [], set()
+    for index, point in enumerate(points):
+        job = point.get("job", {})
+        if not isinstance(job, dict):
+            return None
+        label, parameters = job.get("id"), job.get("parameters")
+        if (not isinstance(label, str) or not label or label in ids
+                or type(job.get("original_index")) is not int or job["original_index"] != index
+                or not isinstance(parameters, list) or not parameters
+                or not all(finite_number(v) for v in parameters)):
+            return None
+        ids.add(label)
+        identity.append((label, parameters))
+    return identity
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("baseline")
@@ -66,10 +86,12 @@ def main():
     p.add_argument("--polarization", choices=["TE", "TM"], default="TM")
     p.add_argument("--pairs", type=int, default=20)
     p.add_argument("--cpu", type=int, default=0)
+    p.add_argument("--cpus", help="Common Linux CPU affinity list for both controls, e.g. 0-3; overrides --cpu")
     p.add_argument("--tolerance", type=float, help="Common stopping tolerance; requires a binary supporting the seventh argument")
     p.add_argument("--stop-on-quality-failure", action="store_true", help="Stop after a failed completed pair; retain it and make no acceptance claim")
     p.add_argument("--require-sector-success", action="store_true", help="Require sector output at every point; a correct unrestricted fallback is not a sector-stage acceptance")
     p.add_argument("--require-requested-path", action="store_true", help="Require an explicit requested_path_success report; fallback output alone cannot accept the feature")
+    p.add_argument("--require-job-identity", action="store_true", help="Require identical ordered job IDs and parameter coordinates in paired sweep outputs")
     p.add_argument("--snapshot", help="Use a frozen seed input instead of a k-path")
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
@@ -90,11 +112,11 @@ def main():
     def run(label, warmup=False):
         binary = getattr(args, label)
         mode = getattr(args, label + "_mode")
-        cmd = ["taskset", "-c", str(args.cpu), binary, args.case, str(args.grid), str(args.bands), args.polarization, mode]
+        cmd = ["taskset", "-c", args.cpus or str(args.cpu), binary, args.case, str(args.grid), str(args.bands), args.polarization, mode]
         if args.tolerance is not None:
             cmd.append(str(args.tolerance))
         if args.snapshot:
-            cmd = ["taskset", "-c", str(args.cpu), binary, mode, args.snapshot, str(args.grid), str(args.bands), args.polarization]
+            cmd = ["taskset", "-c", args.cpus or str(args.cpu), binary, mode, args.snapshot, str(args.grid), str(args.bands), args.polarization]
         t = time.perf_counter()
         load_before = os.getloadavg()
         try:
@@ -114,6 +136,9 @@ def main():
                 record["spectrum_valid"] = spectrum_passes(r, args.bands)
                 record["valid"] = quality_passes(r, args.bands)
                 record["output_valid"] = record["valid"]
+                if args.require_job_identity:
+                    record["job_identity_valid"] = parameter_job_identity(r) is not None
+                    record["valid"] &= record["job_identity_valid"]
                 if args.require_requested_path:
                     record["requested_path_valid"] = r.get("requested_path_success") is True
                     record["valid"] &= record["requested_path_valid"]
@@ -130,6 +155,12 @@ def main():
         labels = ["baseline", "candidate"]
         rng.shuffle(labels)
         records = [dict(pair=pair, **run(label)) for label in labels]
+        if args.require_job_identity:
+            identities = [parameter_job_identity(r.get("result", {})) for r in records]
+            same_jobs = identities[0] is not None and identities[0] == identities[1]
+            for r in records:
+                r["same_ordered_jobs"] = same_jobs
+                r["valid"] &= same_jobs
         if all(r.get("spectrum_valid") for r in records):
             a, b = [r["result"]["spectrum"] for r in records]
             error = max((abs(x-y)/max(1.0,abs(x),abs(y)) for ra,rb in zip(a,b) for x,y in zip(sorted(ra),sorted(rb))), default=math.inf)

@@ -1,6 +1,6 @@
 import copy
 import unittest
-from run_pairs import quality_passes
+from run_pairs import quality_passes, parameter_job_identity
 
 
 class PhysicalQualityGate(unittest.TestCase):
@@ -36,6 +36,20 @@ class PhysicalQualityGate(unittest.TestCase):
         point['residuals'] = [1e-7]
         self.assertFalse(quality_passes(result, 2))
         self.assertFalse(quality_passes({'spectrum': [], 'points': []}, 2))
+
+    def test_equal_frequencies_do_not_hide_swapped_parameter_jobs(self):
+        a = {"points": [{"job": {"id": "a", "parameters": [4.0], "original_index": 0}},
+                         {"job": {"id": "b", "parameters": [4.0], "original_index": 1}}]}
+        self.assertIsNotNone(parameter_job_identity(a))
+        b = copy.deepcopy(a)
+        b["points"][0]["job"]["id"], b["points"][1]["job"]["id"] = "b", "a"
+        self.assertNotEqual(parameter_job_identity(a), parameter_job_identity(b))
+        b = copy.deepcopy(a)
+        b["points"][1]["job"]["original_index"] = 0
+        self.assertIsNone(parameter_job_identity(b))
+        b = copy.deepcopy(a)
+        b["points"][0]["job"]["parameters"] = [float('nan')]
+        self.assertIsNone(parameter_job_identity(b))
 
 
 if __name__ == '__main__':

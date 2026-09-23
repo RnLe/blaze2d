@@ -81,6 +81,13 @@ pub fn get_profile_json() -> String {
     })
 }
 pub fn get_all_counters() -> BTreeMap<&'static str,u64> { let mut a=completed().lock().unwrap().counters.clone();for (name,n) in get_counters() { *a.entry(name).or_default()+=n; }a }
+/// Inclusive stage work from joined workers and the calling worker. A parent
+/// makespan scope does not inherit child-thread counters; worker stages do.
+pub fn get_all_stage_counters() -> BTreeMap<&'static str,BTreeMap<&'static str,u64>> {
+    let mut a=completed().lock().unwrap().stages.clone();
+    for (stage,counters) in get_stage_counters() {for (name,n) in counters {*a.entry(stage).or_default().entry(name).or_default()+=n;}}
+    a
+}
 pub fn print_stats() { println!("{}",get_profile_json()); }
 #[macro_export]
 macro_rules! profile_scope { ($name:expr) => { #[cfg(feature="profiling")] let _timer=$crate::profiler::ScopeTimer::new($name); }; }
@@ -97,6 +104,7 @@ mod tests {
         assert_eq!(v["outer"]["calls"],2);assert_eq!(v["worker"]["calls"],3);
         assert!(v["outer"]["exclusive_nanos"].as_u64().unwrap()<=v["outer"]["nanos"].as_u64().unwrap());
         assert_eq!(get_all_counters()["test.columns"],9);
+        assert_eq!(get_all_stage_counters()["worker"]["test.columns"],6);
         flush_worker();assert_eq!(get_all_counters()["test.columns"],9);
         reset();assert_eq!(get_profile_json(),"{}");assert!(get_all_counters().is_empty());
     }
