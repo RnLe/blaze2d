@@ -11,6 +11,9 @@ import statistics
 import subprocess
 import time
 
+def file_digest(path):
+    with open(path, "rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 def main():
     p = argparse.ArgumentParser()
@@ -31,8 +34,9 @@ def main():
     manifest = vars(args).copy()
     manifest["output"] = str(args.output)
     manifest.update(seed=20260923, timestamp=time.time(), cold="numerical and process; OS/hardware caches uncontrolled", field_output=True,
-                    baseline_sha256=hashlib.sha256(Path(args.baseline).read_bytes()).hexdigest(),
-                    candidate_sha256=hashlib.sha256(Path(args.candidate).read_bytes()).hexdigest())
+                    load_average=os.getloadavg(), harness_sha256=file_digest(__file__),
+                    baseline_sha256=file_digest(args.baseline),
+                    candidate_sha256=file_digest(args.candidate))
     samples = []
 
     def run(label, warmup=False):
@@ -40,20 +44,22 @@ def main():
         mode = getattr(args, label + "_mode")
         cmd = ["taskset", "-c", str(args.cpu), binary, args.case, str(args.grid), str(args.bands), args.polarization, mode]
         t = time.perf_counter()
+        load_before = os.getloadavg()
         try:
             result = subprocess.run(cmd, text=True, capture_output=True, env=env, timeout=600)
-            record = dict(label=label, warmup=warmup, command=cmd, process_seconds=time.perf_counter()-t, returncode=result.returncode)
+            record = dict(label=label, warmup=warmup, command=cmd, process_seconds=time.perf_counter()-t, returncode=result.returncode,
+                          load_average_before=load_before, load_average_after=os.getloadavg())
             if result.returncode:
                 record.update(error=result.stderr[-4000:], valid=False)
             else:
                 record["result"] = json.loads(result.stdout.strip().splitlines()[-1])
                 r = record["result"]
                 residuals = [v for x in r["points"] for v in x["residuals"][1 if x["k"] == [0.0,0.0] else 0:]]
-                absolute = [v for x in r["points"] for v in x["absolute_residuals"]]
+                absolute = [x["absolute_residuals"][0] for x in r["points"] if x["k"] == [0.0,0.0] and x["absolute_residuals"]]
                 record["valid"] = (all(x["converged"] and x["field_count"] == args.bands for x in r["points"])
                     and all(math.isfinite(v) for row in r["spectrum"] for v in row)
                     and max(residuals, default=0) <= 1e-5
-                    and max(absolute, default=0) <= 1e-4
+                    and max(absolute, default=0) <= 1e-7
                     and max(x["b_orthogonality_defect"] for x in r["points"]) <= 1e-8)
         except (subprocess.TimeoutExpired, ValueError) as e:
             record = dict(label=label, warmup=warmup, valid=False, error=str(e))

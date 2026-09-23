@@ -61,14 +61,21 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             let mut absolute_residuals = Vec::new();
             let mut orthogonality = Vec::new();
             let mut fields = Vec::new();
+            let mut symmetry_reports = Vec::new();
             let result = bandstructure::run_with_k_streaming(backend, &job.bands_job(),
                 bandstructure::RunOptions { reuse_gamma: false, disable_band_tracking: !b.tracking,
+                    symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
+                        k_reuse: match b.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},
+                        plane_group:b.symmetry.plane_group.as_ref().map(|s|serde_json::from_value(json!(s)).expect("validated plane group")),
+                        max_cache_bytes:b.symmetry.max_cache_bytes,..Default::default()
+                    },
                     retain_eigenvectors: job.resolved.config.results.eigenvectors, ..Default::default() }, |point| {
                     on_event(Event::Progress { job_index: job.index, sample_index: point.k_index,
                         completed: point.k_index + 1, total: nk, iterations: point.iterations, converged: point.converged,
                         band_point:Some(crate::BandPoint {frequencies:point.omegas.iter().map(|w|w/std::f64::consts::TAU).collect(),
                             k_point:point.k_point,distance:job.resolved.distances[point.k_index]}) });
                     iterations.push(point.iterations); converged.push(point.converged);
+                    symmetry_reports.push(point.symmetry);
                     orthogonality.push(point.b_orthogonality_defect);
                     residuals.extend(point.residuals.into_iter().take(n));
                     absolute_residuals.extend(point.absolute_residuals.into_iter().take(n));
@@ -85,6 +92,8 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                 out.arrays.insert("eigenvectors".into(), Array::complex(&[nk,n,ny,nx], &["k_point","band","y","x"], fields));
             }
             out.metadata["iterations"] = json!(iterations);
+            out.metadata["symmetry"] = json!({"requested":b.symmetry,"points":symmetry_reports,
+                "coverage":"unrestricted source spectrum; qualified finite-operator covariance and fresh transformed residuals"});
             out.metadata["converged"] = json!(converged.iter().all(|c| *c));
             out.metadata["converged_per_point"] = json!(converged);
             out.metadata["labels"] = json!(job.resolved.k_labels);

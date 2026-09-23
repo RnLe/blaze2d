@@ -23,6 +23,7 @@ pub mod affine;
 pub mod action;
 pub mod qualification;
 pub mod representation;
+pub mod reuse;
 
 // ============================================================================
 // K-Path Types

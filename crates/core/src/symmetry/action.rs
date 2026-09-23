@@ -14,6 +14,8 @@ pub enum ActionError {
     FourierSupportNotClosed { index: [i64;2], mapped: [i64;2] },
     #[error("affine action does not permute the sampling nodes")]
     SamplingNotClosed,
+    #[error("centered sampling offsets are not supported by this action plan")]
+    UnsupportedSamplingOrigin,
     #[error("exact coordinate arithmetic overflow")]
     ArithmeticOverflow,
 }
@@ -40,6 +42,7 @@ impl BlochActionPlan {
     /// Reject any lost Fourier mode, including an aliased Nyquist mode. A valid
     /// sampled permutation alone is insufficient to authorize derivatives.
     pub fn new(operation: AffineOp, source: [f64;2], destination: [f64;2], grid: Grid2D, polarization: Polarization, tolerance: f64) -> Result<Self,ActionError> {
+        if grid.centered {return Err(ActionError::UnsupportedSamplingOrigin);}
         if grid.nx==0 || grid.ny==0 || grid.nx>i32::MAX as usize || grid.ny>i32::MAX as usize ||
             !source.iter().chain(&destination).all(|x|x.is_finite() && x.abs()<1e6) ||
             !tolerance.is_finite() || !(0.0..1e-3).contains(&tolerance) {return Err(ActionError::InvalidInput);}

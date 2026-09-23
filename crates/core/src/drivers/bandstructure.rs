@@ -58,6 +58,7 @@ use crate::{
     grid::Grid2D,
     operators::ThetaOperator,
     polarization::Polarization,
+    symmetry::reuse::{CachedSpectrum, KReuse, ReuseReport, SpectralCache, SymmetryOptions,candidate_operations},
 };
 
 // ============================================================================
@@ -137,6 +138,8 @@ pub struct BandStructureResult {
 /// Incremental result emitted after a single k-point solve.
 #[derive(Debug, Clone)]
 pub struct KPointResult {
+    /// Actual reuse and qualification decisions; reused points take zero iterations.
+    pub symmetry: ReuseReport,
     /// Zero-based index of the completed k-point in the path.
     pub k_index: usize,
     /// Total number of k-points in the path.
@@ -170,6 +173,8 @@ pub struct KPointResult {
 /// Options for band structure computation.
 #[derive(Debug, Clone)]
 pub struct RunOptions {
+    /// Independently requested, qualified symmetry policies. Defaults to off.
+    pub symmetry: SymmetryOptions,
     /// Preconditioner type (None, FourierDiagonalKernelCompensated, TransverseProjection).
     pub precond_type: PreconditionerType,
     /// Enable subspace prediction for accelerated warm-start.
@@ -235,6 +240,7 @@ pub struct RunOptions {
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
+            symmetry: SymmetryOptions::default(),
             precond_type: PreconditionerType::default(),
             use_subspace_prediction: true, // Stage 1: rotation-based warm-start
             use_extrapolation: true,       // Stage 2: linear extrapolation
@@ -568,20 +574,28 @@ fn run_core<B: SpectralBackend + Clone>(
     let first_is_gamma = job.k_path.first().map_or(false, |&k| is_gamma_point(k));
     let last_is_gamma = job.k_path.last().map_or(false, |&k| is_gamma_point(k));
     let reuse_gamma =
-        options.reuse_gamma && first_is_gamma && last_is_gamma && job.k_path.len() > 1;
+        options.reuse_gamma && options.symmetry.k_reuse == KReuse::Off && first_is_gamma && last_is_gamma && job.k_path.len() > 1;
     let last_k_idx = job.k_path.len().saturating_sub(1);
     let distances = compute_k_path_distances(&job.k_path);
     let total_k_points = job.k_path.len();
 
     // Storage for first Γ-point frequencies (to reuse for last k-point if applicable)
     let mut first_gamma_omegas: Option<Vec<f64>> = None;
-    let mut first_gamma_iterations: Option<usize> = None;
     let mut first_gamma_quality = (false, Vec::new(), 0.0, Vec::new());
     let mut first_gamma_fields = None;
 
     // Accumulate results
     let mut bands: Vec<Vec<f64>> = Vec::with_capacity(job.k_path.len());
     let mut total_iterations = 0usize;
+    let mut symmetry_cache = SpectralCache::new(options.symmetry.max_cache_bytes);
+    let symmetry_operations = if matches!(options.symmetry.k_reuse,KReuse::Unitary|KReuse::TimeReversal) {
+        let mut operations=candidate_operations(&job.geom.lattice,options.symmetry.plane_group);
+        if options.symmetry.k_reuse==KReuse::TimeReversal {
+            let antiunitary:Vec<_>=operations.iter().map(|op|op.with_conjugation(true)).collect();
+            operations.extend(antiunitary);
+        }
+        operations
+    } else {Vec::new()};
 
     // Start timing the solve phase (excludes setup/diagnostics)
     let solve_start = crate::timing::Timer::start();
@@ -589,6 +603,11 @@ fn run_core<B: SpectralBackend + Clone>(
     crate::profiler::stop_timer("run.setup");
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
         crate::profile_scope!("run.k_point");
+        let mut reuse_report = ReuseReport { requested: options.symmetry.k_reuse, ..Default::default() };
+        let mut reused = if options.symmetry.k_reuse != KReuse::Off {
+            symmetry_cache.exact(k_frac)
+        } else { None };
+        if let Some(ref entry) = reused { reuse_report.source_index = Some(entry.source_index); }
         // Check if this is a Γ-point (k ≈ 0)
         // At Γ, the constant mode (DC) is deflated by the eigensolver.
         let is_gamma = is_gamma_point(k_frac);
@@ -603,12 +622,13 @@ fn run_core<B: SpectralBackend + Clone>(
                 );
                 if let Some(ref mut on_k_point) = on_k_point {
                     (**on_k_point)(KPointResult {
+                        symmetry: ReuseReport::default(),
                         k_index: k_idx,
                         total_k_points,
                         k_point: k_frac,
                         distance: distances[k_idx],
                         omegas: gamma_omegas.clone(),
-                        iterations: first_gamma_iterations.unwrap_or(0),
+                        iterations: 0,
                         converged: first_gamma_quality.0,
                         residuals: first_gamma_quality.1.clone(),
                         absolute_residuals: first_gamma_quality.3.clone(),
@@ -670,6 +690,9 @@ fn run_core<B: SpectralBackend + Clone>(
 
         // Construct the Maxwell operator Θ for this k-point
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
+        if reused.is_none() && matches!(options.symmetry.k_reuse,KReuse::Unitary|KReuse::TimeReversal) {
+            reused = symmetry_cache.related(&mut theta,&job.geom.lattice,&dielectric,k_frac,&symmetry_operations,&options.symmetry,&mut reuse_report);
+        }
 
         // Build preconditioner for this operator
         // Use band-window shift if enabled AND we have previous eigenvalues,
@@ -730,7 +753,15 @@ fn run_core<B: SpectralBackend + Clone>(
         let mut k_absolute_residuals = Vec::new();
         let final_evals: Vec<f64>;
         let mut eigenvectors: Vec<Field2D>;
-        if let Some(study) = study.as_deref_mut() {
+        if let Some(ref entry) = reused {
+            k_iterations = 0;
+            k_converged = true;
+            k_residuals = entry.residuals.clone();
+            k_absolute_residuals = entry.absolute_residuals.clone();
+            final_evals = entry.eigenvalues.clone();
+            eigenvectors = entry.fields.clone();
+            crate::profiler::count("symmetry.reused_solves", 1);
+        } else if let Some(study) = study.as_deref_mut() {
             let mut cfg = job.eigensolver.clone();
             cfg.k_index = Some(k_idx);
             cfg.record_diagnostics = true;
@@ -784,7 +815,9 @@ fn run_core<B: SpectralBackend + Clone>(
 
         // The iteration cache contains soft-lock placeholders. Certify the
         // returned fields without altering eigenvalues, gauges, or warm starts.
-        let k_b_orthogonality_defect = if on_k_point.is_some() {
+        let k_b_orthogonality_defect = if let Some(ref entry) = reused {
+            entry.orthogonality_defect
+        } else if on_k_point.is_some() || options.symmetry.k_reuse != KReuse::Off {
             let certificate = crate::eigensolver::refine::certify_without_refinement(
                 &mut theta,
                 &final_evals,
@@ -796,6 +829,18 @@ fn run_core<B: SpectralBackend + Clone>(
         } else {
             0.0
         };
+
+        // Cache sorted physical pairs before path tracking permutes the output.
+        if options.symmetry.k_reuse != KReuse::Off && reused.is_none() && k_converged {
+            let entry = CachedSpectrum { source_index: k_idx, k: k_frac,
+                eigenvalues: final_evals.clone(), fields: eigenvectors.clone(),
+                residuals: k_residuals.clone(), absolute_residuals: k_absolute_residuals.clone(),
+                orthogonality_defect: k_b_orthogonality_defect };
+            if entry.passes(&options.symmetry) { symmetry_cache.insert(entry); }
+            else { reuse_report.rejected.push("source spectrum failed fresh quality gates".into()); }
+        }
+        reuse_report.cache_bytes = symmetry_cache.bytes();
+        reuse_report.cache_entries = symmetry_cache.len();
 
         // Convert eigenvalues (ω²) to frequencies (ω)
         let mut omegas: Vec<f64> = final_evals
@@ -889,13 +934,13 @@ fn run_core<B: SpectralBackend + Clone>(
         // Store first Γ-point result for potential reuse at end of path
         if reuse_gamma && k_idx == 0 && is_gamma {
             first_gamma_omegas = Some(omegas.clone());
-            first_gamma_iterations = Some(k_iterations);
             first_gamma_quality = (k_converged, k_residuals.clone(), k_b_orthogonality_defect, k_absolute_residuals.clone());
             first_gamma_fields = options.retain_eigenvectors.then(|| eigenvectors.clone());
         }
 
         if let Some(ref mut on_k_point) = on_k_point {
             (**on_k_point)(KPointResult {
+                symmetry: reuse_report,
                 k_index: k_idx,
                 total_k_points,
                 k_point: k_frac,

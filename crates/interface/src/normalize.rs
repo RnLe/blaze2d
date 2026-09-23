@@ -145,6 +145,11 @@ impl Config {
             Task::Bands => {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
+                if let Some(name)=&bands.symmetry.plane_group {
+                    if serde_json::from_value::<blaze2d_core::symmetry::affine::PlaneGroup>(serde_json::Value::String(name.clone())).is_err() {
+                        return Err(invalid("bands.symmetry.plane_group","expected an ordinary plane group (p1 through p6m) in its documented primitive setting"));
+                    }
+                }
                 let path = resolve_path(&mut bands.path, self.geometry.lattice.kind, lattice_vectors)?;
                 k_labels = path.labels;
                 k_label_indices = path.label_indices;

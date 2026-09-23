@@ -41,6 +41,7 @@ fn relative_defect<F:SpectralBuffer>(a:&F,b:&F)->f64 {
         diff+=(x.re.to_accum()-y.re.to_accum()).powi(2)+(x.im.to_accum()-y.im.to_accum()).powi(2);
         scale+=x.re.to_accum().powi(2)+x.im.to_accum().powi(2)+y.re.to_accum().powi(2)+y.im.to_accum().powi(2);
     }
+    if !diff.is_finite() || !scale.is_finite() {return f64::INFINITY;}
     (2.0*diff/scale.max(f64::MIN_POSITIVE)).sqrt()
 }
 
@@ -59,7 +60,7 @@ pub fn qualify<B:SpectralBackend>(plan:BlochActionPlan,lattice:&Lattice2D,source
     let reciprocal=lattice.reciprocal();
     for (theta,k) in [(&*source,plan.source()),(&*destination,plan.destination())] {
         let expected=reciprocal.fractional_to_cartesian(k);let actual=theta.bloch();
-        if theta.grid().nx!=plan.grid().nx || theta.grid().ny!=plan.grid().ny || theta.polarization()!=plan.polarization() ||
+        if theta.grid().nx!=plan.grid().nx || theta.grid().ny!=plan.grid().ny || theta.grid().centered!=plan.grid().centered || theta.grid().lx!=plan.grid().lx || theta.grid().ly!=plan.grid().ly || theta.polarization()!=plan.polarization() ||
             (0..2).any(|i|(expected[i]-actual[i]).abs()>tolerance*expected[i].abs().max(1.0)) ||
             (0..2).any(|i|(theta.dielectric().reciprocal_b1()[i]-reciprocal.b1[i]).abs()>tolerance*reciprocal.b1[i].abs().max(1.0) || (theta.dielectric().reciprocal_b2()[i]-reciprocal.b2[i]).abs()>tolerance*reciprocal.b2[i].abs().max(1.0)) {
             report.rejection_reasons.push(RejectionReason::FiberMismatch);

@@ -41,3 +41,12 @@ fn actual_even_grid_pt_covariance_is_supported_without_aliasing() {
         qualify(plan,&lattice,&mut a,&mut b,1e-10).unwrap();
     }
 }
+
+#[test]
+fn nonfinite_operator_probe_cannot_authorize_reconstruction() {
+    let grid=Grid2D::new(5,5,1.0,1.0);let lattice=Lattice2D::square(1.0);let r=lattice.reciprocal();
+    let d=Dielectric2D::from_sampled_epsilon(grid,r.b1,r.b2,vec![2.0;grid.len()],Some(vec![[1e308,0.0,0.0,1e308];grid.len()]));
+    let backend=CpuBackend::<f64>::new();let mut a=ThetaOperator::new(backend.clone(),d.clone(),Polarization::TE,[0.0;2]);let mut b=ThetaOperator::new(backend,d,Polarization::TE,[0.0;2]);
+    let plan=BlochActionPlan::new(AffineOp::IDENTITY,[0.0;2],[0.0;2],grid,Polarization::TE,1e-12).unwrap();
+    assert!(qualify(plan,&lattice,&mut a,&mut b,1e-10).is_err());
+}

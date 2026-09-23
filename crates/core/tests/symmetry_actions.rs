@@ -31,3 +31,9 @@ fn glide_square_has_bloch_translation_phase() {
         assert!(defect(&expected,&twice)<1e-14);
     }
 }
+
+#[test]
+fn refuses_an_unimplemented_centered_sampling_origin() {
+    let grid=Grid2D::new_centered(8,8,1.0,1.0);
+    assert!(matches!(BlochActionPlan::new(AffineOp::IDENTITY,[0.0;2],[0.0;2],grid,Polarization::TM,1e-12),Err(blaze2d_core::symmetry::action::ActionError::UnsupportedSamplingOrigin)));
+}
