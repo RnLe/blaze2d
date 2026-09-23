@@ -127,6 +127,16 @@ pub trait LinearOperator<B: SpectralBackend> {
     /// Whether the analytic constant Γ kernel belongs to this solver's space.
     fn owns_gamma_kernel(&self) -> bool { true }
 
+    /// Whether this coordinate space contains a known exact zero mode at the
+    /// current fiber. The default preserves the spatial Γ convention; a
+    /// Fourier subspace can also identify the folded mode G = -k without
+    /// changing the physical Bloch wavevector returned by `bloch`.
+    fn analytic_kernel_available(&self) -> bool {
+        self.owns_gamma_kernel()
+            && crate::eigensolver::initialization::is_gamma_point(
+                self.bloch(), crate::eigensolver::initialization::GAMMA_TOLERANCE)
+    }
+
     /// Finite dimension of a constrained search space, including its kernel.
     fn subspace_dimension(&self) -> usize { self.grid().len() }
 

@@ -553,7 +553,7 @@ where
 
         // Step 1: Check if we're at the Γ-point and add constant mode to deflation
         let bloch = self.operator.bloch();
-        if self.operator.owns_gamma_kernel() && initialization::is_gamma_point(bloch, initialization::GAMMA_TOLERANCE) {
+        if self.operator.analytic_kernel_available() {
             if ENABLE_GAMMA_DEFLATION {
                 // Create B-normalized constant mode y₀
                 let (y0, by0, _norm) = initialization::create_gamma_mode(self.operator);
