@@ -52,9 +52,9 @@ def main():
                 absolute = [v for x in r["points"] for v in x["absolute_residuals"]]
                 record["valid"] = (all(x["converged"] and x["field_count"] == args.bands for x in r["points"])
                     and all(math.isfinite(v) for row in r["spectrum"] for v in row)
-                    and max(residuals, default=0) <= 1e-3
-                    and max(absolute, default=0) <= 1e-2
-                    and max(x["b_orthogonality_defect"] for x in r["points"]) <= 1e-6)
+                    and max(residuals, default=0) <= 1e-5
+                    and max(absolute, default=0) <= 1e-4
+                    and max(x["b_orthogonality_defect"] for x in r["points"]) <= 1e-8)
         except (subprocess.TimeoutExpired, ValueError) as e:
             record = dict(label=label, warmup=warmup, valid=False, error=str(e))
         return record
@@ -70,7 +70,7 @@ def main():
             error = max((abs(x-y)/max(1.0,abs(x),abs(y)) for ra,rb in zip(a,b) for x,y in zip(sorted(ra),sorted(rb))), default=math.inf)
             for r in records:
                 r.update(spectral_relative_error=error)
-                r["valid"] &= error <= 1e-4 and len(a) == len(b) and all(len(row) == args.bands for row in a+b)
+                r["valid"] &= error <= 1e-6 and len(a) == len(b) and all(len(row) == args.bands for row in a+b)
         samples.extend(records)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(dict(manifest=manifest,samples=samples),indent=2)+"\n")

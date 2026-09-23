@@ -36,15 +36,16 @@ fn main() {
     };
     let job = BandStructureJob {
         geom, grid: Grid2D::new(n,n,1.0,1.0), pol, k_path: path,
-        eigensolver: EigensolverConfig { n_bands: bands, max_iter: 500, tol: 1e-8, block_size: 0, record_diagnostics: false, k_index: None },
+        eigensolver: EigensolverConfig { n_bands: bands, max_iter: 500, tol: 1e-12, block_size: 0, record_diagnostics: false, k_index: None },
         dielectric: DielectricOptions::default(),
     };
-    let options = RunOptions { disable_band_tracking: true, retain_eigenvectors: true, ..Default::default() };
+    let options = RunOptions { reuse_gamma: false, disable_band_tracking: true, retain_eigenvectors: true, ..Default::default() };
     let mut points = Vec::new();
     let start = std::time::Instant::now();
     let result = run_with_k_streaming(CpuBackend::<f64>::new(), &job, options, |p| {
         points.push(json!({"k":p.k_point,"iterations":p.iterations,"converged":p.converged,"residuals":p.residuals,"absolute_residuals":p.absolute_residuals,"b_orthogonality_defect":p.b_orthogonality_defect,"field_count":p.eigenvectors.as_ref().map_or(0,Vec::len)}));
     });
     let elapsed = start.elapsed().as_secs_f64();
-    println!("{}",json!({"case":case,"grid":[n,n],"bands":bands,"polarization":format!("{pol:?}"),"precision":"f64","tolerance":1e-8,"max_iterations":500,"seconds":elapsed,"spectrum":result.bands,"points":points,"counters":blaze2d_core::profiler::get_counters(),"profile":serde_json::from_str::<serde_json::Value>(&blaze2d_core::profiler::get_profile_json()).unwrap()}));
+    let rss_kib = std::fs::read_to_string("/proc/self/status").ok().and_then(|s| s.lines().find(|l|l.starts_with("VmHWM:")).and_then(|l|l.split_whitespace().nth(1)).and_then(|v|v.parse::<u64>().ok()));
+    println!("{}",json!({"case":case,"grid":[n,n],"bands":bands,"polarization":format!("{pol:?}"),"precision":"f64","tolerance":1e-12,"max_iterations":500,"seconds":elapsed,"peak_rss_kib":rss_kib,"legacy_gamma_reuse":false,"spectrum":result.bands,"points":points,"counters":blaze2d_core::profiler::get_counters(),"stage_counters":blaze2d_core::profiler::get_stage_counters(),"profile":serde_json::from_str::<serde_json::Value>(&blaze2d_core::profiler::get_profile_json()).unwrap()}));
 }

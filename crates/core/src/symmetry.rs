@@ -19,6 +19,11 @@ use crate::{
     lattice::Lattice2D,
 };
 
+pub mod affine;
+pub mod action;
+pub mod qualification;
+pub mod representation;
+
 // ============================================================================
 // K-Path Types
 // ============================================================================

@@ -10,6 +10,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TimingStats { pub calls: u64, pub nanos: u128, pub exclusive_nanos: u128 }
 #[derive(Default)]
+#[cfg_attr(not(feature="profiling"), allow(dead_code))]
 struct Frame { name: &'static str, start: Option<Instant>, child: Duration }
 #[derive(Default)]
 struct Worker {
