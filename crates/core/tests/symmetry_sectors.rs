@@ -3,6 +3,71 @@ use blaze2d_core::{dielectric::Dielectric2D,geometry::{Geometry2D,BasisAtom},gri
     symmetry::{affine::{PlaneGroup,AffineGroup},reuse::SymmetryOptions,sectors::solve_conservative}};
 
 #[test]
+fn serial_projection_workspace_reuse_preserves_fields_and_isolates_jobs() {
+    let lattice=Lattice2D::square(1.0);
+    let grid=Grid2D::new(9,9,1.0,1.0);
+    for pol in [Polarization::TM,Polarization::TE] {
+        let d=Dielectric2D::from_geometry(&Geometry2D{lattice,eps_bg:1.0,atoms:vec![BasisAtom{pos:[0.0;2],radius:0.24,eps_inside:8.9}]},grid,&Default::default());
+        let mut op=ThetaOperator::new(CpuBackend::<f64>::new(),d,pol,[0.0;2]);
+        let mut p=op.build_homogeneous_preconditioner_adaptive();
+        let config=EigensolverConfig{n_bands:5,tol:1e-14,max_iter:500,..Default::default()};
+        let mut options=SymmetryOptions{reconstruct_partners:true,..Default::default()};
+        let reference=solve_conservative(&mut op,&lattice,[0.0;2],PlaneGroup::P4m.group(),&config,None,&options,Some(&mut p)).unwrap();
+        options.share_sector_workspace=true;
+        let pooled=solve_conservative(&mut op,&lattice,[0.0;2],PlaneGroup::P4m.group(),&config,None,&options,Some(&mut p)).unwrap();
+        assert_eq!(reference.iterations,pooled.iterations);
+        assert_eq!(reference.spectrum.eigenvalues,pooled.spectrum.eigenvalues);
+        for (a,b) in reference.spectrum.fields.iter().zip(&pooled.spectrum.fields) {
+            assert_eq!(a.as_slice(),b.as_slice());
+        }
+        assert_eq!(pooled.report.projection_workspace_allocations,2);
+        assert!(reference.report.projection_workspace_allocations>2);
+        assert_eq!(reference.report.projection_workspace_payload_bytes,pooled.report.projection_workspace_payload_bytes);
+    }
+}
+
+#[test]
+fn correction_projection_cadence_keeps_quality_gates_when_te_drifts() {
+    let lattice=Lattice2D::square(1.0);
+    let grid=Grid2D::new(13,13,1.0,1.0);
+    let k=[0.17,0.0];
+    for pol in [Polarization::TM,Polarization::TE] {
+        let d=Dielectric2D::from_geometry(&Geometry2D{lattice,eps_bg:1.0,atoms:vec![BasisAtom{pos:[0.0;2],radius:0.24,eps_inside:12.0}]},grid,&Default::default());
+        let mut op=ThetaOperator::new(CpuBackend::<f64>::new(),d,pol,lattice.reciprocal().fractional_to_cartesian(k));
+        let mut p=op.build_homogeneous_preconditioner_adaptive();
+        let config=EigensolverConfig{n_bands:8,tol:1e-14,max_iter:500,..Default::default()};
+        let mut options=SymmetryOptions{share_sector_workspace:true,..Default::default()};
+        let reference=solve_conservative(&mut op,&lattice,k,PlaneGroup::Pm.group(),&config,None,&options,Some(&mut p)).unwrap();
+        for interval in [2,4] {
+            options.correction_projection_interval=interval;
+            let attempt=solve_conservative(&mut op,&lattice,k,PlaneGroup::Pm.group(),&config,None,&options,Some(&mut p));
+            // TE can amplify roundoff contamination between projections into a
+            // different sector. It must return a valid prefix or reject it.
+            let result=match attempt {
+                Ok(r)=>r,
+                Err(e)=>{
+                    assert_eq!(pol,Polarization::TE,"TM cadence failed: {e}");
+                    assert!(e.contains("failed fresh quality gates") || e.contains("leaked"),"{e}");
+                    continue;
+                }
+            };
+            for (a,b) in reference.spectrum.eigenvalues.iter().zip(&result.spectrum.eigenvalues) {
+                assert!((a-b).abs()/a.abs().max(1.0)<1e-7);
+            }
+            assert!(result.spectrum.passes(&options));
+            for sector in result.report.sectors {
+                let total=sector.correction_projection_rounds+sector.correction_projection_skipped_rounds;
+                assert!(total>10);
+                assert_eq!(sector.correction_projection_rounds,total.div_ceil(interval));
+                assert!(sector.leakage<1e-8);
+            }
+        }
+        options.correction_projection_interval=0;
+        assert!(solve_conservative(&mut op,&lattice,k,PlaneGroup::Pm.group(),&config,None,&options,Some(&mut p)).is_err());
+    }
+}
+
+#[test]
 fn mirror_and_glide_sectors_cover_the_entire_actual_maxwell_pencil() {
     for glide in [false,true] {for pol in [Polarization::TM,Polarization::TE] {
         let (grid,k,group,atoms)=if glide {(Grid2D::new(6,5,1.0,1.0),[0.5,0.0],PlaneGroup::Pg.group(),vec![BasisAtom{pos:[0.0,0.2],radius:0.16,eps_inside:5.0},BasisAtom{pos:[0.5,-0.2],radius:0.16,eps_inside:5.0}])}

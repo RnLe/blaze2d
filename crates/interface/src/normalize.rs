@@ -146,8 +146,11 @@ impl Config {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
                 if bands.symmetry.sectors == SectorPolicy::Off &&
-                    (bands.symmetry.sector_storage != SectorStorage::FullGrid || bands.symmetry.sector_kernel != SectorKernel::FullGrid || bands.symmetry.reconstruct_partners || bands.symmetry.sector_guard_budget.is_some()) {
-                    return Err(invalid("bands.symmetry.sectors","sector storage, kernels, guards and partners require an enabled sector policy"));
+                    (bands.symmetry.sector_storage != SectorStorage::FullGrid || bands.symmetry.sector_kernel != SectorKernel::FullGrid || bands.symmetry.reconstruct_partners || bands.symmetry.share_sector_workspace || bands.symmetry.correction_projection_interval!=1 || bands.symmetry.sector_guard_budget.is_some()) {
+                    return Err(invalid("bands.symmetry.sectors","sector storage, kernels, guards, partners and workspace sharing require an enabled sector policy"));
+                }
+                if bands.symmetry.correction_projection_interval==0 || (bands.symmetry.correction_projection_interval!=1 && bands.symmetry.sector_storage!=SectorStorage::FullGrid) {
+                    return Err(invalid("bands.symmetry.correction_projection_interval","must be positive; values other than one require full-grid sectors"));
                 }
                 if bands.symmetry.sectors != SectorPolicy::Off && bands.symmetry.arithmetic != SymmetryArithmetic::SpatialComplex {
                     return Err(invalid("bands.symmetry.arithmetic","sector solves and Fourier arithmetic are separate experimental paths; their combined representation is not implemented"));

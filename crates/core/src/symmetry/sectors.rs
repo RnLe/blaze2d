@@ -31,6 +31,9 @@ pub struct SectorReport {
     pub dense_complete:bool,
     pub seed_rank:usize,
     pub leakage:f64,
+    pub correction_projection_interval:usize,
+    pub correction_projection_rounds:usize,
+    pub correction_projection_skipped_rounds:usize,
 }
 #[derive(Debug,Clone,Serialize)]
 pub struct CoverageReport {
@@ -41,6 +44,8 @@ pub struct CoverageReport {
     pub computed:usize,
     pub kernel_owners:usize,
     pub qualification_bytes:usize,
+    pub projection_workspace_allocations:usize,
+    pub projection_workspace_payload_bytes:usize,
     pub allocation_rounds:usize,
     pub tail_eigenvalues:Vec<Option<f64>>,
     pub sectors:Vec<SectorReport>,
@@ -75,7 +80,7 @@ impl SectorPlan {
         Ok(Self{representation,actions,sectors})
     }
     pub fn ranks(&self)->Vec<usize> {self.sectors.iter().map(|s|s.rank).collect()}
-    fn project<F:SpectralBuffer>(&self,sector:usize,input:&F,output:&mut F,scratch:&mut F) {
+    pub(crate) fn project<F:SpectralBuffer>(&self,sector:usize,input:&F,output:&mut F,scratch:&mut F) {
         crate::profile_scope!("symmetry.project");
         self.representation.apply_weights(&self.actions,&self.sectors[sector].weights,input,output,scratch).expect("plan actions were checked at construction");
     }
@@ -83,6 +88,7 @@ impl SectorPlan {
 
 struct ConstrainedOperator<'a,B:SpectralBackend> {
     full:&'a mut ThetaOperator<B>,plan:&'a SectorPlan,sector:usize,output:B::Buffer,scratch:B::Buffer,
+    correction_projection_interval:usize,correction_rounds:usize,projected_rounds:usize,
 }
 impl<B:SpectralBackend> LinearOperator<B> for ConstrainedOperator<'_,B> {
     fn apply(&mut self,x:&B::Buffer,y:&mut B::Buffer) {self.full.apply(x,y)}
@@ -97,6 +103,17 @@ impl<B:SpectralBackend> LinearOperator<B> for ConstrainedOperator<'_,B> {
     fn constrain(&mut self,x:&mut B::Buffer) {
         self.plan.project(self.sector,x,&mut self.output,&mut self.scratch);
         x.as_mut_slice().copy_from_slice(self.output.as_slice());
+    }
+    fn constrain_corrections(&mut self,vectors:&mut[B::Buffer]) {
+        if vectors.is_empty() {return;}
+        if self.correction_rounds%self.correction_projection_interval==0 {
+            for vector in vectors {self.constrain(vector);}
+            self.projected_rounds+=1;
+            crate::profiler::count("symmetry.correction_projection_rounds",1);
+        } else {
+            crate::profiler::count("symmetry.skipped_correction_projection_rounds",1);
+        }
+        self.correction_rounds+=1;
     }
 }
 
@@ -132,6 +149,10 @@ fn dense_sector<B:SpectralBackend>(op:&mut ConstrainedOperator<'_,B>)->Result<(V
 /// full dense solve is a finite-spectrum certificate.
 pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,lattice:&Lattice2D,k:[f64;2],group:AffineGroup,config:&EigensolverConfig,warm:Option<&[Field2D]>,options:&SymmetryOptions,mut preconditioner:Option<&mut dyn crate::preconditioners::OperatorPreconditioner<B>>)->Result<SectorResult,String> {
     crate::profile_scope!("symmetry.sectors");
+    if options.correction_projection_interval==0 {return Err("correction projection interval must be positive".into());}
+    if options.correction_projection_interval!=1 && options.sector_storage!=super::reduced::SectorStorage::FullGrid {
+        return Err("correction projection cadence applies only to full-grid sectors".into());
+    }
     let plan=SectorPlan::qualify(operator,lattice,k,group,options)?;
     let bases=if options.sector_storage==super::reduced::SectorStorage::Orbit {
         plan.sectors.iter().map(|s|if s.rank==0 {Ok(None)} else {super::reduced::OrbitBasis::from_projector(&plan.actions,&s.weights,s.rank).map(Some)}).collect::<Result<Vec<_>,String>>()?
@@ -142,6 +163,12 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
     let mut prefixes:Vec<_>=plan.sectors.iter().map(|s|initial.div_ceil(s.partners).min(s.rank)).collect();
     let mut slots:Vec<Option<(CachedSpectrum,SectorReport)>>=(0..plan.sectors.len()).map(|_|None).collect();
     let mut iterations=0;let mut rounds=0;
+    // Invocation-local ownership prevents cross-job aliasing. Both modes use
+    // exactly the same operator and buffers; only their allocation lifetime
+    // differs. This pool does not include persistent eigensolver vectors.
+    let mut projection_workspace:Option<(B::Buffer,B::Buffer)>=None;
+    let mut projection_workspace_allocations=0;
+    let projection_workspace_payload_bytes=2*operator.grid().len()*std::mem::size_of::<num_complex::Complex<B::Real>>();
     loop {
     rounds+=1;
     let mut guards=vec![2;plan.sectors.len()];
@@ -159,9 +186,15 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
         let prefix=prefixes[i];
         if slots[i].as_ref().is_some_and(|(_,r)|r.prefix==prefix) {continue;}
         let previous_steps=slots[i].as_ref().map_or(0,|(_,r)|r.iterations);
+        let previous_projected=slots[i].as_ref().map_or(0,|(_,r)|r.correction_projection_rounds);
+        let previous_skipped=slots[i].as_ref().map_or(0,|(_,r)|r.correction_projection_skipped_rounds);
         let warm=slots[i].as_ref().map(|(e,_)|e.fields.as_slice()).or(warm);
-        let output=operator.alloc_field();let scratch=operator.alloc_field();
-        let mut op=ConstrainedOperator{full:operator,plan:&plan,sector:i,output,scratch};
+        let (output,scratch)=projection_workspace.take().unwrap_or_else(|| {
+            projection_workspace_allocations+=2;
+            crate::profiler::count("sector.projection_workspace_allocations",2);
+            (operator.alloc_field(),operator.alloc_field())
+        });
+        let mut op=ConstrainedOperator{full:operator,plan:&plan,sector:i,output,scratch,correction_projection_interval:options.correction_projection_interval,correction_rounds:0,projected_rounds:0};
         let mut seed_rank=0;
         let projected_seed=if let Some(warm)=warm {
             let mut projected=Vec::new();
@@ -188,12 +221,15 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
         if sector.owns_kernel && values.first().is_some_and(|v|v.abs()<1e-8) {values[0]=0.0;}
         let cert=certify_without_refinement(&mut op,&values,&fields);
         let entry=CachedSpectrum{source_index:0,k,eigenvalues:values,fields,residuals:cert.residuals,absolute_residuals:cert.absolute_residuals,orthogonality_defect:cert.b_orthogonality_defect};
-        if !entry.passes(options) || entry.fields.len()!=prefix {return Err(format!("sector {} failed fresh quality gates",sector.label));}
         let mut leakage:f64=0.0;
         for field in &entry.fields {let mut v=op.alloc_field();for (dst,z) in v.as_mut_slice().iter_mut().zip(field.as_slice()) {*dst=cscalar::<B::Real>(z.re,z.im);}op.constrain(&mut v);let error:f64=v.as_slice().iter().zip(field.as_slice()).map(|(a,b)|(C::new(a.re.to_accum(),a.im.to_accum())-b).norm_sqr()).sum();let scale:f64=field.as_slice().iter().map(|z|z.norm_sqr()).sum();leakage=leakage.max((error/scale).sqrt());}
+        if !entry.passes(options) || entry.fields.len()!=prefix {return Err(format!("sector {} failed fresh quality gates: residuals={:?}, orthogonality={:e}, leakage={leakage:e}",sector.label,entry.residuals,entry.orthogonality_defect));}
         if !leakage.is_finite() || leakage>1e-8 {return Err(format!("sector {} leaked by {leakage:e}",sector.label));}
         let stored_rows=if !dense && bases[i].is_some() {sector.rank} else {op.grid().len()};
-        iterations+=steps;slots[i]=Some((entry,SectorReport{label:sector.label.clone(),dimension:sector.rank,prefix,stored_rows,reduced_kernel,vector_column_bytes:stored_rows*std::mem::size_of::<C>(),basis_payload_bytes:bases[i].as_ref().map_or(0,|b|b.payload_bytes()),partner_rows:sector.partners,working_columns:if dense {sector.rank} else {prefix.saturating_add(guards[i]).min(sector.rank-usize::from(sector.owns_kernel))},owns_gamma_kernel:sector.owns_kernel,iterations:previous_steps+steps,dense_complete:dense,seed_rank,leakage}));
+        iterations+=steps;slots[i]=Some((entry,SectorReport{label:sector.label.clone(),dimension:sector.rank,prefix,stored_rows,reduced_kernel,vector_column_bytes:stored_rows*std::mem::size_of::<C>(),basis_payload_bytes:bases[i].as_ref().map_or(0,|b|b.payload_bytes()),partner_rows:sector.partners,working_columns:if dense {sector.rank} else {prefix.saturating_add(guards[i]).min(sector.rank-usize::from(sector.owns_kernel))},owns_gamma_kernel:sector.owns_kernel,iterations:previous_steps+steps,dense_complete:dense,seed_rank,leakage,correction_projection_interval:options.correction_projection_interval,correction_projection_rounds:previous_projected+op.projected_rounds,correction_projection_skipped_rounds:previous_skipped+op.correction_rounds-op.projected_rounds}));
+        if options.share_sector_workspace {
+            projection_workspace=Some((op.output,op.scratch));
+        }
     }
     let mut values:Vec<_>=slots.iter().flatten().flat_map(|(e,r)|e.eigenvalues.iter().flat_map(move |&x|std::iter::repeat_n(x,r.partner_rows))).collect();values.sort_by(f64::total_cmp);
     let cutoff=values.get(config.n_bands.saturating_sub(1)).copied().unwrap_or(f64::INFINITY);
@@ -229,6 +265,6 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
     let (eigenvalues,fields):(Vec<_>,Vec<_>)=all.into_iter().unzip();let cert=certify_without_refinement(operator,&eigenvalues,&fields);
     let spectrum=CachedSpectrum{source_index:0,k,eigenvalues,fields,residuals:cert.residuals,absolute_residuals:cert.absolute_residuals,orthogonality_defect:cert.b_orthogonality_defect};
     if !spectrum.passes(options) {return Err("merged sector output failed original-pencil certification".into());}
-    let report=CoverageReport{evidence:if all_dense {"complete finite dense spectra"} else if adaptive {"adaptive prefixes with converged tails beyond the requested cut; empirical coverage, not inertia"} else {"conservative sector prefixes; iterative lowest-prefix coverage validated empirically, not by inertia"}.into(),finite_dimension:operator.grid().len(),sum_sector_dimensions:plan.sectors.iter().map(|s|s.rank*s.partners).sum(),requested:config.n_bands,computed,kernel_owners:plan.sectors.iter().filter(|s|s.owns_kernel).count(),allocation_rounds:rounds,tail_eigenvalues:tails,qualification_bytes:plan.actions.iter().map(|a|a.plan().storage_bytes()).sum(),sectors:reports};
+    let report=CoverageReport{projection_workspace_allocations,projection_workspace_payload_bytes,evidence:if all_dense {"complete finite dense spectra"} else if adaptive {"adaptive prefixes with converged tails beyond the requested cut; empirical coverage, not inertia"} else {"conservative sector prefixes; iterative lowest-prefix coverage validated empirically, not by inertia"}.into(),finite_dimension:operator.grid().len(),sum_sector_dimensions:plan.sectors.iter().map(|s|s.rank*s.partners).sum(),requested:config.n_bands,computed,kernel_owners:plan.sectors.iter().filter(|s|s.owns_kernel).count(),allocation_rounds:rounds,tail_eigenvalues:tails,qualification_bytes:plan.actions.iter().map(|a|a.plan().storage_bytes()).sum(),sectors:reports};
     Ok(SectorResult{spectrum,iterations,report})
 }

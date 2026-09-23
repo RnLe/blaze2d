@@ -14,6 +14,10 @@ pub enum KReuse { #[default] Off, Identical, Unitary, TimeReversal }
 #[derive(Debug,Clone)]
 pub struct SymmetryOptions {
     pub k_reuse:KReuse,
+    pub k_traversal:super::traversal::KTraversal,
+    /// Additional physical-field payload retained to restore requested output
+    /// order and tracking after a changed solve route. Separate from the cache.
+    pub max_traversal_field_bytes:usize,
     pub max_cache_bytes:usize,
     /// An explicit primitive setting, still subject to all numerical checks.
     /// None enumerates metric candidates with zero translation and entries ±2.
@@ -24,6 +28,12 @@ pub struct SymmetryOptions {
     pub sector_storage:super::reduced::SectorStorage,
     pub sector_kernel:super::reduced::ReducedKernel,
     pub reconstruct_partners:bool,
+    /// Reuse the two full-grid projection buffers between serial sectors.
+    /// The Maxwell operator and its FFT scratch are shared in either mode.
+    pub share_sector_workspace:bool,
+    /// Project the first correction batch and then every n-th batch. Seeds and
+    /// final leakage/physical residual checks are unconditional. Full-grid only.
+    pub correction_projection_interval:usize,
     pub arithmetic:super::fourier::Arithmetic,
     pub pt_operation:Option<AffineOp>,
     pub relative_rank_tolerance:f64,
@@ -33,7 +43,7 @@ pub struct SymmetryOptions {
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:super::traversal::KTraversal::Given,max_traversal_field_bytes:64*1024*1024,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
 }
 #[derive(Debug,Clone,Serialize)]
 pub struct SolveAttempt {
@@ -47,6 +57,7 @@ pub struct SolveAttempt {
 #[derive(Debug,Clone,Default,Serialize)]
 pub struct ReuseReport {
     pub requested:KReuse,
+    pub traversal:Option<super::traversal::TraversalReport>,
     pub retained_iterations:usize,
     pub attempted_iterations:usize,
     pub solver_attempts:Vec<SolveAttempt>,

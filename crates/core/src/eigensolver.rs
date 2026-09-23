@@ -877,7 +877,7 @@ where
             }
         }
 
-        for vector in &mut p_block { self.operator.constrain(vector); }
+        self.operator.constrain_corrections(&mut p_block);
         p_block
     }
 

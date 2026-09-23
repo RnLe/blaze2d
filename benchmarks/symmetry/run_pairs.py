@@ -29,6 +29,7 @@ def main():
     p.add_argument("--cpu", type=int, default=0)
     p.add_argument("--tolerance", type=float, help="Common stopping tolerance; requires a binary supporting the seventh argument")
     p.add_argument("--stop-on-quality-failure", action="store_true", help="Stop after a failed completed pair; retain it and make no acceptance claim")
+    p.add_argument("--require-sector-success", action="store_true", help="Require sector output at every point; a correct unrestricted fallback is not a sector-stage acceptance")
     p.add_argument("--snapshot", help="Use a frozen seed input instead of a k-path")
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
@@ -77,6 +78,10 @@ def main():
                     and max(residuals, default=0) <= 1e-5
                     and max(absolute, default=0) <= 1e-7
                     and max(x["b_orthogonality_defect"] for x in r["points"]) <= 1e-8)
+                record["output_valid"] = record["valid"]
+                if args.require_sector_success:
+                    record["requested_path_valid"] = all(x.get("symmetry", {}).get("sectors") is not None for x in r["points"])
+                    record["valid"] &= record["requested_path_valid"]
         except (subprocess.TimeoutExpired, ValueError) as e:
             record = dict(label=label, warmup=warmup, valid=False, error=str(e))
         return record

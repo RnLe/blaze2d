@@ -4,6 +4,12 @@ use serde_json::json;
 #[test]
 fn symmetry_options_require_an_implemented_representation_path() {
     let mut config=Config::default();
+    config.bands.as_mut().unwrap().symmetry.share_sector_workspace=true;
+    assert!(config.resolve().is_err());
+    config.bands.as_mut().unwrap().symmetry.share_sector_workspace=false;
+    config.bands.as_mut().unwrap().symmetry.correction_projection_interval=0;
+    assert!(config.resolve().is_err());
+    config.bands.as_mut().unwrap().symmetry.correction_projection_interval=1;
     config.bands.as_mut().unwrap().symmetry.sector_storage=SectorStorage::Orbit;
     assert!(config.resolve().is_err());
     config.bands.as_mut().unwrap().symmetry.sectors=SectorPolicy::AdaptiveMirror;
@@ -20,6 +26,19 @@ fn symmetry_options_require_an_implemented_representation_path() {
     assert!(config.resolve().is_err());
     config.bands.as_mut().unwrap().symmetry.plane_group=Some("p4m".into());
     assert!(config.resolve().is_ok());
+}
+
+#[test]
+fn nearest_traversal_accounts_for_tracking_fields_without_export() {
+    let mut config=Config::default();
+    config.results.eigenvectors=false;
+    let original=Plan::new(config.clone(),Platform::Native).unwrap();
+    config.bands.as_mut().unwrap().symmetry.k_traversal=KTraversal::Nearest;
+    let reordered=Plan::new(config.clone(),Platform::Native).unwrap();
+    assert!(reordered.summary.estimated_peak_bytes>original.summary.estimated_peak_bytes);
+    config.bands.as_mut().unwrap().symmetry.max_traversal_field_bytes=0;
+    let rejected=Plan::new(config,Platform::Native).unwrap();
+    assert_eq!(rejected.summary.estimated_peak_bytes,original.summary.estimated_peak_bytes);
 }
 
 #[test]

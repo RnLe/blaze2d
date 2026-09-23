@@ -118,6 +118,12 @@ pub trait LinearOperator<B: SpectralBackend> {
     /// must project seeds and preconditioned corrections into the same space.
     fn constrain(&mut self, _vector: &mut B::Buffer) {}
 
+    /// Constrain one batch of preconditioned corrections. Separate from seed
+    /// projection so a measured correction cadence cannot skip initialization.
+    fn constrain_corrections(&mut self, vectors: &mut [B::Buffer]) {
+        for vector in vectors { self.constrain(vector); }
+    }
+
     /// Whether the analytic constant Γ kernel belongs to this solver's space.
     fn owns_gamma_kernel(&self) -> bool { true }
 

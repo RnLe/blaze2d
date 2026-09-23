@@ -283,8 +283,20 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
     let retained_fields = if resolved.config.task == Task::Bands && resolved.config.results.eigenvectors {
         nk.checked_mul(bands).and_then(|n|n.checked_mul(samples)).and_then(|n|n.checked_mul(32))
     } else {Some(0)};
+    // The reordered driver may buffer physical f64 fields for original-path
+    // tracking even when the caller does not request exported eigenvectors.
+    // If the complete payload cannot fit, it keeps the supplied order instead.
+    let traversal_fields=if resolved.config.task==Task::Bands {
+        let b=resolved.config.bands.as_ref().unwrap();
+        if b.symmetry.k_traversal==KTraversal::Nearest && (b.tracking || resolved.config.results.eigenvectors) {
+            let payload=nk.checked_add(1).and_then(|n|n.checked_mul(bands))
+                .and_then(|n|n.checked_mul(samples)).and_then(|n|n.checked_mul(16));
+            payload.map(|n|if n<=b.symmetry.max_traversal_field_bytes as u64 {n}else{0})
+        } else {Some(0)}
+    } else {Some(0)};
     fields.and_then(|n| n.checked_add(dense?)).and_then(|n|n.checked_add(path_arrays?))
-        .and_then(|n|n.checked_add(retained_fields?)).ok_or_else(|| invalid("configuration", "memory estimate overflows"))
+        .and_then(|n|n.checked_add(retained_fields?)).and_then(|n|n.checked_add(traversal_fields?))
+        .ok_or_else(|| invalid("configuration", "memory estimate overflows"))
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

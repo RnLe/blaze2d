@@ -167,6 +167,9 @@ impl Default for Bands {
 pub enum KReuse { #[default] Off, Identical, Unitary, TimeReversal }
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
+pub enum KTraversal { #[default] Given, Nearest }
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
 pub enum SeedTransfer { #[default] Copy, RankAware }
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
@@ -180,12 +183,17 @@ pub enum SectorStorage { #[default] FullGrid, Orbit }
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
 pub enum SectorKernel { #[default] FullGrid, MirrorTm, MirrorTmTe }
+fn projection_interval()->usize {1}
 fn symmetry_cache_bytes()->usize {64*1024*1024}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Symmetry {
     #[serde(default)]
     pub k_reuse: KReuse,
+    #[serde(default)]
+    pub k_traversal: KTraversal,
+    #[serde(default="symmetry_cache_bytes")]
+    pub max_traversal_field_bytes: usize,
     #[serde(default="symmetry_cache_bytes")]
     pub max_cache_bytes: usize,
     #[serde(default,skip_serializing_if="Option::is_none")]
@@ -203,9 +211,13 @@ pub struct Symmetry {
     #[serde(default)]
     pub reconstruct_partners: bool,
     #[serde(default)]
+    pub share_sector_workspace: bool,
+    #[serde(default="projection_interval")]
+    pub correction_projection_interval: usize,
+    #[serde(default)]
     pub arithmetic: SymmetryArithmetic,
 }
-impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:symmetry_cache_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,sectors:SectorPolicy::Off,sector_guard_budget:None,sector_storage:SectorStorage::FullGrid,sector_kernel:SectorKernel::FullGrid,reconstruct_partners:false,arithmetic:SymmetryArithmetic::SpatialComplex}}}
+impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:KTraversal::Given,max_traversal_field_bytes:symmetry_cache_bytes(),max_cache_bytes:symmetry_cache_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,sectors:SectorPolicy::Off,sector_guard_budget:None,sector_storage:SectorStorage::FullGrid,sector_kernel:SectorKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:SymmetryArithmetic::SpatialComplex}}}
 
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

@@ -401,6 +401,17 @@ fn run_core<B: SpectralBackend + Clone>(
     mut study: Option<&mut ConvergenceStudy>,
     mut on_k_point: Option<&mut dyn FnMut(KPointResult)>,
 ) -> BandStructureResult {
+    let mut traversal_rejection=None;
+    if options.symmetry.k_traversal==crate::symmetry::traversal::KTraversal::Nearest {
+        if study.is_some() || job.eigensolver.record_diagnostics {
+            traversal_rejection=Some("convergence diagnostics keep the supplied k-point order".to_string());
+        } else {
+            match crate::symmetry::traversal::run_reordered(backend.clone(),job,options.clone(),&mut on_k_point) {
+                Ok(result)=>return result,
+                Err(reason)=>traversal_rejection=Some(reason),
+            }
+        }
+    }
     crate::profile_scope!("run.wall");
     crate::profiler::start_timer("run.setup");
     // ========================================================================
@@ -604,6 +615,7 @@ fn run_core<B: SpectralBackend + Clone>(
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
         crate::profile_scope!("run.k_point");
         let mut reuse_report = ReuseReport { requested: options.symmetry.k_reuse, ..Default::default() };
+        if let Some(reason)=&traversal_rejection {reuse_report.rejected.push(reason.clone());}
         let mut reused = if options.symmetry.k_reuse != KReuse::Off {
             symmetry_cache.exact(k_frac)
         } else { None };
