@@ -79,13 +79,20 @@ use crate::operators::LinearOperator;
 use crate::preconditioners::OperatorPreconditioner;
 
 thread_local! { static ITERATION_TOTAL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-/// Monotonic worker-local accounting, also available without profiling. A
-/// difference around an attempted solve includes work discarded by fallback.
-pub(crate) fn iteration_total() -> usize { ITERATION_TOTAL.with(std::cell::Cell::get) }
+/// Cumulative eigensolver outer rounds on the calling worker, including
+/// discarded attempts. Use wrapping subtraction around an operation; response inner
+/// iterations are separate and are not included in this counter.
+pub fn iteration_total() -> usize { ITERATION_TOTAL.with(std::cell::Cell::get) }
 #[inline]
-fn record_iteration() {
+pub(crate) fn record_iteration() {
     ITERATION_TOTAL.with(|n| n.set(n.get().wrapping_add(1)));
     crate::profiler::count("iterations", 1);
+}
+
+fn record_subspace_rank(result: &normalization::SvqbResult) {
+    crate::profiler::count("subspace.input_columns", result.input_count);
+    crate::profiler::count("subspace.retained_columns", result.output_rank);
+    crate::profiler::count("subspace.dropped_columns", result.dropped_count);
 }
 
 
@@ -1950,6 +1957,7 @@ where
                     block_sizes,
                 );
             let subspace_rank = svqb_result.output_rank;
+            record_subspace_rank(&svqb_result);
 
             // ================================================================
             // DIAGNOSTIC: Subspace condition number warning (every iteration)
@@ -2383,6 +2391,7 @@ where
                     block_sizes,
                 );
             let subspace_rank = svqb_result.output_rank;
+            record_subspace_rank(&svqb_result);
 
             if subspace_rank == 0 {
                 break;

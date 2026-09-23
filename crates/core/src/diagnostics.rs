@@ -698,6 +698,9 @@ pub struct ConvergenceStudy {
     pub name: String,
     /// Individual runs in this study
     pub runs: Vec<ConvergenceRun>,
+    /// Explicit driver decisions affecting the requested diagnostic experiment.
+    #[serde(default, skip_serializing_if="Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 impl ConvergenceStudy {
@@ -706,6 +709,7 @@ impl ConvergenceStudy {
         Self {
             name: name.into(),
             runs: Vec::new(),
+            notes: Vec::new(),
         }
     }
 

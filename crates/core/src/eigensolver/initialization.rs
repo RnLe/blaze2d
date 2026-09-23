@@ -257,6 +257,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
     // Phase 1: Try to use warm-start vectors
     if let Some(seeds) = warm_start {
         for field in seeds {
+            crate::profiler::count("initialization.warm_attempts", 1);
             if let Some(entry) =
                 build_entry_from_field(operator, field, &entries, config.zero_tolerance, deflation)
             {
@@ -274,6 +275,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
     let mut phase = 1.0f64;
 
     while entries.len() < config.block_size && attempts < config.max_random_attempts {
+        crate::profiler::count("initialization.random_attempts", 1);
         let mut vector = operator.alloc_field();
         operator.seed_initial_vector(&mut vector, phase);
         phase += 1.0;
@@ -292,6 +294,9 @@ where O:LinearOperator<B>, B:SpectralBackend {
         random_vectors: entries.len().saturating_sub(warm_hits),
         total_vectors: entries.len(),
     };
+    crate::profiler::count("initialization.warm_accepts", warm_hits);
+    crate::profiler::count("initialization.random_accepts", result.random_vectors);
+    crate::profiler::count("initialization.random_rejections", attempts);
 
     (entries, result)
 }

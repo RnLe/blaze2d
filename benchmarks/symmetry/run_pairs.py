@@ -15,6 +15,45 @@ def file_digest(path):
     with open(path, "rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
+def finite_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+def spectrum_passes(result, bands):
+    rows = result.get("spectrum")
+    points = result.get("points")
+    return (isinstance(rows, list) and isinstance(points, list) and len(rows) == len(points) > 0
+            and all(isinstance(row, list) and len(row) == bands
+                    and all(finite_number(v) and v >= 0 for v in row) for row in rows))
+
+def quality_passes(result, bands):
+    if not spectrum_passes(result, bands):
+        return False
+    points = result["points"]
+    if len(points) != result.get("expected_points", len(points)):
+        return False
+    for point in points:
+        residuals = point.get("residuals")
+        absolute = point.get("absolute_residuals")
+        k = point.get("k")
+        orthogonality = point.get("b_orthogonality_defect")
+        if (point.get("converged") is not True or point.get("field_count") != bands
+                or not isinstance(k, list) or len(k) != 2 or not all(finite_number(v) for v in k)
+                or not isinstance(residuals, list) or len(residuals) != bands
+                or not all(finite_number(v) and v >= 0 for v in residuals)
+                or not finite_number(orthogonality) or not 0 <= orthogonality <= 1e-8):
+            return False
+        gamma = k == [0.0, 0.0]
+        if any(v > 1e-5 for v in residuals[int(gamma):]):
+            return False
+        # Frozen non-Gamma seed snapshots do not store an absolute-residual
+        # array in this harness. Gamma always requires the absolute certificate.
+        if absolute != [] or gamma:
+            if (not isinstance(absolute, list) or len(absolute) != bands
+                    or not all(finite_number(v) and v >= 0 for v in absolute)
+                    or (gamma and absolute[0] > 1e-7)):
+                return False
+    return True
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("baseline")
@@ -30,6 +69,7 @@ def main():
     p.add_argument("--tolerance", type=float, help="Common stopping tolerance; requires a binary supporting the seventh argument")
     p.add_argument("--stop-on-quality-failure", action="store_true", help="Stop after a failed completed pair; retain it and make no acceptance claim")
     p.add_argument("--require-sector-success", action="store_true", help="Require sector output at every point; a correct unrestricted fallback is not a sector-stage acceptance")
+    p.add_argument("--require-requested-path", action="store_true", help="Require an explicit requested_path_success report; fallback output alone cannot accept the feature")
     p.add_argument("--snapshot", help="Use a frozen seed input instead of a k-path")
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
@@ -71,14 +111,12 @@ def main():
                 if args.snapshot:
                     r["spectrum"] = [r["eigenvalues"]]
                     r["points"] = [dict(k=r["target_k"], residuals=r["residuals"], absolute_residuals=[], b_orthogonality_defect=r["orthogonality"], converged=r["converged"], field_count=len(r["eigenvalues"]))]
-                residuals = [v for x in r["points"] for v in x["residuals"][1 if x["k"] == [0.0,0.0] else 0:]]
-                absolute = [x["absolute_residuals"][0] for x in r["points"] if x["k"] == [0.0,0.0] and x["absolute_residuals"]]
-                record["valid"] = (all(x["converged"] and x["field_count"] == args.bands for x in r["points"])
-                    and all(math.isfinite(v) for row in r["spectrum"] for v in row)
-                    and max(residuals, default=0) <= 1e-5
-                    and max(absolute, default=0) <= 1e-7
-                    and max(x["b_orthogonality_defect"] for x in r["points"]) <= 1e-8)
+                record["spectrum_valid"] = spectrum_passes(r, args.bands)
+                record["valid"] = quality_passes(r, args.bands)
                 record["output_valid"] = record["valid"]
+                if args.require_requested_path:
+                    record["requested_path_valid"] = r.get("requested_path_success") is True
+                    record["valid"] &= record["requested_path_valid"]
                 if args.require_sector_success:
                     record["requested_path_valid"] = all(x.get("symmetry", {}).get("sectors") is not None for x in r["points"])
                     record["valid"] &= record["requested_path_valid"]
@@ -92,7 +130,7 @@ def main():
         labels = ["baseline", "candidate"]
         rng.shuffle(labels)
         records = [dict(pair=pair, **run(label)) for label in labels]
-        if all("result" in r for r in records):
+        if all(r.get("spectrum_valid") for r in records):
             a, b = [r["result"]["spectrum"] for r in records]
             error = max((abs(x-y)/max(1.0,abs(x),abs(y)) for ra,rb in zip(a,b) for x,y in zip(sorted(ra),sorted(rb))), default=math.inf)
             for r in records:

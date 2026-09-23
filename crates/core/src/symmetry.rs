@@ -115,3 +115,8 @@ pub mod reduced;
 pub mod mirror_kernel;
 pub mod trial;
 pub mod traversal;
+pub mod continuation;
+pub mod coarse;
+pub mod response;
+mod response_selection;
+pub mod precision;

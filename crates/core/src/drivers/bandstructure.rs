@@ -397,10 +397,25 @@ where
 fn run_core<B: SpectralBackend + Clone>(
     backend: B,
     job: &BandStructureJob,
-    options: RunOptions,
+    mut options: RunOptions,
     mut study: Option<&mut ConvergenceStudy>,
     mut on_k_point: Option<&mut dyn FnMut(KPointResult)>,
 ) -> BandStructureResult {
+    let requested_reuse=options.symmetry.k_reuse;
+    let diagnostic_fallback=(study.is_some() || job.eigensolver.record_diagnostics) &&
+        (options.symmetry.k_reuse!=KReuse::Off || options.symmetry.sectors!=crate::symmetry::sectors::SectorPolicy::Off ||
+            options.symmetry.arithmetic!=crate::symmetry::fourier::Arithmetic::SpatialComplex ||
+            options.symmetry.k_traversal!=crate::symmetry::traversal::KTraversal::Given || options.reuse_gamma);
+    let diagnostic_note="per-iteration diagnostics use unrestricted spatial solves in the supplied order; spectrum reuse, sectors, Fourier arithmetic and legacy Gamma reuse are disabled for this study";
+    if diagnostic_fallback {
+        options.symmetry.k_reuse=KReuse::Off;
+        options.symmetry.sectors=crate::symmetry::sectors::SectorPolicy::Off;
+        options.symmetry.arithmetic=crate::symmetry::fourier::Arithmetic::SpatialComplex;
+        options.symmetry.k_traversal=crate::symmetry::traversal::KTraversal::Given;
+        options.reuse_gamma=false;
+        warn!("[bandstructure] {diagnostic_note}");
+        if let Some(study)=study.as_deref_mut() {study.notes.push(diagnostic_note.into());}
+    }
     let mut traversal_rejection=None;
     if options.symmetry.k_traversal==crate::symmetry::traversal::KTraversal::Nearest {
         if study.is_some() || job.eigensolver.record_diagnostics {
@@ -614,7 +629,8 @@ fn run_core<B: SpectralBackend + Clone>(
     crate::profiler::stop_timer("run.setup");
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
         crate::profile_scope!("run.k_point");
-        let mut reuse_report = ReuseReport { requested: options.symmetry.k_reuse, ..Default::default() };
+        let mut reuse_report = ReuseReport { requested: requested_reuse, ..Default::default() };
+        if diagnostic_fallback {reuse_report.rejected.push(diagnostic_note.into());}
         if let Some(reason)=&traversal_rejection {reuse_report.rejected.push(reason.clone());}
         let mut reused = if options.symmetry.k_reuse != KReuse::Off {
             symmetry_cache.exact(k_frac)
