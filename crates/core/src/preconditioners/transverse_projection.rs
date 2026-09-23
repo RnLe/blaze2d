@@ -167,7 +167,11 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
     fn apply_transverse_projection(&mut self, backend: &B, buffer: &mut B::Buffer) {
         // Step 1: FFT the input residual
         backend.forward_fft_2d(buffer);
+        self.apply_transverse_projection_fourier(backend,buffer);
+        backend.inverse_fft_2d(buffer);
+    }
 
+    fn apply_transverse_projection_fourier(&mut self, backend: &B, buffer: &mut B::Buffer) {
         // Step 2: Invert gradient
         {
             let input_fourier = buffer.as_slice();
@@ -226,12 +230,14 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             }
         }
 
-        // Step 7: IFFT to get final result
-        backend.inverse_fft_2d(buffer);
     }
 }
 
 impl<B: SpectralBackend> OperatorPreconditioner<B> for TransverseProjectionPreconditioner<B> {
+    fn apply_fourier(&mut self, backend: &B, buffer: &mut B::Buffer) -> bool {
+        self.apply_transverse_projection_fourier(backend,buffer);
+        true
+    }
     fn apply(&mut self, backend: &B, buffer: &mut B::Buffer) {
         self.apply_transverse_projection(backend, buffer);
     }

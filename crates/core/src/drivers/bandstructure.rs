@@ -462,8 +462,8 @@ fn run_core<B: SpectralBackend + Clone>(
             let bloch = reciprocal.fractional_to_cartesian(k_frac);
 
             // Create temporary operator for diagnostics
-            crate::profiler::start_timer("run.operator_setup");
-        let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
+            crate::profile_scope!("run.operator_diagnostics");
+            let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
             // Build preconditioner for diagnostics (always using adaptive shift)
             let mut preconditioner_opt: Option<
@@ -688,8 +688,11 @@ fn run_core<B: SpectralBackend + Clone>(
             None
         };
 
-        // Construct the Maxwell operator Θ for this k-point
-        let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
+        // Construct the Maxwell operator Θ for this k-point.
+        let mut theta = {
+            crate::profile_scope!("run.operator_setup");
+            ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch)
+        };
         if reused.is_none() && matches!(options.symmetry.k_reuse,KReuse::Unitary|KReuse::TimeReversal) {
             reused = symmetry_cache.related(&mut theta,&job.geom.lattice,&dielectric,k_frac,&symmetry_operations,&options.symmetry,&mut reuse_report);
         }
@@ -706,6 +709,7 @@ fn run_core<B: SpectralBackend + Clone>(
         // Use band-window shift if enabled AND we have previous eigenvalues,
         // otherwise fall back to adaptive shift.
         let use_band_window = options.use_band_window_shift && prev_eigenvalues.is_some();
+        crate::profiler::start_timer("run.preconditioner_setup");
         let mut preconditioner_opt: Option<
             Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
         > = match precond_type {
@@ -747,7 +751,7 @@ fn run_core<B: SpectralBackend + Clone>(
             }
         };
 
-        crate::profiler::stop_timer("run.operator_setup");
+        crate::profiler::stop_timer("run.preconditioner_setup");
 
         let mut sector_result=None;
         if reused.is_none() && options.symmetry.sectors!=crate::symmetry::sectors::SectorPolicy::Off {
@@ -771,6 +775,13 @@ fn run_core<B: SpectralBackend + Clone>(
             }
             if sector_result.is_none() {reuse_report.rejected.push("no qualified sector solve; using unrestricted solver".into());}
         }
+
+        let coordinate_result=if reused.is_none() && sector_result.is_none() && options.symmetry.arithmetic!=crate::symmetry::fourier::Arithmetic::SpatialComplex {
+            match crate::symmetry::fourier::solve_fourier(&mut theta,&job.geom.lattice,k_frac,&job.eigensolver,warm_slice,&options.symmetry,preconditioner_opt.as_mut().map(|p|&mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>)) {
+                Ok(result)=>{reuse_report.coordinates=Some(result.report.clone());Some(result)},
+                Err(reason)=>{reuse_report.rejected.push(reason);None},
+            }
+        } else {None};
 
         // Solve the eigenproblem at this k-point.
         //
@@ -796,6 +807,8 @@ fn run_core<B: SpectralBackend + Clone>(
             k_iterations=result.iterations;k_converged=true;
             k_residuals=result.spectrum.residuals;k_absolute_residuals=result.spectrum.absolute_residuals;
             final_evals=result.spectrum.eigenvalues;eigenvectors=result.spectrum.fields;
+        } else if let Some(result)=coordinate_result {
+            k_iterations=result.iterations;k_converged=true;k_residuals=result.spectrum.residuals;k_absolute_residuals=result.spectrum.absolute_residuals;final_evals=result.spectrum.eigenvalues;eigenvectors=result.spectrum.fields;
         } else if let Some(study) = study.as_deref_mut() {
             let mut cfg = job.eigensolver.clone();
             cfg.k_index = Some(k_idx);

@@ -103,6 +103,14 @@ pub trait OperatorPreconditioner<B: SpectralBackend> {
     /// Apply the preconditioner to a buffer in-place: buffer ← M^{-1} buffer
     fn apply(&mut self, backend: &B, buffer: &mut B::Buffer);
 
+    /// Exact diagonal in this backend's Fourier ordering, when available.
+    /// This exposes the current coefficients, including any tuned shift.
+    fn fourier_diagonal(&self) -> Option<&[f64]> { None }
+
+    /// Apply F M⁻¹ F⁻¹ to Fourier coefficients in-place, if supported.
+    /// Returning false must leave the buffer unchanged.
+    fn apply_fourier(&mut self, _backend: &B, _buffer: &mut B::Buffer) -> bool { false }
+
     /// Apply the preconditioner to a batch of buffers in-place.
     /// Default implementation loops over the batch.
     fn batch_apply(&mut self, backend: &B, buffers: &mut [B::Buffer]) {

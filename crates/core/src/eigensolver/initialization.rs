@@ -170,17 +170,7 @@ where
 {
     // Allocate and fill with constant 1.0
     let mut u0 = operator.alloc_field();
-    u0.as_mut_slice().fill(cscalar::<B::Real>(1.0, 0.0));
-    // Check if the operator uses a transformed basis (e.g., transformed TE)
-    // If so, apply the transformation factor: v₀ = transform · u₀
-    if let Some(transform) = operator.gamma_kernel_transform() {
-        debug!(
-            "[gamma] Applying kernel transformation for transformed operator (e.g., ε^{{1/2}} for TE)"
-        );
-        for (value, &factor) in u0.as_mut_slice().iter_mut().zip(transform.iter()) {
-            *value *= <B::Real as Real>::from_accum(factor);
-        }
-    }
+    operator.fill_gamma_kernel(&mut u0);
 
     // Compute B·u₀
     let mut bu0 = operator.alloc_field();
@@ -266,7 +256,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
 
     // Phase 1: Try to use warm-start vectors
     if let Some(seeds) = warm_start {
-        for field in seeds.iter().take(config.block_size) {
+        for field in seeds {
             if let Some(entry) =
                 build_entry_from_field(operator, field, &entries, config.zero_tolerance, deflation)
             {
@@ -285,7 +275,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
 
     while entries.len() < config.block_size && attempts < config.max_random_attempts {
         let mut vector = operator.alloc_field();
-        seed_random_vector(vector.as_mut_slice(), phase);
+        operator.seed_initial_vector(&mut vector, phase);
         phase += 1.0;
 
         if let Some(entry) =

@@ -286,7 +286,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
 ) -> SvqbResult {
     let p = vectors.len();
     crate::profiler::count("svqb_gram.elements", p * p);
-    crate::profiler::count("svqb_gram.multiply_terms", p * p * vectors.first().map_or(0, |v| v.as_slice().len()));
+    crate::profiler::count("svqb_gram.multiply_terms", p * p * vectors.first().map_or(0, |v| backend.gram_rows(v)));
 
     if p == 0 {
         return SvqbResult {
@@ -313,7 +313,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     crate::profiler::start_timer("svqb::gram_matrix");
 
     #[cfg(feature = "native-linalg")]
-    let gram = {
+    let gram = if backend.real_coefficients() {backend.gram_matrix(vectors,mass_vectors)} else {
         // CPU path with faer: use GEMM for Gram matrix computation
         // G = X^H * BX where X is n×p and BX is n×p, result is p×p
         // This is O(n*p²) with optimized BLAS instead of O(p²) separate dot products
@@ -347,7 +347,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     };
 
     #[cfg(feature = "wasm-linalg")]
-    let gram = {
+    let gram = if backend.real_coefficients() {backend.gram_matrix(vectors,mass_vectors)} else {
         // CPU path with nalgebra: use GEMM for Gram matrix computation
         // G = X^H * BX where X is n×p and BX is n×p, result is p×p
         let n = vectors[0].as_slice().len();
@@ -386,7 +386,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     #[cfg(feature = "profiling")]
     crate::profiler::start_timer("svqb::eigendecomp");
 
-    let (eigenvalues, eigenvectors) = hermitian_eigendecomposition(&gram, p);
+    let (eigenvalues, eigenvectors) = if backend.real_coefficients() {
+        let mut column_major=vec![Complex64::ZERO;p*p];
+        for i in 0..p {for j in 0..p {column_major[i+p*j]=gram[i*p+j];}}
+        let eigen=backend.dense_eigen(&column_major,p);
+        let mut rows=vec![Complex64::ZERO;p*p];for i in 0..p {for j in 0..p {rows[i*p+j]=eigen.eigenvectors[i+p*(p-1-j)];}}
+        (eigen.eigenvalues.into_iter().rev().collect(),rows)
+    } else {hermitian_eigendecomposition(&gram,p)};
 
     #[cfg(feature = "profiling")]
     crate::profiler::stop_timer("svqb::eigendecomp");
@@ -433,6 +439,14 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     crate::profiler::start_timer("svqb::gemm");
 
     {
+        if backend.prefer_backend_linear_combinations() {
+            let mut coefficients=vec![Complex64::ZERO;p*rank];
+            for j in 0..rank {for i in 0..p {coefficients[i+p*j]=eigenvectors[i*p+kept_indices[j]]/eigenvalues[kept_indices[j]].max(1e-30).sqrt();}}
+            let x=backend.linear_combinations(vectors,&coefficients,rank);
+            let bx=backend.linear_combinations(mass_vectors,&coefficients,rank);
+            for (dst,src) in vectors.iter_mut().zip(x) {*dst=src;}
+            for (dst,src) in mass_vectors.iter_mut().zip(bx) {*dst=src;}
+        } else {
         // CPU path: use GEMM for matrix multiplication
         // X_new = X_old * T where X_old is n×p and T is p×rank
         let n = vectors[0].as_slice().len();
@@ -525,6 +539,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             }
         }
 
+        }
         // Zero out unused slots
         for i in rank..p {
             zero_buffer(vectors[i].as_mut_slice());

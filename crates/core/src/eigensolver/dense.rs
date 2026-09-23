@@ -190,3 +190,53 @@ fn solve_hermitian_eigen_nalgebra(a_matrix: &[Complex64], dim: usize) -> DenseEi
 #[cfg(test)]
 #[path = "_tests_dense.rs"]
 mod tests;
+
+/// Diagonalize a real symmetric matrix through the complex reference kernel,
+/// then recover a real basis within every degenerate eigenspace. Complex
+/// eigenvectors may have arbitrary phases, so discarding imaginary parts is
+/// not a valid conversion.
+pub fn solve_real_via_complex(matrix:&[Complex64],n:usize)->DenseEigenResult {
+    assert!(matrix.iter().all(|z|z.im==0.0));
+    let source=solve_hermitian_eigen(matrix,n);let mut vectors=vec![Complex64::ZERO;n*n];let mut start=0;
+    while start<n {
+        let mut end=start+1;let scale=source.eigenvalues.iter().map(|x|x.abs()).fold(1.0,f64::max);
+        while end<n && (source.eigenvalues[end]-source.eigenvalues[start]).abs()<=128.0*f64::EPSILON*n as f64*scale {end+=1;}
+        let mut basis:Vec<Vec<f64>>=Vec::new();
+        for column in start..end {for imaginary in [false,true] {
+            let mut v:Vec<_>=(0..n).map(|i|if imaginary {source.eigenvectors[i+n*column].im}else{source.eigenvectors[i+n*column].re}).collect();
+            for _ in 0..2 {for q in &basis {let dot:f64=q.iter().zip(&v).map(|(a,b)|a*b).sum();for (dst,&a) in v.iter_mut().zip(q) {*dst-=dot*a;}}}
+            let norm=v.iter().map(|x|x*x).sum::<f64>().sqrt();if norm>1e-8 {for x in &mut v {*x/=norm;}basis.push(v);}
+            if basis.len()==end-start {break;}
+        }if basis.len()==end-start {break;}}
+        assert_eq!(basis.len(),end-start,"complex eigenspace did not span the expected real eigenspace");
+        for (j,v) in basis.iter().enumerate() {for (i,&x) in v.iter().enumerate() {vectors[i+n*(start+j)]=Complex64::new(x,0.0);}}
+        start=end;
+    }
+    DenseEigenResult{eigenvalues:source.eigenvalues,eigenvectors:vectors,dim:n}
+}
+
+/// Real symmetric dense kernel at f64 precision. Input/output layout matches
+/// the complex reference so the vector-space change is independent of storage.
+pub fn solve_real_symmetric_eigen(matrix:&[Complex64],n:usize)->DenseEigenResult {
+    crate::profile_scope!("real_dense_ritz");
+    crate::profiler::count("real_dense_ritz.calls",1);
+    crate::profiler::count("real_dense_ritz.dimension_sum",n);
+    crate::profiler::count("real_dense_ritz.dimension_cubes",n*n*n);
+    assert_eq!(matrix.len(),n*n);assert!(matrix.iter().all(|z|z.im==0.0));
+    if n==0 {return DenseEigenResult{eigenvalues:vec![],eigenvectors:vec![],dim:0};}
+    #[cfg(feature="native-linalg")]
+    {
+        let a=Mat::<f64>::from_fn(n,n,|i,j|matrix[i+n*j].re);
+        let result=a.self_adjoint_eigen(Side::Lower).expect("real symmetric eigendecomposition");
+        let diagonal=result.S().column_vector();let mut vectors=vec![Complex64::ZERO;n*n];
+        for j in 0..n {for i in 0..n {vectors[i+n*j]=Complex64::new(*result.U().get(i,j),0.0);}}
+        DenseEigenResult{eigenvalues:(0..n).map(|i|*diagonal.get(i)).collect(),eigenvectors:vectors,dim:n}
+    }
+    #[cfg(feature="wasm-linalg")]
+    {
+        let a=DMatrix::<f64>::from_fn(n,n,|i,j|matrix[i+n*j].re);let result=a.symmetric_eigen();
+        let mut order:Vec<_>=(0..n).collect();order.sort_by(|&i,&j|result.eigenvalues[i].total_cmp(&result.eigenvalues[j]));
+        let mut vectors=vec![Complex64::ZERO;n*n];for j in 0..n {for i in 0..n {vectors[i+n*j]=Complex64::new(result.eigenvectors[(i,order[j])],0.0);}}
+        DenseEigenResult{eigenvalues:order.iter().map(|&i|result.eigenvalues[i]).collect(),eigenvectors:vectors,dim:n}
+    }
+}

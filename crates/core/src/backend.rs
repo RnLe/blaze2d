@@ -77,6 +77,16 @@ pub trait SpectralBackend {
     /// Buffer type whose storage scalar matches `Self::Real`.
     type Buffer: SpectralBuffer<Real = Self::Real> + Clone;
 
+    /// Coordinate backends can encode a real vector space in paired storage.
+    /// Complex-GEMM shortcuts must use this backend's Gram implementation when
+    /// this is true; an imaginary storage lane is then a second real coordinate.
+    fn real_coefficients(&self)->bool {false}
+    fn prefer_backend_linear_combinations(&self)->bool {false}
+    fn gram_rows(&self,buffer:&Self::Buffer)->usize {buffer.len()}
+    fn dense_eigen(&self,matrix:&[Complex64],dimension:usize)->crate::eigensolver::dense::DenseEigenResult {
+        crate::eigensolver::dense::solve_hermitian_eigen(matrix,dimension)
+    }
+
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer;
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer);
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer);

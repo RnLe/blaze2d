@@ -308,6 +308,15 @@ impl FourierDiagonalPreconditioner {
 }
 
 impl<B: SpectralBackend> OperatorPreconditioner<B> for FourierDiagonalPreconditioner {
+    fn fourier_diagonal(&self) -> Option<&[f64]> { Some(&self.inverse_diagonal) }
+    fn apply_fourier(&mut self, _backend: &B, buffer: &mut B::Buffer) -> bool {
+        assert_eq!(buffer.len(),self.inverse_diagonal.len());
+        for (value,&scale) in buffer.as_mut_slice().iter_mut().zip(&self.inverse_diagonal) {
+            *value *= B::Real::from_accum(scale);
+        }
+        true
+    }
+
     fn apply(&mut self, backend: &B, buffer: &mut B::Buffer) {
         // Apply F⁻¹ · D · F (Fourier-diagonal operation)
         backend.forward_fft_2d(buffer);

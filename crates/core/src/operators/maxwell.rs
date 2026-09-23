@@ -661,6 +661,34 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
     }
 
+    /// Apply the unchanged finite Maxwell stiffness to Fourier coefficients.
+    /// The common normalization of input/output coefficients cancels. TE uses
+    /// four full-size FFTs; TM is diagonal. Physical A/B certification still
+    /// uses the original spatial entry points.
+    pub fn apply_fourier(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
+        crate::profile_scope!("apply_fourier");
+        crate::profiler::count("operator_A.columns",1);
+        crate::profiler::count("operator_A.elements",self.grid.len());
+        assert_eq!(input.len(),self.grid.len());
+        assert_eq!(output.len(),self.grid.len());
+        match self.polarization {
+            Polarization::TM => {
+                for ((dst,&src),&weight) in output.as_mut_slice().iter_mut().zip(input.as_slice()).zip(&self.k_plus_g_sq) {
+                    *dst=src*B::Real::from_accum(weight);
+                }
+            }
+            Polarization::TE => {
+                compute_gradients_from_potential(input.as_slice(),self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),&self.k_plus_g_x,&self.k_plus_g_y);
+                self.backend.inverse_fft_2d(&mut self.grad_x);
+                self.backend.inverse_fft_2d(&mut self.grad_y);
+                apply_inv_eps(self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),&self.dielectric);
+                self.backend.forward_fft_2d(&mut self.grad_x);
+                self.backend.forward_fft_2d(&mut self.grad_y);
+                assemble_divergence(self.grad_x.as_slice(),self.grad_y.as_slice(),output.as_mut_slice(),&self.k_plus_g_x,&self.k_plus_g_y);
+            }
+        }
+    }
+
     fn apply_te(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         crate::profiler::start_timer("apply_te");
         crate::profiler::count("operator_A.columns", 1);

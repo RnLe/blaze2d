@@ -1256,12 +1256,19 @@ where
     ) -> Vec<num_complex::Complex64> {
         crate::profiler::start_timer("project_operator");
         crate::profiler::count("ritz_gram.elements", q_block.len() * q_block.len());
-        crate::profiler::count("ritz_gram.multiply_terms", q_block.len() * q_block.len() * self.operator.grid().len());
+        crate::profiler::count("ritz_gram.multiply_terms", q_block.len() * q_block.len() * q_block.first().map_or(0,|v|self.operator.backend().gram_rows(v)));
 
         let r = q_block.len();
         if r == 0 {
             crate::profiler::stop_timer("project_operator");
             return vec![];
+        }
+
+        if self.operator.backend().real_coefficients() {
+            let gram=self.operator.backend().gram_matrix(q_block,aq_block);
+            let mut result=vec![num_complex::Complex64::ZERO;r*r];
+            for i in 0..r {for j in 0..r {result[i+r*j]=0.5*(gram[i*r+j]+gram[j*r+i].conj());}}
+            crate::profiler::stop_timer("project_operator");return result;
         }
 
         // A_s[i,j] = <q_i, A q_j> = q_i^* (A q_j)
@@ -1384,6 +1391,14 @@ where
         self.eigenvalues.clear();
         for j in 0..m {
             self.eigenvalues.push(dense_result.eigenvalue(j));
+        }
+
+        if self.operator.backend().prefer_backend_linear_combinations() {
+            let backend=self.operator.backend();let coefficients=&dense_result.eigenvectors[..r*m];
+            let x=backend.linear_combinations(q_block,coefficients,m);let bx=backend.linear_combinations(bq_block,coefficients,m);let ax=backend.linear_combinations(aq_block,coefficients,m);
+            self.x_block=x.into_iter().zip(bx).zip(ax).map(|((vector,mass),applied)|BlockEntry{vector,mass,applied}).collect();
+            #[cfg(feature="profiling")] crate::profiler::stop_timer("update_ritz_vectors");
+            return;
         }
 
         #[cfg(feature = "native-linalg")]
@@ -1585,6 +1600,10 @@ where
             // No room for W directions (subspace too small)
             self.w_block.clear();
             return;
+        }
+
+        if self.operator.backend().prefer_backend_linear_combinations() {
+            self.w_block=self.operator.backend().linear_combinations(q_block,&dense_result.eigenvectors[r*w_start..r*w_end],n_w);return;
         }
 
         #[cfg(feature = "native-linalg")]
@@ -1962,7 +1981,7 @@ where
             // ================================================================
             // Step 11: Solve dense eigenproblem A_s Y = Y Θ
             // ================================================================
-            let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
+            let dense_result = self.operator.backend().dense_eigen(&a_projected, subspace_rank);
 
             // Store previous frequencies for comparison (for warning about increases)
             let prev_frequencies: Vec<f64> = self
@@ -2364,7 +2383,7 @@ where
             let a_projected = self.project_operator_with_aq(&q_block, &aq_block);
 
             // Solve dense eigenproblem A_s Y = Y Θ
-            let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
+            let dense_result = self.operator.backend().dense_eigen(&a_projected, subspace_rank);
 
             // Store previous eigenvalues and update Ritz vectors
             // A*X computed via GEMM using precomputed A*Q (no fresh applies!)
@@ -2823,7 +2842,7 @@ where
             // ================================================================
             // Step 11: Solve dense eigenproblem A_s Y = Y Θ
             // ================================================================
-            let dense_result = dense::solve_hermitian_eigen(&a_projected, subspace_rank);
+            let dense_result = self.operator.backend().dense_eigen(&a_projected, subspace_rank);
 
             // Store previous frequencies for comparison (for warning about increases)
             let prev_frequencies: Vec<f64> = self

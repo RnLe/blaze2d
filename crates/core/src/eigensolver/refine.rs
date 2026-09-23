@@ -14,7 +14,6 @@ use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::field::{Field2D, Real};
 use crate::operators::LinearOperator;
 
-use super::dense;
 
 /// Certification data for a returned eigenblock.
 #[derive(Debug, Clone)]
@@ -92,7 +91,7 @@ where
     hermitize_in_place(&mut h_mat, n);
 
     // -- W = S^{-1/2} via the dense Hermitian eigendecomposition of S --
-    let s_eig = dense::solve_hermitian_eigen(&s_mat, n);
+    let s_eig = operator.backend().dense_eigen(&s_mat, n);
     let mut w = vec![Complex64::ZERO; n * n];
     for j in 0..n {
         for i in 0..n {
@@ -113,7 +112,7 @@ where
     let hw = matmul_col_major(&h_mat, &w, n);
     let mut h_tilde = matmul_col_major(&w, &hw, n);
     hermitize_in_place(&mut h_tilde, n);
-    let h_eig = dense::solve_hermitian_eigen(&h_tilde, n);
+    let h_eig = operator.backend().dense_eigen(&h_tilde, n);
 
     // Full rotation Z = W · Y: u'_j = Σ_i Z[i,j] u_i.
     let z = matmul_col_major(&w, &h_eig.eigenvectors, n);

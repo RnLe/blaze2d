@@ -124,6 +124,21 @@ pub trait LinearOperator<B: SpectralBackend> {
     /// Finite dimension of a constrained search space, including its kernel.
     fn subspace_dimension(&self) -> usize { self.grid().len() }
 
+    /// Populate the analytic kernel in this operator's coordinate system.
+    fn fill_gamma_kernel(&self,vector:&mut B::Buffer) {
+        use crate::{backend::SpectralBuffer,field::{Real,cscalar}};
+        vector.as_mut_slice().fill(cscalar::<B::Real>(1.0,0.0));
+        if let Some(factors)=self.gamma_kernel_transform() {
+            for (value,&factor) in vector.as_mut_slice().iter_mut().zip(factors) {*value *= B::Real::from_accum(factor);}
+        }
+    }
+
+    /// Seed the same physical search space in a representation-aware way.
+    fn seed_initial_vector(&mut self,vector:&mut B::Buffer,phase:f64) {
+        use crate::backend::SpectralBuffer;
+        crate::eigensolver::initialization::seed_random_vector(vector.as_mut_slice(),phase);
+    }
+
     /// Get the transformation factor for Γ-point kernel basis.
     ///
     /// For operators using a similarity transform (like transformed TE where
