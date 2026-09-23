@@ -2,6 +2,27 @@ use blaze2d_interface::*;
 use serde_json::json;
 
 #[test]
+fn symmetry_options_require_an_implemented_representation_path() {
+    let mut config=Config::default();
+    config.bands.as_mut().unwrap().symmetry.sector_storage=SectorStorage::Orbit;
+    assert!(config.resolve().is_err());
+    config.bands.as_mut().unwrap().symmetry.sectors=SectorPolicy::AdaptiveMirror;
+    assert!(config.resolve().is_ok());
+    config.bands.as_mut().unwrap().symmetry.arithmetic=SymmetryArithmetic::PtReal;
+    assert!(config.resolve().is_err());
+    config.bands.as_mut().unwrap().symmetry.arithmetic=SymmetryArithmetic::SpatialComplex;
+    config.bands.as_mut().unwrap().symmetry.sector_kernel=SectorKernel::MirrorTm;
+    assert!(config.resolve().is_ok());
+    config.bands.as_mut().unwrap().symmetry.sector_storage=SectorStorage::FullGrid;
+    assert!(config.resolve().is_err());
+    config.bands.as_mut().unwrap().symmetry.sector_kernel=SectorKernel::FullGrid;
+    config.bands.as_mut().unwrap().symmetry.sectors=SectorPolicy::AdaptiveGroup;
+    assert!(config.resolve().is_err());
+    config.bands.as_mut().unwrap().symmetry.plane_group=Some("p4m".into());
+    assert!(config.resolve().is_ok());
+}
+
+#[test]
 fn public_example_round_trips_and_resolves_defaults() {
     let source = include_str!("fixtures/bands.toml");
     let config = Config::from_toml(source).unwrap();

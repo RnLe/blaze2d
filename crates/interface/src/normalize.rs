@@ -145,6 +145,19 @@ impl Config {
             Task::Bands => {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
+                if bands.symmetry.sectors == SectorPolicy::Off &&
+                    (bands.symmetry.sector_storage != SectorStorage::FullGrid || bands.symmetry.sector_kernel != SectorKernel::FullGrid || bands.symmetry.reconstruct_partners || bands.symmetry.sector_guard_budget.is_some()) {
+                    return Err(invalid("bands.symmetry.sectors","sector storage, kernels, guards and partners require an enabled sector policy"));
+                }
+                if bands.symmetry.sectors != SectorPolicy::Off && bands.symmetry.arithmetic != SymmetryArithmetic::SpatialComplex {
+                    return Err(invalid("bands.symmetry.arithmetic","sector solves and Fourier arithmetic are separate experimental paths; their combined representation is not implemented"));
+                }
+                if bands.symmetry.sector_kernel != SectorKernel::FullGrid && bands.symmetry.sector_storage != SectorStorage::Orbit {
+                    return Err(invalid("bands.symmetry.sector_storage","a reduced mirror kernel requires orbit storage"));
+                }
+                if matches!(bands.symmetry.sectors,SectorPolicy::ConservativeGroup|SectorPolicy::AdaptiveGroup) && bands.symmetry.plane_group.is_none() {
+                    return Err(invalid("bands.symmetry.plane_group","group sectors require an explicit primitive plane-group setting"));
+                }
                 if let Some(name)=&bands.symmetry.plane_group {
                     if serde_json::from_value::<blaze2d_core::symmetry::affine::PlaneGroup>(serde_json::Value::String(name.clone())).is_err() {
                         return Err(invalid("bands.symmetry.plane_group","expected an ordinary plane group (p1 through p6m) in its documented primitive setting"));

@@ -780,6 +780,9 @@ fn run_core<B: SpectralBackend + Clone>(
             if sector_result.is_none() {reuse_report.rejected.push("no qualified sector solve; using unrestricted solver".into());}
         }
 
+        if sector_result.is_some() && options.symmetry.arithmetic!=crate::symmetry::fourier::Arithmetic::SpatialComplex {
+            reuse_report.rejected.push("requested Fourier representation is not combined with the retained sector solve".into());
+        }
         let coordinate_result=if reused.is_none() && sector_result.is_none() && options.symmetry.arithmetic!=crate::symmetry::fourier::Arithmetic::SpatialComplex {
             let attempt_start=crate::eigensolver::iteration_total();
             let attempt=crate::symmetry::fourier::solve_fourier(&mut theta,&job.geom.lattice,k_frac,&job.eigensolver,warm_slice,&options.symmetry,preconditioner_opt.as_mut().map(|p|&mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>));

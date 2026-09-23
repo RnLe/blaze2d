@@ -16,6 +16,21 @@ use super::qualification::QualifiedAction;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all="snake_case")]
 pub enum SectorStorage { #[default] FullGrid, Orbit }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all="snake_case")]
+pub enum ReducedKernel { #[default] FullGrid, MirrorTm, MirrorTmTe }
+#[derive(Debug,Clone,Default,Serialize)]
+pub struct KernelReport {
+    pub requested:ReducedKernel,
+    pub applied:ReducedKernel,
+    pub tangent_fft_length:usize,
+    pub normal_dense_dimension:usize,
+    pub normal_partner_dimension:Option<usize>,
+    pub payload_bytes:usize,
+    pub rejection:Option<String>,
+}
+pub(crate) struct ReducedResult {pub eigenvalues:Vec<f64>,pub fields:Vec<Field2D>,pub iterations:usize,pub kernel:KernelReport}
+
 
 /// Euclidean-orthonormal columns S, supported on disjoint group orbits.
 /// The reduced pencil is S† A S, S† B S; B is not assumed to be identity.
@@ -63,6 +78,7 @@ impl OrbitBasis {
         Ok(Self{grid,columns})
     }
     pub fn rank(&self)->usize {self.columns.len()}
+    pub(crate) fn columns(&self)->&[Vec<(usize,C)>] {&self.columns}
     pub fn grid(&self)->Grid2D {self.grid}
     pub fn coordinate_grid(&self)->Grid2D {Grid2D::new(self.rank(),1,1.0,1.0)}
     /// Index and coefficient payload only; excludes Vec/allocator overhead.
@@ -87,11 +103,15 @@ impl OrbitBasis {
 }
 
 struct ReducedOperator<'a,B:SpectralBackend> {
-    full:&'a mut ThetaOperator<B>,basis:&'a OrbitBasis,input:B::Buffer,output:B::Buffer,owns_kernel:bool,
+    full:&'a mut ThetaOperator<B>,basis:&'a OrbitBasis,input:B::Buffer,output:B::Buffer,owns_kernel:bool,mirror:Option<super::mirror_kernel::MirrorYKernel<B>>,mirror_te:Option<super::mirror_kernel::MirrorYTeKernel<B>>,
 }
 impl<B:SpectralBackend> LinearOperator<B> for ReducedOperator<'_,B> {
-    fn apply(&mut self,x:&B::Buffer,y:&mut B::Buffer) {self.basis.expand(x,&mut self.input);self.full.apply(&self.input,&mut self.output);self.basis.restrict(&self.output,y);}
-    fn apply_mass(&mut self,x:&B::Buffer,y:&mut B::Buffer) {self.basis.expand(x,&mut self.input);self.full.apply_mass(&self.input,&mut self.output);self.basis.restrict(&self.output,y);}
+    fn apply(&mut self,x:&B::Buffer,y:&mut B::Buffer) {
+        if let Some(kernel)=&mut self.mirror {kernel.apply(self.full.backend(),x,y);} else if let Some(kernel)=&mut self.mirror_te {kernel.apply(self.full.backend(),x,y);} else {self.basis.expand(x,&mut self.input);self.full.apply(&self.input,&mut self.output);self.basis.restrict(&self.output,y);}
+    }
+    fn apply_mass(&mut self,x:&B::Buffer,y:&mut B::Buffer) {
+        if let Some(kernel)=&self.mirror {kernel.apply_mass(x,y);} else if let Some(kernel)=&self.mirror_te {kernel.apply_mass(x,y);} else {self.basis.expand(x,&mut self.input);self.full.apply_mass(&self.input,&mut self.output);self.basis.restrict(&self.output,y);}
+    }
     fn alloc_field(&self)->B::Buffer {self.full.backend().alloc_field(self.grid())}
     fn backend(&self)->&B {self.full.backend()}
     fn backend_mut(&mut self)->&mut B {self.full.backend_mut()}
@@ -111,19 +131,33 @@ impl<B:SpectralBackend> OperatorPreconditioner<B> for ReducedPreconditioner<'_,B
     fn apply(&mut self,backend:&B,v:&mut B::Buffer) {self.basis.expand(v,&mut self.scratch);self.inner.apply(backend,&mut self.scratch);self.basis.restrict(&self.scratch,v);}
 }
 
-pub(crate) fn solve_reduced<B:SpectralBackend>(operator:&mut ThetaOperator<B>,basis:&OrbitBasis,owns_kernel:bool,config:EigensolverConfig,warm:Option<&[Field2D]>,preconditioner:Option<&mut dyn OperatorPreconditioner<B>>)->Result<(Vec<f64>,Vec<Field2D>,usize),String> {
+pub(crate) fn solve_reduced<B:SpectralBackend>(operator:&mut ThetaOperator<B>,basis:&OrbitBasis,owns_kernel:bool,config:EigensolverConfig,warm:Option<&[Field2D]>,preconditioner:Option<&mut dyn OperatorPreconditioner<B>>,kernel:ReducedKernel)->Result<ReducedResult,String> {
     crate::profile_scope!("symmetry.reduced_solve");
     if basis.rank()==0 || !same_grid(basis.grid(),operator.grid()) {return Err("incompatible reduced operator".into());}
     let warm=warm.map(|fields|fields.iter().map(|field| {let mut small=Field2D::zeros(basis.coordinate_grid());basis.restrict(field,&mut small);small}).collect::<Vec<_>>());
     let input=operator.alloc_field();let output=operator.alloc_field();let mut scratch=operator.alloc_field();
     let mut preconditioner=preconditioner.map(|inner|ReducedPreconditioner{inner,basis,scratch:operator.alloc_field()});
-    let mut reduced=ReducedOperator{full:operator,basis,input,output,owns_kernel};
+    let mut report=KernelReport{requested:kernel,..Default::default()};
+    let mirror=if matches!(kernel,ReducedKernel::MirrorTm|ReducedKernel::MirrorTmTe) && operator.polarization()==crate::polarization::Polarization::TM {
+        match super::mirror_kernel::MirrorYKernel::new(operator,basis) {
+            Ok(m)=>{report.applied=ReducedKernel::MirrorTm;report.tangent_fft_length=operator.grid().nx;report.normal_dense_dimension=m.normal_rows();report.payload_bytes=m.payload_bytes();Some(m)},
+            Err(reason)=>{report.rejection=Some(reason);None},
+        }
+    } else {None};
+    let mirror_te=if kernel==ReducedKernel::MirrorTmTe && operator.polarization()==crate::polarization::Polarization::TE {
+        match super::mirror_kernel::MirrorYTeKernel::new(operator,basis) {
+            Ok(m)=>{report.applied=kernel;report.tangent_fft_length=operator.grid().nx;report.normal_dense_dimension=m.normal_rows();report.normal_partner_dimension=Some(m.opposite_rows());report.payload_bytes=m.payload_bytes();Some(m)},
+            Err(reason)=>{report.rejection=Some(reason);None},
+        }
+    } else {None};
+    if kernel!=ReducedKernel::FullGrid && mirror.is_none() && mirror_te.is_none() && report.rejection.is_none() {report.rejection=Some("requested reduced kernel does not support this polarization".into());}
+    let mut reduced=ReducedOperator{full:operator,basis,input,output,owns_kernel,mirror,mirror_te};
     let mut solver=Eigensolver::new(&mut reduced,config,preconditioner.as_mut().map(|p|p as &mut dyn OperatorPreconditioner<B>),warm.as_deref());
     let result=solver.solve();let coordinates=solver.all_eigenvectors();drop(solver);
     if !result.converged {return Err(format!("reduced sector failed after {} iterations",result.iterations));}
     let mut fields=Vec::new();
     for small in coordinates {basis.expand(&small,&mut scratch);fields.push(Field2D::from_vec(basis.grid(),scratch.as_slice().iter().map(|z|C::new(z.re.to_accum(),z.im.to_accum())).collect()));}
-    Ok((result.eigenvalues,fields,result.iterations))
+    Ok(ReducedResult{eigenvalues:result.eigenvalues,fields,iterations:result.iterations,kernel:report})
 }
 
 fn same_grid(a:Grid2D,b:Grid2D)->bool { (a.nx,a.ny,a.lx.to_bits(),a.ly.to_bits(),a.centered)==(b.nx,b.ny,b.lx.to_bits(),b.ly.to_bits(),b.centered) }

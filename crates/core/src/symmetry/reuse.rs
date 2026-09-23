@@ -22,6 +22,7 @@ pub struct SymmetryOptions {
     pub sectors:super::sectors::SectorPolicy,
     pub sector_guard_budget:Option<usize>,
     pub sector_storage:super::reduced::SectorStorage,
+    pub sector_kernel:super::reduced::ReducedKernel,
     pub reconstruct_partners:bool,
     pub arithmetic:super::fourier::Arithmetic,
     pub pt_operation:Option<AffineOp>,
@@ -32,7 +33,7 @@ pub struct SymmetryOptions {
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,sector_storage:super::reduced::SectorStorage::FullGrid,reconstruct_partners:false,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {k_reuse:KReuse::Off,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
 }
 #[derive(Debug,Clone,Serialize)]
 pub struct SolveAttempt {

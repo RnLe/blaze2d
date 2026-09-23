@@ -112,3 +112,4 @@ pub mod sectors;
 
 pub mod fourier;
 pub mod reduced;
+pub mod mirror_kernel;

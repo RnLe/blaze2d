@@ -24,6 +24,7 @@ pub struct SectorReport {
     pub stored_rows:usize,
     pub vector_column_bytes:usize,
     pub basis_payload_bytes:usize,
+    pub reduced_kernel:Option<super::reduced::KernelReport>,
     pub partner_rows:usize,
     pub owns_gamma_kernel:bool,
     pub iterations:usize,
@@ -168,10 +169,12 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
             let seed=super::seed::rank_aware_seed(&mut op,&projected,options.relative_rank_tolerance).map_err(|e|e.to_string())?;seed_rank=seed.fields.len();Some(seed.fields)
         } else {None};
         let dense=sector.rank<=prefix+2;
+        let mut reduced_kernel=None;
         let (mut values,mut fields,steps)=if dense {let (a,b)=dense_sector(&mut op)?;(a,b,0)} else {
             let mut cfg=config.clone();cfg.n_bands=prefix;cfg.block_size=prefix.saturating_add(guards[i]).min(sector.rank-usize::from(sector.owns_kernel));
             if let Some(basis)=&bases[i] {
-                super::reduced::solve_reduced(op.full,basis,sector.owns_kernel,cfg,projected_seed.as_deref(),preconditioner.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>))?
+                let result=super::reduced::solve_reduced(op.full,basis,sector.owns_kernel,cfg,projected_seed.as_deref(),preconditioner.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),options.sector_kernel)?;
+                reduced_kernel=Some(result.kernel);(result.eigenvalues,result.fields,result.iterations)
             } else {
             let mut solver=Eigensolver::new(&mut op,cfg,preconditioner.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),projected_seed.as_deref());
             let result=solver.solve();let fields=solver.all_eigenvectors();
@@ -190,7 +193,7 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
         for field in &entry.fields {let mut v=op.alloc_field();for (dst,z) in v.as_mut_slice().iter_mut().zip(field.as_slice()) {*dst=cscalar::<B::Real>(z.re,z.im);}op.constrain(&mut v);let error:f64=v.as_slice().iter().zip(field.as_slice()).map(|(a,b)|(C::new(a.re.to_accum(),a.im.to_accum())-b).norm_sqr()).sum();let scale:f64=field.as_slice().iter().map(|z|z.norm_sqr()).sum();leakage=leakage.max((error/scale).sqrt());}
         if !leakage.is_finite() || leakage>1e-8 {return Err(format!("sector {} leaked by {leakage:e}",sector.label));}
         let stored_rows=if !dense && bases[i].is_some() {sector.rank} else {op.grid().len()};
-        iterations+=steps;slots[i]=Some((entry,SectorReport{label:sector.label.clone(),dimension:sector.rank,prefix,stored_rows,vector_column_bytes:stored_rows*std::mem::size_of::<C>(),basis_payload_bytes:bases[i].as_ref().map_or(0,|b|b.payload_bytes()),partner_rows:sector.partners,working_columns:if dense {sector.rank} else {prefix.saturating_add(guards[i]).min(sector.rank-usize::from(sector.owns_kernel))},owns_gamma_kernel:sector.owns_kernel,iterations:previous_steps+steps,dense_complete:dense,seed_rank,leakage}));
+        iterations+=steps;slots[i]=Some((entry,SectorReport{label:sector.label.clone(),dimension:sector.rank,prefix,stored_rows,reduced_kernel,vector_column_bytes:stored_rows*std::mem::size_of::<C>(),basis_payload_bytes:bases[i].as_ref().map_or(0,|b|b.payload_bytes()),partner_rows:sector.partners,working_columns:if dense {sector.rank} else {prefix.saturating_add(guards[i]).min(sector.rank-usize::from(sector.owns_kernel))},owns_gamma_kernel:sector.owns_kernel,iterations:previous_steps+steps,dense_complete:dense,seed_rank,leakage}));
     }
     let mut values:Vec<_>=slots.iter().flatten().flat_map(|(e,r)|e.eigenvalues.iter().flat_map(move |&x|std::iter::repeat_n(x,r.partner_rows))).collect();values.sort_by(f64::total_cmp);
     let cutoff=values.get(config.n_bands.saturating_sub(1)).copied().unwrap_or(f64::INFINITY);
