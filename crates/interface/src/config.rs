@@ -156,11 +156,45 @@ pub struct Bands {
     pub tracking: bool,
     #[serde(default)]
     pub symmetry: Symmetry,
+    /// Selecting a metric ball changes the finite numerical pencil.
+    #[serde(default, skip_serializing_if="Discretization::is_fft_rectangle")]
+    pub discretization: Discretization,
 }
 fn default_tracking() -> bool { true }
 impl Default for Bands {
-    fn default() -> Self { Self { count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default() } }
+    fn default() -> Self { Self { count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default(), discretization: Discretization::default() } }
 }
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag="kind", rename_all="snake_case", deny_unknown_fields)]
+pub enum Discretization {
+    #[default]
+    FftRectangle,
+    MetricBall {
+        /// Cartesian angular cutoff in inverse reference length; no implicit 2*pi.
+        angular_cutoff: f64,
+        #[serde(default="support_coefficients")]
+        max_coefficients: usize,
+        #[serde(default="support_embedding")]
+        max_embedding_points: usize,
+        #[serde(default="support_enumeration")]
+        max_enumerated_indices: usize,
+        /// Numerical payload admission, not a process RSS limit.
+        #[serde(default="support_payload")]
+        max_estimated_payload_bytes: usize,
+        #[serde(default="support_dense")]
+        max_dense_dimension: usize,
+        #[serde(default="support_rounds")]
+        max_allocation_rounds: usize,
+    },
+}
+impl Discretization { pub fn is_fft_rectangle(&self)->bool {matches!(self,Self::FftRectangle)} }
+fn support_coefficients()->usize {4096}
+fn support_embedding()->usize {1_048_576}
+fn support_enumeration()->usize {4_194_304}
+fn support_payload()->usize {512*1024*1024}
+fn support_dense()->usize {512}
+fn support_rounds()->usize {32}
 
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]

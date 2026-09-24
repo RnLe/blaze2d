@@ -72,7 +72,31 @@ export interface Config {
 }
 export interface Bands {
   count?: number;
+  /**
+   * Selecting a metric ball changes the finite numerical pencil.
+   */
+  discretization?:
+    | {
+        kind: "fft_rectangle";
+      }
+    | {
+        /**
+         * Cartesian angular cutoff in inverse reference length; no implicit 2*pi.
+         */
+        angular_cutoff: number;
+        kind: "metric_ball";
+        max_allocation_rounds?: number;
+        max_coefficients?: number;
+        max_dense_dimension?: number;
+        max_embedding_points?: number;
+        max_enumerated_indices?: number;
+        /**
+         * Numerical payload admission, not a process RSS limit.
+         */
+        max_estimated_payload_bytes?: number;
+      };
   path?: KPath;
+  symmetry?: Symmetry;
   tracking?: boolean;
 }
 export interface KPath {
@@ -82,6 +106,22 @@ export interface KPath {
   points?: number[][] | null;
   preset?: string | null;
   vertices?: number[][] | null;
+}
+export interface Symmetry {
+  arithmetic?: "spatial_complex" | "fourier_complex" | "pt_real";
+  correction_projection_interval?: number;
+  k_reuse?: "off" | "identical" | "unitary" | "time_reversal";
+  k_traversal?: "given" | "nearest";
+  max_cache_bytes?: number;
+  max_traversal_field_bytes?: number;
+  plane_group?: string | null;
+  reconstruct_partners?: boolean;
+  sector_guard_budget?: number | null;
+  sector_kernel?: "full_grid" | "mirror_tm" | "mirror_tm_te";
+  sector_storage?: "full_grid" | "orbit";
+  sectors?: "off" | "conservative_mirror" | "adaptive_mirror" | "conservative_group" | "adaptive_group";
+  seed_transfer?: "copy" | "rank_aware";
+  share_sector_workspace?: boolean;
 }
 export interface Dielectric {
   interface_tolerance?: number;
@@ -264,6 +304,7 @@ export interface Capabilities {
 export interface PlanSummary {
   estimated_peak_bytes: number;
   jobs: number;
+  memory_estimate_scope: string;
   precision: Precision;
   registry_points: number;
   /**

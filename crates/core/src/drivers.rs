@@ -37,6 +37,7 @@
 pub mod bandstructure;
 pub mod operator_data;
 pub mod single_solve;
+pub mod support_bands;
 
 // Re-export commonly used types from bandstructure
 pub use bandstructure::{

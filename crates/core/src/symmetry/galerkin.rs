@@ -53,16 +53,44 @@ pub fn estimated_payload_bytes(
     config: &EigensolverConfig,
     dense: bool,
 ) -> Result<usize, String> {
-    let n = support.grid().len() as u128;
-    let m = support.len() as u128;
-    let b = config.effective_block_size().min(support.len()) as u128;
+    estimated_payload_bytes_for_dimensions(support.grid().len(), support.len(), config, dense)
+}
+
+/// Dimension-only form for interface planning across geometry/grid sweeps.
+/// An upper bound on coefficient count yields a conservative payload model;
+/// the actual support and solver configuration are still admitted at execution.
+pub fn estimated_payload_bytes_for_dimensions(
+    embedding_points: usize,
+    coefficients: usize,
+    config: &EigensolverConfig,
+    dense: bool,
+) -> Result<usize, String> {
+    let n = embedding_points as u128;
+    let m = coefficients as u128;
+    let b = config.effective_block_size().min(coefficients) as u128;
     let r = config.n_bands as u128;
-    let scalar_count = if dense {
-        8 * n + 24 * m * m + 16 * m * r + (4 * r + 2) * n
+    let product = |terms: &[u128]| terms.iter().try_fold(1_u128, |a, &b| a.checked_mul(b));
+    let terms = if dense {
+        [
+            product(&[8, n]),
+            product(&[24, m, m]),
+            product(&[16, m, r]),
+            product(&[4 * r + 2, n]),
+        ]
     } else {
-        8 * n + 64 * m * b + 128 * b * b + (4 * r + 2) * n
+        [
+            product(&[8, n]),
+            product(&[64, m, b]),
+            product(&[128, b, b]),
+            product(&[4 * r + 2, n]),
+        ]
     };
-    let bytes = scalar_count * 16 + support.index_payload_bytes() as u128;
+    let bytes = terms
+        .into_iter()
+        .try_fold(0_u128, |sum, term| sum.checked_add(term?))
+        .and_then(|n| n.checked_mul(16))
+        .and_then(|n| n.checked_add(m * (16 + std::mem::size_of::<usize>()) as u128))
+        .ok_or("Galerkin workspace estimate overflow")?;
     usize::try_from(bytes).map_err(|_| "Galerkin workspace estimate overflow".into())
 }
 

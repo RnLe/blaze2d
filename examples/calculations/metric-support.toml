@@ -1,0 +1,50 @@
+schema = "blaze2d/1"
+task = "bands"
+polarization = "TE"
+
+[geometry]
+background_epsilon = 1.0
+lattice = { type = "triangular", a = 1.0 }
+
+[[geometry.objects]]
+name = "rod"
+kind = "circle"
+center = [0.0, 0.0]
+radius = 0.20
+epsilon = 8.9
+
+[grid]
+resolution = 33
+
+[bands]
+count = 8
+tracking = true
+path = { preset = "triangular", intervals_per_segment = 3 }
+
+# This explicitly changes the finite pencil. The cutoff is angular: 2*pi*7.
+# It is an example, not an accuracy recommendation for sharp-interface TE.
+[bands.discretization]
+kind = "metric_ball"
+angular_cutoff = 43.982297150257104
+max_estimated_payload_bytes = 67108864
+
+[bands.symmetry]
+plane_group = "p6m"
+sectors = "adaptive_group"
+arithmetic = "fourier_complex"
+sector_storage = "orbit"
+reconstruct_partners = true
+sector_guard_budget = 8
+
+# Raw sampling is an explicit choice. Existing analytic smoothing can break
+# sampled C6 covariance and then reduction falls back on the same support.
+[dielectric]
+smoothing = "none"
+
+[eigensolver]
+precision = "f64"
+tolerance = 1e-14
+max_iterations = 1000
+
+[results]
+eigenvectors = true

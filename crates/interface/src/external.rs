@@ -18,6 +18,9 @@ pub fn execute_sampled<B: SpectralBackend>(backend: B, backend_name: &str, job: 
     if job.resolved.config.task != Task::Bands || job.resolved.config.dielectric.source != DielectricSource::External || job.resolved.k_points_cartesian.len() != 1 {
         return Err(fail("Declare dielectric.source = 'external' with one explicitly sampled band point"));
     }
+    if job.resolved.config.bands.as_ref().is_some_and(|b| !b.discretization.is_fft_rectangle()) {
+        return Err(fail("External sampled execution does not implement the requested metric Fourier support; use the core Galerkin API"));
+    }
     let actual = if std::mem::size_of::<B::Real>() == 4 { Precision::F32 } else { Precision::F64 };
     if actual != job.resolved.config.eigensolver.precision { return Err(fail("Backend precision does not match the calculation")); }
     let [nx,ny] = job.resolved.resolution;

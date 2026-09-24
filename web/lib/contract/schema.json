@@ -106,11 +106,32 @@
           "default": 8,
           "minimum": 0
         },
+        "discretization": {
+          "description": "Selecting a metric ball changes the finite numerical pencil.",
+          "$ref": "#/$defs/Discretization"
+        },
         "path": {
           "$ref": "#/$defs/KPath",
           "default": {
             "basis": "reciprocal_fractional",
             "intervals_per_segment": 15
+          }
+        },
+        "symmetry": {
+          "$ref": "#/$defs/Symmetry",
+          "default": {
+            "arithmetic": "spatial_complex",
+            "correction_projection_interval": 1,
+            "k_reuse": "off",
+            "k_traversal": "given",
+            "max_cache_bytes": 67108864,
+            "max_traversal_field_bytes": 67108864,
+            "reconstruct_partners": false,
+            "sector_kernel": "full_grid",
+            "sector_storage": "full_grid",
+            "sectors": "off",
+            "seed_transfer": "copy",
+            "share_sector_workspace": false
           }
         },
         "tracking": {
@@ -339,6 +360,79 @@
       "enum": [
         "geometry",
         "external"
+      ]
+    },
+    "Discretization": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fft_rectangle"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "angular_cutoff": {
+              "description": "Cartesian angular cutoff in inverse reference length; no implicit 2*pi.",
+              "type": "number",
+              "format": "double"
+            },
+            "kind": {
+              "type": "string",
+              "const": "metric_ball"
+            },
+            "max_allocation_rounds": {
+              "type": "integer",
+              "format": "uint",
+              "default": 32,
+              "minimum": 0
+            },
+            "max_coefficients": {
+              "type": "integer",
+              "format": "uint",
+              "default": 4096,
+              "minimum": 0
+            },
+            "max_dense_dimension": {
+              "type": "integer",
+              "format": "uint",
+              "default": 512,
+              "minimum": 0
+            },
+            "max_embedding_points": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1048576,
+              "minimum": 0
+            },
+            "max_enumerated_indices": {
+              "type": "integer",
+              "format": "uint",
+              "default": 4194304,
+              "minimum": 0
+            },
+            "max_estimated_payload_bytes": {
+              "description": "Numerical payload admission, not a process RSS limit.",
+              "type": "integer",
+              "format": "uint",
+              "default": 536870912,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "angular_cutoff"
+          ]
+        }
       ]
     },
     "Eigensolver": {
@@ -682,6 +776,15 @@
         "basis"
       ]
     },
+    "KReuse": {
+      "type": "string",
+      "enum": [
+        "off",
+        "identical",
+        "unitary",
+        "time_reversal"
+      ]
+    },
     "KStencil": {
       "type": "object",
       "properties": {
@@ -699,6 +802,13 @@
       "required": [
         "points_per_axis",
         "half_width"
+      ]
+    },
+    "KTraversal": {
+      "type": "string",
+      "enum": [
+        "given",
+        "nearest"
       ]
     },
     "Lattice": {
@@ -914,6 +1024,9 @@
           "format": "uint",
           "minimum": 0
         },
+        "memory_estimate_scope": {
+          "type": "string"
+        },
         "precision": {
           "$ref": "#/$defs/Precision"
         },
@@ -958,6 +1071,7 @@
         "jobs",
         "solves",
         "estimated_peak_bytes",
+        "memory_estimate_scope",
         "resolution",
         "solved_bands",
         "task",
@@ -1286,6 +1400,38 @@
         "arrays"
       ]
     },
+    "SectorKernel": {
+      "type": "string",
+      "enum": [
+        "full_grid",
+        "mirror_tm",
+        "mirror_tm_te"
+      ]
+    },
+    "SectorPolicy": {
+      "type": "string",
+      "enum": [
+        "off",
+        "conservative_mirror",
+        "adaptive_mirror",
+        "conservative_group",
+        "adaptive_group"
+      ]
+    },
+    "SectorStorage": {
+      "type": "string",
+      "enum": [
+        "full_grid",
+        "orbit"
+      ]
+    },
+    "SeedTransfer": {
+      "type": "string",
+      "enum": [
+        "copy",
+        "rank_aware"
+      ]
+    },
     "Smoothing": {
       "type": "string",
       "enum": [
@@ -1325,6 +1471,88 @@
       "required": [
         "name",
         "target"
+      ]
+    },
+    "Symmetry": {
+      "type": "object",
+      "properties": {
+        "arithmetic": {
+          "$ref": "#/$defs/SymmetryArithmetic",
+          "default": "spatial_complex"
+        },
+        "correction_projection_interval": {
+          "type": "integer",
+          "format": "uint",
+          "default": 1,
+          "minimum": 0
+        },
+        "k_reuse": {
+          "$ref": "#/$defs/KReuse",
+          "default": "off"
+        },
+        "k_traversal": {
+          "$ref": "#/$defs/KTraversal",
+          "default": "given"
+        },
+        "max_cache_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "default": 67108864,
+          "minimum": 0
+        },
+        "max_traversal_field_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "default": 67108864,
+          "minimum": 0
+        },
+        "plane_group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reconstruct_partners": {
+          "type": "boolean",
+          "default": false
+        },
+        "sector_guard_budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "sector_kernel": {
+          "$ref": "#/$defs/SectorKernel",
+          "default": "full_grid"
+        },
+        "sector_storage": {
+          "$ref": "#/$defs/SectorStorage",
+          "default": "full_grid"
+        },
+        "sectors": {
+          "$ref": "#/$defs/SectorPolicy",
+          "default": "off"
+        },
+        "seed_transfer": {
+          "$ref": "#/$defs/SeedTransfer",
+          "default": "copy"
+        },
+        "share_sector_workspace": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "SymmetryArithmetic": {
+      "type": "string",
+      "enum": [
+        "spatial_complex",
+        "fourier_complex",
+        "pt_real"
       ]
     },
     "Task": {

@@ -152,7 +152,7 @@ impl Config {
                 if bands.symmetry.correction_projection_interval==0 || (bands.symmetry.correction_projection_interval!=1 && bands.symmetry.sector_storage!=SectorStorage::FullGrid) {
                     return Err(invalid("bands.symmetry.correction_projection_interval","must be positive; values other than one require full-grid sectors"));
                 }
-                if bands.symmetry.sectors != SectorPolicy::Off && bands.symmetry.arithmetic != SymmetryArithmetic::SpatialComplex {
+                if bands.discretization.is_fft_rectangle() && bands.symmetry.sectors != SectorPolicy::Off && bands.symmetry.arithmetic != SymmetryArithmetic::SpatialComplex {
                     return Err(invalid("bands.symmetry.arithmetic","sector solves and Fourier arithmetic are separate experimental paths; their combined representation is not implemented"));
                 }
                 if bands.symmetry.sector_kernel != SectorKernel::FullGrid && bands.symmetry.sector_storage != SectorStorage::Orbit {
@@ -166,7 +166,31 @@ impl Config {
                         return Err(invalid("bands.symmetry.plane_group","expected an ordinary plane group (p1 through p6m) in its documented primitive setting"));
                     }
                 }
+                if let Some(selected)=bands.discretization.metric_options() {
+                    if config.dielectric.source==DielectricSource::External {
+                        return Err(invalid("dielectric.source","the public metric-support band workflow currently requires geometry-sampled material; external arrays remain available through the core Galerkin API"));
+                    }
+                    if config.eigensolver.precision!=Precision::F64 {
+                        return Err(invalid("eigensolver.precision","metric Fourier support requires f64; precision is not promoted"));
+                    }
+                    if selected.support_budget.max_coefficients==0 || selected.support_budget.max_embedding_points==0 || selected.support_budget.max_enumerated_indices==0 || selected.budget.max_dense_dimension==0 {
+                        return Err(invalid("bands.discretization","support and dense reference budgets must be nonzero"));
+                    }
+                    blaze2d_core::drivers::support_bands::validate_options(&bands.run_options(false),selected)
+                        .map_err(|reason|invalid("bands.discretization",reason))?;
+                }
                 let path = resolve_path(&mut bands.path, self.geometry.lattice.kind, lattice_vectors)?;
+                if check_dimensions {
+                    if let Some(selected)=bands.discretization.metric_options() {
+                        let grid=blaze2d_core::grid::Grid2D::new(resolution[0],resolution[1],1.0,1.0);
+                        let lattice=blaze2d_core::lattice::Lattice2D::oblique(lattice_vectors[0],lattice_vectors[1]);
+                        for (index,&k) in path.points.iter().enumerate() {
+                            let space=blaze2d_core::symmetry::support::FourierSupport::metric_ball(grid,lattice,k,selected.angular_cutoff,selected.support_budget)
+                                .map_err(|reason|invalid("bands.discretization",format!("k point {index}: {reason}")))?;
+                            if bands.count>space.len() {return Err(invalid("bands.count",format!("requested bands exceed the metric support at k point {index}")));}
+                        }
+                    }
+                }
                 k_labels = path.labels;
                 k_label_indices = path.label_indices;
                 (bands.count, path.points)

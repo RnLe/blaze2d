@@ -62,37 +62,35 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
             let mut orthogonality = Vec::new();
             let mut fields = Vec::new();
             let mut symmetry_reports = Vec::new();
-            let result = bandstructure::run_with_k_streaming(backend, &job.bands_job(),
-                bandstructure::RunOptions { reuse_gamma: false, disable_band_tracking: !b.tracking,
-                    symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
-                        k_reuse: match b.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},
-                        k_traversal:match b.symmetry.k_traversal {crate::KTraversal::Given=>blaze2d_core::symmetry::traversal::KTraversal::Given,crate::KTraversal::Nearest=>blaze2d_core::symmetry::traversal::KTraversal::Nearest},
-                        max_traversal_field_bytes:b.symmetry.max_traversal_field_bytes,
-                        plane_group:b.symmetry.plane_group.as_ref().map(|s|serde_json::from_value(json!(s)).expect("validated plane group")),
-                        seed_transfer:match b.symmetry.seed_transfer {crate::SeedTransfer::Copy=>blaze2d_core::symmetry::seed::SeedTransfer::Copy,crate::SeedTransfer::RankAware=>blaze2d_core::symmetry::seed::SeedTransfer::RankAware},
-                        sectors:match b.symmetry.sectors {crate::SectorPolicy::Off=>blaze2d_core::symmetry::sectors::SectorPolicy::Off,crate::SectorPolicy::ConservativeMirror=>blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeMirror,crate::SectorPolicy::AdaptiveMirror=>blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveMirror,crate::SectorPolicy::ConservativeGroup=>blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeGroup,crate::SectorPolicy::AdaptiveGroup=>blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveGroup},
-                        arithmetic:match b.symmetry.arithmetic {crate::SymmetryArithmetic::SpatialComplex=>blaze2d_core::symmetry::fourier::Arithmetic::SpatialComplex,crate::SymmetryArithmetic::FourierComplex=>blaze2d_core::symmetry::fourier::Arithmetic::FourierComplex,crate::SymmetryArithmetic::PtReal=>blaze2d_core::symmetry::fourier::Arithmetic::PtRealTe},
-                        sector_kernel:match b.symmetry.sector_kernel {crate::SectorKernel::FullGrid=>blaze2d_core::symmetry::reduced::ReducedKernel::FullGrid,crate::SectorKernel::MirrorTm=>blaze2d_core::symmetry::reduced::ReducedKernel::MirrorTm,crate::SectorKernel::MirrorTmTe=>blaze2d_core::symmetry::reduced::ReducedKernel::MirrorTmTe},
-                        sector_storage:match b.symmetry.sector_storage {crate::SectorStorage::FullGrid=>blaze2d_core::symmetry::reduced::SectorStorage::FullGrid,crate::SectorStorage::Orbit=>blaze2d_core::symmetry::reduced::SectorStorage::Orbit},
-                        correction_projection_interval:b.symmetry.correction_projection_interval,share_sector_workspace:b.symmetry.share_sector_workspace,reconstruct_partners:b.symmetry.reconstruct_partners,sector_guard_budget:b.symmetry.sector_guard_budget,max_cache_bytes:b.symmetry.max_cache_bytes,..Default::default()
-                    },
-                    retain_eigenvectors: job.resolved.config.results.eigenvectors, ..Default::default() }, |point| {
+            let mut discretization_reports = Vec::new();
+            let mut collect = |point: bandstructure::KPointResult| {
                     on_event(Event::Progress { job_index: job.index, sample_index: point.k_index,
                         completed: point.k_index + 1, total: nk, iterations: point.iterations, converged: point.converged,
                         band_point:Some(crate::BandPoint {frequencies:point.omegas.iter().map(|w|w/std::f64::consts::TAU).collect(),
                             k_point:point.k_point,distance:job.resolved.distances[point.k_index]}) });
                     iterations.push(point.iterations); converged.push(point.converged);
                     symmetry_reports.push(point.symmetry);
+                    discretization_reports.push(point.discretization);
                     orthogonality.push(point.b_orthogonality_defect);
                     residuals.extend(point.residuals.into_iter().take(n));
                     absolute_residuals.extend(point.absolute_residuals.into_iter().take(n));
                     if let Some(v) = point.eigenvectors { fields.extend(v.into_iter().take(n).flat_map(|v| v.as_slice().to_vec())); }
-                });
+                };
+            let options=b.run_options(job.resolved.config.results.eigenvectors);
+            let selected=b.discretization.metric_options();
+            let (result,failure)=if let Some(discretization)=selected {
+                match blaze2d_core::drivers::support_bands::run_with_k_streaming(backend,&job.bands_job(),options,discretization,&mut collect) {
+                    Ok(result)=>(result,None),
+                    Err(failure)=>(failure.partial_result.clone(),Some(failure)),
+                }
+            } else {(bandstructure::run_with_k_streaming(backend,&job.bands_job(),options,&mut collect),None)};
+            let requested_points=nk;
+            let nk=result.bands.len();
             out.arrays.insert("frequencies".into(), Array::real(&[nk,n], &["k_point","band"],
                 result.bands.into_iter().flatten().map(|w| w / std::f64::consts::TAU)));
-            out.arrays.insert("k_points".into(), Array::real(&[nk,2], &["k_point","direction"], job.resolved.k_points_fractional.iter().flatten().copied()));
-            out.arrays.insert("k_points_cartesian".into(), Array::real(&[nk,2], &["k_point","direction"], job.resolved.k_points_cartesian.iter().flatten().copied()));
-            out.arrays.insert("distances".into(), Array::real(&[nk], &["k_point"], job.resolved.distances.iter().copied()));
+            out.arrays.insert("k_points".into(), Array::real(&[nk,2], &["k_point","direction"], job.resolved.k_points_fractional.iter().take(nk).flatten().copied()));
+            out.arrays.insert("k_points_cartesian".into(), Array::real(&[nk,2], &["k_point","direction"], job.resolved.k_points_cartesian.iter().take(nk).flatten().copied()));
+            out.arrays.insert("distances".into(), Array::real(&[nk], &["k_point"], job.resolved.distances.iter().take(nk).copied()));
             out.arrays.insert("residuals".into(), Array::real(&[nk,n], &["k_point","band"], residuals));
             out.arrays.insert("absolute_residuals".into(), Array::real(&[nk,n], &["k_point","band"], absolute_residuals));
             if job.resolved.config.results.eigenvectors {
@@ -103,8 +101,8 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                 "coverage":"unrestricted source spectrum; qualified finite-operator covariance and fresh transformed residuals"});
             out.metadata["converged"] = json!(converged.iter().all(|c| *c));
             out.metadata["converged_per_point"] = json!(converged);
-            out.metadata["labels"] = json!(job.resolved.k_labels);
-            out.metadata["label_indices"] = json!(job.resolved.k_label_indices);
+            out.metadata["labels"] = json!(job.resolved.k_labels.iter().zip(&job.resolved.k_label_indices).filter(|(_,i)|**i<nk).map(|(label,_)|label).collect::<Vec<_>>());
+            out.metadata["label_indices"] = json!(job.resolved.k_label_indices.iter().filter(|&&i|i<nk).collect::<Vec<_>>());
             out.metadata["band_indices"] = json!((0..n).collect::<Vec<_>>());
             out.metadata["stopping_criterion"] = json!("relative_eigenvalue_change");
             out.metadata["certification"] = json!({"source":"fresh_operator_application",
@@ -115,9 +113,26 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                 "max_residual":out.arrays["residuals"].data.iter().copied().fold(0.0_f64, f64::max),
                 "b_orthogonality_defect":orthogonality.iter().copied().fold(0.0_f64, f64::max),
                 "b_orthogonality_per_point":orthogonality});
+            if selected.is_some() {
+                out.metadata["discretization"]=json!({"requested":b.discretization,"points":discretization_reports,
+                    "requested_points":requested_points,"completed_points":nk,
+                    "pencil":"S_adjoint_A_S_and_S_adjoint_B_S",
+                    "full_rectangle_residuals":"discretization diagnostics only; not the projected solve acceptance gate",
+                    "payload_limit_scope":"modeled driver and solve numerical payload; excludes caller-retained output, FFT plans, allocator and library scratch"});
+                out.metadata["symmetry"]["coverage"]=json!("qualified sectors or unrestricted solve on the explicitly selected metric Fourier support; per-point reports state empirical or complete coverage");
+                out.metadata["certification"]["pencil"]=json!("selected_metric_fourier_support");
+                out.metadata["certification"]["source"]=json!("fresh_projected_operator_application");
+            }
             out.metadata["gauge"] = json!(if b.tracking {"tracked_path"} else {"independent_sorted_eigenvalues"});
             out.metadata["quantities"] = json!({"requested":["frequencies"],
                 "computed":["frequencies","eigenvectors","residuals","absolute_residuals"], "retained":out.arrays.keys().collect::<Vec<_>>(), "unavailable":{}});
+            if let Some(failure)=failure {
+                out.metadata["converged"]=json!(false);
+                out.metadata["elapsed_seconds"]=json!(start.elapsed_secs());
+                out.metadata["failed_point"]=json!({"k_index":failure.k_index,"reason":failure.reason,
+                    "symmetry":failure.symmetry,"discretization":failure.discretization});
+                return Err(JobFailure {job_index:job.index,diagnostic:Diagnostic::new("metric_support","bands.discretization",failure.reason),partial_result:Some(Box::new(out))});
+            }
         }
         Task::Operators => {
             let o = job.resolved.config.operators.as_ref().unwrap();

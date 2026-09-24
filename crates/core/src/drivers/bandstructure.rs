@@ -138,6 +138,9 @@ pub struct BandStructureResult {
 /// Incremental result emitted after a single k-point solve.
 #[derive(Debug, Clone)]
 pub struct KPointResult {
+    /// Present only for an explicitly selected metric Fourier support. Its
+    /// projected certificate and full-rectangle diagnostic have different roles.
+    pub discretization: Option<super::support_bands::SupportPointReport>,
     /// Actual reuse and qualification decisions; reused points take zero iterations.
     pub symmetry: ReuseReport,
     /// Zero-based index of the completed k-point in the path.
@@ -650,6 +653,7 @@ fn run_core<B: SpectralBackend + Clone>(
                 );
                 if let Some(ref mut on_k_point) = on_k_point {
                     (**on_k_point)(KPointResult {
+                        discretization: None,
                         symmetry: ReuseReport::default(),
                         k_index: k_idx,
                         total_k_points,
@@ -1035,6 +1039,7 @@ fn run_core<B: SpectralBackend + Clone>(
 
         if let Some(ref mut on_k_point) = on_k_point {
             (**on_k_point)(KPointResult {
+                discretization: None,
                 symmetry: reuse_report,
                 k_index: k_idx,
                 total_k_points,

@@ -103,3 +103,39 @@ impl PlannedJob {
         }
     }
 }
+
+impl crate::Bands {
+    pub(crate) fn run_options(&self, retain_eigenvectors: bool) -> blaze2d_core::drivers::bandstructure::RunOptions {
+        use serde_json::json;
+        blaze2d_core::drivers::bandstructure::RunOptions {
+            reuse_gamma: false, disable_band_tracking: !self.tracking, retain_eigenvectors,
+            symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
+                        k_reuse: match self.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},
+                        k_traversal:match self.symmetry.k_traversal {crate::KTraversal::Given=>blaze2d_core::symmetry::traversal::KTraversal::Given,crate::KTraversal::Nearest=>blaze2d_core::symmetry::traversal::KTraversal::Nearest},
+                        max_traversal_field_bytes:self.symmetry.max_traversal_field_bytes,
+                        plane_group:self.symmetry.plane_group.as_ref().map(|s|serde_json::from_value(json!(s)).expect("validated plane group")),
+                        seed_transfer:match self.symmetry.seed_transfer {crate::SeedTransfer::Copy=>blaze2d_core::symmetry::seed::SeedTransfer::Copy,crate::SeedTransfer::RankAware=>blaze2d_core::symmetry::seed::SeedTransfer::RankAware},
+                        sectors:match self.symmetry.sectors {crate::SectorPolicy::Off=>blaze2d_core::symmetry::sectors::SectorPolicy::Off,crate::SectorPolicy::ConservativeMirror=>blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeMirror,crate::SectorPolicy::AdaptiveMirror=>blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveMirror,crate::SectorPolicy::ConservativeGroup=>blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeGroup,crate::SectorPolicy::AdaptiveGroup=>blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveGroup},
+                        arithmetic:match self.symmetry.arithmetic {crate::SymmetryArithmetic::SpatialComplex=>blaze2d_core::symmetry::fourier::Arithmetic::SpatialComplex,crate::SymmetryArithmetic::FourierComplex=>blaze2d_core::symmetry::fourier::Arithmetic::FourierComplex,crate::SymmetryArithmetic::PtReal=>blaze2d_core::symmetry::fourier::Arithmetic::PtRealTe},
+                        sector_kernel:match self.symmetry.sector_kernel {crate::SectorKernel::FullGrid=>blaze2d_core::symmetry::reduced::ReducedKernel::FullGrid,crate::SectorKernel::MirrorTm=>blaze2d_core::symmetry::reduced::ReducedKernel::MirrorTm,crate::SectorKernel::MirrorTmTe=>blaze2d_core::symmetry::reduced::ReducedKernel::MirrorTmTe},
+                        sector_storage:match self.symmetry.sector_storage {crate::SectorStorage::FullGrid=>blaze2d_core::symmetry::reduced::SectorStorage::FullGrid,crate::SectorStorage::Orbit=>blaze2d_core::symmetry::reduced::SectorStorage::Orbit},
+                        correction_projection_interval:self.symmetry.correction_projection_interval,share_sector_workspace:self.symmetry.share_sector_workspace,reconstruct_partners:self.symmetry.reconstruct_partners,sector_guard_budget:self.symmetry.sector_guard_budget,max_cache_bytes:self.symmetry.max_cache_bytes,..Default::default()
+                    },
+            ..Default::default()
+        }
+    }
+}
+
+impl crate::Discretization {
+    pub(crate) fn metric_options(&self) -> Option<blaze2d_core::drivers::support_bands::MetricBallOptions> {
+        use blaze2d_core::{drivers::support_bands::MetricBallOptions, symmetry::{support::SupportBudget, galerkin::GalerkinBudget}};
+        match *self {
+            Self::FftRectangle => None,
+            Self::MetricBall { angular_cutoff, max_coefficients, max_embedding_points, max_enumerated_indices,
+                max_estimated_payload_bytes, max_dense_dimension, max_allocation_rounds } => Some(MetricBallOptions {
+                angular_cutoff, support_budget: SupportBudget { max_coefficients, max_embedding_points, max_enumerated_indices },
+                budget: GalerkinBudget { max_estimated_payload_bytes, max_dense_dimension }, max_allocation_rounds,
+            }),
+        }
+    }
+}

@@ -39,6 +39,7 @@ pub struct PlanSummary {
     pub jobs: usize,
     pub solves: usize,
     pub estimated_peak_bytes: u64,
+    pub memory_estimate_scope: &'static str,
     pub resolution: [usize; 2],
     pub solved_bands: usize,
     pub task: Task,
@@ -228,6 +229,7 @@ impl Plan {
         };
         let solves = jobs.checked_mul(per_job).ok_or_else(|| invalid("sweeps", "solve count overflows"))?;
         let summary = PlanSummary { jobs, solves, estimated_peak_bytes: peak,
+            memory_estimate_scope:"modeled numerical payload and retained output; metric sectors reserve their configured admission budget; FFT plans, allocator and library overhead are outside this estimate",
             resolution: base.resolution, solved_bands: base.solved_bands, task: config.task,
             precision: config.eigensolver.precision, sweep_shape: axis_lengths.clone(), registry_points };
         Ok(Self { config, summary, platform, axis_lengths })
@@ -278,6 +280,28 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
     let fields = samples.checked_mul(fields).and_then(|n| n.checked_mul(16));
     let dense = block.checked_mul(block).and_then(|n| n.checked_mul(1024));
     let nk = resolved.k_points_fractional.len() as u64;
+    if let Some(b)=resolved.config.bands.as_ref() {
+        if let Some(selected)=b.discretization.metric_options() {
+            let coefficients=(selected.support_budget.max_coefficients as u64).min(samples);
+            let groups=b.symmetry.plane_group.as_ref().map(|name|serde_json::from_value::<blaze2d_core::symmetry::affine::PlaneGroup>(json!(name)).expect("validated plane group").group().order() as u64).unwrap_or(1);
+            let rounds=if b.symmetry.sectors==SectorPolicy::Off {0} else {(selected.max_allocation_rounds as u64).min(coefficients)};
+            let cfg=blaze2d_core::eigensolver::EigensolverConfig {n_bands:resolved.solved_bands,block_size:resolved.config.eigensolver.block_size,..Default::default()};
+            let mut reserved=selected.budget.max_estimated_payload_bytes as u128;
+            if b.symmetry.sectors==SectorPolicy::Off {
+                let driver=blaze2d_core::drivers::support_bands::driver_payload_bytes(samples as usize,bands as usize,nk as usize).map_err(|e|invalid("bands.discretization",e))?;
+                let solve=blaze2d_core::symmetry::galerkin::estimated_payload_bytes_for_dimensions(samples as usize,coefficients as usize,&cfg,false).map_err(|e|invalid("bands.discretization",e))?;
+                reserved=reserved.min(driver as u128+solve as u128);
+            }
+            // Retained physical outputs need both temporary complex fields and
+            // the interleaved export copy. Report arrays include exact support
+            // identities and every bounded allocation-round certificate.
+            let output=if resolved.config.results.eigenvectors {32*nk as u128*bands as u128*samples as u128} else {0};
+            let reports=nk as u128*((32+16*rounds as u128)*coefficients as u128
+                +96*bands as u128+256*(groups as u128).pow(2)+512*rounds as u128*groups as u128);
+            let path=nk as u128*(32*bands as u128+128);
+            return u64::try_from(reserved+output+reports+path).map_err(|_|invalid("configuration","metric-support memory estimate overflows"));
+        }
+    }
     let path_arrays = nk.checked_mul(bands.checked_mul(4).and_then(|n|n.checked_add(16))
         .ok_or_else(|| invalid("configuration", "memory estimate overflows"))?).and_then(|n|n.checked_mul(8));
     let retained_fields = if resolved.config.task == Task::Bands && resolved.config.results.eigenvectors {
