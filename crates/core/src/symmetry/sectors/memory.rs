@@ -57,6 +57,18 @@ pub fn worker_payload(rows: usize, columns: usize, warm_columns: usize) -> Resul
     ])
 }
 
+pub fn coordinate_setup_payload(rows:usize, enabled:bool)->Result<usize,String> {
+    if enabled {product(&[16,rows,12])} else {Ok(0)}
+}
+
+/// Conversion buffers plus both scalar parts of a complex warm block. Keep the
+/// doubled Gram allowance explicit even when target-rank extraction shrinks it.
+pub fn coordinate_worker_payload(rows:usize, warm_columns:usize, enabled:bool)->Result<usize,String> {
+    if !enabled {return Ok(0);}
+    let split=product(&[2,warm_columns])?;
+    sum(&[product(&[16,rows,sum(&[8,split])?])?,product(&[512,split,split])?])
+}
+
 /// Both mirror kernels use normal-axis dense matrices; ny^2 cannot be bounded
 /// by nx*ny on a thin, tall embedding. Keep that term explicit.
 pub fn mirror_payload(nx: usize, ny: usize, kernel: ReducedKernel) -> Result<usize, String> {
@@ -90,6 +102,11 @@ pub fn reservation(
     kernel: ReducedKernel,
     limit: usize,
 ) -> Result<usize, String> {
+    reservation_with_coordinates(nx,ny,group_order,requested,storage,kernel,limit,false)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn reservation_with_coordinates(nx:usize,ny:usize,group_order:usize,requested:usize,storage:SectorStorage,kernel:ReducedKernel,limit:usize,coordinates:bool)->Result<usize,String> {
     let rows = product(&[nx, ny])?;
     // The fully exhausted hypothetical workspace can exceed usize on wasm32
     // even for an ordinary 65² grid. Positive payload overflow means its bound
@@ -98,6 +115,7 @@ pub fn reservation(
     let finite = (|| -> Result<usize, String> {
         let fixed = sum(&[
             setup_payload(rows, group_order, storage)?,
+            coordinate_setup_payload(rows,coordinates)?,
             spectrum_payload(rows, requested)?,
         ])?;
         let retained = spectrum_payload(rows, rows)?;
@@ -105,6 +123,7 @@ pub fn reservation(
             fixed,
             retained,
             worker_payload(rows, rows, rows.max(requested))?,
+            coordinate_worker_payload(rows,rows.max(requested),coordinates)?,
             mirror_payload(nx, ny, kernel)?,
         ])?;
         let merge = merge_payload(fixed, rows, requested, retained)?;

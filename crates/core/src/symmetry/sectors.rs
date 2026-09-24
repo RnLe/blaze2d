@@ -3,6 +3,8 @@ use num_complex::Complex64 as C;
 use serde::Serialize;
 use crate::{backend::{SpectralBackend,SpectralBuffer},field::{Field2D,Real,cscalar},grid::Grid2D,lattice::Lattice2D,operators::{LinearOperator,ThetaOperator},eigensolver::{Eigensolver,EigensolverConfig,dense::solve_hermitian_eigen,refine::{rayleigh_ritz_certify,certify_without_refinement}}};
 use super::{affine::AffineGroup,action::BlochActionPlan,qualification::{QualifiedAction,qualify},representation::RepresentationPlan,reuse::{CachedSpectrum,SymmetryOptions}};
+use std::sync::Arc;
+use super::fourier::{Arithmetic,CoordinateSetup,sector::SectorProjection};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod concurrency;
@@ -17,7 +19,13 @@ pub struct SectorPlan {
     actions:Vec<QualifiedAction>,
     sectors:Vec<Sector>,
 }
-struct Sector {label:String,irrep:usize,partners:usize,weights:Vec<C>,rank:usize,owns_kernel:bool}
+struct Sector {label:String,irrep:usize,partners:usize,weights:Vec<C>,rank:usize,owns_kernel:bool,coordinates:Option<SectorCoordinates>}
+struct SectorCoordinates {setup:Arc<CoordinateSetup>,rejection:Option<String>,pt_defect:Option<f64>}
+
+/// Orbit coordinates and genuine mirror kernels have separate storage contracts.
+pub(crate) fn uses_coordinates(options:&SymmetryOptions)->bool {
+    options.arithmetic!=Arithmetic::SpatialComplex && options.sector_storage==super::reduced::SectorStorage::FullGrid
+}
 
 #[derive(Debug,Clone,Serialize)]
 pub struct SectorReport {
@@ -29,6 +37,12 @@ pub struct SectorReport {
     pub vector_column_bytes:usize,
     pub basis_payload_bytes:usize,
     pub reduced_kernel:Option<super::reduced::KernelReport>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub coordinates:Option<super::fourier::CoordinateReport>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub coordinate_rejection:Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub pt_projector_defect:Option<f64>,
     pub partner_rows:usize,
     pub owns_gamma_kernel:bool,
     pub iterations:usize,
@@ -61,8 +75,9 @@ pub struct SectorResult {pub spectrum:CachedSpectrum,pub iterations:usize,pub re
 impl SectorPlan {
     pub fn qualify<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,lattice:&Lattice2D,k:[f64;2],group:AffineGroup,options:&SymmetryOptions)->Result<Self,String> {
         if std::mem::size_of::<B::Real>()!=8 {return Err("sector solves currently require f64".into());}
-        let setup=memory::setup_payload(operator.grid().len(),group.order(),options.sector_storage)?;
+        let setup=memory::sum(&[memory::setup_payload(operator.grid().len(),group.order(),options.sector_storage)?,memory::coordinate_setup_payload(operator.grid().len(),uses_coordinates(options))?])?;
         memory::WorkspaceReport::new(options.max_sector_workspace_bytes,setup).admit("qualification/basis setup",0,setup)?;
+        if group.operations.iter().any(|g|g.conjugates()) {return Err("sector groups must contain unitary operations".into());}
         let representation=RepresentationPlan::ordinary(group.clone(),k).or_else(|_|RepresentationPlan::projective(group,k)).map_err(|e|e.to_string())?;
         let mut other=ThetaOperator::new(operator.backend().clone(),operator.dielectric().clone(),operator.polarization(),operator.bloch());
         let mut actions=Vec::new();
@@ -70,6 +85,14 @@ impl SectorPlan {
             let plan=BlochActionPlan::new(g,k,k,operator.grid(),operator.polarization(),1e-12).map_err(|e|e.to_string())?;
             actions.push(qualify(plan,lattice,operator,&mut other,options.qualification_tolerance).map_err(|r|format!("sector qualification: {:?}",r.rejection_reasons))?);
         }
+        drop(other);
+        let complex=uses_coordinates(options).then(||Arc::new(CoordinateSetup::complex(operator.grid().len())));
+        let (coordinate_setup,coordinate_rejection)=if let Some(complex)=&complex {
+            match CoordinateSetup::qualify(operator,lattice,k,options) {
+                Ok(setup)=>(Some(Arc::new(setup)),None),
+                Err(reason)=>(Some(complex.clone()),Some(reason)),
+            }
+        } else {(None,None)};
         let mut sectors=Vec::new();let grid=operator.grid();let gamma=k==[0.0;2];
         let mut constant=operator.alloc_field();constant.as_mut_slice().fill(cscalar::<B::Real>(1.0,0.0));
         let mut out=operator.alloc_field();let mut scratch=operator.alloc_field();
@@ -82,7 +105,21 @@ impl SectorPlan {
             representation.apply_weights(&actions,&weights,&constant,&mut out,&mut scratch).map_err(|e|e.to_string())?;
             let constant_part=operator.backend().dot(&out,&out).re/grid.len() as f64;
             if gamma && constant_part>1e-9 && (constant_part-1.0).abs()>1e-9 {return Err("ambiguous Gamma kernel ownership".into());}
-            sectors.push(Sector{label:representation.irreps[i].label.clone(),irrep:i,partners,weights,rank,owns_kernel:gamma && constant_part>0.5});
+            let owns_kernel=gamma && constant_part>0.5;
+            let coordinates=if let Some(setup)=&coordinate_setup {
+                let mut selected=setup.clone();let mut rejection=coordinate_rejection.clone();
+                let pt_defect=if setup.real() {
+                    let projection=SectorProjection{actions:&actions,weights:&weights,dimension:rank,owns_gamma_kernel:owns_kernel,correction_projection_interval:options.correction_projection_interval};
+                    let defect=projection.reality_defect(setup)?;
+                    if defect>options.qualification_tolerance {
+                        selected=complex.as_ref().unwrap().clone();
+                        rejection=Some(format!("sector projector is not invariant under qualified PT (defect {defect:e}); retaining complex Fourier coordinates"));
+                    }
+                    Some(defect)
+                } else {None};
+                Some(SectorCoordinates{setup:selected,rejection,pt_defect})
+            } else {None};
+            sectors.push(Sector{label:representation.irreps[i].label.clone(),irrep:i,partners,weights,rank,owns_kernel,coordinates});
         }
         if sectors.iter().map(|s|s.rank*s.partners).sum::<usize>()!=grid.len() || (gamma && sectors.iter().filter(|s|s.owns_kernel).count()!=1) {return Err("sector dimensions or kernel ownership do not cover the finite space".into());}
         Ok(Self{representation,actions,sectors})
@@ -166,7 +203,7 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
         warm.is_some_and(|fields|fields.iter().any(|f| {let g=f.grid();(g.nx,g.ny,g.centered,g.lx.to_bits(),g.ly.to_bits())!=(grid.nx,grid.ny,grid.centered,grid.lx.to_bits(),grid.ly.to_bits()) || f.as_slice().iter().any(|z|!z.re.is_finite() || !z.im.is_finite())})) {
         return Err("invalid sector solve configuration or warm fields".into());
     }
-    let setup=memory::setup_payload(grid.len(),group.order(),options.sector_storage)?;
+    let setup=memory::sum(&[memory::setup_payload(grid.len(),group.order(),options.sector_storage)?,memory::coordinate_setup_payload(grid.len(),uses_coordinates(options))?])?;
     let mut workspace=memory::WorkspaceReport::new(options.max_sector_workspace_bytes,setup);
     workspace.admit("qualification/basis setup",0,setup)?;
     let fixed=memory::sum(&[setup,memory::spectrum_payload(grid.len(),warm.map_or(0,<[Field2D]>::len))?])?;
@@ -200,7 +237,7 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
         let retained=slots.iter().flatten().try_fold(0usize,|n,(e,_)|n.checked_add(e.bytes())).ok_or("sector payload overflow")?;
         workspace.peak_retained_spectrum_payload_bytes=workspace.peak_retained_spectrum_payload_bytes.max(retained);
         let columns=if sector.rank<=prefix.saturating_add(2) {sector.rank} else {prefix.saturating_add(guards[i]).min(sector.rank-usize::from(sector.owns_kernel))};
-        let estimate=memory::sum(&[fixed,retained,kernel_payload,memory::worker_payload(grid.len(),columns,warm.map_or(0,<[Field2D]>::len))?])?;
+        let estimate=memory::sum(&[fixed,retained,kernel_payload,memory::worker_payload(grid.len(),columns,warm.map_or(0,<[Field2D]>::len))?,memory::coordinate_worker_payload(grid.len(),warm.map_or(0,<[Field2D]>::len),uses_coordinates(options))?])?;
         workspace.admit("sector prefix",rounds,estimate).map_err(|reason|format!("sector {i} prefix {prefix}: {reason}"))?;
         let (output,scratch)=projection_workspace.take().unwrap_or_else(|| {
             projection_workspace_allocations+=2;
@@ -250,7 +287,16 @@ fn solve_prefix<B:SpectralBackend+Clone>(
         } else {None};
         let dense=sector.rank<=prefix+2;
         let mut reduced_kernel=None;
-        let (mut values,mut fields,steps)=if dense {let (a,b)=dense_sector(&mut op)?;(a,b,0)} else {
+        let mut coordinates=None;
+        let (mut values,mut fields,steps)=if let Some(prepared)=&sector.coordinates {
+            let mut cfg=config.clone();cfg.n_bands=prefix;cfg.block_size=prefix.saturating_add(guard_columns).min(sector.rank-usize::from(sector.owns_kernel));
+            let projection=SectorProjection{actions:&plan.actions,weights:&sector.weights,dimension:sector.rank,owns_gamma_kernel:sector.owns_kernel,correction_projection_interval:options.correction_projection_interval};
+            let (result,projected,skipped)=super::fourier::solve_prepared(op.full,k,&cfg,projected_seed.as_deref(),options,
+                preconditioner.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),&prepared.setup,Some(projection),dense)?;
+            op.projected_rounds=projected;op.correction_rounds=projected+skipped;
+            coordinates=Some(result.report);
+            (result.spectrum.eigenvalues,result.spectrum.fields,result.iterations)
+        } else if dense {let (a,b)=dense_sector(&mut op)?;(a,b,0)} else {
             let mut cfg=config.clone();cfg.n_bands=prefix;cfg.block_size=prefix.saturating_add(guard_columns).min(sector.rank-usize::from(sector.owns_kernel));
             if let Some(basis)=basis {
                 let result=super::reduced::solve_reduced(op.full,basis,sector.owns_kernel,cfg,projected_seed.as_deref(),preconditioner.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),options.sector_kernel)?;
@@ -264,7 +310,7 @@ fn solve_prefix<B:SpectralBackend+Clone>(
         };
         values.truncate(prefix);fields.truncate(prefix);
         // Refine within this sector, never across different physical labels.
-        let _=rayleigh_ritz_certify(&mut op,&mut values,&mut fields);
+        if coordinates.is_none() {let _=rayleigh_ritz_certify(&mut op,&mut values,&mut fields);}
         if sector.owns_kernel && values.first().is_some_and(|v|v.abs()<1e-8) {values[0]=0.0;}
         let cert=certify_without_refinement(&mut op,&values,&fields);
         let entry=CachedSpectrum{source_index:0,k,eigenvalues:values,fields,residuals:cert.residuals,absolute_residuals:cert.absolute_residuals,orthogonality_defect:cert.b_orthogonality_defect};
@@ -273,7 +319,9 @@ fn solve_prefix<B:SpectralBackend+Clone>(
         if !entry.passes(options) || entry.fields.len()!=prefix {return Err(format!("sector {} failed fresh quality gates: residuals={:?}, orthogonality={:e}, leakage={leakage:e}",sector.label,entry.residuals,entry.orthogonality_defect));}
         if !leakage.is_finite() || leakage>1e-8 {return Err(format!("sector {} leaked by {leakage:e}",sector.label));}
         let stored_rows=if !dense && basis.is_some() {sector.rank} else {op.grid().len()};
-        let report=SectorReport{label:sector.label.clone(),dimension:sector.rank,prefix,stored_rows,reduced_kernel,vector_column_bytes:stored_rows*std::mem::size_of::<C>(),basis_payload_bytes:basis.map_or(0,|b|b.payload_bytes()),partner_rows:sector.partners,working_columns:if dense {sector.rank} else {prefix.saturating_add(guard_columns).min(sector.rank-usize::from(sector.owns_kernel))},owns_gamma_kernel:sector.owns_kernel,iterations:steps,dense_complete:dense,seed_rank,leakage,correction_projection_interval:options.correction_projection_interval,correction_projection_rounds:op.projected_rounds,correction_projection_skipped_rounds:op.correction_rounds-op.projected_rounds};
+        let vector_column_bytes=coordinates.as_ref().map_or(stored_rows*std::mem::size_of::<C>(),|r|r.bytes_per_column);
+        let stored_rows=coordinates.as_ref().map_or(stored_rows,|r|r.bytes_per_column/16);
+        let report=SectorReport{label:sector.label.clone(),dimension:sector.rank,prefix,stored_rows,reduced_kernel,vector_column_bytes,basis_payload_bytes:basis.map_or(0,|b|b.payload_bytes()),coordinates,coordinate_rejection:sector.coordinates.as_ref().and_then(|s|s.rejection.clone()),pt_projector_defect:sector.coordinates.as_ref().and_then(|s|s.pt_defect),partner_rows:sector.partners,working_columns:if dense {sector.rank} else {prefix.saturating_add(guard_columns).min(sector.rank-usize::from(sector.owns_kernel))},owns_gamma_kernel:sector.owns_kernel,iterations:steps,dense_complete:dense,seed_rank,leakage,correction_projection_interval:options.correction_projection_interval,correction_projection_rounds:op.projected_rounds,correction_projection_skipped_rounds:op.correction_rounds-op.projected_rounds};
 
     Ok((entry,report,(op.output,op.scratch)))
 }

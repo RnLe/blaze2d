@@ -11,6 +11,7 @@ use blaze2d_core::{
     polarization::Polarization,
     symmetry::{
         affine::PlaneGroup,
+        fourier::Arithmetic,
         reduced::{ReducedKernel, SectorStorage},
         reuse::SymmetryOptions,
         sectors::{self, SectorPlan, SectorPolicy, memory},
@@ -84,47 +85,50 @@ fn solve(
 
 #[test]
 fn setup_dense_and_original_seed_width_are_admitted_before_solver_work() {
-    let j = job(13, 4, false);
-    let mut s = options();
-    s.max_sector_workspace_bytes = 1;
-    let before = iteration_total();
-    let error = SectorPlan::qualify(
-        &mut operator(&j),
-        &j.geom.lattice,
-        j.k_path[0],
-        PlaneGroup::Pm.group(),
-        &s,
-    )
-    .err()
-    .unwrap();
-    assert!(error.contains("qualification/basis setup"));
-    assert_eq!(iteration_total(), before);
+    for arithmetic in [Arithmetic::SpatialComplex, Arithmetic::PtRealTe] {
+        let j = job(13, 4, false);
+        let mut s = options();
+        s.arithmetic = arithmetic;
+        s.max_sector_workspace_bytes = 1;
+        let before = iteration_total();
+        let error = SectorPlan::qualify(
+            &mut operator(&j),
+            &j.geom.lattice,
+            j.k_path[0],
+            PlaneGroup::Pm.group(),
+            &s,
+        )
+        .err()
+        .unwrap();
+        assert!(error.contains("qualification/basis setup"));
+        assert_eq!(iteration_total(), before);
 
-    s.max_sector_workspace_bytes = 1 << 20;
-    let reference = solve(&j, &s, None).unwrap();
-    assert!(
-        reference
-            .report
-            .workspace
-            .as_ref()
-            .unwrap()
-            .peak_estimated_payload_bytes
-            <= s.max_sector_workspace_bytes
-    );
-    // All 64 inputs are identical. Their original width, not their final rank,
-    // determines the temporary projection fields and rank-extraction Gram.
-    let warm = vec![Field2D::from_vec(j.grid, vec![C::ONE; j.grid.len()]); 64];
-    let before = iteration_total();
-    let error = solve(&j, &s, Some(&warm)).err().unwrap();
-    assert!(error.contains("sector 0 prefix"), "{error}");
-    assert_eq!(iteration_total(), before);
+        s.max_sector_workspace_bytes = 1 << 20;
+        let reference = solve(&j, &s, None).unwrap();
+        assert!(
+            reference
+                .report
+                .workspace
+                .as_ref()
+                .unwrap()
+                .peak_estimated_payload_bytes
+                <= s.max_sector_workspace_bytes
+        );
+        // All 64 inputs are identical. Their original width, not their final rank,
+        // determines the temporary projection fields and rank-extraction Gram.
+        let warm = vec![Field2D::from_vec(j.grid, vec![C::ONE; j.grid.len()]); 64];
+        let before = iteration_total();
+        let error = solve(&j, &s, Some(&warm)).err().unwrap();
+        assert!(error.contains("sector 0 prefix"), "{error}");
+        assert_eq!(iteration_total(), before);
 
-    let small = job(5, 25, true);
-    s.max_sector_workspace_bytes = 70_000;
-    let before = iteration_total();
-    let error = solve(&small, &s, None).err().unwrap();
-    assert!(error.contains("prefix"), "{error}");
-    assert_eq!(iteration_total(), before);
+        let small = job(5, 25, true);
+        s.max_sector_workspace_bytes = 70_000;
+        let before = iteration_total();
+        let error = solve(&small, &s, None).err().unwrap();
+        assert!(error.contains("prefix"), "{error}");
+        assert_eq!(iteration_total(), before);
+    }
 }
 
 #[test]
@@ -187,14 +191,19 @@ fn growth_budget_rejection_preserves_attempted_work_and_falls_back() {
 
 #[test]
 fn accepted_admission_caps_preserve_fields_and_finite_reservations_cover_the_report() {
-    for storage in [SectorStorage::FullGrid, SectorStorage::Orbit] {
+    for (storage, arithmetic) in [
+        (SectorStorage::FullGrid, Arithmetic::SpatialComplex),
+        (SectorStorage::Orbit, Arithmetic::SpatialComplex),
+        (SectorStorage::FullGrid, Arithmetic::PtRealTe),
+    ] {
         let mut j = job(9, 6, false);
         j.pol = Polarization::TE;
         let mut s = options();
         s.sector_storage = storage;
+        s.arithmetic = arithmetic;
         let original = solve(&j, &s, None).unwrap();
         let m = original.report.workspace.as_ref().unwrap();
-        let reservation = memory::reservation(
+        let reservation = memory::reservation_with_coordinates(
             9,
             9,
             2,
@@ -202,6 +211,7 @@ fn accepted_admission_caps_preserve_fields_and_finite_reservations_cover_the_rep
             storage,
             ReducedKernel::FullGrid,
             s.max_sector_workspace_bytes,
+            arithmetic != Arithmetic::SpatialComplex,
         )
         .unwrap();
         assert!(m.peak_estimated_payload_bytes <= reservation);

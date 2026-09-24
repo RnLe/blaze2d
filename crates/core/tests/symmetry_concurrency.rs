@@ -10,6 +10,7 @@ use blaze2d_core::{
     polarization::Polarization,
     symmetry::{
         affine::PlaneGroup,
+        fourier::Arithmetic,
         reduced::SectorStorage,
         reuse::SymmetryOptions,
         sectors::{
@@ -43,16 +44,63 @@ fn operator(n: usize, k: [f64; 2], polarization: Polarization) -> ThetaOperator<
 
 #[test]
 fn private_worker_scheduling_preserves_fields_and_adaptive_decisions() {
-    for (family, n, k, storage, partners) in [
+    for (family, n, k, storage, partners, arithmetic) in [
         (
             PlaneGroup::Pm,
             13,
             [0.17, 0.0],
             SectorStorage::FullGrid,
             false,
+            Arithmetic::SpatialComplex,
         ),
-        (PlaneGroup::P4m, 9, [0.0; 2], SectorStorage::FullGrid, true),
-        (PlaneGroup::P4m, 9, [0.0; 2], SectorStorage::Orbit, true),
+        (
+            PlaneGroup::P4m,
+            9,
+            [0.0; 2],
+            SectorStorage::FullGrid,
+            true,
+            Arithmetic::SpatialComplex,
+        ),
+        (
+            PlaneGroup::P4m,
+            9,
+            [0.0; 2],
+            SectorStorage::Orbit,
+            true,
+            Arithmetic::SpatialComplex,
+        ),
+        (
+            PlaneGroup::Pm,
+            13,
+            [0.17, 0.0],
+            SectorStorage::FullGrid,
+            false,
+            Arithmetic::FourierComplex,
+        ),
+        (
+            PlaneGroup::Pm,
+            13,
+            [0.17, 0.0],
+            SectorStorage::FullGrid,
+            false,
+            Arithmetic::PtRealTe,
+        ),
+        (
+            PlaneGroup::P4,
+            9,
+            [0.0; 2],
+            SectorStorage::FullGrid,
+            false,
+            Arithmetic::PtRealTe,
+        ),
+        (
+            PlaneGroup::P4m,
+            9,
+            [0.0; 2],
+            SectorStorage::FullGrid,
+            true,
+            Arithmetic::PtRealTe,
+        ),
     ] {
         for polarization in [Polarization::TM, Polarization::TE] {
             let config = EigensolverConfig {
@@ -66,6 +114,7 @@ fn private_worker_scheduling_preserves_fields_and_adaptive_decisions() {
                 sector_guard_budget: Some(6),
                 sector_storage: storage,
                 reconstruct_partners: partners,
+                arithmetic,
                 ..Default::default()
             };
             let run = |workers, cap| {
@@ -171,65 +220,11 @@ fn rejected_worker_work_is_counted_and_budgets_reject_before_launch() {
         tol: 1e-14,
         ..Default::default()
     };
-    let options = SymmetryOptions::default();
-    let before = iteration_total();
-    let error = match solve_owned(
-        &mut op,
-        &lattice,
-        k,
-        PlaneGroup::Pm.group(),
-        &config,
-        None,
-        &options,
-        ExecutionBudget {
-            workers: 2,
-            logical_cpu_budget: 2,
+    for arithmetic in [Arithmetic::SpatialComplex, Arithmetic::PtRealTe] {
+        let options = SymmetryOptions {
+            arithmetic,
             ..Default::default()
-        },
-        CpuBackend::<f64>::new,
-    ) {
-        Ok(_) => panic!("one iteration should not produce a certified sector spectrum"),
-        Err(e) => e,
-    };
-    assert!(error.scheduling.attempted_iterations > 0);
-    assert_eq!(
-        error.scheduling.attempted_iterations,
-        iteration_total().wrapping_sub(before)
-    );
-    assert_eq!(
-        error.scheduling.attempted_iterations,
-        error
-            .scheduling
-            .attempts
-            .iter()
-            .map(|a| a.attempted_iterations)
-            .sum::<usize>()
-    );
-    assert!(
-        error
-            .scheduling
-            .attempts
-            .iter()
-            .all(|a| a.rejection.is_some())
-    );
-    assert_eq!(
-        error.scheduling.attempts.len(),
-        error.scheduling.effective_worker_limit.min(2)
-    );
-    for budget in [
-        ExecutionBudget {
-            workers: 0,
-            ..Default::default()
-        },
-        ExecutionBudget {
-            logical_cpu_budget: 0,
-            ..Default::default()
-        },
-        ExecutionBudget {
-            max_workspace_bytes: 1,
-            ..Default::default()
-        },
-    ] {
+        };
         let before = iteration_total();
         let error = match solve_owned(
             &mut op,
@@ -239,14 +234,73 @@ fn rejected_worker_work_is_counted_and_budgets_reject_before_launch() {
             &config,
             None,
             &options,
-            budget,
+            ExecutionBudget {
+                workers: 2,
+                logical_cpu_budget: 2,
+                ..Default::default()
+            },
             CpuBackend::<f64>::new,
         ) {
-            Ok(_) => panic!("invalid resource budget accepted"),
+            Ok(_) => panic!("one iteration should not produce a certified sector spectrum"),
             Err(e) => e,
         };
-        assert!(error.scheduling.attempts.is_empty());
-        assert_eq!(error.scheduling.attempted_iterations, 0);
-        assert_eq!(iteration_total(), before);
+        assert!(error.scheduling.attempted_iterations > 0);
+        assert_eq!(
+            error.scheduling.attempted_iterations,
+            iteration_total().wrapping_sub(before)
+        );
+        assert_eq!(
+            error.scheduling.attempted_iterations,
+            error
+                .scheduling
+                .attempts
+                .iter()
+                .map(|a| a.attempted_iterations)
+                .sum::<usize>()
+        );
+        assert!(
+            error
+                .scheduling
+                .attempts
+                .iter()
+                .all(|a| a.rejection.is_some())
+        );
+        assert_eq!(
+            error.scheduling.attempts.len(),
+            error.scheduling.effective_worker_limit.min(2)
+        );
+        for budget in [
+            ExecutionBudget {
+                workers: 0,
+                ..Default::default()
+            },
+            ExecutionBudget {
+                logical_cpu_budget: 0,
+                ..Default::default()
+            },
+            ExecutionBudget {
+                max_workspace_bytes: 1,
+                ..Default::default()
+            },
+        ] {
+            let before = iteration_total();
+            let error = match solve_owned(
+                &mut op,
+                &lattice,
+                k,
+                PlaneGroup::Pm.group(),
+                &config,
+                None,
+                &options,
+                budget,
+                CpuBackend::<f64>::new,
+            ) {
+                Ok(_) => panic!("invalid resource budget accepted"),
+                Err(e) => e,
+            };
+            assert!(error.scheduling.attempts.is_empty());
+            assert_eq!(error.scheduling.attempted_iterations, 0);
+            assert_eq!(iteration_total(), before);
+        }
     }
 }

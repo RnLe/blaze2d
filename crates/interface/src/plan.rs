@@ -348,8 +348,9 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
                 blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeMirror | blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveMirror=>2,
                 _=>options.plane_group.expect("validated group policy").group().order(),
             };
-            extra+=memory::reservation(resolved.resolution[0],resolved.resolution[1],order,resolved.solved_bands,
-                options.sector_storage,options.sector_kernel,options.max_sector_workspace_bytes).map_err(error)? as u128;
+            extra+=memory::reservation_with_coordinates(resolved.resolution[0],resolved.resolution[1],order,resolved.solved_bands,
+                options.sector_storage,options.sector_kernel,options.max_sector_workspace_bytes,
+                options.sector_storage==Storage::FullGrid && options.arithmetic!=blaze2d_core::symmetry::fourier::Arithmetic::SpatialComplex).map_err(error)? as u128;
         }
         u64::try_from(extra).map_err(|_|invalid("bands.symmetry","memory estimate overflows"))?
     } else {0};

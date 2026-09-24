@@ -5,6 +5,8 @@ use serde::Serialize;
 use crate::{backend::{SpectralBackend,SpectralBuffer},field::{Field2D,Real,cscalar},grid::Grid2D,lattice::Lattice2D,operators::{LinearOperator,ThetaOperator},preconditioners::OperatorPreconditioner,eigensolver::{Eigensolver,EigensolverConfig,refine::certify_without_refinement}};
 use super::reuse::{CachedSpectrum,SymmetryOptions};
 
+pub(crate) mod sector;
+
 #[derive(Debug,Clone,Copy,Default,PartialEq,Eq,Serialize)]
 #[serde(rename_all="snake_case")]
 pub enum Arithmetic {#[default] SpatialComplex, FourierComplex, PtComplex, PtRealStorage, PtRealVectors, PtRealGram, PtRealDense, PtRealTm, PtRealTe, PtRealReferenceVectors}
@@ -16,9 +18,39 @@ pub struct CoordinateReport {
     pub peak_solver_vector_bytes:usize,
     pub conversion_scratch_bytes:usize,
     pub maximum_real_subspace_leakage:f64,
+    /// Relative correction applied before the final sector-local Ritz rotation.
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub final_sector_projection_defect:Option<f64>,
     pub qualification:Option<super::qualification::QualificationReport>,
 }
 pub struct CoordinateResult {pub spectrum:CachedSpectrum,pub iterations:usize,pub report:CoordinateReport}
+
+/// Immutable qualification and gauge, shared by all prefixes at one k point.
+pub(crate) struct CoordinateSetup {
+    arithmetic: Arithmetic,
+    gauge: Arc<Vec<C>>,
+    qualification: Option<super::qualification::QualificationReport>,
+}
+impl CoordinateSetup {
+    pub(crate) fn complex(n:usize)->Self {
+        Self{arithmetic:Arithmetic::FourierComplex,gauge:Arc::new(vec![C::ONE;n]),qualification:None}
+    }
+    pub(crate) fn real(&self)->bool { !matches!(self.arithmetic,Arithmetic::SpatialComplex|Arithmetic::FourierComplex) }
+    pub(crate) fn qualify<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,lattice:&Lattice2D,k:[f64;2],options:&SymmetryOptions)->Result<Self,String> {
+        if std::mem::size_of::<B::Real>()!=8 {return Err("Fourier-coordinate experiments currently require f64".into());}
+        let mut setup=Self::complex(operator.grid().len());
+        if matches!(options.arithmetic,Arithmetic::SpatialComplex|Arithmetic::FourierComplex) {return Ok(setup);}
+        let pt=options.pt_operation.unwrap_or_else(||super::affine::PlaneGroup::P2.group().operations[1].with_conjugation(true));
+        if !pt.conjugates() || pt.matrix()!=[[-1,0],[0,-1]] {return Err("real scalar packing requires antiunitary inversion".into());}
+        let plan=super::action::BlochActionPlan::new(pt,k,k,operator.grid(),operator.polarization(),1e-12).map_err(|e|e.to_string())?;
+        if plan.fourier_permutation().iter().enumerate().any(|(i,&j)|i!=j) {return Err("PT action is not diagonal in this Fourier representation".into());}
+        let gauge=plan.fourier_phases().iter().map(|z|C::from_polar(1.0,0.5*z.arg())).collect();
+        let mut other=ThetaOperator::new(operator.backend().clone(),operator.dielectric().clone(),operator.polarization(),operator.bloch());
+        let qualified=super::qualification::qualify(plan,lattice,operator,&mut other,options.qualification_tolerance).map_err(|r|format!("PT qualification failed: {:?}",r.rejection_reasons))?;
+        setup.arithmetic=options.arithmetic;setup.gauge=Arc::new(gauge);setup.qualification=Some(qualified.report().clone());
+        Ok(setup)
+    }
+}
 
 #[derive(Default)]
 struct AllocationLedger {live:AtomicUsize,peak:AtomicUsize}
@@ -124,6 +156,7 @@ impl<B:SpectralBackend+Clone> Conversion<B> {
 }
 struct FourierOperator<'a,B:SpectralBackend+Clone> {
     full:&'a mut ThetaOperator<B>,backend:CoordinateBackend,conversion:Conversion<B>,input:B::Buffer,output:B::Buffer,direct_tm:bool,direct_te:bool,
+    sector:Option<sector::SectorProjection<'a>>,correction_rounds:usize,projected_rounds:usize,
 }
 impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOperator<'_,B> {
     fn apply(&mut self,x:&CoordinateBuffer,y:&mut CoordinateBuffer) {
@@ -153,7 +186,36 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
     fn backend(&self)->&CoordinateBackend {&self.backend}
     fn backend_mut(&mut self)->&mut CoordinateBackend {&mut self.backend}
     fn grid(&self)->Grid2D {self.conversion.coordinate_grid()}
-    fn subspace_dimension(&self)->usize {self.full.grid().len()}
+    fn subspace_dimension(&self)->usize {self.sector.as_ref().map_or(self.full.grid().len(),|s|s.dimension)}
+    fn owns_gamma_kernel(&self)->bool {self.sector.as_ref().is_none_or(|s|s.owns_gamma_kernel)}
+    fn constrain(&mut self,v:&mut CoordinateBuffer) {
+        if let Some(sector)=&self.sector {
+            self.conversion.unpack_fourier(v.as_slice(),&mut self.input);
+            sector.project(&self.input,&mut self.output);
+            if self.conversion.real_space {
+                // An exactly annihilated axis can leave pure-imaginary roundoff.
+                // Projector leakage is relative to its input, not that near-zero
+                // output. The complete gauged projector was checked beforehand.
+                let norm=self.input.as_slice().iter().map(|z|z.re.to_accum().powi(2)+z.im.to_accum().powi(2)).sum::<f64>();
+                let imaginary=self.output.as_slice().iter().zip(self.conversion.gauge.iter()).map(|(z,g)| {
+                    let z=C::new(z.re.to_accum(),z.im.to_accum())*g.conj();z.im*z.im
+                }).sum::<f64>();
+                let defect=(imaginary/norm.max(f64::MIN_POSITIVE)).sqrt();
+                self.conversion.leakage.set(if defect.is_finite() {self.conversion.leakage.get().max(defect)} else {f64::INFINITY});
+            }
+            self.conversion.pack_fourier(&self.output,v.as_mut_slice(),1.0,false);
+        }
+    }
+    fn constrain_corrections(&mut self,vectors:&mut[CoordinateBuffer]) {
+        let Some(sector)=&self.sector else {return;};
+        if vectors.is_empty() {return;}
+        if self.correction_rounds%sector.correction_projection_interval==0 {
+            for v in vectors {self.constrain(v);}
+            self.projected_rounds+=1;
+            crate::profiler::count("symmetry.correction_projection_rounds",1);
+        } else {crate::profiler::count("symmetry.skipped_correction_projection_rounds",1);}
+        self.correction_rounds+=1;
+    }
     fn bloch(&self)->[f64;2] {self.full.bloch()}
     fn fill_gamma_kernel(&self,v:&mut CoordinateBuffer) {v.as_mut_slice().fill(C::ZERO);v.as_mut_slice()[0]=C::ONE;}
     fn seed_initial_vector(&mut self,v:&mut CoordinateBuffer,phase:f64) {
@@ -190,22 +252,16 @@ impl<B:SpectralBackend+Clone> OperatorPreconditioner<CoordinateBackend> for Four
 
 pub fn solve_fourier<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,lattice:&Lattice2D,k:[f64;2],config:&EigensolverConfig,warm:Option<&[Field2D]>,options:&SymmetryOptions,preconditioner:Option<&mut dyn OperatorPreconditioner<B>>)->Result<CoordinateResult,String> {
     crate::profile_scope!("symmetry.fourier_coordinates");
-    if std::mem::size_of::<B::Real>()!=8 {return Err("Fourier-coordinate experiments currently require f64".into());}
+    let setup=CoordinateSetup::qualify(operator,lattice,k,options)?;
+    solve_prepared(operator,k,config,warm,options,preconditioner,&setup,None,false).map(|r|r.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn solve_prepared<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,k:[f64;2],config:&EigensolverConfig,warm:Option<&[Field2D]>,options:&SymmetryOptions,preconditioner:Option<&mut dyn OperatorPreconditioner<B>>,setup:&CoordinateSetup,sector:Option<sector::SectorProjection<'_>>,complete:bool)->Result<(CoordinateResult,usize,usize),String> {
     let grid=operator.grid();let n=grid.len();
-    let real_space=!matches!(options.arithmetic,Arithmetic::SpatialComplex|Arithmetic::FourierComplex);let packed=real_space && options.arithmetic!=Arithmetic::PtComplex;
-    let mut gauge=vec![C::ONE;n];let mut qualification=None;
-    if real_space {
-        let pt=options.pt_operation.unwrap_or_else(||super::affine::PlaneGroup::P2.group().operations[1].with_conjugation(true));
-        if !pt.conjugates() || pt.matrix()!=[[-1,0],[0,-1]] {return Err("real scalar packing requires antiunitary inversion".into());}
-        let plan=super::action::BlochActionPlan::new(pt,k,k,grid,operator.polarization(),1e-12).map_err(|e|e.to_string())?;
-        if plan.fourier_permutation().iter().enumerate().any(|(i,&j)|i!=j) {return Err("PT action is not diagonal in this Fourier representation".into());}
-        gauge=plan.fourier_phases().iter().map(|z|C::from_polar(1.0,0.5*z.arg())).collect();
-        let mut other=ThetaOperator::new(operator.backend().clone(),operator.dielectric().clone(),operator.polarization(),operator.bloch());
-        let qualified=super::qualification::qualify(plan,lattice,operator,&mut other,options.qualification_tolerance).map_err(|r|format!("PT qualification failed: {:?}",r.rejection_reasons))?;
-        qualification=Some(qualified.report().clone());
-    }
-    let conversion=Conversion{backend:operator.backend().clone(),grid,gauge:Arc::new(gauge),real_space,packed,leakage:Rc::new(Cell::new(0.0))};
-    let backend=CoordinateBackend{ledger:Arc::default(),nreal:n,real_space,packed,real_vectors:matches!(options.arithmetic,Arithmetic::PtRealVectors|Arithmetic::PtRealGram|Arithmetic::PtRealDense|Arithmetic::PtRealTm|Arithmetic::PtRealTe),real_gram:matches!(options.arithmetic,Arithmetic::PtRealGram|Arithmetic::PtRealDense|Arithmetic::PtRealTm|Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors),real_dense:matches!(options.arithmetic,Arithmetic::PtRealDense|Arithmetic::PtRealTm|Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors)};
+    let arithmetic=setup.arithmetic;let real_space=setup.real();let packed=real_space && arithmetic!=Arithmetic::PtComplex;
+    let conversion=Conversion{backend:operator.backend().clone(),grid,gauge:setup.gauge.clone(),real_space,packed,leakage:Rc::new(Cell::new(0.0))};
+    let backend=CoordinateBackend{ledger:Arc::default(),nreal:n,real_space,packed,real_vectors:matches!(arithmetic,Arithmetic::PtRealVectors|Arithmetic::PtRealGram|Arithmetic::PtRealDense|Arithmetic::PtRealTm|Arithmetic::PtRealTe),real_gram:matches!(arithmetic,Arithmetic::PtRealGram|Arithmetic::PtRealDense|Arithmetic::PtRealTm|Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors),real_dense:matches!(arithmetic,Arithmetic::PtRealDense|Arithmetic::PtRealTm|Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors)};
     let mut scratch=operator.alloc_field();
     if warm.is_some_and(|fields|fields.iter().any(|f|f.len()!=n || f.grid().nx!=grid.nx || f.grid().ny!=grid.ny)) {return Err("warm-start shape differs from physical Fourier grid".into());}
     let warm=warm.map(|fields| {
@@ -223,18 +279,48 @@ pub fn solve_fourier<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,lat
         }
         converted
     });
-    let direct_tm=matches!(options.arithmetic,Arithmetic::PtRealTm|Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors) && operator.polarization()==crate::polarization::Polarization::TM;
-    let direct_te=matches!(options.arithmetic,Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors) && operator.polarization()==crate::polarization::Polarization::TE;
+    let direct_tm=matches!(arithmetic,Arithmetic::PtRealTm|Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors) && operator.polarization()==crate::polarization::Polarization::TM;
+    let direct_te=matches!(arithmetic,Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors) && operator.polarization()==crate::polarization::Polarization::TE;
     let mut preconditioner=preconditioner.map(|p|FourierPreconditioner{inner:p,conversion:conversion.clone(),scratch:operator.alloc_field(),direct_diagonal:direct_tm||direct_te,direct_fourier:direct_te});
     let input=operator.alloc_field();let output=operator.alloc_field();
-    let mut op=FourierOperator{full:operator,backend:backend.clone(),conversion:conversion.clone(),input,output,direct_tm,direct_te};
-    let mut solver=Eigensolver::new(&mut op,config.clone(),preconditioner.as_mut().map(|p|p as &mut dyn OperatorPreconditioner<CoordinateBackend>),warm.as_deref());
-    let result=solver.solve();let coordinates=solver.all_eigenvectors();drop(solver);
+    let mut op=FourierOperator{full:operator,backend:backend.clone(),conversion:conversion.clone(),input,output,direct_tm,direct_te,sector,correction_rounds:0,projected_rounds:0};
+    let (mut eigenvalues,mut coordinates,iterations,converged)=if complete {
+        let (values,fields)=sector::dense_complete(&mut op)?;(values,fields,0,true)
+    } else {
+        let mut solver=Eigensolver::new(&mut op,config.clone(),preconditioner.as_mut().map(|p|p as &mut dyn OperatorPreconditioner<CoordinateBackend>),warm.as_deref());
+        let result=solver.solve();let coordinates=solver.all_eigenvectors();
+        (result.eigenvalues,coordinates,result.iterations,result.converged)
+    };
+    eigenvalues.truncate(config.n_bands);
+    coordinates.truncate(config.n_bands);
+    let final_sector_projection_defect=if op.sector.is_some() {
+        // Near-dependent warm directions can amplify projector roundoff during
+        // normalization. Restore the qualified subspace before the final Ritz
+        // rotation; fresh physical residual and orthogonality gates still apply.
+        let mut maximum:f64=0.0;
+        for field in &mut coordinates {
+            let mut v=op.alloc_field();v.as_mut_slice().copy_from_slice(field.as_slice());
+            let norm=op.backend.dot(&v,&v).re.max(f64::MIN_POSITIVE);
+            op.constrain(&mut v);
+            let mut difference=v.clone();
+            for (dst,src) in difference.as_mut_slice().iter_mut().zip(field.as_slice()) {*dst-=src;}
+            let defect=(op.backend.dot(&difference,&difference).re.max(0.0)/norm).sqrt();
+            if !defect.is_finite() {return Err("nonfinite final sector projection defect".into());}
+            maximum=maximum.max(defect);
+            field.as_mut_slice().copy_from_slice(v.as_slice());
+        }
+        // Refine in the selected real/complex algebra. A later complex rotation
+        // in physical coordinates could destroy the exported PT gauge.
+        crate::eigensolver::refine::rayleigh_ritz_certify(&mut op,&mut eigenvalues,&mut coordinates);
+        if op.owns_gamma_kernel() && k==[0.0;2] && eigenvalues.first().is_some_and(|v|v.abs()<1e-8) {eigenvalues[0]=0.0;}
+        Some(maximum)
+    } else {None};
     let mut fields=Vec::new();for v in coordinates {conversion.spatial(v.as_slice(),&mut scratch);fields.push(conversion.promote(&scratch));}
-    let cert=certify_without_refinement(op.full,&result.eigenvalues,&fields);
-    let spectrum=CachedSpectrum{source_index:0,k,eigenvalues:result.eigenvalues,fields,residuals:cert.residuals,absolute_residuals:cert.absolute_residuals,orthogonality_defect:cert.b_orthogonality_defect};
+    fields.truncate(config.n_bands);
+    let cert=certify_without_refinement(op.full,&eigenvalues,&fields);
+    let spectrum=CachedSpectrum{source_index:0,k,eigenvalues,fields,residuals:cert.residuals,absolute_residuals:cert.absolute_residuals,orthogonality_defect:cert.b_orthogonality_defect};
     if !conversion.leakage.get().is_finite() || conversion.leakage.get()>options.qualification_tolerance {return Err(format!("PT real subspace leakage: {:e}",conversion.leakage.get()));}
-    if !result.converged || !spectrum.passes(options) || spectrum.fields.len()!=config.n_bands {return Err("Fourier-coordinate solve failed fresh physical quality gates".into());}
-    let report=CoordinateReport{representation:if real_space {options.arithmetic} else {Arithmetic::FourierComplex},physical_coefficients:grid.len(),bytes_per_column:conversion.coordinate_grid().len()*16,peak_solver_vector_bytes:backend.ledger.peak.load(Ordering::Relaxed),maximum_real_subspace_leakage:conversion.leakage.get(),qualification,conversion_scratch_bytes:grid.len()*16*(3+usize::from(preconditioner.is_some()))};
-    Ok(CoordinateResult{spectrum,iterations:result.iterations,report})
+    if !converged || !spectrum.passes(options) || spectrum.fields.len()!=config.n_bands {return Err("Fourier-coordinate solve failed fresh physical quality gates".into());}
+    let report=CoordinateReport{representation:if real_space {arithmetic} else {Arithmetic::FourierComplex},physical_coefficients:grid.len(),bytes_per_column:conversion.coordinate_grid().len()*16,peak_solver_vector_bytes:backend.ledger.peak.load(Ordering::Relaxed),maximum_real_subspace_leakage:conversion.leakage.get(),final_sector_projection_defect,qualification:setup.qualification.clone(),conversion_scratch_bytes:grid.len()*16*(3+usize::from(preconditioner.is_some()))};
+    Ok((CoordinateResult{spectrum,iterations,report},op.projected_rounds,op.correction_rounds-op.projected_rounds))
 }

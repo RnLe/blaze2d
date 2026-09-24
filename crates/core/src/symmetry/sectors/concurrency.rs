@@ -176,13 +176,13 @@ where
     {
         return Err("correction projection cadence applies only to full-grid sectors".into());
     }
-    if options.arithmetic != crate::symmetry::fourier::Arithmetic::SpatialComplex
+    if (options.arithmetic != crate::symmetry::fourier::Arithmetic::SpatialComplex && options.sector_storage!=SectorStorage::FullGrid)
         || options.share_sector_workspace
         || (options.sector_storage == SectorStorage::FullGrid
             && options.sector_kernel != crate::symmetry::reduced::ReducedKernel::FullGrid)
     {
         return Err(
-            "owned workers require spatial arithmetic and private projection buffers".into(),
+            "owned workers require private buffers; Fourier arithmetic requires full-grid sectors".into(),
         );
     }
     if warm.is_some_and(|fields| {
@@ -206,8 +206,10 @@ where
     // Bound table/basis setup before constructing it. This is a payload model,
     // not an assertion about the allocator's process high-water mark.
     let group_order = group.operations.len();
-    let qualification_bound =
-        memory::setup_payload(grid.len(), group_order, options.sector_storage)?;
+    let qualification_bound = memory::sum(&[
+        memory::setup_payload(grid.len(), group_order, options.sector_storage)?,
+        memory::coordinate_setup_payload(grid.len(),super::uses_coordinates(options))?,
+    ])?;
     report.peak_estimated_payload_bytes = qualification_bound;
     if qualification_bound > report.effective_workspace_limit {
         return Err("qualification/basis setup exceeds concurrent payload budget".into());
@@ -285,6 +287,7 @@ where
                 };
                 let estimate = memory::sum(&[
                     memory::worker_payload(grid.len(), columns, seed.map_or(0, <[Field2D]>::len))?,
+                    memory::coordinate_worker_payload(grid.len(),seed.map_or(0,<[Field2D]>::len),super::uses_coordinates(options))?,
                     kernel_payload,
                 ])?;
                 let combined = payload.checked_add(estimate).ok_or("payload overflow")?;

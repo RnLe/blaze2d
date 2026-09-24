@@ -152,8 +152,8 @@ impl Config {
                 if bands.symmetry.correction_projection_interval==0 || (bands.symmetry.correction_projection_interval!=1 && bands.symmetry.sector_storage!=SectorStorage::FullGrid) {
                     return Err(invalid("bands.symmetry.correction_projection_interval","must be positive; values other than one require full-grid sectors"));
                 }
-                if bands.discretization.is_fft_rectangle() && bands.symmetry.sectors != SectorPolicy::Off && bands.symmetry.arithmetic != SymmetryArithmetic::SpatialComplex {
-                    return Err(invalid("bands.symmetry.arithmetic","sector solves and Fourier arithmetic are separate experimental paths; their combined representation is not implemented"));
+                if bands.discretization.is_fft_rectangle() && bands.symmetry.sectors != SectorPolicy::Off && bands.symmetry.arithmetic != SymmetryArithmetic::SpatialComplex && bands.symmetry.sector_storage != SectorStorage::FullGrid {
+                    return Err(invalid("bands.symmetry.arithmetic","Fourier arithmetic requires full-grid sector storage; combining it with orbit storage is not implemented"));
                 }
                 if bands.symmetry.sector_kernel != SectorKernel::FullGrid && bands.symmetry.sector_storage != SectorStorage::Orbit {
                     return Err(invalid("bands.symmetry.sector_storage","a reduced mirror kernel requires orbit storage"));
