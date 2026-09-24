@@ -14,7 +14,7 @@ use crate::{
         BlockCertification, Eigensolver, EigensolverConfig,
         refine::{certify_without_refinement, rayleigh_ritz_certify},
     },
-    field::Field2D,
+    field::{Field2D, Real, cscalar, from_accum, to_accum},
     grid::Grid2D,
     operators::{LinearOperator, ThetaOperator},
     polarization::Polarization,
@@ -70,10 +70,15 @@ fn same_grid(a: Grid2D, b: Grid2D) -> bool {
     (a.nx, a.ny, a.lx, a.ly, a.centered) == (b.nx, b.ny, b.lx, b.ly, b.centered)
 }
 
-fn validate_operator<B: SpectralBackend<Real = f64>>(
+pub(super) fn validate_operator<B: SpectralBackend>(
     full: &ThetaOperator<B>,
     support: &FourierSupport,
 ) -> Result<(), String> {
+    if std::any::TypeId::of::<B::Real>() != std::any::TypeId::of::<f64>() {
+        return Err(
+            "Galerkin solves require an f64 backend; precision is never silently promoted".into(),
+        );
+    }
     let reciprocal = support.lattice().reciprocal();
     let d = full.dielectric();
     if !same_grid(full.grid(), support.grid())
@@ -116,7 +121,9 @@ fn validate_operator<B: SpectralBackend<Real = f64>>(
 
 /// Public coefficient-space operator, useful for independently testing its
 /// congruence and for subsequent qualified reduction on exactly this pencil.
-pub struct GalerkinOperator<'a, B: SpectralBackend<Real = f64>> {
+/// Generic callers may pass any backend; construction explicitly rejects
+/// storage other than f64 before allocating the projected workspace.
+pub struct GalerkinOperator<'a, B: SpectralBackend> {
     full: &'a mut ThetaOperator<B>,
     support: &'a FourierSupport,
     application: GalerkinApplication,
@@ -125,7 +132,7 @@ pub struct GalerkinOperator<'a, B: SpectralBackend<Real = f64>> {
     scratch: B::Buffer,
     kernel_index: Option<usize>,
 }
-impl<'a, B: SpectralBackend<Real = f64>> GalerkinOperator<'a, B> {
+impl<'a, B: SpectralBackend> GalerkinOperator<'a, B> {
     /// The workspace limit here bounds only the three newly allocated full
     /// fields. Solver entry points apply their larger payload model first.
     pub fn new(
@@ -165,7 +172,7 @@ impl<'a, B: SpectralBackend<Real = f64>> GalerkinOperator<'a, B> {
         self.support
     }
 
-    fn project_physical(
+    pub(super) fn project_physical(
         &mut self,
         fields: &[Field2D],
         limit: usize,
@@ -179,7 +186,9 @@ impl<'a, B: SpectralBackend<Real = f64>> GalerkinOperator<'a, B> {
                     "Galerkin warm fields must be finite and use the same physical grid".into(),
                 );
             }
-            self.input.as_mut_slice().copy_from_slice(field.as_slice());
+            for (dst, &src) in self.input.as_mut_slice().iter_mut().zip(field.as_slice()) {
+                *dst = from_accum(src);
+            }
             let mut small = Field2D::zeros(self.grid());
             self.support.restrict(
                 self.full.backend(),
@@ -198,13 +207,21 @@ impl<'a, B: SpectralBackend<Real = f64>> GalerkinOperator<'a, B> {
             .map(|field| {
                 self.support
                     .expand(self.full.backend(), field.as_slice(), &mut self.input);
-                Field2D::from_vec(self.support.grid(), self.input.as_slice().to_vec())
+                Field2D::from_vec(
+                    self.support.grid(),
+                    self.input
+                        .as_slice()
+                        .iter()
+                        .copied()
+                        .map(to_accum)
+                        .collect(),
+                )
             })
             .collect()
     }
 }
 
-impl<B: SpectralBackend<Real = f64>> LinearOperator<B> for GalerkinOperator<'_, B> {
+impl<B: SpectralBackend> LinearOperator<B> for GalerkinOperator<'_, B> {
     fn apply(&mut self, x: &B::Buffer, y: &mut B::Buffer) {
         assert_eq!(x.len(), self.support.len());
         assert_eq!(y.len(), self.support.len());
@@ -220,11 +237,11 @@ impl<B: SpectralBackend<Real = f64>> LinearOperator<B> for GalerkinOperator<'_, 
                     .zip(x.as_slice())
                     .zip(self.support.embedding_indices())
                 {
-                    *dst = src * self.full.k_plus_g_squares()[i];
+                    *dst = src * B::Real::from_accum(self.full.k_plus_g_squares()[i]);
                 }
             }
             (GalerkinApplication::DirectFourier, Polarization::TE) => {
-                self.input.as_mut_slice().fill(C::ZERO);
+                self.input.as_mut_slice().fill(cscalar::<B::Real>(0.0, 0.0));
                 for (&i, &value) in self.support.embedding_indices().iter().zip(x.as_slice()) {
                     self.input.as_mut_slice()[i] = value;
                 }
@@ -298,9 +315,9 @@ impl<B: SpectralBackend<Real = f64>> LinearOperator<B> for GalerkinOperator<'_, 
         self.kernel_index.is_some()
     }
     fn fill_gamma_kernel(&self, vector: &mut B::Buffer) {
-        vector.as_mut_slice().fill(C::ZERO);
+        vector.as_mut_slice().fill(cscalar::<B::Real>(0.0, 0.0));
         if let Some(i) = self.kernel_index {
-            vector.as_mut_slice()[i] = C::ONE;
+            vector.as_mut_slice()[i] = cscalar::<B::Real>(1.0, 0.0);
         }
     }
     fn seed_initial_vector(&mut self, vector: &mut B::Buffer, phase: f64) {
@@ -316,14 +333,40 @@ impl<B: SpectralBackend<Real = f64>> LinearOperator<B> for GalerkinOperator<'_, 
     }
 }
 
-struct GalerkinPreconditioner<'a, B: SpectralBackend<Real = f64>> {
+pub(super) struct GalerkinPreconditioner<'a, B: SpectralBackend> {
     inner: &'a mut dyn OperatorPreconditioner<B>,
     support: &'a FourierSupport,
     application: GalerkinApplication,
     input: B::Buffer,
     scratch: B::Buffer,
 }
-impl<B: SpectralBackend<Real = f64>> OperatorPreconditioner<B> for GalerkinPreconditioner<'_, B> {
+impl<'a, B: SpectralBackend> GalerkinPreconditioner<'a, B> {
+    pub(super) fn new(
+        inner: &'a mut dyn OperatorPreconditioner<B>,
+        full: &ThetaOperator<B>,
+        support: &'a FourierSupport,
+        application: GalerkinApplication,
+    ) -> Result<Self, String> {
+        if inner.fourier_diagonal().is_some_and(|d| {
+            d.len() != support.grid().len()
+                || d.iter().any(|x| !x.is_finite())
+                || support
+                    .embedding_indices()
+                    .iter()
+                    .any(|&i| d[i] < 0.0 || (d[i] == 0.0 && full.k_plus_g_squares()[i] != 0.0))
+        }) {
+            return Err("Galerkin preconditioner diagonal is invalid for the embedding".into());
+        }
+        Ok(Self {
+            inner,
+            support,
+            application,
+            input: full.alloc_field(),
+            scratch: full.alloc_field(),
+        })
+    }
+}
+impl<B: SpectralBackend> OperatorPreconditioner<B> for GalerkinPreconditioner<'_, B> {
     fn apply(&mut self, backend: &B, vector: &mut B::Buffer) {
         crate::profile_scope!("symmetry.galerkin.preconditioner");
         if self.application == GalerkinApplication::DirectFourier {
@@ -334,11 +377,11 @@ impl<B: SpectralBackend<Real = f64>> OperatorPreconditioner<B> for GalerkinPreco
                     .iter_mut()
                     .zip(self.support.embedding_indices())
                 {
-                    *value *= diagonal[i];
+                    *value *= B::Real::from_accum(diagonal[i]);
                 }
                 return;
             }
-            self.input.as_mut_slice().fill(C::ZERO);
+            self.input.as_mut_slice().fill(cscalar::<B::Real>(0.0, 0.0));
             for (&i, &value) in self
                 .support
                 .embedding_indices()
@@ -446,12 +489,34 @@ fn admit(
     Ok(bytes)
 }
 
-fn finish<B: SpectralBackend<Real = f64>>(
+fn finish<B: SpectralBackend>(
+    operator: &mut GalerkinOperator<'_, B>,
+    eigenvalues: Vec<f64>,
+    coefficients: Vec<Field2D>,
+    config: &EigensolverConfig,
+    report: GalerkinReport,
+) -> GalerkinResult {
+    finish_impl(operator, eigenvalues, coefficients, config, report, true)
+}
+
+/// Certify a union of already refined sectors without rotating their labels.
+pub(super) fn finish_preserving_labels<B: SpectralBackend>(
+    operator: &mut GalerkinOperator<'_, B>,
+    eigenvalues: Vec<f64>,
+    coefficients: Vec<Field2D>,
+    config: &EigensolverConfig,
+    report: GalerkinReport,
+) -> GalerkinResult {
+    finish_impl(operator, eigenvalues, coefficients, config, report, false)
+}
+
+fn finish_impl<B: SpectralBackend>(
     operator: &mut GalerkinOperator<'_, B>,
     mut eigenvalues: Vec<f64>,
     mut coefficients: Vec<Field2D>,
     config: &EigensolverConfig,
     mut report: GalerkinReport,
+    refine: bool,
 ) -> GalerkinResult {
     eigenvalues.truncate(config.n_bands);
     coefficients.truncate(config.n_bands);
@@ -462,7 +527,11 @@ fn finish<B: SpectralBackend<Real = f64>>(
             .iter()
             .all(|v| v.as_slice().iter().all(|&z| finite(z)));
     if finite_block {
-        let projected = rayleigh_ritz_certify(operator, &mut eigenvalues, &mut coefficients);
+        let projected = if refine {
+            rayleigh_ritz_certify(operator, &mut eigenvalues, &mut coefficients)
+        } else {
+            certify_without_refinement(operator, &eigenvalues, &coefficients)
+        };
         report.projected = Some(projected.into());
     }
     let fields = operator.expand_fields(&coefficients);
@@ -470,26 +539,10 @@ fn finish<B: SpectralBackend<Real = f64>>(
         report.full_rectangle =
             Some(certify_without_refinement(operator.full, &eigenvalues, &fields).into());
     }
-    let valid_certificate = report.projected.as_ref().is_some_and(|c| {
-        c.b_orthogonality_defect.is_finite()
-            && c.b_orthogonality_defect <= 1e-8
-            && c.residuals.len() == config.n_bands
-            && c.absolute_residuals.len() == config.n_bands
-            && c.residuals
-                .iter()
-                .zip(&c.absolute_residuals)
-                .enumerate()
-                .all(|(j, (&r, &a))| {
-                    r.is_finite()
-                        && a.is_finite()
-                        && eigenvalues[j].is_finite()
-                        && if report.analytic_kernel && j == 0 {
-                            eigenvalues[j].abs() <= 1e-7 && a <= 1e-7
-                        } else {
-                            eigenvalues[j] >= 0.0 && r <= 1e-5
-                        }
-                })
-    });
+    let valid_certificate = report
+        .projected
+        .as_ref()
+        .is_some_and(|c| certificate_passes(c, &eigenvalues, report.analytic_kernel));
     report.accepted = report.solver_converged && finite_block && valid_certificate;
     if !report.accepted {
         report.rejection = Some(
@@ -510,7 +563,33 @@ fn finish<B: SpectralBackend<Real = f64>>(
     }
 }
 
-fn report<B: SpectralBackend<Real = f64>>(
+pub(super) fn certificate_passes(
+    c: &GalerkinCertificate,
+    eigenvalues: &[f64],
+    analytic_kernel: bool,
+) -> bool {
+    !eigenvalues.is_empty()
+        && c.b_orthogonality_defect.is_finite()
+        && c.b_orthogonality_defect <= 1e-8
+        && c.residuals.len() == eigenvalues.len()
+        && c.absolute_residuals.len() == eigenvalues.len()
+        && c.residuals
+            .iter()
+            .zip(&c.absolute_residuals)
+            .enumerate()
+            .all(|(j, (&r, &a))| {
+                r.is_finite()
+                    && a.is_finite()
+                    && eigenvalues[j].is_finite()
+                    && if analytic_kernel && j == 0 {
+                        eigenvalues[j].abs() <= 1e-7 && a <= 1e-7
+                    } else {
+                        eigenvalues[j] >= 0.0 && r <= 1e-5
+                    }
+            })
+}
+
+pub(super) fn report<B: SpectralBackend>(
     operator: &GalerkinOperator<'_, B>,
     bytes: usize,
     method: &'static str,
@@ -533,7 +612,8 @@ fn report<B: SpectralBackend<Real = f64>>(
 
 /// LOBPCG on the new pencil. Nonconverged attempts retain fields, certificates,
 /// iterations and an explicit rejection; they are never silently discarded.
-pub fn solve_iterative<B: SpectralBackend<Real = f64>>(
+/// Only f64 backend storage is admitted; generic dispatch never promotes f32.
+pub fn solve_iterative<B: SpectralBackend>(
     full: &mut ThetaOperator<B>,
     support: &FourierSupport,
     config: &EigensolverConfig,
@@ -545,18 +625,6 @@ pub fn solve_iterative<B: SpectralBackend<Real = f64>>(
     crate::profile_scope!("symmetry.galerkin.iterative");
     let bytes = admit(support, config, false, budget)?;
     validate_operator(full, support)?;
-    if let Some(p) = &preconditioner {
-        if p.fourier_diagonal().is_some_and(|d| {
-            d.len() != support.grid().len()
-                || d.iter().any(|x| !x.is_finite())
-                || support
-                    .embedding_indices()
-                    .iter()
-                    .any(|&i| d[i] < 0.0 || (d[i] == 0.0 && full.k_plus_g_squares()[i] != 0.0))
-        }) {
-            return Err("Galerkin preconditioner diagonal is invalid for the embedding".into());
-        }
-    }
     let mut operator = GalerkinOperator::new(
         full,
         support,
@@ -566,13 +634,9 @@ pub fn solve_iterative<B: SpectralBackend<Real = f64>>(
     let warm = warm_physical
         .map(|v| operator.project_physical(v, config.effective_block_size().min(support.len())))
         .transpose()?;
-    let mut preconditioner = preconditioner.map(|inner| GalerkinPreconditioner {
-        inner,
-        support,
-        application,
-        input: operator.full.alloc_field(),
-        scratch: operator.full.alloc_field(),
-    });
+    let mut preconditioner = preconditioner
+        .map(|inner| GalerkinPreconditioner::new(inner, operator.full, support, application))
+        .transpose()?;
     let mut solver = Eigensolver::new(
         &mut operator,
         config.clone(),
@@ -598,11 +662,21 @@ pub fn solve_iterative<B: SpectralBackend<Real = f64>>(
 
 /// Assemble the complete coefficient pencil for a bounded independent dense
 /// reference. Caller must budget two M² matrices before invoking this method.
-pub fn dense_pencil<B: SpectralBackend<Real = f64>>(
+pub fn dense_pencil<B: SpectralBackend>(
     operator: &mut GalerkinOperator<'_, B>,
     max_matrix_bytes: usize,
 ) -> Result<(Vec<C>, Vec<C>), String> {
-    let m = operator.support.len();
+    dense_operator_pencil(operator, max_matrix_bytes)
+}
+
+fn dense_operator_pencil<B: SpectralBackend, O: LinearOperator<B>>(
+    operator: &mut O,
+    max_matrix_bytes: usize,
+) -> Result<(Vec<C>, Vec<C>), String> {
+    let m = operator.subspace_dimension();
+    if m == 0 || operator.grid().len() != m {
+        return Err("dense coordinates must span the complete declared space".into());
+    }
     let bytes = m
         .checked_mul(m)
         .and_then(|x| x.checked_mul(32))
@@ -615,12 +689,16 @@ pub fn dense_pencil<B: SpectralBackend<Real = f64>>(
     let mut x = operator.alloc_field();
     let mut y = operator.alloc_field();
     for j in 0..m {
-        x.as_mut_slice().fill(C::ZERO);
-        x.as_mut_slice()[j] = C::ONE;
+        x.as_mut_slice().fill(cscalar::<B::Real>(0.0, 0.0));
+        x.as_mut_slice()[j] = cscalar::<B::Real>(1.0, 0.0);
         operator.apply(&x, &mut y);
-        a[j * m..(j + 1) * m].copy_from_slice(y.as_slice());
+        for (dst, &src) in a[j * m..(j + 1) * m].iter_mut().zip(y.as_slice()) {
+            *dst = to_accum(src);
+        }
         operator.apply_mass(&x, &mut y);
-        b[j * m..(j + 1) * m].copy_from_slice(y.as_slice());
+        for (dst, &src) in b[j * m..(j + 1) * m].iter_mut().zip(y.as_slice()) {
+            *dst = to_accum(src);
+        }
     }
     hermitize_checked(&mut a, m)?;
     hermitize_checked(&mut b, m)?;
@@ -647,7 +725,7 @@ fn hermitize_checked(a: &mut [C], n: usize) -> Result<(), String> {
 
 /// Complete generalized dense reference. Whitening retains every mass mode;
 /// an unresolved/nonpositive mass eigenvalue rejects rather than dropping rank.
-pub fn solve_dense<B: SpectralBackend<Real = f64>>(
+pub fn solve_dense<B: SpectralBackend>(
     full: &mut ThetaOperator<B>,
     support: &FourierSupport,
     config: &EigensolverConfig,
@@ -662,8 +740,34 @@ pub fn solve_dense<B: SpectralBackend<Real = f64>>(
         application,
         budget.max_estimated_payload_bytes,
     )?;
-    let m = support.len();
-    let (a, b) = dense_pencil(&mut operator, budget.max_estimated_payload_bytes)?;
+    let (eigenvalues, coefficients) = dense_generalized(
+        &mut operator,
+        config.n_bands,
+        budget.max_estimated_payload_bytes,
+    )?;
+    let mut report = report(&operator, bytes, "dense_generalized");
+    report.solver_converged = true;
+    Ok(finish(
+        &mut operator,
+        eigenvalues,
+        coefficients,
+        config,
+        report,
+    ))
+}
+
+/// Shared complete-coordinate reference. Callers admit the full dense
+/// workspace model before invoking it; no mass rank is dropped.
+pub(super) fn dense_generalized<B: SpectralBackend, O: LinearOperator<B>>(
+    operator: &mut O,
+    requested: usize,
+    max_matrix_bytes: usize,
+) -> Result<(Vec<f64>, Vec<Field2D>), String> {
+    let m = operator.subspace_dimension();
+    if requested == 0 || requested > m {
+        return Err("invalid dense generalized band count".into());
+    }
+    let (a, b) = dense_operator_pencil(operator, max_matrix_bytes)?;
     let mass = operator.backend().dense_eigen(&b, m);
     let max_mass = mass.eigenvalues.iter().copied().fold(0.0, f64::max);
     if mass
@@ -699,8 +803,8 @@ pub fn solve_dense<B: SpectralBackend<Real = f64>>(
     hermitize_checked(&mut h, m)?;
     let eig = operator.backend().dense_eigen(&h, m);
     let mut coefficients = Vec::new();
-    for j in 0..config.n_bands {
-        let mut v = Field2D::zeros(support.coordinate_grid());
+    for j in 0..requested {
+        let mut v = Field2D::zeros(operator.grid());
         for i in 0..m {
             v.as_mut_slice()[i] = (0..m)
                 .map(|k| w[i + m * k] * eig.eigenvectors[k + m * j])
@@ -708,13 +812,5 @@ pub fn solve_dense<B: SpectralBackend<Real = f64>>(
         }
         coefficients.push(v);
     }
-    let mut report = report(&operator, bytes, "dense_generalized");
-    report.solver_converged = true;
-    Ok(finish(
-        &mut operator,
-        eig.eigenvalues[..config.n_bands].to_vec(),
-        coefficients,
-        config,
-        report,
-    ))
+    Ok((eig.eigenvalues[..requested].to_vec(), coefficients))
 }

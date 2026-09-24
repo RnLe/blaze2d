@@ -5,6 +5,8 @@
 //! embedding FFT; a smaller coefficient count is not a smaller-transform claim.
 use std::collections::{HashMap, HashSet};
 
+use crate::field::{Real, cscalar, from_accum, to_accum};
+use num_complex::Complex;
 use num_complex::Complex64 as C;
 use serde::Serialize;
 
@@ -217,30 +219,30 @@ impl FourierSupport {
     /// S has orthonormal sampled plane-wave columns, normalized by sqrt(N).
     /// Input/output buffers are explicit. FFT plans and internal workspace are
     /// owned by the backend and may be allocated lazily on first use.
-    pub fn expand<B: SpectralBackend<Real = f64>>(
+    pub fn expand<B: SpectralBackend, R: Real>(
         &self,
         backend: &B,
-        coefficients: &[C],
+        coefficients: &[Complex<R>],
         output: &mut B::Buffer,
     ) {
         assert_eq!(coefficients.len(), self.len());
         assert!(same_grid(output.grid(), self.grid));
         crate::profiler::count("symmetry.support.expand_coefficients", self.len());
-        output.as_mut_slice().fill(C::ZERO);
+        output.as_mut_slice().fill(cscalar::<B::Real>(0.0, 0.0));
         let scale = (self.grid.len() as f64).sqrt();
         for (&index, &value) in self.embedding_indices.iter().zip(coefficients) {
-            output.as_mut_slice()[index] = value * scale;
+            output.as_mut_slice()[index] = from_accum(to_accum(value) * scale);
         }
         backend.inverse_fft_2d(output);
     }
 
     /// S† is the adjoint, not an interpolation onto a differently sampled grid.
-    pub fn restrict<B: SpectralBackend<Real = f64>>(
+    pub fn restrict<B: SpectralBackend, R: Real>(
         &self,
         backend: &B,
         input: &B::Buffer,
         scratch: &mut B::Buffer,
-        coefficients: &mut [C],
+        coefficients: &mut [Complex<R>],
     ) {
         assert_eq!(coefficients.len(), self.len());
         assert!(same_grid(input.grid(), self.grid) && same_grid(scratch.grid(), self.grid));
@@ -249,7 +251,7 @@ impl FourierSupport {
         backend.forward_fft_2d(scratch);
         let scale = 1.0 / (self.grid.len() as f64).sqrt();
         for (&index, value) in self.embedding_indices.iter().zip(coefficients) {
-            *value = scratch.as_slice()[index] * scale;
+            *value = from_accum(to_accum(scratch.as_slice()[index]) * scale);
         }
     }
 }
@@ -374,7 +376,7 @@ impl CoefficientAction {
             .filter_map(|(i, &j)| (i == j).then_some(self.phases[i]))
             .sum())
     }
-    pub fn apply(&self, input: &[C], output: &mut [C]) {
+    pub fn apply<R: Real>(&self, input: &[Complex<R>], output: &mut [Complex<R>]) {
         assert_eq!(input.len(), self.destination.len());
         assert_eq!(output.len(), input.len());
         for (i, &j) in self.destination.iter().enumerate() {
@@ -383,7 +385,7 @@ impl CoefficientAction {
             } else {
                 input[i]
             };
-            output[j] = self.phases[i] * z;
+            output[j] = from_accum::<R>(self.phases[i]) * z;
         }
     }
 }

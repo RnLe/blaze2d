@@ -24,6 +24,30 @@ impl From<GroupError> for ActionError { fn from(_:GroupError)->Self {Self::Arith
 /// The order and Nyquist convention used by ThetaOperator, without aliasing.
 pub fn fft_indices(n: usize) -> Vec<i64> { (0..n).map(|i|if i<=n/2 {i as i64} else {i as i64-n as i64}).collect() }
 
+/// Exact pullback of sampling nodes, independent of any Fourier support.
+/// Callers must budget its index array. This does not authorize derivatives.
+pub(super) fn sampled_node_permutation(operation: AffineOp, grid: Grid2D) -> Result<Vec<usize>,ActionError> {
+    if grid.centered {return Err(ActionError::UnsupportedSamplingOrigin);}
+    if grid.nx==0 || grid.ny==0 || grid.nx>i32::MAX as usize || grid.ny>i32::MAX as usize || grid.nx.checked_mul(grid.ny).is_none() {return Err(ActionError::InvalidInput);}
+    let wr=operation.reciprocal_matrix();let winv=[[wr[0][0],wr[1][0]],[wr[0][1],wr[1][1]]];
+    let shifts=operation.translation();let mut result=vec![0;grid.len()];
+    for j in 0..grid.ny {for i in 0..grid.nx {
+        let xi=[Rational::new(i as i64,grid.nx as i64)?,Rational::new(j as i64,grid.ny as i64)?];
+        let delta=[xi[0].checked_add(shifts[0].checked_scale(-1)?)?,xi[1].checked_add(shifts[1].checked_scale(-1)?)?];
+        let mut src=[0usize;2];
+        for d in 0..2 {
+            let a=i32::try_from(winv[d][0]).map_err(|_|ActionError::ArithmeticOverflow)?;
+            let b=i32::try_from(winv[d][1]).map_err(|_|ActionError::ArithmeticOverflow)?;
+            let v=delta[0].checked_scale(a)?.checked_add(delta[1].checked_scale(b)?)?;
+            let size=[grid.nx,grid.ny][d] as i128;let scaled=v.numerator() as i128*size;let denominator=v.denominator() as i128;
+            if scaled%denominator!=0 {return Err(ActionError::SamplingNotClosed);}
+            src[d]=(scaled/denominator).rem_euclid(size) as usize;
+        }
+        result[grid.idx(i,j)]=grid.idx(src[0],src[1]);
+    }}
+    Ok(result)
+}
+
 #[derive(Debug, Clone)]
 pub struct BlochActionPlan {
     operation: AffineOp,
@@ -61,22 +85,10 @@ impl BlochActionPlan {
             let q=operation.map_wavevector([x as f64+source[0],y as f64+source[1]]);
             fourier_phase[pos]=Complex64::from_polar(character,-std::f64::consts::TAU*(q[0]*tau[0]+q[1]*tau[1]));
         } }
-        let winv=[[wr[0][0],wr[1][0]],[wr[0][1],wr[1][1]]];
-        let mut spatial_source=vec![0;grid.len()];let mut spatial_phase=vec![Complex64::ZERO;grid.len()];
-        let shifts=operation.translation();
+        let spatial_source=sampled_node_permutation(operation,grid)?;let mut spatial_phase=vec![Complex64::ZERO;grid.len()];
         for j in 0..grid.ny {for i in 0..grid.nx {
             let xi=[Rational::new(i as i64,grid.nx as i64)?,Rational::new(j as i64,grid.ny as i64)?];
-            let delta=[xi[0].checked_add(shifts[0].checked_scale(-1)?)?,xi[1].checked_add(shifts[1].checked_scale(-1)?)?];
-            let mut src=[0usize;2];
-            for d in 0..2 {
-                let a=i32::try_from(winv[d][0]).map_err(|_|ActionError::ArithmeticOverflow)?;
-                let b=i32::try_from(winv[d][1]).map_err(|_|ActionError::ArithmeticOverflow)?;
-                let v=delta[0].checked_scale(a)?.checked_add(delta[1].checked_scale(b)?)?;
-                let size=[grid.nx,grid.ny][d] as i128;let scaled=v.numerator() as i128*size;let denominator=v.denominator() as i128;
-                if scaled%denominator!=0 {return Err(ActionError::SamplingNotClosed);}
-                src[d]=(scaled/denominator).rem_euclid(size) as usize;
-            }
-            let pos=grid.idx(i,j);spatial_source[pos]=grid.idx(src[0],src[1]);
+            let pos=grid.idx(i,j);
             let phase=-raw[0]*tau[0]-raw[1]*tau[1]+folding[0] as f64*xi[0].value()+folding[1] as f64*xi[1].value();
             spatial_phase[pos]=Complex64::from_polar(character,std::f64::consts::TAU*phase);
         } }

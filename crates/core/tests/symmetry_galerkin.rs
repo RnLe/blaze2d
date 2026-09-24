@@ -8,11 +8,14 @@ use blaze2d_core::{
     operators::{LinearOperator, ThetaOperator},
     polarization::Polarization,
     symmetry::{
+        affine::PlaneGroup,
         galerkin::{
             GalerkinApplication as Application, GalerkinBudget, GalerkinOperator, dense_pencil,
             estimated_payload_bytes, solve_dense, solve_iterative,
         },
         support::FourierSupport,
+        support_qualification::QualifiedSupportGroup,
+        support_sectors::{SupportSectorPlan, solve as solve_sectors, solve_with_plan},
     },
 };
 use num_complex::Complex64 as C;
@@ -391,5 +394,69 @@ fn nested_supports_obey_the_generalized_variational_order_on_fixed_material() {
             }
             previous = Some(result.eigenvalues);
         }
+    }
+}
+
+#[test]
+fn generic_dispatch_rejects_f32_without_promoting_or_starting_a_solve() {
+    let lattice = Lattice2D::square(1.0);
+    let grid = Grid2D::new(13, 13, 1.0, 1.0);
+    let space = support(lattice, grid, [0.0; 2], 2.8);
+    let c = config(5);
+    for pol in [Polarization::TM, Polarization::TE] {
+        let d = rod(lattice, grid);
+        let mut full = ThetaOperator::new(CpuBackend::<f64>::new(), d.clone(), pol, [0.0; 2]);
+        let group = PlaneGroup::P4m.group();
+        let qualified =
+            QualifiedSupportGroup::qualify(&mut full, &space, group.clone(), Default::default())
+                .unwrap();
+        let plan = SupportSectorPlan::new(qualified, &full, &space, true, usize::MAX).unwrap();
+        let mut low = ThetaOperator::new(CpuBackend::<f32>::new(), d, pol, [0.0; 2]);
+        let before = blaze2d_core::eigensolver::iteration_total();
+        let rejected = |error: String| assert!(error.contains("require an f64 backend"), "{error}");
+        for application in [Application::SpatialReference, Application::DirectFourier] {
+            rejected(
+                GalerkinOperator::new(&mut low, &space, application, usize::MAX)
+                    .err()
+                    .unwrap(),
+            );
+            rejected(
+                solve_iterative(
+                    &mut low,
+                    &space,
+                    &c,
+                    None,
+                    None,
+                    application,
+                    Default::default(),
+                )
+                .err()
+                .unwrap(),
+            );
+            rejected(
+                solve_dense(&mut low, &space, &c, application, Default::default())
+                    .err()
+                    .unwrap(),
+            );
+        }
+        let qualification =
+            QualifiedSupportGroup::qualify(&mut low, &space, group.clone(), Default::default())
+                .err()
+                .unwrap();
+        assert!(!qualification.authorized && qualification.actions.is_empty());
+        assert_eq!(qualification.estimated_payload_bytes, 0);
+        rejected(qualification.rejection.unwrap());
+        rejected(plan.validate_for(&low, &space).err().unwrap());
+        rejected(
+            solve_with_plan(&mut low, &space, &plan, &c, None, None, Default::default())
+                .err()
+                .unwrap(),
+        );
+        rejected(
+            solve_sectors(&mut low, &space, group, &c, None, None, Default::default())
+                .err()
+                .unwrap(),
+        );
+        assert_eq!(blaze2d_core::eigensolver::iteration_total(), before);
     }
 }

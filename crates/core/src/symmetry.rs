@@ -124,3 +124,5 @@ pub mod shared;
 pub mod parameter;
 pub mod support;
 pub mod galerkin;
+pub mod support_qualification;
+pub mod support_sectors;
