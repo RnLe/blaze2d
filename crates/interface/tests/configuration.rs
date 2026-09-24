@@ -2,6 +2,55 @@ use blaze2d_interface::*;
 use serde_json::json;
 
 #[test]
+fn symmetry_memory_planning_accounts_for_bounded_cache_and_conversion_tables() {
+    let mut c=Config::default();c.results.eigenvectors=false;
+    c.grid.resolution=Resolution::Uniform(13);
+    c.bands.as_mut().unwrap().path=KPath {points:Some(vec![vec![0.0,0.0],vec![0.17,0.0],vec![0.0,0.0]]),intervals_per_segment:None,..Default::default()};
+    let bytes=|c:Config|Plan::new(c,Platform::Native).unwrap().summary.estimated_peak_bytes;
+    let disabled=bytes(c.clone());
+    c.bands.as_mut().unwrap().symmetry.max_cache_bytes=usize::MAX;
+    assert_eq!(disabled,bytes(c.clone()),"an unused cache cap reserves no fields");
+    c.bands.as_mut().unwrap().symmetry.k_reuse=KReuse::Identical;
+    c.bands.as_mut().unwrap().symmetry.max_cache_bytes=0;
+    let empty=bytes(c.clone());assert!(empty>disabled,"insertion still creates a transient entry");
+    let entry=c.bands.as_ref().unwrap().count*(13*13*16+24);
+    c.bands.as_mut().unwrap().symmetry.max_cache_bytes=2*entry;
+    let two=bytes(c.clone());assert_eq!(two-empty,(2*entry) as u64);
+    c.bands.as_mut().unwrap().symmetry.max_cache_bytes=usize::MAX;
+    assert_eq!(bytes(c.clone())-empty,(3*entry) as u64,"path length bounds resident entries");
+    c.bands.as_mut().unwrap().symmetry.k_reuse=KReuse::Unitary;
+    let qualified=bytes(c.clone());assert!(qualified>two+entry as u64);
+    c.bands.as_mut().unwrap().symmetry.arithmetic=SymmetryArithmetic::PtReal;
+    assert!(bytes(c)>qualified,"phase, conversion and physical scratch remain resident");
+}
+
+#[test]
+fn rectangular_sector_admission_reserves_growth_and_exports_the_bound() {
+    let mut c=Config::default();c.grid.resolution=Resolution::Uniform(9);
+    c.eigensolver.tolerance=Some(1e-14);c.eigensolver.max_iterations=Some(500);
+    c.bands.as_mut().unwrap().count=5;
+    c.bands.as_mut().unwrap().path=KPath {points:Some(vec![vec![0.0,0.0]]),intervals_per_segment:None,..Default::default()};
+    let base=Plan::new(c.clone(),Platform::Native).unwrap();
+    c.bands.as_mut().unwrap().symmetry.sectors=SectorPolicy::AdaptiveGroup;
+    c.bands.as_mut().unwrap().symmetry.plane_group=Some("p4m".into());
+    c.bands.as_mut().unwrap().symmetry.max_sector_workspace_bytes=8<<20;
+    let restored=Config::from_toml(&c.to_toml().unwrap()).unwrap();assert_eq!(c,restored);
+    let selected=Plan::new(c.clone(),Platform::Native).unwrap();
+    assert_eq!(selected.summary.estimated_peak_bytes-base.summary.estimated_peak_bytes,8<<20);
+    let out=execute(blaze2d_backend_cpu::CpuBackend::<f64>::new(),"cpu",&selected.job(0).unwrap(),|_|{}).unwrap();
+    let workspace=&out.metadata["symmetry"]["points"][0]["sectors"]["workspace"];
+    assert_eq!(workspace["budget_bytes"],8<<20);
+    assert!(workspace["peak_estimated_payload_bytes"].as_u64().unwrap()<=8<<20);
+    c.bands.as_mut().unwrap().symmetry.max_sector_workspace_bytes=0;
+    let fallback=Plan::new(c,Platform::Native).unwrap();
+    assert_eq!(fallback.summary.estimated_peak_bytes,base.summary.estimated_peak_bytes);
+    let out=execute(blaze2d_backend_cpu::CpuBackend::<f64>::new(),"cpu",&fallback.job(0).unwrap(),|_|{}).unwrap();
+    assert!(out.metadata["symmetry"]["points"][0]["sectors"].is_null());
+    assert!(out.metadata["symmetry"]["points"][0]["rejected"].to_string().contains("above budget 0"));
+    assert_eq!(out.metadata["symmetry"]["points"][0]["solver_attempts"][0]["iterations"],0);
+}
+
+#[test]
 fn symmetry_options_require_an_implemented_representation_path() {
     let mut config=Config::default();
     config.bands.as_mut().unwrap().symmetry.share_sector_workspace=true;

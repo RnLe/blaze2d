@@ -113,6 +113,11 @@ export interface Symmetry {
   k_reuse?: "off" | "identical" | "unitary" | "time_reversal";
   k_traversal?: "given" | "nearest";
   max_cache_bytes?: number;
+  /**
+   * Numerical payload admission for rectangular sector plans and solves.
+   * Metric Fourier supports use bands.discretization's budget instead.
+   */
+  max_sector_workspace_bytes?: number;
   max_traversal_field_bytes?: number;
   plane_group?: string | null;
   reconstruct_partners?: boolean;

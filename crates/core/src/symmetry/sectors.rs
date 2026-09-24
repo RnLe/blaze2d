@@ -6,6 +6,7 @@ use super::{affine::AffineGroup,action::BlochActionPlan,qualification::{Qualifie
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod concurrency;
+pub mod memory;
 
 #[derive(Debug,Clone,Copy,Default,PartialEq,Eq,Serialize)]
 #[serde(rename_all="snake_case")]
@@ -40,6 +41,8 @@ pub struct SectorReport {
 }
 #[derive(Debug,Clone,Serialize)]
 pub struct CoverageReport {
+    /// Serial admission report; owned worker scheduling has its own report.
+    pub workspace:Option<memory::WorkspaceReport>,
     pub evidence:String,
     pub finite_dimension:usize,
     pub sum_sector_dimensions:usize,
@@ -58,6 +61,8 @@ pub struct SectorResult {pub spectrum:CachedSpectrum,pub iterations:usize,pub re
 impl SectorPlan {
     pub fn qualify<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,lattice:&Lattice2D,k:[f64;2],group:AffineGroup,options:&SymmetryOptions)->Result<Self,String> {
         if std::mem::size_of::<B::Real>()!=8 {return Err("sector solves currently require f64".into());}
+        let setup=memory::setup_payload(operator.grid().len(),group.order(),options.sector_storage)?;
+        memory::WorkspaceReport::new(options.max_sector_workspace_bytes,setup).admit("qualification/basis setup",0,setup)?;
         let representation=RepresentationPlan::ordinary(group.clone(),k).or_else(|_|RepresentationPlan::projective(group,k)).map_err(|e|e.to_string())?;
         let mut other=ThetaOperator::new(operator.backend().clone(),operator.dielectric().clone(),operator.polarization(),operator.bloch());
         let mut actions=Vec::new();
@@ -156,6 +161,17 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
     if options.correction_projection_interval!=1 && options.sector_storage!=super::reduced::SectorStorage::FullGrid {
         return Err("correction projection cadence applies only to full-grid sectors".into());
     }
+    let grid=operator.grid();
+    if config.n_bands==0 || config.n_bands>grid.len() || config.max_iter==0 || !config.tol.is_finite() || config.tol<=0.0 ||
+        warm.is_some_and(|fields|fields.iter().any(|f| {let g=f.grid();(g.nx,g.ny,g.centered,g.lx.to_bits(),g.ly.to_bits())!=(grid.nx,grid.ny,grid.centered,grid.lx.to_bits(),grid.ly.to_bits()) || f.as_slice().iter().any(|z|!z.re.is_finite() || !z.im.is_finite())})) {
+        return Err("invalid sector solve configuration or warm fields".into());
+    }
+    let setup=memory::setup_payload(grid.len(),group.order(),options.sector_storage)?;
+    let mut workspace=memory::WorkspaceReport::new(options.max_sector_workspace_bytes,setup);
+    workspace.admit("qualification/basis setup",0,setup)?;
+    let fixed=memory::sum(&[setup,memory::spectrum_payload(grid.len(),warm.map_or(0,<[Field2D]>::len))?])?;
+    workspace.admit("retained input and qualification",0,fixed)?;
+    let kernel_payload=memory::mirror_payload(grid.nx,grid.ny,options.sector_kernel)?;
     let plan=SectorPlan::qualify(operator,lattice,k,group,options)?;
     let bases=if options.sector_storage==super::reduced::SectorStorage::Orbit {
         plan.sectors.iter().map(|s|if s.rank==0 {Ok(None)} else {super::reduced::OrbitBasis::from_projector(&plan.actions,&s.weights,s.rank).map(Some)}).collect::<Result<Vec<_>,String>>()?
@@ -181,6 +197,11 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
         let previous_projected=slots[i].as_ref().map_or(0,|(_,r)|r.correction_projection_rounds);
         let previous_skipped=slots[i].as_ref().map_or(0,|(_,r)|r.correction_projection_skipped_rounds);
         let warm=slots[i].as_ref().map(|(e,_)|e.fields.as_slice()).or(warm);
+        let retained=slots.iter().flatten().try_fold(0usize,|n,(e,_)|n.checked_add(e.bytes())).ok_or("sector payload overflow")?;
+        workspace.peak_retained_spectrum_payload_bytes=workspace.peak_retained_spectrum_payload_bytes.max(retained);
+        let columns=if sector.rank<=prefix.saturating_add(2) {sector.rank} else {prefix.saturating_add(guards[i]).min(sector.rank-usize::from(sector.owns_kernel))};
+        let estimate=memory::sum(&[fixed,retained,kernel_payload,memory::worker_payload(grid.len(),columns,warm.map_or(0,<[Field2D]>::len))?])?;
+        workspace.admit("sector prefix",rounds,estimate).map_err(|reason|format!("sector {i} prefix {prefix}: {reason}"))?;
         let (output,scratch)=projection_workspace.take().unwrap_or_else(|| {
             projection_workspace_allocations+=2;
             crate::profiler::count("sector.projection_workspace_allocations",2);
@@ -199,8 +220,14 @@ pub fn solve_conservative<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B
     let grow=grow_prefixes(&slots,&mut prefixes,config.n_bands,adaptive);
     if !grow {break;}
     }
-    finish_sectors(operator,&plan,slots,k,config.n_bands,adaptive,options,iterations,rounds,
-        projection_workspace_allocations,projection_workspace_payload_bytes)
+    let retained=slots.iter().flatten().try_fold(0usize,|n,(e,_)|n.checked_add(e.bytes())).ok_or("sector payload overflow")?;
+    workspace.peak_retained_spectrum_payload_bytes=workspace.peak_retained_spectrum_payload_bytes.max(retained);
+    let reconstructed=slots.iter().enumerate().filter_map(|(i,s)|s.as_ref().map(|(e,_)|(i,e))).try_fold(0usize,|n,(i,e)|e.bytes().checked_mul(plan.sectors[i].partners)?.checked_add(n)).ok_or("partner output payload overflow")?;
+    workspace.admit("partner output reconstruction",rounds,memory::merge_payload(fixed,grid.len(),config.n_bands,reconstructed)?)?;
+    let mut result=finish_sectors(operator,&plan,slots,k,config.n_bands,adaptive,options,iterations,rounds,
+        projection_workspace_allocations,projection_workspace_payload_bytes)?;
+    result.report.workspace=Some(workspace);
+    Ok(result)
 }
 
 /// One unchanged prefix solve, shared by serial and worker-owned schedules.
@@ -311,6 +338,6 @@ fn finish_sectors<B:SpectralBackend+Clone>(operator:&mut ThetaOperator<B>,plan:&
     let (eigenvalues,fields):(Vec<_>,Vec<_>)=all.into_iter().unzip();let cert=certify_without_refinement(operator,&eigenvalues,&fields);
     let spectrum=CachedSpectrum{source_index:0,k,eigenvalues,fields,residuals:cert.residuals,absolute_residuals:cert.absolute_residuals,orthogonality_defect:cert.b_orthogonality_defect};
     if !spectrum.passes(options) {return Err("merged sector output failed original-pencil certification".into());}
-    let report=CoverageReport{projection_workspace_allocations,projection_workspace_payload_bytes,evidence:if all_dense {"complete finite dense spectra"} else if adaptive {"adaptive prefixes with converged tails beyond the requested cut; empirical coverage, not inertia"} else {"conservative sector prefixes; iterative lowest-prefix coverage validated empirically, not by inertia"}.into(),finite_dimension:operator.grid().len(),sum_sector_dimensions:plan.sectors.iter().map(|s|s.rank*s.partners).sum(),requested:requested,computed,kernel_owners:plan.sectors.iter().filter(|s|s.owns_kernel).count(),allocation_rounds:rounds,tail_eigenvalues:tails,qualification_bytes:plan.actions.iter().map(|a|a.plan().storage_bytes()).sum(),sectors:reports};
+    let report=CoverageReport{workspace:None,projection_workspace_allocations,projection_workspace_payload_bytes,evidence:if all_dense {"complete finite dense spectra"} else if adaptive {"adaptive prefixes with converged tails beyond the requested cut; empirical coverage, not inertia"} else {"conservative sector prefixes; iterative lowest-prefix coverage validated empirically, not by inertia"}.into(),finite_dimension:operator.grid().len(),sum_sector_dimensions:plan.sectors.iter().map(|s|s.rank*s.partners).sum(),requested:requested,computed,kernel_owners:plan.sectors.iter().filter(|s|s.owns_kernel).count(),allocation_rounds:rounds,tail_eigenvalues:tails,qualification_bytes:plan.actions.iter().map(|a|a.plan().storage_bytes()).sum(),sectors:reports};
     Ok(SectorResult{spectrum,iterations,report})
 }

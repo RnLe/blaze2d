@@ -3,7 +3,7 @@
 //! A shallow backend clone may share FFT scratch and is not a private worker.
 use super::{
     SectorPlan, SectorReport, SectorResult, allocate_guards, finish_sectors, grow_prefixes,
-    initial_prefixes, is_adaptive, solve_prefix,
+    initial_prefixes, is_adaptive, memory, solve_prefix,
 };
 use crate::{
     backend::SpectralBackend,
@@ -50,6 +50,8 @@ pub struct WorkerAttemptReport {
 #[derive(Debug, Clone, Serialize)]
 pub struct ConcurrencyReport {
     pub budget: ExecutionBudget,
+    pub effective_workspace_limit: usize,
+    pub payload_model: &'static str,
     pub available_logical_cpus: usize,
     pub effective_worker_limit: usize,
     pub maximum_live_workers: usize,
@@ -103,6 +105,10 @@ where
     crate::init_faer_sequential();
     let available = std::thread::available_parallelism().map_or(1, usize::from);
     let mut report = ConcurrencyReport {
+        effective_workspace_limit: budget
+            .max_workspace_bytes
+            .min(options.max_sector_workspace_bytes),
+        payload_model: memory::MODEL,
         budget,
         available_logical_cpus: available,
         effective_worker_limit: budget.workers.min(budget.logical_cpu_budget).min(available),
@@ -155,7 +161,7 @@ where
 {
     let grid = operator.grid();
     if report.effective_worker_limit == 0
-        || report.budget.max_workspace_bytes == 0
+        || report.effective_workspace_limit == 0
         || config.n_bands == 0
         || config.n_bands > grid.len()
         || config.max_iter == 0
@@ -200,27 +206,10 @@ where
     // Bound table/basis setup before constructing it. This is a payload model,
     // not an assertion about the allocator's process high-water mark.
     let group_order = group.operations.len();
-    let action_bytes = 2 * std::mem::size_of::<usize>() + 32;
-    let table_bound = grid
-        .len()
-        .checked_mul(group_order)
-        .and_then(|n| n.checked_mul(action_bytes));
-    let orbit_bound = if options.sector_storage == SectorStorage::Orbit {
-        grid.len()
-            .checked_mul(group_order)
-            .and_then(|n| n.checked_mul(24))
-            .and_then(|n| grid.len().checked_mul(64)?.checked_add(n))
-    } else {
-        Some(0)
-    };
-    let qualification_bound = grid
-        .len()
-        .checked_mul(16 * 32)
-        .and_then(|n| n.checked_add(table_bound?))
-        .and_then(|n| n.checked_add(orbit_bound?))
-        .ok_or("qualification payload overflow")?;
+    let qualification_bound =
+        memory::setup_payload(grid.len(), group_order, options.sector_storage)?;
     report.peak_estimated_payload_bytes = qualification_bound;
-    if qualification_bound > report.budget.max_workspace_bytes {
+    if qualification_bound > report.effective_workspace_limit {
         return Err("qualification/basis setup exceeds concurrent payload budget".into());
     }
     let plan = SectorPlan::qualify(operator, lattice, k, group, options)?;
@@ -238,18 +227,12 @@ where
     } else {
         (0..plan.sectors.len()).map(|_| None).collect()
     };
-    let fixed_payload = plan
-        .actions
-        .iter()
-        .map(|a| a.plan().storage_bytes())
-        .chain(bases.iter().flatten().map(OrbitBasis::payload_bytes))
-        .chain(warm.into_iter().flatten().map(|f| f.len() * 16))
-        .try_fold(
-            grid.len().checked_mul(16 * 32).ok_or("payload overflow")?,
-            |a, b| a.checked_add(b),
-        )
-        .ok_or("payload overflow")?;
-    if fixed_payload > report.budget.max_workspace_bytes {
+    let fixed_payload = memory::sum(&[
+        qualification_bound,
+        memory::spectrum_payload(grid.len(), warm.map_or(0, <[Field2D]>::len))?,
+    ])?;
+    let kernel_payload = memory::mirror_payload(grid.nx, grid.ny, options.sector_kernel)?;
+    if fixed_payload > report.effective_workspace_limit {
         return Err(
             "shared qualification/result workspace exceeds concurrent payload budget".into(),
         );
@@ -292,7 +275,7 @@ where
             while cursor < ready.len() && batch.len() < report.effective_worker_limit {
                 let i = ready[cursor];
                 let seed = slots[i].as_ref().map(|(e, _)| e.fields.as_slice()).or(warm);
-                let dense = plan.sectors[i].rank <= prefixes[i] + 2;
+                let dense = plan.sectors[i].rank <= prefixes[i].saturating_add(2);
                 let columns = if dense {
                     plan.sectors[i].rank
                 } else {
@@ -300,14 +283,16 @@ where
                         .saturating_add(guards[i])
                         .min(plan.sectors[i].rank - usize::from(plan.sectors[i].owns_kernel))
                 };
-                let estimate =
-                    worker_payload(grid.len(), columns, seed.map_or(0, <[Field2D]>::len))?;
+                let estimate = memory::sum(&[
+                    memory::worker_payload(grid.len(), columns, seed.map_or(0, <[Field2D]>::len))?,
+                    kernel_payload,
+                ])?;
                 let combined = payload.checked_add(estimate).ok_or("payload overflow")?;
-                if combined > report.budget.max_workspace_bytes {
+                if combined > report.effective_workspace_limit {
                     if batch.is_empty() {
                         return Err(format!(
                             "sector {i} needs estimated payload {combined}, above budget {}",
-                            report.budget.max_workspace_bytes
+                            report.effective_workspace_limit
                         ));
                     }
                     break;
@@ -439,17 +424,10 @@ where
                 .checked_add(n)
         })
         .ok_or("partner output payload overflow")?;
-    let merge_payload = fixed_payload
-        .checked_add(reconstructed)
-        .and_then(|n| {
-            grid.len()
-                .checked_mul(config.n_bands)?
-                .checked_mul(16 * 4)?
-                .checked_add(n)
-        })
-        .ok_or("payload overflow")?;
+    let merge_payload =
+        memory::merge_payload(fixed_payload, grid.len(), config.n_bands, reconstructed)?;
     report.peak_estimated_payload_bytes = report.peak_estimated_payload_bytes.max(merge_payload);
-    if merge_payload > report.budget.max_workspace_bytes {
+    if merge_payload > report.effective_workspace_limit {
         return Err("sector output reconstruction exceeds concurrent payload budget".into());
     }
     finish_sectors(
@@ -465,20 +443,4 @@ where
         allocations,
         report.maximum_live_workers * grid.len() * 32,
     )
-}
-
-fn worker_payload(rows: usize, columns: usize, warm_columns: usize) -> Result<usize, String> {
-    let vectors = columns
-        .checked_mul(24)
-        .and_then(|n| warm_columns.checked_mul(2)?.checked_add(n))
-        .and_then(|n| n.checked_add(32));
-    rows.checked_mul(16)
-        .and_then(|n| n.checked_mul(vectors?))
-        .and_then(|n| {
-            columns
-                .checked_mul(columns)?
-                .checked_mul(1024)?
-                .checked_add(n)
-        })
-        .ok_or_else(|| "worker payload overflow".into())
 }

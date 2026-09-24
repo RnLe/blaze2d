@@ -163,6 +163,7 @@ fn incompatible_requests_and_clipped_supports_are_rejected_at_configuration() {
         "storage",
         "traversal",
         "external",
+        "rectangle_budget",
         "cutoff",
     ] {
         let mut c = original.clone();
@@ -175,6 +176,7 @@ fn incompatible_requests_and_clipped_supports_are_rejected_at_configuration() {
             }
             "traversal" => c.bands.as_mut().unwrap().symmetry.k_traversal = KTraversal::Nearest,
             "external" => c.dielectric.source = DielectricSource::External,
+            "rectangle_budget" => c.bands.as_mut().unwrap().symmetry.max_sector_workspace_bytes=1,
             "cutoff" => {
                 if let Discretization::MetricBall { angular_cutoff, .. } =
                     &mut c.bands.as_mut().unwrap().discretization

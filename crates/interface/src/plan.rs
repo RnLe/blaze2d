@@ -229,7 +229,7 @@ impl Plan {
         };
         let solves = jobs.checked_mul(per_job).ok_or_else(|| invalid("sweeps", "solve count overflows"))?;
         let summary = PlanSummary { jobs, solves, estimated_peak_bytes: peak,
-            memory_estimate_scope:"modeled numerical payload and retained output; metric sectors reserve their configured admission budget; FFT plans, allocator and library overhead are outside this estimate",
+            memory_estimate_scope:"modeled numerical payload, retained output, bounded cache and symmetry tables; sectors reserve their configured admission budget or finite-space bound; FFT plans, container/allocator and library overhead are outside this estimate",
             resolution: base.resolution, solved_bands: base.solved_bands, task: config.task,
             precision: config.eigensolver.precision, sweep_shape: axis_lengths.clone(), registry_points };
         Ok(Self { config, summary, platform, axis_lengths })
@@ -318,8 +318,44 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             payload.map(|n|if n<=b.symmetry.max_traversal_field_bytes as u64 {n}else{0})
         } else {Some(0)}
     } else {Some(0)};
+    let symmetry_payload=if resolved.config.task==Task::Bands {
+        let b=resolved.config.bands.as_ref().unwrap();
+        let options=b.run_options(false).symmetry;
+        use blaze2d_core::symmetry::{sectors::memory, reduced::SectorStorage as Storage};
+        let rows=usize::try_from(samples).map_err(|_|invalid("configuration","grid does not fit the target platform"))?;
+        let error=|reason|invalid("bands.symmetry",reason);
+        let entry=memory::spectrum_payload(rows,resolved.solved_bands).map_err(error)?;
+        let mut extra=0_u128;
+        if options.k_reuse!=blaze2d_core::symmetry::reuse::KReuse::Off {
+            // Resident entries are bounded by both path length and cache cap.
+            // Lookup/reconstruction and insertion also create transient copies,
+            // including a discarded insertion when the cache limit is zero.
+            let entries=(options.max_cache_bytes/entry).min(nk as usize);
+            extra+=(entries as u128+2)*entry as u128;
+            if options.k_reuse!=blaze2d_core::symmetry::reuse::KReuse::Identical {
+                extra+=memory::setup_payload(rows,1,Storage::FullGrid).map_err(error)? as u128;
+            }
+        }
+        if options.seed_transfer==blaze2d_core::symmetry::seed::SeedTransfer::RankAware {
+            extra+=memory::worker_payload(rows,0,resolved.solved_bands).map_err(error)? as u128;
+        }
+        if options.arithmetic!=blaze2d_core::symmetry::fourier::Arithmetic::SpatialComplex {
+            extra+=memory::setup_payload(rows,1,Storage::FullGrid).map_err(error)? as u128;
+            extra+=4*entry as u128;
+        }
+        if options.sectors!=blaze2d_core::symmetry::sectors::SectorPolicy::Off {
+            let order=match options.sectors {
+                blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeMirror | blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveMirror=>2,
+                _=>options.plane_group.expect("validated group policy").group().order(),
+            };
+            extra+=memory::reservation(resolved.resolution[0],resolved.resolution[1],order,resolved.solved_bands,
+                options.sector_storage,options.sector_kernel,options.max_sector_workspace_bytes).map_err(error)? as u128;
+        }
+        u64::try_from(extra).map_err(|_|invalid("bands.symmetry","memory estimate overflows"))?
+    } else {0};
     fields.and_then(|n| n.checked_add(dense?)).and_then(|n|n.checked_add(path_arrays?))
         .and_then(|n|n.checked_add(retained_fields?)).and_then(|n|n.checked_add(traversal_fields?))
+        .and_then(|n|n.checked_add(symmetry_payload))
         .ok_or_else(|| invalid("configuration", "memory estimate overflows"))
 }
 

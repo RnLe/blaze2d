@@ -25,6 +25,9 @@ pub struct SymmetryOptions {
     pub seed_transfer:super::seed::SeedTransfer,
     pub sectors:super::sectors::SectorPolicy,
     pub sector_guard_budget:Option<usize>,
+    /// Rectangular sector plan, prefix and reconstruction payload admission.
+    /// FFT plans, allocator/container overhead and library scratch are extra.
+    pub max_sector_workspace_bytes:usize,
     pub sector_storage:super::reduced::SectorStorage,
     pub sector_kernel:super::reduced::ReducedKernel,
     pub reconstruct_partners:bool,
@@ -43,7 +46,7 @@ pub struct SymmetryOptions {
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:super::traversal::KTraversal::Given,max_traversal_field_bytes:64*1024*1024,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:super::traversal::KTraversal::Given,max_traversal_field_bytes:64*1024*1024,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,max_sector_workspace_bytes:super::sectors::memory::DEFAULT_LIMIT_BYTES,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
 }
 #[derive(Debug,Clone,Serialize)]
 pub struct SolveAttempt {

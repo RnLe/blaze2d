@@ -1500,6 +1500,12 @@
           "default": 67108864,
           "minimum": 0
         },
+        "max_sector_workspace_bytes": {
+          "description": "Numerical payload admission for rectangular sector plans and solves.\nMetric Fourier supports use bands.discretization's budget instead.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "max_traversal_field_bytes": {
           "type": "integer",
           "format": "uint",

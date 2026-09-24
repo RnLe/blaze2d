@@ -109,6 +109,9 @@ pub struct SupportBandFailure {
 /// combinations can be added only with their own support identity/qualification.
 pub fn validate_options(options: &RunOptions, selected: MetricBallOptions) -> Result<(), String> {
     let s = &options.symmetry;
+    if s.max_sector_workspace_bytes != crate::symmetry::sectors::memory::DEFAULT_LIMIT_BYTES {
+        return Err("metric support uses its discretization payload budget; the rectangular-sector workspace budget is not applicable".into());
+    }
     if !selected.angular_cutoff.is_finite()
         || selected.angular_cutoff <= 0.0
         || selected.max_allocation_rounds == 0
