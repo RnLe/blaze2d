@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from replay_quiet import HERE, ROOT, digest, legacy_command
+from quiet_host import MEASUREMENT_PROTOCOL
 
 
 def previous_attempts(study, roots):
@@ -32,6 +33,8 @@ def previous_attempts(study, roots):
             manifest = json.loads((candidate/'manifest.json').read_text())
             if manifest['original_sha256'] != study['original_sha256']:
                 continue
+            if manifest.get('measurement_protocol') != MEASUREMENT_PROTOCOL:
+                raise ValueError('Prior attempt used superseded clock accounting: ' + str(candidate))
             audit = json.loads((candidate/'audit.json').read_text())
             if audit.get('numerical_signature_mismatches'):
                 raise ValueError('Numerical signature changed: ' + str(candidate))
@@ -78,9 +81,10 @@ def main():
                                      s.get('result',{}).get('timings')) for s in value['samples'])))
         studies.sort(key=lambda s: (s['original_instrumented'], s['priority'], s['name']))
         manifest = dict(schema='blaze2d/critical-replay-inventory/1', timestamp=time.time(),
+                        measurement_protocol=MEASUREMENT_PROTOCOL,
                         harness_revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                         queue_sha256=digest(__file__), replay_sha256=digest(HERE/'replay_quiet.py'),
-                        admission_sha256={n:digest(HERE/n) for n in ['quiet_host.py','host_clock.ps1','quiet-host-protocol.md']},
+                        admission_sha256={n:digest(HERE/n) for n in ['quiet_host.py','host_clock.ps1','quiet-host-protocol.md','normalized_timing.py']},
                         studies=studies, additional_required_studies=['D04 convergence/negative controls',
                         'D05 28 studies', 'dispatch overhead', 'valid memory admission', 'PT-sector interactions'],
                         presentation_work=False, environment_attempt_limit=3,
@@ -97,6 +101,9 @@ def main():
     names = {s['name'] for s in manifest['studies']}
     if args.only and not set(args.only) <= names:
         raise ValueError('Requested study is not in the complete inventory')
+    with (out/'invocations.jsonl').open('a') as stream:
+        stream.write(json.dumps(dict(timestamp=time.time(), only=args.only,
+                                   arguments=sys.argv[1:]))+'\n')
     exhausted_cases = 0
     for study in manifest['studies']:
         name=study['name']
@@ -106,10 +113,17 @@ def main():
             print('Stopped at requested study boundary', flush=True); return 0
         if digest(study['original']) != study['original_sha256']:
             raise ValueError('Original evidence changed: '+name)
-        prior, prior_environment_failures = previous_attempts(study, manifest['completed_roots'])
+        prior, prior_environment_failures = previous_attempts(study, manifest['completed_roots']+[out])
         if prior:
             with (out/'references.jsonl').open('a') as f:f.write(json.dumps(prior)+'\n')
             print(json.dumps(prior),flush=True)
+            continue
+        if prior_environment_failures >= manifest['environment_attempt_limit']:
+            state = dict(study=name, phase='previous_environment_allowance_exhausted',
+                         previous_attempts=prior_environment_failures)
+            with (out/'references.jsonl').open('a') as stream:
+                stream.write(json.dumps(state)+'\n')
+            print(json.dumps(state), flush=True)
             continue
         for attempt in range(1+prior_environment_failures,manifest['environment_attempt_limit']+1):
             destination=out/(name if attempt==1 else f'{name}-attempt-{attempt}')

@@ -11,7 +11,8 @@ import subprocess
 import sys
 import time
 
-from quiet_host import QuietHost, assess
+from quiet_host import QuietHost, assess, MEASUREMENT_PROTOCOL
+from normalized_timing import normalize
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -123,7 +124,7 @@ def backend_dependencies(original):
     return dependencies
 
 
-def audit_replay(original, current, windows):
+def audit_replay(original, current, windows, projection=None):
     expected = {}
     for r in original['samples']:
         if 'result' in r:
@@ -150,13 +151,15 @@ def audit_replay(original, current, windows):
     complete = actual == declared
     instrumented = any(r.get('result', {}).get('profile') or
                        r.get('result', {}).get('timings') for r in samples)
-    qualified = env_ok and quality_ok and complete and not mismatches
-    summary = current.get('summary', {})
+    clock_ok = projection is None or projection['clock_qualified']
+    qualified = env_ok and quality_ok and complete and not mismatches and clock_ok
+    summary = projection['summary'] if projection is not None else current.get('summary', {})
     decisions = ({'paired': practical(summary.get('ci95'))} if 'ci95' in summary else
                  {k: practical(v.get('ci95')) for k, v in summary.items()
                   if k != 'interaction_time_factor' and isinstance(v, dict) and 'ci95' in v})
     interaction = summary.get('interaction_time_factor')
-    return dict(environment_qualified=env_ok, numerical_qualified=quality_ok,
+    return dict(environment_qualified=env_ok and clock_ok, numerical_qualified=quality_ok,
+                clock_qualified=clock_ok, measurement_protocol=MEASUREMENT_PROTOCOL,
                 complete=complete, declared_blocks=declared, completed_blocks=actual,
                 numerical_signature_mismatches=mismatches, environment_blocks=environment,
                 timing_qualified=qualified,
@@ -165,6 +168,7 @@ def audit_replay(original, current, windows):
                 interaction_decision=interaction_decision(interaction.get('ci95'))
                     if qualified and isinstance(interaction, dict) else None,
                 old_summary=original.get('summary'), new_summary=summary,
+                reported_clock_summary=current.get('summary'),
                 scope='monitored low-load desktop; hardware resources are not exclusively reserved')
 
 
@@ -180,11 +184,13 @@ def main():
     original_run = subprocess.run
     windows = []
     dependencies = [Path(__file__), HERE/(legacy_name+'.py'),
-                    HERE/'quiet_host.py', HERE/'host_clock.ps1', HERE/'quiet-host-protocol.md']
+                    HERE/'quiet_host.py', HERE/'host_clock.ps1', HERE/'quiet-host-protocol.md',
+                    HERE/'normalized_timing.py']
     if legacy_name == 'run_coarse_workflow_pairs':
         dependencies += [HERE/name for name in ['run_pairs.py', 'interface_contract.py',
                           'coarse_workflow_contract.py', 'coarse-workflow-protocol.md']]
     metadata = dict(schema='blaze2d/quiet-replay/1', original=str(args.original.resolve()),
+                    measurement_protocol=MEASUREMENT_PROTOCOL,
                     original_sha256=digest(args.original), timestamp=time.time(),
                     harness_revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                     legacy_harness=legacy_name, arguments=argv,
@@ -222,7 +228,9 @@ def main():
         finally:
             subprocess.run = original_run
     current = json.loads((out/'samples.json').read_text())
-    audit = audit_replay(original, current, windows)
+    projection = normalize(current, windows, legacy_name)
+    (out/'clock-normalized.json').write_text(json.dumps(projection, indent=2)+'\n')
+    audit = audit_replay(original, current, windows, projection)
     (out/'audit.json').write_text(json.dumps(audit, indent=2)+'\n')
     print(json.dumps({'study': args.original.name, **{k:v for k,v in audit.items()
           if k not in ['old_summary', 'new_summary', 'environment_blocks']}}), flush=True)

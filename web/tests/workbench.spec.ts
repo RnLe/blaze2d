@@ -31,6 +31,52 @@ async function exported(page: Page, format: string) {
   return readFileSync(path!);
 }
 
+for (const polarization of ['tm', 'te']) {
+  test(`symmetry coarse initialization preserves ${polarization.toUpperCase()} fields and work accounting`, { tag: '@symmetry' }, async ({ page }) => {
+    const built = JSON.parse(readFileSync('public/wasm-blaze/build.json', 'utf8'));
+    const served = await page.request.get(`${base}/wasm-blaze/build.json`);
+    expect(served.ok()).toBe(true);
+    expect((await served.json()).source_revision).toBe(built.source_revision);
+    const cold = readFileSync(`tests/fixtures/symmetry-cold-${polarization}.toml`, 'utf8');
+    const coarse = readFileSync(`tests/fixtures/symmetry-coarse-${polarization}.toml`, 'utf8');
+    await open(page); await apply(page, cold); await run(page);
+    const reference = JSON.parse((await exported(page, 'json')).toString()).results[0];
+    await apply(page, coarse); await run(page);
+    const result = JSON.parse((await exported(page, 'json')).toString()).results[0];
+    expect(result.arrays.eigenvectors.shape).toEqual([3, 6, 13, 13]);
+    expect(result.arrays.eigenvectors.dtype).toBe('complex128');
+    expect(result.arrays.eigenvectors.data.every(Number.isFinite)).toBe(true);
+    expect(result.metadata.converged).toBe(true);
+    expect(result.metadata.certification.b_orthogonality_defect).toBeLessThan(1e-8);
+    result.arrays.frequencies.data.forEach((frequency: number, i: number) => {
+      expect(Math.abs(frequency-reference.arrays.frequencies.data[i])).toBeLessThan(1e-6);
+      expect(Math.abs(frequency) < 1e-8 ? result.arrays.absolute_residuals.data[i] : result.arrays.residuals.data[i])
+        .toBeLessThan(Math.abs(frequency) < 1e-8 ? 1e-7 : 1e-5);
+    });
+    const points = result.metadata.symmetry.points;
+    expect(points[0].coarse_start.used_as_seed).toBe(true);
+    expect(points[0].coarse_start.iterations).toBeGreaterThan(0);
+    expect(points.slice(1).every((point: { coarse_start?: unknown }) => !point.coarse_start)).toBe(true);
+    points.forEach((point: { solver_attempts: { iterations: number }[]; attempted_iterations: number }, i: number) => {
+      const attempted = point.solver_attempts.reduce((sum, attempt) => sum+attempt.iterations, 0);
+      expect(point.attempted_iterations).toBe(attempted);
+      expect(result.metadata.iterations[i]).toBe(attempted);
+    });
+    const zeroBudget = cold+'\n[bands.symmetry.coarse_start]\nresolution = [7, 7]\nmax_seed_field_bytes = 0\n';
+    await apply(page, zeroBudget); await run(page);
+    const fallback = JSON.parse((await exported(page, 'json')).toString()).results[0];
+    expect(fallback.arrays).toEqual(reference.arrays);
+    expect(fallback.metadata.iterations).toEqual(reference.metadata.iterations);
+    expect(fallback.metadata.symmetry.points[0].coarse_start.used_as_seed).toBe(false);
+    expect(fallback.metadata.symmetry.points[0].coarse_start.rejection).toContain('payload budget');
+    const invalid = coarse.replace('precision = "f64"', 'precision = "f32"');
+    expect(invalid).not.toBe(coarse);
+    await page.locator('input[type=file]').setInputFiles({ name: 'invalid-coarse.toml', mimeType: 'text/plain', buffer: Buffer.from(invalid) });
+    await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled();
+    await expect(page.locator('.wb-validation')).toContainText('f64');
+  });
+}
+
 test('UTF-8 diagnostic spans identify Unicode source accurately', () => {
   const source = '# Γ 🔬\nradius = invalid';
   const offset = Buffer.byteLength('# Γ 🔬\nradius = ');

@@ -1,0 +1,86 @@
+schema = "blaze2d/1"
+task = "bands"
+dimension = 2
+polarization = "TE"
+
+[geometry]
+background_epsilon = 1.0
+
+[geometry.lattice]
+type = "square"
+a = 1.0
+
+[[geometry.objects]]
+name = "rod"
+kind = "circle"
+center = [
+    0.0,
+    0.0,
+]
+radius = 0.2
+epsilon = 8.9
+
+[grid]
+resolution = [
+    13,
+    13,
+]
+
+[bands]
+count = 6
+tracking = false
+
+[bands.path]
+points = [
+    [
+    0.0,
+    0.0,
+],
+    [
+    0.17,
+    0.0,
+],
+    [
+    0.0,
+    0.0,
+],
+]
+basis = "reciprocal_fractional"
+
+[bands.symmetry]
+k_reuse = "off"
+k_traversal = "given"
+max_traversal_field_bytes = 67108864
+max_cache_bytes = 67108864
+plane_group = "p4m"
+seed_transfer = "copy"
+sectors = "adaptive_group"
+sector_guard_budget = 4
+sector_storage = "full_grid"
+sector_kernel = "full_grid"
+reconstruct_partners = true
+share_sector_workspace = true
+correction_projection_interval = 1
+arithmetic = "pt_real"
+
+[bands.symmetry.coarse_start]
+resolution = [
+    7,
+    7,
+]
+max_seed_field_bytes = 1048576
+
+[eigensolver]
+precision = "f64"
+tolerance = 0.00000000000001
+max_iterations = 500
+block_size = 0
+
+[dielectric]
+source = "geometry"
+smoothing = "analytic"
+mesh_size = 3
+interface_tolerance = 0.000001
+
+[results]
+eigenvectors = true

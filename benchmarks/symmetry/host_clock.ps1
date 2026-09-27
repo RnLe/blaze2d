@@ -15,6 +15,8 @@ while ($null -ne [Console]::ReadLine()) {
     }
     $process = [Diagnostics.Process]::GetCurrentProcess()
     @{
+        qpc_ticks = [Diagnostics.Stopwatch]::GetTimestamp()
+        qpc_frequency = [Diagnostics.Stopwatch]::Frequency
         busy_seconds = ($kernel + $user - $idle) / 10000000.0
         idle_seconds = $idle / 10000000.0
         collector_cpu_seconds = $process.TotalProcessorTime.TotalSeconds

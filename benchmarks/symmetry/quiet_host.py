@@ -1,20 +1,45 @@
 """Read-only WSL/Windows activity admission; does not reserve hardware resources."""
 import json
+import math
 import os
 from pathlib import Path
 import resource
 import subprocess
 import time
 
+MEASUREMENT_PROTOCOL = 'raw-clock-v4'
+
+
+def elapsed_clocks(start, end):
+    """Keep CPU-clock denominators independent of the adjusted guest clock."""
+    try:
+        raw = end['monotonic_raw'] - start['monotonic_raw']
+        adjusted = end['monotonic'] - start['monotonic']
+        frequency = start['windows']['qpc_frequency']
+        if frequency <= 0 or end['windows']['qpc_frequency'] != frequency:
+            raise ValueError('Windows QPC frequency changed or is invalid')
+        windows = (end['windows']['qpc_ticks'] - start['windows']['qpc_ticks']) / frequency
+    except KeyError as error:
+        raise ValueError('Missing independent raw/QPC clock evidence') from error
+    if not all(math.isfinite(v) and v > 0 for v in (raw, adjusted, windows)):
+        raise ValueError('Invalid measurement interval')
+    if abs(raw-windows) > .010 + .005*raw:
+        raise ValueError('Windows QPC and Linux raw elapsed clocks disagree')
+    return dict(raw_seconds=raw, windows_seconds=windows, adjusted_seconds=adjusted,
+                adjusted_to_raw_scale=raw/adjusted)
+
 
 def assess(start, end, limit=0.5, windows_limit=1.5):
-    elapsed = end['monotonic'] - start['monotonic']
-    if elapsed <= 0:
-        return {'accepted': False, 'issues': ['invalid measurement interval']}
+    try:
+        clocks = elapsed_clocks(start, end)
+    except ValueError as error:
+        return {'accepted': False, 'issues': [str(error)],
+                'measurement_protocol': MEASUREMENT_PROTOCOL}
+    elapsed = clocks['raw_seconds']
     own = end['owned_cpu_seconds'] - start['owned_cpu_seconds']
     linux = (end['linux_busy_seconds'] - start['linux_busy_seconds'] - own) / elapsed
     win_own = end['windows']['collector_cpu_seconds'] - start['windows']['collector_cpu_seconds']
-    windows = (end['windows']['busy_seconds'] - start['windows']['busy_seconds'] - own - win_own) / elapsed
+    windows = (end['windows']['busy_seconds'] - start['windows']['busy_seconds'] - own - win_own) / clocks['windows_seconds']
     issues = []
     for host, value, bound in [('linux', linux, limit), ('windows', windows, windows_limit)]:
         if value > bound:
@@ -25,6 +50,7 @@ def assess(start, end, limit=0.5, windows_limit=1.5):
     if min(start['memory_available_bytes'], end['memory_available_bytes']) < 2 * 1024**3:
         issues.append('less than 2 GiB available memory')
     return dict(accepted=not issues, issues=issues, elapsed_seconds=elapsed,
+                clocks=clocks, measurement_protocol=MEASUREMENT_PROTOCOL,
                 linux_background_cores=linux, windows_background_cores=windows,
                 owned_cpu_seconds=own, linux_limit_background_cores=limit,
                 windows_limit_background_cores=windows_limit)
@@ -55,7 +81,13 @@ class QuietHost:
         stall = sum(int(line.split('total=')[1]) for line in pressure if line.startswith('full '))
         own = resource.getrusage(resource.RUSAGE_SELF)
         children = resource.getrusage(resource.RUSAGE_CHILDREN)
-        return dict(monotonic=time.monotonic(), utc=time.time(), windows=windows,
+        # Bracket the raw read to quantify the local clock-pair alignment.
+        before = time.monotonic_ns()
+        raw = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
+        after = time.monotonic_ns()
+        return dict(monotonic=(before+after)/2e9, monotonic_raw=raw/1e9,
+                    local_clock_alignment_seconds=(after-before)/2e9,
+                    utc=time.time(), windows=windows,
                     linux_busy_seconds=(sum(cpu) - cpu[3] - cpu[4]) / self.ticks,
                     owned_cpu_seconds=own.ru_utime + own.ru_stime + children.ru_utime + children.ru_stime,
                     swap_in=int(vm['pswpin']), swap_out=int(vm['pswpout']), memory_stall_us=stall,
@@ -63,7 +95,9 @@ class QuietHost:
 
     def interval(self, duration=2, limit=0.25, windows_limit=1.5):
         start = self.snapshot()
-        time.sleep(duration)
+        deadline = start['monotonic_raw'] + duration
+        while (remaining := deadline-time.clock_gettime(time.CLOCK_MONOTONIC_RAW)) > 0:
+            time.sleep(max(.001, remaining))
         end = self.snapshot()
         return dict(start=start, end=end, **assess(start, end, limit, windows_limit))
 

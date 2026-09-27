@@ -6,6 +6,7 @@ import unittest
 
 from rerun_critical_studies import previous_attempts
 from replay_quiet import interaction_decision
+from quiet_host import MEASUREMENT_PROTOCOL
 
 
 class PriorAttempts(unittest.TestCase):
@@ -20,7 +21,8 @@ class PriorAttempts(unittest.TestCase):
     def attempt(self, cohort, suffix='', *, admitted=False, numerical=True, timestamp=1, mismatch=False):
         out = self.root/cohort/(self.study['name'] + suffix)
         out.mkdir(parents=True)
-        (out/'manifest.json').write_text(json.dumps(dict(original_sha256='frozen-input', timestamp=timestamp)))
+        (out/'manifest.json').write_text(json.dumps(dict(original_sha256='frozen-input', timestamp=timestamp,
+                                                       measurement_protocol=MEASUREMENT_PROTOCOL)))
         (out/'audit.json').write_text(json.dumps(dict(environment_qualified=admitted,
             numerical_qualified=numerical, timing_qualified=admitted and numerical,
             primary_latency_qualified=admitted and numerical,
@@ -59,6 +61,14 @@ class PriorAttempts(unittest.TestCase):
         self.assertEqual(interaction_decision([1.1, 1.2]), 'above_multiplicative_time_prediction')
         self.assertEqual(interaction_decision([0.8, 0.9]), 'below_multiplicative_time_prediction')
         self.assertEqual(interaction_decision([0.99, 1.01]), 'within_two_percent_of_multiplicative_prediction')
+
+    def test_superseded_clock_evidence_cannot_be_reused(self):
+        out = self.attempt('one', admitted=True)
+        data = json.loads((out/'manifest.json').read_text())
+        del data['measurement_protocol']
+        (out/'manifest.json').write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, 'superseded clock'):
+            previous_attempts(self.study, [self.root/'one'])
 
 
 if __name__ == '__main__':

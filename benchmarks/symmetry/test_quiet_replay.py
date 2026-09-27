@@ -10,13 +10,16 @@ class ReplayTests(unittest.TestCase):
         samples = [dict(pair=0, label=label, valid=True, result=copy.deepcopy(result))
                    for label in ['baseline', 'candidate']]
         d = dict(manifest={'pairs': 1}, samples=samples, summary={'ci95': [1.05, 1.15]})
-        a = dict(monotonic=0, owned_cpu_seconds=0, linux_busy_seconds=0,
-                 windows={'busy_seconds': 0, 'collector_cpu_seconds': 0},
+        a = dict(monotonic=0, monotonic_raw=0, owned_cpu_seconds=0, linux_busy_seconds=0,
+                 windows={'busy_seconds': 0, 'collector_cpu_seconds': 0,
+                          'qpc_ticks': 0, 'qpc_frequency': 1000},
                  swap_in=0, swap_out=0, memory_stall_us=0, memory_available_bytes=4*1024**3)
-        b = copy.deepcopy(a); b.update(monotonic=1, owned_cpu_seconds=1, linux_busy_seconds=1)
+        b = copy.deepcopy(a); b.update(monotonic=1, monotonic_raw=1, owned_cpu_seconds=1, linux_busy_seconds=1)
         b['windows']['busy_seconds'] = 1
-        c = copy.deepcopy(b); c.update(monotonic=2, owned_cpu_seconds=2, linux_busy_seconds=2)
+        b['windows']['qpc_ticks'] = 1000
+        c = copy.deepcopy(b); c.update(monotonic=2, monotonic_raw=2, owned_cpu_seconds=2, linux_busy_seconds=2)
         c['windows']['busy_seconds'] = 2
+        c['windows']['qpc_ticks'] = 2000
         return d, copy.deepcopy(d), [{'start': a, 'end': b}, {'start': b, 'end': c}]
 
     def test_runtime_changes_do_not_change_numerical_signature(self):

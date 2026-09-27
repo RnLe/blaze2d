@@ -109,6 +109,7 @@ export interface KPath {
 }
 export interface Symmetry {
   arithmetic?: "spatial_complex" | "fourier_complex" | "pt_real";
+  coarse_start?: CoarseStart | null;
   correction_projection_interval?: number;
   k_reuse?: "off" | "identical" | "unitary" | "time_reversal";
   k_traversal?: "given" | "nearest";
@@ -127,6 +128,17 @@ export interface Symmetry {
   sectors?: "off" | "conservative_mirror" | "adaptive_mirror" | "conservative_group" | "adaptive_group";
   seed_transfer?: "copy" | "rank_aware";
   share_sector_workspace?: boolean;
+}
+export interface CoarseStart {
+  /**
+   * Coarse, lifted and prepared seed fields; solver and FFT scratch are extra.
+   */
+  max_seed_field_bytes?: number;
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  resolution: [number, number];
 }
 export interface Dielectric {
   interface_tolerance?: number;

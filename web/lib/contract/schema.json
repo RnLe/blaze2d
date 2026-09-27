@@ -206,6 +206,32 @@
         "checkpoint_resume"
       ]
     },
+    "CoarseStart": {
+      "type": "object",
+      "properties": {
+        "max_seed_field_bytes": {
+          "description": "Coarse, lifted and prepared seed fields; solver and FFT scratch are extra.",
+          "type": "integer",
+          "format": "uint",
+          "default": 67108864,
+          "minimum": 0
+        },
+        "resolution": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "resolution"
+      ]
+    },
     "Config": {
       "type": "object",
       "properties": {
@@ -1479,6 +1505,16 @@
         "arithmetic": {
           "$ref": "#/$defs/SymmetryArithmetic",
           "default": "spatial_complex"
+        },
+        "coarse_start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoarseStart"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "correction_projection_interval": {
           "type": "integer",
