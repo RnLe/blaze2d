@@ -114,6 +114,7 @@ impl crate::Bands {
                         k_traversal:match self.symmetry.k_traversal {crate::KTraversal::Given=>blaze2d_core::symmetry::traversal::KTraversal::Given,crate::KTraversal::Nearest=>blaze2d_core::symmetry::traversal::KTraversal::Nearest},
                         max_traversal_field_bytes:self.symmetry.max_traversal_field_bytes,
                         max_sector_workspace_bytes:self.symmetry.max_sector_workspace_bytes,
+                        coarse_start:self.symmetry.coarse_start.as_ref().map(|c|c.options()),
                         plane_group:self.symmetry.plane_group.as_ref().map(|s|serde_json::from_value(json!(s)).expect("validated plane group")),
                         seed_transfer:match self.symmetry.seed_transfer {crate::SeedTransfer::Copy=>blaze2d_core::symmetry::seed::SeedTransfer::Copy,crate::SeedTransfer::RankAware=>blaze2d_core::symmetry::seed::SeedTransfer::RankAware},
                         sectors:match self.symmetry.sectors {crate::SectorPolicy::Off=>blaze2d_core::symmetry::sectors::SectorPolicy::Off,crate::SectorPolicy::ConservativeMirror=>blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeMirror,crate::SectorPolicy::AdaptiveMirror=>blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveMirror,crate::SectorPolicy::ConservativeGroup=>blaze2d_core::symmetry::sectors::SectorPolicy::ConservativeGroup,crate::SectorPolicy::AdaptiveGroup=>blaze2d_core::symmetry::sectors::SectorPolicy::AdaptiveGroup},
@@ -137,6 +138,14 @@ impl crate::Discretization {
                 angular_cutoff, support_budget: SupportBudget { max_coefficients, max_embedding_points, max_enumerated_indices },
                 budget: GalerkinBudget { max_estimated_payload_bytes, max_dense_dimension }, max_allocation_rounds,
             }),
+        }
+    }
+}
+
+impl crate::CoarseStart {
+    pub(crate) fn options(&self) -> blaze2d_core::symmetry::coarse::CoarseStartOptions {
+        blaze2d_core::symmetry::coarse::CoarseStartOptions {
+            resolution:self.resolution,max_seed_field_bytes:self.max_seed_field_bytes,
         }
     }
 }

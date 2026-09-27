@@ -734,8 +734,22 @@ fn run_core<B: SpectralBackend + Clone>(
                 Err(error)=>{reuse_report.rejected.push(error.to_string());None},
             })
         } else {None};
-        let warm_slice=rank_seed.as_ref().map(|s|s.fields.as_slice()).or(warm_slice);
-        let warm_start_used=warm_start_used && warm_slice.is_some_and(|s|!s.is_empty());
+        let iteration_start=crate::eigensolver::iteration_total();
+        let coarse_seed=if k_idx==0 && reused.is_none() && warm_slice.is_none() {
+            options.symmetry.coarse_start.and_then(|coarse| {
+                let (seed, report)=crate::symmetry::coarse::prepare_initializer(
+                    &mut theta,&job.geom,&job.dielectric,k_frac,&job.eigensolver,coarse,
+                    options.symmetry.relative_rank_tolerance);
+                reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {
+                    method:"coarse_initializer",iterations:report.iterations,retained:false,
+                    rejection:report.rejection.clone()});
+                if let Some(reason)=&report.rejection {reuse_report.rejected.push(reason.clone());}
+                reuse_report.coarse_start=Some(report);
+                seed
+            })
+        } else {None};
+        let warm_slice=coarse_seed.as_ref().or(rank_seed.as_ref()).map(|s|s.fields.as_slice()).or(warm_slice);
+        let warm_start_used=(warm_start_used || coarse_seed.is_some()) && warm_slice.is_some_and(|s|!s.is_empty());
 
         // Build preconditioner for this operator
         // Use band-window shift if enabled AND we have previous eigenvalues,
@@ -785,7 +799,6 @@ fn run_core<B: SpectralBackend + Clone>(
 
         crate::profiler::stop_timer("run.preconditioner_setup");
 
-        let iteration_start=crate::eigensolver::iteration_total();
         let mut sector_result=None;
         if reused.is_none() && options.symmetry.sectors!=crate::symmetry::sectors::SectorPolicy::Off {
             use crate::symmetry::{sectors::SectorPolicy,affine::{AffineGroup,Rational}};

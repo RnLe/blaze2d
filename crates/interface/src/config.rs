@@ -223,6 +223,14 @@ fn symmetry_sector_bytes()->usize {blaze2d_core::symmetry::sectors::memory::DEFA
 fn is_default_sector_bytes(value:&usize)->bool {*value==symmetry_sector_bytes()}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct CoarseStart {
+    pub resolution: [usize; 2],
+    /// Coarse, lifted and prepared seed fields; solver and FFT scratch are extra.
+    #[serde(default="symmetry_cache_bytes")]
+    pub max_seed_field_bytes: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Symmetry {
     #[serde(default)]
     pub k_reuse: KReuse,
@@ -240,6 +248,8 @@ pub struct Symmetry {
     pub plane_group: Option<String>,
     #[serde(default)]
     pub seed_transfer: SeedTransfer,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub coarse_start: Option<CoarseStart>,
     #[serde(default)]
     pub sectors: SectorPolicy,
     #[serde(default,skip_serializing_if="Option::is_none")]
@@ -257,7 +267,7 @@ pub struct Symmetry {
     #[serde(default)]
     pub arithmetic: SymmetryArithmetic,
 }
-impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:KTraversal::Given,max_traversal_field_bytes:symmetry_cache_bytes(),max_cache_bytes:symmetry_cache_bytes(),max_sector_workspace_bytes:symmetry_sector_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,sectors:SectorPolicy::Off,sector_guard_budget:None,sector_storage:SectorStorage::FullGrid,sector_kernel:SectorKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:SymmetryArithmetic::SpatialComplex}}}
+impl Default for Symmetry {fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:KTraversal::Given,max_traversal_field_bytes:symmetry_cache_bytes(),max_cache_bytes:symmetry_cache_bytes(),max_sector_workspace_bytes:symmetry_sector_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,coarse_start:None,sectors:SectorPolicy::Off,sector_guard_budget:None,sector_storage:SectorStorage::FullGrid,sector_kernel:SectorKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:SymmetryArithmetic::SpatialComplex}}}
 
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

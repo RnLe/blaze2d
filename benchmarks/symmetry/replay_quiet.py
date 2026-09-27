@@ -49,7 +49,10 @@ def resolve(path, workspace, expected=None):
 def legacy_command(manifest, workspace, output):
     m = manifest
     if 'baseline' in m:
-        name = 'run_pairs'
+        contract = m.get('comparison_contract')
+        if contract not in (None, 'public_coarse'):
+            raise ValueError('Unknown declared comparison contract')
+        name = 'run_coarse_workflow_pairs' if contract == 'public_coarse' else 'run_pairs'
         argv = [resolve(m[k], workspace, m[k+'_sha256']) for k in ('baseline', 'candidate')]
         fields = ['baseline_mode', 'candidate_mode', 'case', 'grid', 'bands', 'polarization',
                   'pairs', 'cpu', 'cpus', 'tolerance', 'stop_on_quality_failure',
@@ -82,6 +85,14 @@ def practical(ci):
     lo, hi = ci
     return ('win' if lo > 1.02 else 'regression' if hi < 1/1.02 else
             'equivalent' if lo >= 1/1.02 and hi <= 1.02 else 'inconclusive')
+
+
+def interaction_decision(ci):
+    """T11*T00/(T10*T01) is a time factor, not a speedup."""
+    decision = practical(ci)
+    return {'win': 'above_multiplicative_time_prediction',
+            'regression': 'below_multiplicative_time_prediction',
+            'equivalent': 'within_two_percent_of_multiplicative_prediction'}.get(decision, decision)
 
 
 def backend_dependencies(original):
@@ -143,13 +154,16 @@ def audit_replay(original, current, windows):
     summary = current.get('summary', {})
     decisions = ({'paired': practical(summary.get('ci95'))} if 'ci95' in summary else
                  {k: practical(v.get('ci95')) for k, v in summary.items()
-                  if isinstance(v, dict) and 'ci95' in v})
+                  if k != 'interaction_time_factor' and isinstance(v, dict) and 'ci95' in v})
+    interaction = summary.get('interaction_time_factor')
     return dict(environment_qualified=env_ok, numerical_qualified=quality_ok,
                 complete=complete, declared_blocks=declared, completed_blocks=actual,
                 numerical_signature_mismatches=mismatches, environment_blocks=environment,
                 timing_qualified=qualified,
                 instrumented=bool(instrumented), primary_latency_qualified=qualified and not instrumented,
                 practical_decisions=decisions if qualified else {},
+                interaction_decision=interaction_decision(interaction.get('ci95'))
+                    if qualified and isinstance(interaction, dict) else None,
                 old_summary=original.get('summary'), new_summary=summary,
                 scope='monitored low-load desktop; hardware resources are not exclusively reserved')
 
@@ -165,12 +179,16 @@ def main():
     legacy_name, argv = legacy_command(original['manifest'], args.workspace, out/'samples.json')
     original_run = subprocess.run
     windows = []
+    dependencies = [Path(__file__), HERE/(legacy_name+'.py'),
+                    HERE/'quiet_host.py', HERE/'host_clock.ps1', HERE/'quiet-host-protocol.md']
+    if legacy_name == 'run_coarse_workflow_pairs':
+        dependencies += [HERE/name for name in ['run_pairs.py', 'interface_contract.py',
+                          'coarse_workflow_contract.py', 'coarse-workflow-protocol.md']]
     metadata = dict(schema='blaze2d/quiet-replay/1', original=str(args.original.resolve()),
                     original_sha256=digest(args.original), timestamp=time.time(),
-                    source_revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+                    harness_revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                     legacy_harness=legacy_name, arguments=argv,
-                    harness_sha256={p.name: digest(p) for p in [Path(__file__), HERE/(legacy_name+'.py'),
-                                    HERE/'quiet_host.py', HERE/'host_clock.ps1', HERE/'quiet-host-protocol.md']},
+                    harness_sha256={p.name: digest(p) for p in dependencies},
                     original_manifest=original['manifest'], runtime_signature_exclusions=sorted(RUNTIME_KEYS),
                     backend_dependencies=backend_dependencies(args.original),
                     additional_signature_exclusions='keys ending in _seconds')

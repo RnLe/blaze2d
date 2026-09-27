@@ -108,6 +108,10 @@ pub struct SupportBandFailure {
 /// Validate policies independently of geometry and backend allocation. More
 /// combinations can be added only with their own support identity/qualification.
 pub fn validate_options(options: &RunOptions, selected: MetricBallOptions) -> Result<(), String> {
+    if options.symmetry.coarse_start.is_some() {
+        return Err("coarse initialization is not implemented for metric Fourier support".into());
+    }
+
     let s = &options.symmetry;
     if s.max_sector_workspace_bytes != crate::symmetry::sectors::memory::DEFAULT_LIMIT_BYTES {
         return Err("metric support uses its discretization payload budget; the rectangular-sector workspace budget is not applicable".into());

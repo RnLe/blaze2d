@@ -36,7 +36,11 @@ fn main() {
     let tolerance: f64 = args.get(5).map(|s| s.parse().unwrap()).unwrap_or(1e-14);
     assert!(n > 0 && bands > 0 && tolerance.is_finite() && tolerance > 0.0);
     assert!(matches!(pol, "TM" | "TE"));
-    assert!(matches!(mode, "off" | "pt" | "unitary" | "pt-unitary"));
+    assert!(matches!(
+        mode,
+        "off" | "pt" | "unitary" | "pt-unitary" | "coarse" | "pt-coarse"
+    ));
+    let audit_fields = args.get(6).is_some_and(|value| value == "audit");
     let export = case.ends_with("-export");
     let without_export = case.strip_suffix("-export").unwrap_or(case);
     let field_output = !without_export.ends_with("-values");
@@ -67,6 +71,10 @@ fn main() {
             "basis":"reciprocal_fractional"}),
         "repeated" => json!({"points":[[0.13,0.21],[0.27,0.09],[0.13,0.21],[0.27,0.09]],
             "basis":"reciprocal_fractional"}),
+        "square-gamma" => json!({"points":[[0.0,0.0]],"basis":"reciprocal_fractional"}),
+        "square-generic" => json!({"points":[[0.13,0.17]],"basis":"reciprocal_fractional"}),
+        "square-return" => json!({"points":[[0.0,0.0],[0.17,0.0],[0.0,0.0]],
+            "basis":"reciprocal_fractional"}),
         _ => panic!("unknown case: {case}"),
     };
     let reuse = if mode.contains("unitary") {
@@ -80,6 +88,18 @@ fn main() {
     } else {
         "spatial_complex"
     });
+    if mode.ends_with("coarse") {
+        // Largest odd grid at most half the fine width, fixed before sampling.
+        assert!(
+            n >= 7,
+            "coarse benchmark requires a fine grid of at least seven"
+        );
+        let half = (n - 1) / 2;
+        let coarse = half - usize::from(half % 2 == 0);
+        cfg["bands"]["symmetry"]["coarse_start"] = json!({
+            "resolution":[coarse,coarse],"max_seed_field_bytes":67108864
+        });
+    }
     cfg["results"]["eigenvectors"] = json!(field_output);
     let source = api::edit::apply_config(
         DEFAULT_TOML,
@@ -124,6 +144,27 @@ fn main() {
     };
     let seconds = begin.elapsed().as_secs_f64();
     let rss = peak_rss_kib();
+    // Diagnostic-only export runs after the primary clock and RSS snapshot.
+    // It is never requested by the latency harness.
+    let audit_material = if audit_fields {
+        let plan = api::Plan::new(
+            api::Config::from_toml(&source).unwrap(),
+            api::Platform::Browser,
+        )
+        .unwrap();
+        let job = plan.job(0).unwrap();
+        let material = blaze2d_core::dielectric::Dielectric2D::from_geometry(
+            &job.geometry(),
+            job.grid(),
+            &job.dielectric(),
+        );
+        json!({"resolution":job.resolved.resolution,
+            "lattice_vectors":job.resolved.lattice_vectors,"sample_origin":[0.0,0.0],
+            "epsilon":material.eps(),"inverse_epsilon":material.inv_eps(),
+            "inverse_tensors":material.inv_eps_tensors()})
+    } else {
+        Value::Null
+    };
     let arr = &record.arrays;
     let meta = &record.metadata;
     let nk = arr["frequencies"].shape[0];
@@ -160,6 +201,9 @@ fn main() {
         } else {
             sym.iter().all(|s| s["coordinates"].is_null())
         })
+        && (!mode.ends_with("coarse")
+            || (sym[0]["coarse_start"]["used_as_seed"] == true
+                && sym.iter().skip(1).all(|s| s["coarse_start"].is_null())))
         && (!(mode.contains("unitary") && matches!(base_case, "square-star" | "repeated"))
             || reused_points > 0);
     let counters = profiler::get_all_counters();
@@ -183,6 +227,8 @@ fn main() {
             "seconds":seconds,"peak_rss_kib":rss,"expected_points":nk,
             "requested_path_success":path_success,"field_output":field_output,
             "arrays":arrays,"spectrum":spectrum,"points":points,
+            "audit_arrays":if audit_fields {serde_json::to_value(arr).unwrap()} else {Value::Null},
+            "audit_material":audit_material,
             "counters_available":!counters.is_empty(),"counters":counters,"stage_counters":stages,"timings":timings,
             "backend":backend_name,"configuration":cfg,"reused_points":reused_points,"build":api::build_info(),
             "interface_seconds":interface_seconds,"core_seconds":meta["elapsed_seconds"],

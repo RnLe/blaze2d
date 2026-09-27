@@ -326,6 +326,21 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
         let error=|reason|invalid("bands.symmetry",reason);
         let entry=memory::spectrum_payload(rows,resolved.solved_bands).map_err(error)?;
         let mut extra=0_u128;
+        if let Some(coarse)=options.coarse_start.filter(|c|c.max_seed_field_bytes>0) {
+            let cfg=blaze2d_core::eigensolver::EigensolverConfig {
+                n_bands:resolved.solved_bands,block_size:resolved.config.eigensolver.block_size,
+                ..Default::default()
+            };
+            let grid=blaze2d_core::grid::Grid2D::new(resolved.resolution[0],resolved.resolution[1],1.0,1.0);
+            let fields=coarse.seed_field_bytes(grid,&cfg).map_err(error)?;
+            let coarse_rows=coarse.resolution[0].checked_mul(coarse.resolution[1]).ok_or_else(||error("coarse grid size overflows".into()))?;
+            // An envelope whose largest grid rejects seed admission may still
+            // contain smaller jobs that admit it. Keep a conservative reserve
+            // for source solving and target rank extraction whenever enabled.
+            extra+=fields.min(coarse.max_seed_field_bytes) as u128;
+            extra+=memory::worker_payload(coarse_rows,cfg.effective_block_size(),0).map_err(error)? as u128;
+            extra+=memory::worker_payload(rows,0,resolved.solved_bands).map_err(error)? as u128;
+        }
         if options.k_reuse!=blaze2d_core::symmetry::reuse::KReuse::Off {
             // Resident entries are bounded by both path length and cache cap.
             // Lookup/reconstruction and insertion also create transient copies,

@@ -23,6 +23,8 @@ pub struct SymmetryOptions {
     /// None enumerates metric candidates with zero translation and entries ±2.
     pub plane_group:Option<PlaneGroup>,
     pub seed_transfer:super::seed::SeedTransfer,
+    /// Approximate first executed point only; all coarse work is reported.
+    pub coarse_start:Option<super::coarse::CoarseStartOptions>,
     pub sectors:super::sectors::SectorPolicy,
     pub sector_guard_budget:Option<usize>,
     /// Rectangular sector plan, prefix and reconstruction payload admission.
@@ -46,7 +48,7 @@ pub struct SymmetryOptions {
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:super::traversal::KTraversal::Given,max_traversal_field_bytes:64*1024*1024,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,max_sector_workspace_bytes:super::sectors::memory::DEFAULT_LIMIT_BYTES,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:super::traversal::KTraversal::Given,max_traversal_field_bytes:64*1024*1024,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,coarse_start:None,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,max_sector_workspace_bytes:super::sectors::memory::DEFAULT_LIMIT_BYTES,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
 }
 #[derive(Debug,Clone,Serialize)]
 pub struct SolveAttempt {
@@ -72,6 +74,8 @@ pub struct ReuseReport {
     pub qualification_attempts:usize,
     pub qualification:Option<super::qualification::QualificationReport>,
     pub seed:Option<super::seed::SeedReport>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub coarse_start:Option<super::coarse::CoarseStartReport>,
     pub sectors:Option<super::sectors::CoverageReport>,
     pub coordinates:Option<super::fourier::CoordinateReport>,
     pub rejected:Vec<String>,

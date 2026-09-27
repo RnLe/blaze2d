@@ -145,6 +145,21 @@ impl Config {
             Task::Bands => {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
+                if let Some(coarse)=&bands.symmetry.coarse_start {
+                    if !bands.discretization.is_fft_rectangle() || config.dielectric.source==DielectricSource::External {
+                        return Err(invalid("bands.symmetry.coarse_start","coarse initialization requires a geometry-sampled FFT rectangle"));
+                    }
+                    if config.eigensolver.precision!=Precision::F64 {
+                        return Err(invalid("bands.symmetry.coarse_start","coarse initialization requires f64; precision is not promoted"));
+                    }
+                    let grid=blaze2d_core::grid::Grid2D::new(resolution[0],resolution[1],1.0,1.0);
+                    let solver=blaze2d_core::eigensolver::EigensolverConfig {
+                        n_bands:bands.count,block_size:config.eigensolver.block_size,..Default::default()
+                    };
+                    coarse.options().seed_field_bytes(grid,&solver)
+                        .map_err(|reason|invalid("bands.symmetry.coarse_start",reason))?;
+                }
+
                 if bands.symmetry.sectors == SectorPolicy::Off &&
                     (bands.symmetry.sector_storage != SectorStorage::FullGrid || bands.symmetry.sector_kernel != SectorKernel::FullGrid || bands.symmetry.reconstruct_partners || bands.symmetry.share_sector_workspace || bands.symmetry.correction_projection_interval!=1 || bands.symmetry.sector_guard_budget.is_some()) {
                     return Err(invalid("bands.symmetry.sectors","sector storage, kernels, guards, partners and workspace sharing require an enabled sector policy"));
