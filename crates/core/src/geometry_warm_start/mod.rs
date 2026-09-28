@@ -9,3 +9,5 @@ pub mod innovation;
 pub mod path;
 pub mod projected;
 pub mod response;
+pub mod model;
+pub mod shape;

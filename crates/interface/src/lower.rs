@@ -119,7 +119,8 @@ impl crate::Bands {
                 use blaze2d_core::geometry_warm_start::{point, snapshot::Quality};
                 let a=self.accuracy.clone().unwrap_or_default();
                 point::Options {
-                    method: match w.method {crate::GeometryMethod::Cold=>point::Method::Cold,crate::GeometryMethod::Copy=>point::Method::Copy,crate::GeometryMethod::Metric=>point::Method::Metric,crate::GeometryMethod::Secant=>point::Method::Secant,crate::GeometryMethod::History=>point::Method::History,crate::GeometryMethod::Residual=>point::Method::Residual,crate::GeometryMethod::Response=>point::Method::Response},
+                    method: match w.method {crate::GeometryMethod::Cold=>point::Method::Cold,crate::GeometryMethod::Copy=>point::Method::Copy,crate::GeometryMethod::Metric=>point::Method::Metric,crate::GeometryMethod::Secant=>point::Method::Secant,crate::GeometryMethod::History=>point::Method::History,crate::GeometryMethod::Residual=>point::Method::Residual,crate::GeometryMethod::Response=>point::Method::Response,crate::GeometryMethod::Tangent=>point::Method::Tangent,crate::GeometryMethod::ReducedResponse=>point::Method::ReducedResponse},
+                    model:w.model.options(),transport:w.transport.as_ref().map(|t|t.options()),
                     scope: match w.scope {crate::GeometryScope::Gamma=>point::Scope::Gamma,crate::GeometryScope::Anchors=>point::Scope::Anchors,crate::GeometryScope::Path=>point::Scope::Path},
                     innovation_columns:w.innovation_columns,innovation_relative_tolerance:w.innovation_relative_tolerance,
                     anchors:w.anchors.clone(),max_guards:w.max_guards,donor_selection:match w.donor_selection {crate::GeometryDonorSelection::SameK=>point::DonorSelection::SameK,crate::GeometryDonorSelection::PreviousK=>point::DonorSelection::PreviousK,crate::GeometryDonorSelection::Screened=>point::DonorSelection::Screened},

@@ -22,6 +22,8 @@ pub enum Method {
     History,
     Residual,
     Response,
+    Tangent,
+    ReducedResponse,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -65,6 +67,8 @@ pub struct Options {
     pub quality: Quality,
     pub response_iterations: usize,
     pub response_tolerance: f64,
+    pub model: super::model::Options,
+    pub transport: Option<super::shape::Options>,
 }
 pub struct Context<R: Real> {
     pub bank: NativeBank<R>,
@@ -92,6 +96,8 @@ pub struct PointReport {
     pub prediction: Option<super::predict::PredictionReport>,
     pub response: Option<super::response::NativeResponseReport>,
     pub response_failure: Option<crate::symmetry::response::ResponseError>,
+    pub model: Option<super::model::Report>,
+    pub transport: Option<super::shape::Report>,
     pub compression: Option<super::innovation::CompressionReport>,
     pub compression_failure: Option<String>,
     pub preparation_actions_reused: usize,
@@ -152,7 +158,7 @@ pub fn solve<B: SpectralBackend + Clone>(
             &key,
             match options.method {
                 Method::History => options.history,
-                Method::Secant => 2,
+                Method::Secant | Method::ReducedResponse => 2,
                 _ => 1,
             },
         )
@@ -207,6 +213,8 @@ pub fn solve<B: SpectralBackend + Clone>(
         donors.clear();
     }
     let donor = donors.first().cloned();
+    let cached_model = donor.as_ref().and_then(|s| context.bank.model_for(s));
+    let mut pending_model = None;
     let innovations = donor
         .as_ref()
         .filter(|_| options.innovation_columns > 0)
@@ -222,6 +230,8 @@ pub fn solve<B: SpectralBackend + Clone>(
         prediction: None,
         response: None,
         response_failure: None,
+        model: None,
+        transport: None,
         compression: None,
         compression_failure: None,
         preparation_actions_reused: 0,
@@ -240,6 +250,7 @@ pub fn solve<B: SpectralBackend + Clone>(
         fallback: None,
         insertion: BankReport::default(),
         leased_payload_bytes: donors.iter().map(|s| s.payload_bytes()).sum::<usize>()
+            + cached_model.as_ref().map_or(0, |m| m.model.payload_bytes())
             + innovations.as_ref().map_or(0, |i| i.payload_bytes())
             + compression_donor
                 .as_ref()
@@ -279,6 +290,7 @@ pub fn solve<B: SpectralBackend + Clone>(
     if identical_pencil && !matches!(options.method, Method::Cold | Method::Copy) {
         report.preparation_skipped = Some("identical discrete pencil; copy the certified source window");
         crate::profiler::count("geometry.identical_predictor_skips", 1);
+        pending_model = cached_model.clone();
     }
     if donor.is_some()
         && !identical_pencil
@@ -354,6 +366,50 @@ pub fn solve<B: SpectralBackend + Clone>(
                 report.response = Some(response.report);
             }
             Err(error) => report.response_failure = Some(error),
+        }
+    }
+    if let Some(source) = donor.as_ref().filter(|_| !identical_pencil
+        && matches!(options.method, Method::Tangent | Method::ReducedResponse)) {
+        let kind = if options.method == Method::Tangent { super::model::Kind::Tangent }
+            else { super::model::Kind::Reduced };
+        let retained = cfg.n_bands - usize::from(key.is_gamma());
+        if options.max_predictor_columns>0 && options.max_predictor_columns<source.fields().len().max(retained) {
+            report.model = Some(super::model::Report {kind,accepted:false,attempts:vec![super::model::Attempt {
+                rejection:Some("response model exceeds its target column budget".into()),..Default::default()}]});
+        } else {
+        let (prediction, model, model_report) = super::model::prepare(theta, source.clone(),
+            donors.get(1).map(|s| &**s), cached_model, &parameters, kind, options.model,
+            options.quality, retained, options.max_preparation_bytes);
+        if let Some(prediction) = prediction {
+            preparation_actions = prediction.actions.is_some();
+            seeds = Some(prediction.vectors); actions = prediction.actions;
+            if let Some(model) = &model {
+                let anchor = model.model.anchor();
+                if !report.parents.contains(&anchor) { report.parents.push(anchor); }
+            }
+        }
+        pending_model = model; report.model = Some(model_report);
+        }
+    }
+    if let Some(transport) = options.transport {
+        if let Some(source) = donor.as_ref().filter(|_| !identical_pencil) {
+            let retained = cfg.n_bands - usize::from(key.is_gamma());
+            let columns = if options.max_predictor_columns == 0 { 2*retained }
+                else { options.max_predictor_columns };
+            let (prediction, transport_report) = super::shape::prepare(theta, source,
+                &parameters, transport, seeds.as_deref(), retained, columns,
+                options.max_preparation_bytes);
+            if let Some(prediction) = prediction {
+                preparation_actions = prediction.actions.is_some();
+                seeds = Some(prediction.vectors); actions = prediction.actions;
+            }
+            report.transport = Some(transport_report);
+        } else {
+            report.transport = Some(super::shape::Report {
+                reason: Some(if identical_pencil { "identical discrete pencil; transport skipped" }
+                    else { "no same-k geometry donor for transport" }.into()),
+                ..Default::default()
+            });
         }
     }
     if seeds.is_none() {
@@ -590,10 +646,11 @@ pub fn solve<B: SpectralBackend + Clone>(
                                         }
                                     }
                                 });
-                        report.insertion = context.bank.insert_shared(
+                        report.insertion = context.bank.insert_with_model(
                             snapshot,
                             options.quality,
                             compressed,
+                            pending_model.take(),
                         );
                     }
                 } else {
@@ -605,6 +662,7 @@ pub fn solve<B: SpectralBackend + Clone>(
     }
     report.insertion.entries = context.bank.len();
     report.insertion.payload_bytes = context.bank.payload_bytes();
+    report.insertion.model_payload_bytes = context.bank.model_payload_bytes();
     (
         report.insertion.innovation_columns,
         report.insertion.innovation_payload_bytes,

@@ -175,6 +175,17 @@ impl Config {
                         || warm.response_tolerance<=0. || warm.response_tolerance>=1. {
                         return Err(invalid("bands.warm_start", "use 1..64 response iterations and an inner relative tolerance strictly between zero and one"));
                     }
+                    if let Some(transport)=warm.transport {
+                        if !transport.options().valid() || warm.method==GeometryMethod::Cold {
+                            return Err(invalid("bands.warm_start.transport", "transport needs a donor method, a finite stretch bound above one and at most four, and a positive interpolation budget"));
+                        }
+                    }
+                    if !warm.model.options().valid() {
+                        return Err(invalid("bands.warm_start.model", "use 1..64 basis columns, 1..1024 training iterations, 0..64 reuses, step bound 1..16 and finite relative tolerances strictly between zero and one"));
+                    }
+                    if matches!(warm.method,GeometryMethod::Tangent|GeometryMethod::ReducedResponse) && warm.guards==0 {
+                        return Err(invalid("bands.warm_start.guards", "reusable response models require at least one solved guard"));
+                    }
                     if warm.max_preparation_bytes==0 || warm.max_predictor_columns>512 {
                         return Err(invalid("bands.warm_start", "use a positive predictor workspace budget and at most 512 explicit predictor columns"));
                     }

@@ -23,7 +23,8 @@ fn main() {
         guards:2,max_guards:None,history:2,innovation_columns:0,innovation_relative_tolerance:1e-3,
         max_predictor_columns:0,max_preparation_bytes:64<<20,max_cache_bytes:64<<20,retain_tm_actions:false,
         quality:Quality {relative_residual:quality.max_relative_residual,absolute_residual:quality.max_absolute_residual,
-            orthogonality:quality.max_orthogonality_defect},response_iterations:2,response_tolerance:0.25};
+            orthogonality:quality.max_orthogonality_defect},response_iterations:2,response_tolerance:0.25,
+            model:Default::default(),transport:None};
     let p=plan.summary.jobs;let k=plan.job(0).unwrap().resolved.k_points_fractional.len();
     let mut nodes=Vec::new();
     match strategy {

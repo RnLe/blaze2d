@@ -262,3 +262,37 @@ fn serpentine_geometry_order_preserves_canonical_ids_and_compatibility_groups() 
     }
 }
 
+
+#[test]
+fn reusable_response_configuration_roundtrips_and_rejects_invalid_budgets() {
+    let mut config=Config::default();
+    let warm=GeometryWarmStart {method:GeometryMethod::Tangent,..Default::default()};
+    config.bands.as_mut().unwrap().warm_start=Some(warm);
+    let original=serde_json::to_value(&config).unwrap();
+    assert_eq!(serde_json::to_value(Config::from_value(original.clone()).unwrap()).unwrap(),original);
+    assert!(Plan::new(config.clone(),Platform::Native).is_ok());
+    for (key,value) in [("columns",json!(0)),("columns",json!(65)),("training_iterations",json!(0)),
+        ("training_iterations",json!(1025)),("training_tolerance",json!(1.)),("max_reuses",json!(65)),
+        ("max_step",json!(0.5)),("max_relative_residual",json!(0.))] {
+        let mut bad=original.clone();bad["bands"]["warm_start"]["model"][key]=value;
+        assert!(Config::from_value(bad).and_then(|c|Plan::new(c,Platform::Native).map(|_|())).is_err(),"{key}");
+    }
+    config.bands.as_mut().unwrap().warm_start.as_mut().unwrap().guards=0;
+    assert!(Plan::new(config,Platform::Native).is_err());
+}
+
+#[test]
+fn shape_transport_configuration_roundtrips_and_rejects_invalid_limits() {
+    let mut config=Config::default();
+    config.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart{
+        method:GeometryMethod::ReducedResponse,transport:Some(GeometryTransport::default()),..Default::default()});
+    let original=serde_json::to_value(&config).unwrap();
+    assert_eq!(serde_json::to_value(Config::from_value(original.clone()).unwrap()).unwrap(),original);
+    assert!(Plan::new(config.clone(),Platform::Native).is_ok());
+    for (key,value) in [("max_stretch",json!(1.)),("max_stretch",json!(4.1)),("max_interpolation_terms",json!(0))] {
+        let mut bad=original.clone();bad["bands"]["warm_start"]["transport"][key]=value;
+        assert!(Config::from_value(bad).and_then(|c|Plan::new(c,Platform::Native).map(|_|())).is_err());
+    }
+    config.bands.as_mut().unwrap().warm_start.as_mut().unwrap().method=GeometryMethod::Cold;
+    assert!(Plan::new(config,Platform::Native).is_err());
+}

@@ -13,6 +13,9 @@ pub struct BankReport {
     pub innovation_columns: usize,
     pub innovation_payload_bytes: usize,
     pub innovation_trimmed_columns: usize,
+    pub model_payload_bytes: usize,
+    pub model_stored: bool,
+    pub model_rejection: Option<String>,
     pub evicted: Vec<BasisGeneration>,
     pub reason: Option<String>,
 }
@@ -27,6 +30,7 @@ pub struct NativeBank<R: Real> {
 struct Entry<R: Real> {
     snapshot: Arc<NativeSnapshot<R>>,
     innovation: Option<Arc<Innovations<R>>>,
+    model: Option<super::model::Lease<R>>,
 }
 impl<R: Real> std::ops::Deref for Entry<R> {
     type Target = NativeSnapshot<R>;
@@ -37,6 +41,7 @@ impl<R: Real> std::ops::Deref for Entry<R> {
 impl<R: Real> Entry<R> {
     fn payload_bytes(&self) -> usize {
         self.snapshot.payload_bytes() + self.innovation.as_ref().map_or(0, |i| i.payload_bytes())
+            + self.model.as_ref().map_or(0, |m| m.model.payload_bytes())
     }
 }
 impl<R: Real> NativeBank<R> {
@@ -98,6 +103,14 @@ impl<R: Real> NativeBank<R> {
             .and_then(|e| e.innovation.clone())
             .filter(|i| i.matches(source))
     }
+    pub fn model_for(&self, source: &NativeSnapshot<R>) -> Option<super::model::Lease<R>> {
+        self.entries.iter().rev()
+            .find(|e| e.basis_generation() == source.basis_generation() && e.key() == source.key())
+            .and_then(|e| e.model.clone())
+    }
+    pub fn model_payload_bytes(&self) -> usize {
+        self.entries.iter().filter_map(|e| e.model.as_ref()).map(|m| m.model.payload_bytes()).sum()
+    }
     pub fn resize(&mut self, limit: usize, history_per_fiber: usize) {
         self.limit = limit;
         self.history_per_fiber = history_per_fiber.max(1);
@@ -142,13 +155,23 @@ impl<R: Real> NativeBank<R> {
         &mut self,
         snapshot: Arc<NativeSnapshot<R>>,
         quality: Quality,
+        innovation: Option<Innovations<R>>,
+    ) -> BankReport {
+        self.insert_with_model(snapshot, quality, innovation, None)
+    }
+    pub fn insert_with_model(
+        &mut self,
+        snapshot: Arc<NativeSnapshot<R>>,
+        quality: Quality,
         mut innovation: Option<Innovations<R>>,
+        mut model: Option<super::model::Lease<R>>,
     ) -> BankReport {
         let mut report = BankReport {
             entries: self.len(),
             payload_bytes: self.bytes,
             innovation_columns: self.innovation_payload().0,
             innovation_payload_bytes: self.innovation_payload().1,
+            model_payload_bytes: self.model_payload_bytes(),
             ..Default::default()
         };
         if !snapshot.admitted(quality) {
@@ -189,7 +212,13 @@ impl<R: Real> NativeBank<R> {
         if innovation.as_ref().is_some_and(|i| i.fields().is_empty()) {
             innovation = None;
         }
-        let size = snapshot.payload_bytes() + innovation.as_ref().map_or(0, |i| i.payload_bytes());
+        let base_size = snapshot.payload_bytes() + innovation.as_ref().map_or(0, |i| i.payload_bytes());
+        if model.as_ref().is_some_and(|m| m.model.key() != snapshot.key()
+            || m.model.payload_bytes() > self.limit.saturating_sub(base_size).saturating_sub(protected)) {
+            model = None;
+            report.model_rejection = Some("response model declined to preserve the newest snapshot within the cache budget".into());
+        }
+        let size = base_size + model.as_ref().map_or(0, |m| m.model.payload_bytes());
         if size > self.limit {
             report.reason = Some("snapshot exceeds the worker cache budget".into());
             return report;
@@ -255,14 +284,17 @@ impl<R: Real> NativeBank<R> {
             }
             !discard
         });
+        report.model_stored = model.is_some();
         self.entries.push_back(Entry {
             snapshot,
             innovation: innovation.map(Arc::new),
+            model,
         });
         self.bytes = retained + size;
         report.stored = true;
         report.entries = self.len();
         report.payload_bytes = self.bytes;
+        report.model_payload_bytes = self.model_payload_bytes();
         report.innovation_columns = self
             .entries
             .iter()

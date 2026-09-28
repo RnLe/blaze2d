@@ -204,16 +204,20 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
     assert!(reference.errors.is_empty(),"{:?}",reference.errors);
     c.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {scope:GeometryScope::Path,
         guards:2,max_cache_bytes:256*1024,..Default::default()});
-    for (method,threads,innovations) in [(GeometryMethod::Copy,1,0),(GeometryMethod::Copy,2,0),(GeometryMethod::Metric,1,0),(GeometryMethod::Secant,1,0),(GeometryMethod::History,1,0),(GeometryMethod::Residual,1,0),(GeometryMethod::Response,1,0),(GeometryMethod::Response,2,0),(GeometryMethod::History,1,4)] {
+    for (method,threads,innovations,transport) in [(GeometryMethod::Copy,1,0,false),(GeometryMethod::Copy,2,0,false),(GeometryMethod::Metric,1,0,false),(GeometryMethod::Secant,1,0,false),(GeometryMethod::History,1,0,false),(GeometryMethod::Residual,1,0,false),(GeometryMethod::Response,1,0,false),(GeometryMethod::Response,2,0,false),(GeometryMethod::History,1,4,false),
+        (GeometryMethod::Tangent,1,0,false),(GeometryMethod::Tangent,2,0,false),(GeometryMethod::ReducedResponse,1,0,false),(GeometryMethod::ReducedResponse,2,0,false),
+        (GeometryMethod::Copy,1,0,true),(GeometryMethod::Secant,1,0,true),(GeometryMethod::Tangent,1,0,true),(GeometryMethod::ReducedResponse,2,0,true)] {
         let warm=c.bands.as_mut().unwrap().warm_start.as_mut().unwrap();
         warm.method=method;warm.retain_tm_actions=threads==2;
         warm.innovation_columns=innovations;
+        warm.transport=transport.then(GeometryTransport::default);
         let candidate=blaze2d_runner::collect(Plan::new(c.clone(),Platform::Native).unwrap(),
             Options {threads,..Default::default()}).unwrap();
         assert!(candidate.errors.is_empty(),"{:?}",candidate.errors);
         let mut seeds=0;
         let mut advanced=0;
         let mut compressed_seeds=0;
+        let mut transported=0;
         for (a,b) in reference.results.iter().zip(&candidate.results) {
             assert_eq!(a.job_index,b.job_index);
             assert_eq!(b.arrays["eigenvectors"].shape,vec![3,4,9,9]);
@@ -222,10 +226,11 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
             }
             for point in b.metadata["geometry_warm_start"]["points"].as_array().unwrap() {
                 seeds+=usize::from(!point["source"].is_null());
+                transported+=usize::from(point["transport"]["accepted"]==true);
                 compressed_seeds+=point["prediction"]["innovation_columns"].as_u64().unwrap_or(0);
-                if (point["prediction"].is_object() && point["prediction"]["fallback"].is_null()) || point["response"].is_object() {advanced+=1;}
+                if (point["prediction"].is_object() && point["prediction"]["fallback"].is_null()) || point["response"].is_object() || point["model"]["accepted"]==true {advanced+=1;}
                 if threads==2 && !point["source"].is_null() {
-                    assert!(point[if method==GeometryMethod::Response && point["preparation_skipped"].is_null() {"preparation_actions_reused"} else {"tm_actions_reused"}].as_u64().unwrap()>0);
+                    assert!(point[if (method==GeometryMethod::Response || point["model"]["accepted"]==true || point["transport"]["accepted"]==true) && point["preparation_skipped"].is_null() {"preparation_actions_reused"} else {"tm_actions_reused"}].as_u64().unwrap()>0);
                 }
                 if !point["preparation_skipped"].is_null() {assert_eq!(point["initial_acceptance"],true);}
                 assert_eq!(point["certified_guards"],2,"{point}");
@@ -233,6 +238,7 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
             }
         }
         assert!(seeds>0);
+        if transport {assert!(transported>0,"transport never admitted a trial");}
         if innovations>0 {assert!(compressed_seeds>0,"compressed directions were not consumed");}
         if method!=GeometryMethod::Copy {assert!(advanced>0,"{method:?} never admitted a prediction");}
     }

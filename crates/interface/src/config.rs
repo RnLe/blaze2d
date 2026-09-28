@@ -466,14 +466,68 @@ pub struct GeometryWarmStart {
     pub retain_tm_actions: bool,
     pub response_iterations: usize,
     pub response_tolerance: f64,
+    pub model: GeometryResponseModel,
+    pub transport: Option<GeometryTransport>,
 }
 impl Default for GeometryWarmStart {
     fn default() -> Self { Self { method: GeometryMethod::Copy, parameter_order: GeometryParameterOrder::Grouped, scope: GeometryScope::Gamma,
-        anchors:vec![],donor_selection:GeometryDonorSelection::SameK,guards: 2,max_guards:None,history: 2,innovation_columns:0,innovation_relative_tolerance:1e-3, max_predictor_columns: 0, max_preparation_bytes: 64*1024*1024, max_cache_bytes: 64*1024*1024, retain_tm_actions: false, response_iterations: 2, response_tolerance: 0.25 } }
+        anchors:vec![],donor_selection:GeometryDonorSelection::SameK,guards: 2,max_guards:None,history: 2,innovation_columns:0,innovation_relative_tolerance:1e-3, max_predictor_columns: 0, max_preparation_bytes: 64*1024*1024, max_cache_bytes: 64*1024*1024, retain_tm_actions: false, response_iterations: 2, response_tolerance: 0.25, model:GeometryResponseModel::default(),transport:None } }
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
-pub enum GeometryMethod { Cold, Copy, Metric, Secant, History, Residual, Response }
+pub enum GeometryMethod { Cold, Copy, Metric, Secant, History, Residual, Response, Tangent, ReducedResponse }
+/// Reusable source response limits. These do not weaken final field accuracy.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct GeometryResponseModel {
+    pub basis: GeometryResponseBasis,
+    pub columns: usize,
+    pub training_iterations: usize,
+    pub training_tolerance: f64,
+    pub max_reuses: usize,
+    pub max_step: f64,
+    pub max_relative_residual: f64,
+}
+impl Default for GeometryResponseModel {
+    fn default() -> Self { Self {basis:GeometryResponseBasis::Fourier,columns:8,
+        training_iterations:128,training_tolerance:1e-4,max_reuses:4,max_step:4.,max_relative_residual:0.1} }
+}
+impl GeometryResponseModel {
+    pub(crate) fn options(&self) -> blaze2d_core::geometry_warm_start::model::Options {
+        use blaze2d_core::geometry_warm_start::model::{Options,Basis};
+        Options {basis:match self.basis {GeometryResponseBasis::Fourier=>Basis::Fourier,
+            GeometryResponseBasis::History=>Basis::History,GeometryResponseBasis::Residual=>Basis::Residual},
+            columns:self.columns,training_iterations:self.training_iterations,training_tolerance:self.training_tolerance,
+            max_reuses:self.max_reuses,max_step:self.max_step,max_relative_residual:self.max_relative_residual}
+    }
+}
+/// Optional periodic shape transport, composed as an independent target trial.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct GeometryTransport {
+    pub interpolation: GeometryInterpolation,
+    pub jacobian: bool,
+    pub max_stretch: f64,
+    pub max_interpolation_terms: usize,
+}
+impl Default for GeometryTransport {
+    fn default() -> Self {Self{interpolation:GeometryInterpolation::Cubic,jacobian:false,
+        max_stretch:2.,max_interpolation_terms:32_000_000}}
+}
+impl GeometryTransport {
+    pub(crate) fn options(&self) -> blaze2d_core::geometry_warm_start::shape::Options {
+        use blaze2d_core::geometry_warm_start::shape::{Options,Interpolation};
+        Options{interpolation:match self.interpolation {GeometryInterpolation::Cubic=>Interpolation::Cubic,
+            GeometryInterpolation::Fourier=>Interpolation::Fourier},jacobian:self.jacobian,
+            max_stretch:self.max_stretch,max_interpolation_terms:self.max_interpolation_terms}
+    }
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum GeometryInterpolation { Cubic, Fourier }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum GeometryResponseBasis { Fourier, History, Residual }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
 pub enum GeometryParameterOrder { Grouped, Serpentine }
