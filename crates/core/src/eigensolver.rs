@@ -436,6 +436,20 @@ pub struct EigensolverResult {
     pub converged: bool,
 }
 
+/// Residual acceptance for an independently qualified lowest-band prefix.
+///
+/// A small residual does not establish spectral coverage. The caller must
+/// establish that `certified_prefix` covers the lowest target bands (for example
+/// an identical certified operator, or a guarded perturbation bound). Raw public
+/// seed fields have no such provenance and do not enable this shortcut.
+#[derive(Debug, Clone, Copy)]
+pub struct InitialAcceptance {
+    pub certified_prefix: usize,
+    pub relative_residual: f64,
+    pub absolute_residual: f64,
+    pub b_orthogonality: f64,
+}
+
 /// Extended result including convergence diagnostics for analysis.
 ///
 /// This is returned by [`Eigensolver::solve_with_diagnostics`] and includes
@@ -496,6 +510,8 @@ where
     iteration: usize,
     /// Whether the solver has been initialized.
     initialized: bool,
+    initialization_report: Option<InitializationResult>,
+    initial_acceptance: Option<InitialAcceptance>,
 }
 
 impl<'a, O, B> Eigensolver<'a, O, B>
@@ -529,6 +545,8 @@ where
             soft_locked: Vec::new(),
             iteration: 0,
             initialized: false,
+            initialization_report: None,
+            initial_acceptance: None,
         }
     }
 
@@ -538,13 +556,8 @@ where
     ///
     /// # Γ-Point Deflation
     ///
-    /// At k=0 (the Γ point), the constant field is always an eigenvector with
-    /// eigenvalue λ=0. This spurious mode is automatically added to the deflation
-    /// subspace to prevent convergence issues. This is NOT optional because:
-    ///
-    /// 1. The constant mode has exactly λ=0, which can cause division issues
-    /// 2. It's always degenerate with other modes in the null space
-    /// 3. Including it in the active block would waste computational effort
+    /// At exact Γ, the analytic kernel is locked once. Positive modes are
+    /// initialized in its target-metric complement, including imported fields.
     pub fn initialize(&mut self) {
         crate::profile_scope!("initialization");
         if self.initialized {
@@ -598,53 +611,70 @@ where
         }
 
         // Step 2: Create initial block X_0
-        let block_size = self.config.effective_block_size().min(self.operator.subspace_dimension().saturating_sub(self.deflation.len()));
+        let positive_requested = self.config.n_bands.saturating_sub(self.deflation.len());
+        let block_size = if positive_requested == 0 { 0 } else {
+            self.config.effective_block_size().min(self.operator.subspace_dimension().saturating_sub(self.deflation.len()))
+        };
         let init_config = InitializationConfig {
             block_size,
             max_random_attempts: block_size * 8,
             zero_tolerance: 1e-12,
         };
 
-        let (mut x_block, _init_result) =
+        let (x_block, init_result) =
             initialization::initialize_block_with_deflation(self.operator, &init_config, self.warm_start, Some(&self.deflation));
 
-        // Step 3: Project initial block against Γ mode (if present)
-        // We must handle the projection and re-application carefully to avoid borrow conflicts
-        if !self.deflation.is_empty() {
-            // First pass: project and normalize using immutable backend
-            {
-                let backend = self.operator.backend();
-                for entry in &mut x_block {
-                    self.deflation
-                        .project_single(backend, &mut entry.vector, &mut entry.mass);
-
-                    // Re-normalize after projection
-                    let norm = normalization::b_norm(backend, &entry.vector, &entry.mass);
-                    if norm > 1e-12 {
-                        let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
-                        backend.scale(scale, &mut entry.vector);
-                        backend.scale(scale, &mut entry.mass);
-                    }
-                }
-            }
-            // Second pass: re-apply operator (requires mutable borrow)
-            for entry in &mut x_block {
-                self.operator.apply(&entry.vector, &mut entry.applied);
-            }
-        }
-
-        self.x_block = x_block;
+        self.initialization_report = Some(init_result);
+        (self.x_block, self.eigenvalues) = initialization::ritz_block(self.operator.backend(), x_block);
         self.initialized = true;
-
-        // Initialize soft_locked to all false (no bands converged yet)
         self.soft_locked = vec![false; self.x_block.len()];
+    }
 
-        // Compute initial Rayleigh quotients as eigenvalue estimates
-        self.eigenvalues = self
-            .x_block
-            .iter()
-            .map(|entry| entry.rayleigh_quotient(self.operator.backend()))
-            .collect();
+    /// Enable the same initial residual gate for every solve entry point.
+    /// Spectral coverage is a caller contract, separate from residual accuracy.
+    pub fn set_initial_acceptance(&mut self, policy: InitialAcceptance) {
+        self.initial_acceptance = Some(policy);
+    }
+
+    /// Rank repair observations for the actual imported block.
+    pub fn initialization_report(&self) -> Option<&InitializationResult> {
+        self.initialization_report.as_ref()
+    }
+
+    /// Certify stored target fields before any correction, never cached products.
+    fn initial_result(&mut self) -> Option<EigensolverResult> {
+        let n = self.config.n_bands;
+        let analytic_only = self.deflation.len() >= n;
+        let mut residuals = Vec::new();
+        if !analytic_only {
+            let policy = self.initial_acceptance?;
+            if policy.certified_prefix < n || self.total_bands() < n
+                || [policy.relative_residual, policy.absolute_residual, policy.b_orthogonality]
+                    .iter().any(|x| !x.is_finite() || *x < 0.0) { return None; }
+            let values = self.collect_all_eigenvalues();
+            let fields = self.all_eigenvectors();
+            let certificate = refine::certify_without_refinement(self.operator, &values[..n], &fields);
+            if !certificate.b_orthogonality_defect.is_finite()
+                || certificate.b_orthogonality_defect > policy.b_orthogonality
+                || certificate.residuals.iter().zip(&certificate.absolute_residuals).any(|(&r,&a)|
+                    !r.is_finite() || !a.is_finite() || (r > policy.relative_residual && a > policy.absolute_residual)) {
+                return None;
+            }
+            residuals = certificate.residuals;
+        }
+        let mut convergence = ConvergenceInfo::new(n);
+        convergence.band_states.fill(BandState::Converged);
+        convergence.relative_residuals = if analytic_only {vec![0.0;n]} else {residuals};
+        convergence.relative_eigenvalue_changes.fill(0.0);
+        convergence.n_converged = n;
+        convergence.all_converged = true;
+        convergence.max_residual = convergence.relative_residuals.iter().copied().fold(0.0, f64::max);
+        convergence.max_eigenvalue_change = 0.0;
+        crate::profiler::count("initialization.accepted_without_correction", 1);
+        Some(EigensolverResult {
+            eigenvalues: self.collect_all_eigenvalues().into_iter().take(n).collect(),
+            iterations: 0, convergence, converged: true,
+        })
     }
 
     /// Check if the solver has been initialized.
@@ -1757,6 +1787,7 @@ where
         }
 
         crate::profiler::count("eigensolve.calls", 1);
+        if let Some(result) = self.initial_result() { return result; }
         let n_bands_requested = self.config.n_bands;
         let n_bands = n_bands_requested.min(self.x_block.len());
         let mut convergence = ConvergenceInfo::new(n_bands);
@@ -2288,6 +2319,7 @@ where
         }
 
         crate::profiler::count("eigensolve.calls", 1);
+        if let Some(result) = self.initial_result() { return result; }
         let n_bands_requested = self.config.n_bands;
         let n_bands = n_bands_requested.min(self.x_block.len());
         let mut convergence = ConvergenceInfo::new(n_bands);
@@ -2650,6 +2682,9 @@ where
         let run_config = self.create_run_config(label);
         let mut recorder = ConvergenceRecorder::new(run_config);
         recorder.start();
+        if let Some(result) = self.initial_result() {
+            return DiagnosticResult { result, diagnostics: recorder.finalize_with_result(0, true) };
+        }
 
         // Threshold for warning about poor subspace conditioning
         const CONDITION_WARN_THRESHOLD: f64 = 1e10;

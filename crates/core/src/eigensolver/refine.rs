@@ -288,7 +288,7 @@ fn zero_buffer<B: SpectralBackend>(buffer: &mut B::Buffer) {
     }
 }
 
-fn hermitize_in_place(matrix: &mut [Complex64], n: usize) {
+pub(crate) fn hermitize_in_place(matrix: &mut [Complex64], n: usize) {
     for j in 0..n {
         for i in 0..=j {
             let avg = 0.5 * (matrix[i + j * n] + matrix[j + i * n].conj());
@@ -299,7 +299,7 @@ fn hermitize_in_place(matrix: &mut [Complex64], n: usize) {
 }
 
 /// C = A·B for small column-major complex matrices.
-fn matmul_col_major(a: &[Complex64], b: &[Complex64], n: usize) -> Vec<Complex64> {
+pub(crate) fn matmul_col_major(a: &[Complex64], b: &[Complex64], n: usize) -> Vec<Complex64> {
     let mut c = vec![Complex64::ZERO; n * n];
     for j in 0..n {
         for k in 0..n {

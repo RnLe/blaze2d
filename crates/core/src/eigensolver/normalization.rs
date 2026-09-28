@@ -93,7 +93,7 @@ pub fn normalize_to_unit_b_norm_with_tol<B: SpectralBackend>(
     tol: f64,
 ) -> f64 {
     let norm = b_norm(backend, vector, mass_vector);
-    if norm > tol {
+    if norm.is_finite() && norm > tol {
         let scale = Complex64::new(1.0 / norm, 0.0);
         backend.scale(scale, vector);
         backend.scale(scale, mass_vector);

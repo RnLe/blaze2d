@@ -132,9 +132,7 @@ pub trait LinearOperator<B: SpectralBackend> {
     /// Fourier subspace can also identify the folded mode G = -k without
     /// changing the physical Bloch wavevector returned by `bloch`.
     fn analytic_kernel_available(&self) -> bool {
-        self.owns_gamma_kernel()
-            && crate::eigensolver::initialization::is_gamma_point(
-                self.bloch(), crate::eigensolver::initialization::GAMMA_TOLERANCE)
+        self.owns_gamma_kernel() && self.bloch() == [0.0, 0.0]
     }
 
     /// Finite dimension of a constrained search space, including its kernel.

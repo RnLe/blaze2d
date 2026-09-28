@@ -8,7 +8,7 @@
 //!
 //! # Γ-Point Constant Mode
 //!
-//! At k=0 (the Γ point), there is always a spurious zero-eigenvalue mode
+//! At k=0 (the Γ point), the physical zero-eigenvalue mode is known analytically
 //! corresponding to the constant field u₀ = 1 everywhere. This mode satisfies
 //! (∇ + ik) × u₀ = 0 when k=0, giving λ = 0.
 //!
@@ -20,7 +20,7 @@
 //! y₀ = u₀ / √(u₀^* B u₀)
 //! ```
 //!
-//! where u₀ has value 1 for all Fourier components.
+//! where u₀ has value 1 at every spatial grid point.
 
 use log::{debug, warn};
 use num_complex::{Complex, Complex64};
@@ -73,7 +73,7 @@ pub struct InitializationConfig {
     pub block_size: usize,
     /// Maximum random initialization attempts before giving up.
     pub max_random_attempts: usize,
-    /// Tolerance for considering a vector as zero (and rejecting it).
+    /// Relative B-norm threshold; storage roundoff sets an additional lower bound.
     pub zero_tolerance: f64,
 }
 
@@ -100,6 +100,10 @@ pub struct InitializationResult {
     pub random_vectors: usize,
     /// Total vectors in the block (may be less than requested if initialization failed).
     pub total_vectors: usize,
+    /// Rejected warm columns, including invalid shape, nonfinite values and lost rank.
+    pub rejected_warm_vectors: usize,
+    /// Relative norm cutoff used in rank decisions.
+    pub rank_tolerance: f64,
 }
 
 // ============================================================================
@@ -253,13 +257,17 @@ pub(crate) fn initialize_block_with_deflation<O,B>(operator:&mut O,config:&Initi
 where O:LinearOperator<B>, B:SpectralBackend {
     let mut entries: Vec<BlockEntry<B>> = Vec::with_capacity(config.block_size);
     let mut warm_hits = 0usize;
+    let mut warm_attempts = 0usize;
+    let rank_tolerance = config.zero_tolerance.max(32.0 * <B::Real as num_traits::Float>::epsilon().to_accum());
 
     // Phase 1: Try to use warm-start vectors
     if let Some(seeds) = warm_start {
         for field in seeds {
+            if entries.len() >= config.block_size { break; }
+            warm_attempts += 1;
             crate::profiler::count("initialization.warm_attempts", 1);
             if let Some(entry) =
-                build_entry_from_field(operator, field, &entries, config.zero_tolerance, deflation)
+                build_entry_from_field(operator, field, &entries, rank_tolerance, deflation)
             {
                 entries.push(entry);
                 warm_hits += 1;
@@ -281,7 +289,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
         phase += 1.0;
 
         if let Some(entry) =
-            build_entry_from_buffer(operator, vector, &entries, config.zero_tolerance, deflation)
+            build_entry_from_buffer(operator, vector, &entries, rank_tolerance, deflation)
         {
             entries.push(entry);
         } else {
@@ -293,6 +301,8 @@ where O:LinearOperator<B>, B:SpectralBackend {
         warm_start_hits: warm_hits,
         random_vectors: entries.len().saturating_sub(warm_hits),
         total_vectors: entries.len(),
+        rejected_warm_vectors: warm_attempts - warm_hits,
+        rank_tolerance,
     };
     crate::profiler::count("initialization.warm_accepts", warm_hits);
     crate::profiler::count("initialization.random_accepts", result.random_vectors);
@@ -314,6 +324,15 @@ where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
+    let source_grid = field.grid();
+    let target_grid = operator.grid();
+    if (source_grid.nx, source_grid.ny, source_grid.lx, source_grid.ly, source_grid.centered)
+        != (target_grid.nx, target_grid.ny, target_grid.lx, target_grid.ly, target_grid.centered)
+        || field.as_slice().iter().any(|z| !z.re.is_finite() || !z.im.is_finite())
+    {
+        crate::profiler::count("initialization.invalid_fields", 1);
+        return None;
+    }
     let mut vector = operator.alloc_field();
     let dst = vector.as_mut_slice();
     for (d, &s) in dst.iter_mut().zip(field.as_slice().iter()) {
@@ -337,31 +356,32 @@ where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
-    // Constraints apply to both warm starts and random rank repair.
-    operator.constrain(&mut vector);
-    // Compute mass vector
-    let mut mass = operator.alloc_field();
-    operator.apply_mass(&vector, &mut mass);
-
-    if let Some(locked)=deflation {locked.project_single(operator.backend(),&mut vector,&mut mass);}
-
-    // Project out components along existing basis vectors (B-orthogonalization)
-    for entry in existing {
-        project_out(
-            operator.backend(),
-            &mut vector,
-            &mut mass,
-            &entry.vector,
-            &entry.mass,
-        );
-    }
-
-    // Normalize to unit B-norm (returns 0.0 if norm is below tolerance)
-    let norm =
-        normalize_to_unit_b_norm_with_tol(operator.backend(), &mut vector, &mut mass, zero_tol);
-    if norm == 0.0 {
+    // Compare rank after constraints with the incoming norm. In particular,
+    // cancellation residue of a projected kernel is not a new direction.
+    if vector.as_slice().iter().any(|z| !z.re.to_accum().is_finite() || !z.im.to_accum().is_finite()) {
         return None;
     }
+    let mut mass = operator.alloc_field();
+    operator.apply_mass(&vector, &mut mass);
+    let incoming_norm = operator.backend().dot(&vector, &mass).re.sqrt();
+    if !incoming_norm.is_finite() || incoming_norm == 0.0 { return None; }
+    operator.constrain(&mut vector);
+    operator.apply_mass(&vector, &mut mass);
+    for _ in 0..2 {
+        if let Some(locked) = deflation {
+            locked.project_single(operator.backend(), &mut vector, &mut mass);
+        }
+        for entry in existing {
+            project_out(operator.backend(), &mut vector, &mut mass, &entry.vector, &entry.mass);
+        }
+        // In f32, independently updated Bx can retain cancellation error even
+        // when x is nearly zero. Rank and the next pass use the stored x.
+        operator.apply_mass(&vector, &mut mass);
+    }
+    let norm = normalize_to_unit_b_norm_with_tol(
+        operator.backend(), &mut vector, &mut mass, zero_tol * incoming_norm);
+    if norm == 0.0 { return None; }
+    operator.apply_mass(&vector, &mut mass);
 
     // Apply the operator to get A*x
     let mut applied = operator.alloc_field();
@@ -372,4 +392,42 @@ where
         mass,
         applied,
     })
+}
+
+/// Initial target Rayleigh–Ritz in native storage. Rank repair has already made
+/// the Gram matrix nonsingular; whitening accounts for its remaining roundoff.
+pub(crate) fn ritz_block<B: SpectralBackend>(
+    backend: &B, entries: Vec<BlockEntry<B>>,
+) -> (Vec<BlockEntry<B>>, Vec<f64>) {
+    use super::refine::{hermitize_in_place, matmul_col_major};
+    crate::profile_scope!("initialization.ritz");
+    let n = entries.len();
+    if n == 0 { return (entries, Vec::new()); }
+    let mut s = vec![Complex64::ZERO; n * n];
+    let mut h = s.clone();
+    for j in 0..n { for i in 0..n {
+        s[i+j*n] = backend.dot(&entries[i].vector, &entries[j].mass);
+        h[i+j*n] = backend.dot(&entries[i].vector, &entries[j].applied);
+    }}
+    hermitize_in_place(&mut s, n);
+    hermitize_in_place(&mut h, n);
+    let eig = backend.dense_eigen(&s, n);
+    let mut w = vec![Complex64::ZERO; n*n];
+    for k in 0..n {
+        assert!(eig.eigenvalues[k] > 0.0, "initial block lost target-metric rank");
+        let scale = eig.eigenvalues[k].sqrt().recip();
+        for j in 0..n { for i in 0..n {
+            w[i+j*n] += eig.eigenvectors[i+k*n] * eig.eigenvectors[j+k*n].conj() * scale;
+        }}
+    }
+    let mut projected = matmul_col_major(&w, &matmul_col_major(&h, &w, n), n);
+    hermitize_in_place(&mut projected, n);
+    let eig = backend.dense_eigen(&projected, n);
+    let coefficients = matmul_col_major(&w, &eig.eigenvectors, n);
+    let (mut x, mut bx, mut ax) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    for entry in entries { x.push(entry.vector); bx.push(entry.mass); ax.push(entry.applied); }
+    let x = backend.linear_combinations(&x, &coefficients, n);
+    let bx = backend.linear_combinations(&bx, &coefficients, n);
+    let ax = backend.linear_combinations(&ax, &coefficients, n);
+    (x.into_iter().zip(bx).zip(ax).map(|((vector,mass),applied)| BlockEntry {vector,mass,applied}).collect(), eig.eigenvalues)
 }
