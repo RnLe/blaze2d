@@ -8,6 +8,10 @@ use num_complex::Complex64;
 use serde_json::json;
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--audit") {
+        audit_stored(&std::env::args().nth(2).expect("--audit needs a restored study JSON file"));
+        return;
+    }
     let n: usize = std::env::args().nth(1).map_or(24, |s| s.parse().unwrap());
     let tolerance: f64 = std::env::args().nth(2).map_or(1e-6, |s| s.parse().unwrap());
     let accuracy = BandAccuracy {max_relative_residual:5e-4,max_absolute_residual:2e-3,max_orthogonality_defect:2e-5};
@@ -73,4 +77,55 @@ fn main() {
     println!("{}",json!({"scope":"f32 storage audited by fresh f64 operator actions; accuracy only, not timing",
         "resolution":n,"stopping_tolerance":tolerance,"accuracy":accuracy,"pass":passed,"records":records}));
     if !passed {std::process::exit(1);}
+}
+
+/// Audit the actual archived fields without changing their basis or refining them.
+fn audit_stored(path: &str) {
+    let study: blaze2d_runner::Study = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let plan = Plan::new(study.config.clone(), Platform::Native).unwrap();
+    let accuracy = study.config.bands.as_ref().unwrap().accuracy.clone().unwrap_or_default();
+    let mut reference_config = study.config.clone();
+    reference_config.eigensolver.precision = Precision::F64;
+    reference_config.eigensolver.tolerance = Some(1e-13);
+    reference_config.bands.as_mut().unwrap().warm_start = None;
+    reference_config.bands.as_mut().unwrap().accuracy = Some(BandAccuracy::default());
+    reference_config.results.eigenvectors = false;
+    let reference = collect(Plan::new(reference_config, Platform::Native).unwrap(),
+        Options { threads: 1, ..Default::default() }).unwrap();
+    assert!(reference.errors.is_empty(), "independent f64 reference failed");
+    let mut audits = Vec::new();
+    let mut passed = study.errors.is_empty() && study.results.len() == reference.results.len();
+    for result in study.results.iter().chain(study.errors.iter().filter_map(|e| e.partial_result.as_deref())) {
+        result.validate_arrays().unwrap();
+        let job = plan.job(result.job_index).unwrap();
+        let core = job.bands_job();
+        let material = Dielectric2D::from_geometry(&core.geom, core.grid, &core.dielectric);
+        let count = result.arrays["frequencies"].shape[1];
+        let samples = core.grid.len();
+        let reference = reference.results.iter().find(|r| r.job_index == result.job_index).unwrap();
+        for (ki, k) in job.resolved.k_points_cartesian.iter().enumerate() {
+            let mut theta = ThetaOperator::new(CpuBackend::<f64>::new(), material.clone(), core.pol, *k);
+            let frequencies = &result.arrays["frequencies"].data[ki*count..(ki+1)*count];
+            let values: Vec<_> = frequencies.iter().map(|f| (f*std::f64::consts::TAU).powi(2)).collect();
+            let fields: Vec<_> = result.arrays["eigenvectors"].data[ki*count*samples*2..(ki+1)*count*samples*2]
+                .chunks_exact(samples*2).map(|x| Field2D::from_vec(core.grid, x.chunks_exact(2)
+                    .map(|z| Complex64::new(z[0],z[1])).collect())).collect();
+            let fresh = certify_without_refinement(&mut theta, &values, &fields);
+            let mut a = frequencies.to_vec();
+            let mut b = reference.arrays["frequencies"].data[ki*count..(ki+1)*count].to_vec();
+            a.sort_by(f64::total_cmp); b.sort_by(f64::total_cmp);
+            let frequency_error = a.iter().zip(b).map(|(a,b)| (a-b).abs()).fold(0.,f64::max);
+            let pass = fresh.b_orthogonality_defect <= accuracy.max_orthogonality_defect
+                && fresh.residuals.iter().zip(&fresh.absolute_residuals).all(|(&r,&a)|
+                    r <= accuracy.max_relative_residual || a <= accuracy.max_absolute_residual)
+                && frequency_error < 2e-5;
+            passed &= pass;
+            audits.push(json!({"job":result.job_index,"k_index":ki,"pass":pass,
+                "f64_residuals":fresh.residuals,"f64_absolute_residuals":fresh.absolute_residuals,
+                "f64_orthogonality":fresh.b_orthogonality_defect,"max_frequency_difference":frequency_error}));
+        }
+    }
+    println!("{}", json!({"scope":"fresh f64 actions on archived unrefined fields, plus independent ordinary f64 spectrum",
+        "pass":passed,"accuracy":accuracy,"audits":audits}));
+    if !passed { std::process::exit(1); }
 }

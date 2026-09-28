@@ -685,6 +685,9 @@ fn run_core<B: SpectralBackend + Clone>(
         let mut point_continuation = continuation.as_deref_mut()
             .filter(|state| !state.first_point_only || k_idx == 0);
         crate::profile_scope!("run.k_point");
+        let _point_class_timer = crate::profiler::ScopeTimer::new(
+            if k_frac == [0., 0.] { "run.gamma_point" } else { "run.nonzero_point" },
+        );
         let mut reuse_report = ReuseReport { requested: requested_reuse, ..Default::default() };
         if point_continuation.is_some() { reuse_report.continuation = Some(Default::default()); }
         if let Some(reason) = &arithmetic_rejection {

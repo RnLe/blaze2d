@@ -126,7 +126,9 @@ $Q$ excludes the complete retained source window, including guards and the
 analytic Gamma kernel. Mapping back also includes the first-order mass
 normalization term $-\tfrac12 X(X^\dagger\Delta B X)$. Production inner solves
 are bounded by `response_iterations` and `response_tolerance`; they do not
-construct a full dense complement. Guards are copied while response work
+construct a full dense complement. Target constraint projection and Ritz
+normalization finish the step, including the changed TM Gamma constraint.
+Guards are copied while response work
 targets the requested positive modes.
 
 Actual discrete increments matter. Blaze's legacy `analytic` partial-cell
@@ -183,9 +185,11 @@ include dual-mass residuals, kernel leakage, parentage, cache decisions and
 discarded correction work. Near zero, the absolute criterion is essential and
 does not imply a small relative frequency error.
 
-Explicit f32 accuracy additionally qualifies soft locks with fresh residuals
-before deflation. An inaccurate locked vector reopens instead of disappearing
-from correction. All predictor methods passed a 24² square/triangular TE/TM
+Explicit accuracy requests additionally qualify soft locks with fresh residuals
+before deflation in both precisions. An inaccurate locked vector reopens instead
+of disappearing from correction. Eigenvalue-change stopping alone did not ensure
+accurate fields in larger f64 TE sweeps either. All predictor methods passed a
+24² square/triangular TE/TM f32
 audit with fresh f64 actions, relative/absolute limits $5\cdot10^{-4}$ and
 $2\cdot10^{-3}$, and Gram limit $2\cdot10^{-5}$. The same request fails in parts
 of the 64² covering set, including ordinary solves near Gamma. More iterations

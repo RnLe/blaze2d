@@ -177,7 +177,7 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             out.metadata["labels"] = json!(job.resolved.k_labels.iter().zip(&job.resolved.k_label_indices).filter(|(_,i)|**i<nk).map(|(label,_)|label).collect::<Vec<_>>());
             out.metadata["label_indices"] = json!(job.resolved.k_label_indices.iter().filter(|&&i|i<nk).collect::<Vec<_>>());
             out.metadata["band_indices"] = json!((0..n).collect::<Vec<_>>());
-            out.metadata["stopping_criterion"] = json!(if actual==Precision::F32 && b.accuracy.is_some() {"relative_eigenvalue_change_with_fresh_residual_qualified_locks"} else {"relative_eigenvalue_change"});
+            out.metadata["stopping_criterion"] = json!(if b.accuracy.is_some() {"relative_eigenvalue_change_with_fresh_residual_qualified_locks"} else {"relative_eigenvalue_change"});
             out.metadata["certification"] = json!({"source":"fresh_operator_application",
                 "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
                 "absolute_residual_convention":"norm(Au-lambda*Bu)/norm(u)",

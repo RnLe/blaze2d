@@ -9,7 +9,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--group', choices=['public', 'policy', 'workers', 'controls'], required=True)
+    p.add_argument('--group', choices=['public', 'policy', 'workers', 'controls', 'large'], required=True)
     a = p.parse_args()
     common = [sys.executable, str(Path(__file__).with_name('run_paths.py')),
               '--reference', str(a.binary), '--candidate', str(a.binary),
@@ -28,6 +28,10 @@ def main():
         ],
         'workers': [(f'workers-{w}', ['--ablation', 'public', '--variant', 'gamma', '--family', 'contrast', '--threads', str(w), '--tolerance', '1e-13'])
                     for w in [1, 2, 4, 8]],
+        'large': [
+            ('large-public', ['--ablation', 'public', '--variant', 'gamma', '--geometry-count', '32', '--threads', '8', '--tolerance', '1e-13']),
+            ('large-auto', ['--ablation', 'public', '--variant', 'gamma', '--geometry-count', '32', '--threads', '8', '--tolerance', '1e-13', '--reference-auto']),
+        ],
         'controls': [
             ('donors', ['--ablation', 'donors', '--size', '32']),
             ('guards', ['--ablation', 'guards', '--size', '32']),

@@ -47,25 +47,30 @@ fn target_metric_rank_repair_respects_storage_precision() {
     projected_rank(CpuBackend::<f32>::new(),2e-6);
 }
 
-#[test]
-fn explicit_f32_accuracy_qualifies_locks_in_every_solver_entry() {
+fn residual_qualified_locks<B: SpectralBackend + Clone>(backend: B, limits: [f64; 2]) {
     for entry in 0..3 {
         for qualified in [false,true] {
             let k=[0.31,0.23];
-            let mut op=operator(CpuBackend::<f32>::new(),Polarization::TE,k,true);
+            let mut op=operator(backend.clone(),Polarization::TE,k,true);
             let mut pc=op.build_homogeneous_preconditioner_adaptive();
             let mut solver=Eigensolver::new(&mut op,EigensolverConfig {n_bands:4,tol:1e-3,max_iter:100,
-                locking_residual_limits:qualified.then_some([5e-4,2e-3]),..Default::default()},Some(&mut pc),None);
+                locking_residual_limits:qualified.then_some(limits),..Default::default()},Some(&mut pc),None);
             let result=match entry {0=>solver.solve(),1=>solver.solve_with_progress(|_|{}),_=>solver.solve_with_diagnostics("residual_locks").result};
             let fields=solver.all_eigenvectors();drop(solver);
             let mut audit=operator(CpuBackend::<f64>::new(),Polarization::TE,k,true);
             let fresh=blaze2d_core::eigensolver::refine::certify_without_refinement(&mut audit,&result.eigenvalues,&fields);
-            let accepted=fresh.residuals.iter().zip(&fresh.absolute_residuals).all(|(&r,&a)|r<=5e-4 || a<=2e-3);
+            let accepted=fresh.residuals.iter().zip(&fresh.absolute_residuals).all(|(&r,&a)|r<=limits[0] || a<=limits[1]);
             assert!(result.converged,"entry={entry}, qualified={qualified}");
             assert_eq!(accepted,qualified,"entry={entry}, residuals={:?}, absolute={:?}",fresh.residuals,fresh.absolute_residuals);
-            eprintln!("f32 locks entry={entry} qualified={qualified}: iterations={}, f64 residuals={:?}",result.iterations,fresh.residuals);
+            eprintln!("residual locks entry={entry} qualified={qualified}: iterations={}, f64 residuals={:?}",result.iterations,fresh.residuals);
         }
     }
+}
+
+#[test]
+fn explicit_accuracy_qualifies_locks_in_every_precision_and_solver_entry() {
+    residual_qualified_locks(CpuBackend::<f32>::new(), [5e-4, 2e-3]);
+    residual_qualified_locks(CpuBackend::<f64>::new(), [1e-5, 1e-7]);
 }
 
 #[test]

@@ -266,6 +266,8 @@ impl<R: Real> NativeSnapshot<R> {
             return Err("analytic Gamma kernel is missing from the native solution".into());
         }
         let mut certificate = NativeCertificate::default();
+        let certificate_timer = crate::profiler::ScopeTimer::new("geometry.final_certification");
+        crate::profiler::count("geometry.final_certificate_columns", pairs.len());
         let mut mass =
             (operator.polarization() == Polarization::TM).then(|| operator.alloc_field());
         let mut applied = Vec::new();
@@ -334,6 +336,7 @@ impl<R: Real> NativeSnapshot<R> {
                 applied.push(ax.into_field());
             }
         }
+        drop(certificate_timer);
         let kernel = if gamma {
             Some(pairs.remove(0).1.into_field())
         } else {
