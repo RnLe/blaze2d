@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { examples } from '../lib/examples/registry';
 const base = process.env.NEXT_BASE_PATH ?? '';
 
 test('article search, generated heading links, and mobile navigation', { tag: '@smoke' }, async ({ page }) => {
@@ -35,7 +36,7 @@ test('article search, generated heading links, and mobile navigation', { tag: '@
   await menu.getByRole('link', { name: 'Examples', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'A starting point for your next calculation' })).toBeVisible();
   await expect(menu).not.toBeVisible();
-  await expect(page.locator('.wb-example-card img')).toHaveCount(8);
+  await expect(page.locator('.wb-example-card img')).toHaveCount(examples.length);
 });
 
 test('Cartesian object edits preserve fractional coordinates for an oblique non-unit cell', async ({ page }) => {

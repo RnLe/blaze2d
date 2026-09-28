@@ -144,6 +144,10 @@
           "description": "Selecting a metric ball changes the finite numerical pencil.",
           "$ref": "#/$defs/Discretization"
         },
+        "operator_diagnostics": {
+          "description": "Optional setup probes; ordinary solves do not compute condition estimates.",
+          "type": "boolean"
+        },
         "path": {
           "$ref": "#/$defs/KPath",
           "default": {
@@ -174,6 +178,17 @@
         "tracking": {
           "type": "boolean",
           "default": true
+        },
+        "warm_start": {
+          "description": "Native parameter continuation. Omitted by default.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GeometryWarmStart"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -726,6 +741,143 @@
       "required": [
         "lattice"
       ]
+    },
+    "GeometryDonorSelection": {
+      "type": "string",
+      "enum": [
+        "same_k",
+        "previous_k",
+        "screened"
+      ]
+    },
+    "GeometryMethod": {
+      "type": "string",
+      "enum": [
+        "cold",
+        "copy",
+        "metric",
+        "secant",
+        "history",
+        "residual",
+        "response"
+      ]
+    },
+    "GeometryParameterOrder": {
+      "type": "string",
+      "enum": [
+        "grouped",
+        "serpentine"
+      ]
+    },
+    "GeometryScope": {
+      "type": "string",
+      "enum": [
+        "gamma",
+        "anchors",
+        "path"
+      ]
+    },
+    "GeometryWarmStart": {
+      "description": "Bounded native history on a fixed physical grid and lattice.",
+      "type": "object",
+      "properties": {
+        "anchors": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "donor_selection": {
+          "$ref": "#/$defs/GeometryDonorSelection",
+          "default": "same_k"
+        },
+        "guards": {
+          "type": "integer",
+          "format": "uint",
+          "default": 2,
+          "minimum": 0
+        },
+        "history": {
+          "type": "integer",
+          "format": "uint",
+          "default": 2,
+          "minimum": 0
+        },
+        "innovation_columns": {
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "innovation_relative_tolerance": {
+          "type": "number",
+          "format": "double",
+          "default": 0.001
+        },
+        "max_cache_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "default": 67108864,
+          "minimum": 0
+        },
+        "max_guards": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        },
+        "max_predictor_columns": {
+          "description": "Zero selects twice the retained positive window.",
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "max_preparation_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "default": 67108864,
+          "minimum": 0
+        },
+        "method": {
+          "$ref": "#/$defs/GeometryMethod",
+          "default": "copy"
+        },
+        "parameter_order": {
+          "$ref": "#/$defs/GeometryParameterOrder",
+          "default": "grouped"
+        },
+        "response_iterations": {
+          "type": "integer",
+          "format": "uint",
+          "default": 2,
+          "minimum": 0
+        },
+        "response_tolerance": {
+          "type": "number",
+          "format": "double",
+          "default": 0.25
+        },
+        "retain_tm_actions": {
+          "type": "boolean",
+          "default": false
+        },
+        "scope": {
+          "$ref": "#/$defs/GeometryScope",
+          "default": "gamma"
+        }
+      },
+      "additionalProperties": false
     },
     "Grid": {
       "type": "object",

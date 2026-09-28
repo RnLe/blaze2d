@@ -79,10 +79,11 @@ whole block must pass B-orthogonality, and every requested point must meet the
 stopping criterion. The absolute branch remains meaningful at zero or near-zero
 Gamma modes. Limits must be finite and positive; omitted limits take the values
 above. Omitting the entire section preserves the previous reporting-only behavior.
-For explicit f32 accuracy, tentative soft locks also require fresh residual
-qualification before deflation. This prevents eigenvalue stagnation from freezing
-inaccurate fields. f64 retains its existing stopping behavior. The gate covers ordinary solves, reuse, final fallbacks, metric support and
-external sampled inputs. It never silently tightens the stopping tolerance.
+For explicit accuracy in either precision, tentative soft locks also require
+fresh residual qualification before deflation. This prevents eigenvalue
+stagnation from freezing inaccurate fields. The gate covers ordinary solves,
+reuse, final fallbacks, metric support and external sampled inputs. It never
+silently tightens the stopping tolerance.
 Rejected ordinary jobs preserve their computed arrays in `partial_result` and
 follow the runner's error policy. An empty or invalid certificate cannot pass.
 

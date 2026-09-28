@@ -60,6 +60,12 @@ export const navigation: NavigationItem[] = [
     "order": 1
   },
   {
+    "route": "/geometry-warm-starts",
+    "title": "Geometry warm starts",
+    "group": "Theory",
+    "order": 2
+  },
+  {
     "route": "/paper",
     "title": "Manuscript",
     "group": "Research",

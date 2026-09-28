@@ -76,8 +76,8 @@ See `examples/calculations/geometry-warm-start.toml` and the
 [theory and limits](https://rnle.github.io/blaze2d/geometry-warm-starts).
 These options remain experimental: selected secant cases improve, but full
 banks and short response predictors often cost more than they save. The raw
-comparison archive is `benchmarks/geometry-warm-start`. Native f32 requests with
-explicit accuracy now qualify soft locks by fresh residuals; the documented
+comparison archive is `benchmarks/geometry-warm-start`. Explicit accuracy
+qualifies soft locks by fresh residuals in both precisions. The documented f32
 24² audit passes, while parts of the 64² set exceed the same accuracy contract.
 Use f64 for unqualified precision/resolution combinations.
 

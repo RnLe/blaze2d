@@ -131,6 +131,10 @@ normalization finish the step, including the changed TM Gamma constraint.
 Guards are copied while response work
 targets the requested positive modes.
 
+The second-order oracle results require sufficiently accurate source and inner
+solves. Short production budgets do not guarantee that prediction order; the
+ordinary target corrector and fresh certificate enforce the final accuracy.
+
 Actual discrete increments matter. Blaze's legacy `analytic` partial-cell
 sampling can have plateaus and jumps as an interface crosses sample locations.
 Its name does not guarantee a differentiable coefficient map. The qualifying
@@ -154,6 +158,9 @@ Geometry-independent axes form separate groups. `parameter_order = "serpentine"`
 reflects neighboring geometry rows while retaining canonical job indices,
 requested parameter values and the supplied k-path tracking order. More workers
 provide concurrency but also create more roots and shorter reusable chains.
+Fixed chains can also leave workers unevenly loaded when geometry regions have
+different solve costs. The final contrast studies show this can outweigh a
+reduction in iterations; locality alone does not establish a good schedule.
 
 `donor_selection` chooses `same_k`, `previous_k` or `screened`. Screening compares
 cheap dimensionless step metadata before preparing one candidate. Its distance
@@ -210,17 +217,58 @@ raw outputs and the comparison protocol.
   and second-order response error in qualified smooth regimes, at Gamma and
   nonzero k. Short production response budgets do not yield a useful total-time
   gain in the measured ladders.
-- TE secants give promising 16–19% gains in selected Gamma ladders. This does
-  not establish the same gain over a complete ordinary parameter sweep.
+- The final TE secant Gamma ladder reaches 1.18 times the throughput of native
+  copying, about 15% less time. TM secants are flat in that final ladder.
+- A 24² triangular TM f32 full-path case reaches 1.12 times ordinary throughput,
+  about 11% less time. Fresh f64 actions on the actual stored fields confirm
+  the declared accuracy. This is a narrow qualified case.
+- Larger 64-geometry, eight-worker f64 sweeps are qualitatively flat or slower
+  than the ordinary workflow. Existing automatic symmetry is about twice as
+  fast as native continuation in the admitted symmetric cases. Native history
+  also increases process memory there. Fewer iterations alone do not justify
+  switching workflows.
 - Compressed history lowers retained memory but did not pass the 10% speed
   gate. A full k bank was 21–65% slower than Gamma-only reuse in the initial
   four complete-path controls. Selected extra anchors helped triangular TM
-  there, while other anchor cases regressed.
+  there, but the final held-out set does not establish a general anchor benefit.
+
+The final archive contains 60 numerically passing comparison configurations,
+separate field audits and explanatory profiles. The full-workflow promotion
+gate fails because substantial regressions accompany the narrow wins.
+Final direct certificates cost under 1% of summed solve-worker time in the
+measured profiles; removing scientific checks would not resolve the scheduling
+and preparation costs.
 
 These are qualitative decision gates from paired whole-workflow runs on a
 shared machine with lenient host-load admission. Rejected timing samples and
 numerical failures are retained. Software byte counts are not measured DRAM
 bandwidth. Linux is the main measurement platform; a macOS runner is unavailable.
 See the evidence ledger for the exact build, accuracy, output and concurrency
-of each experiment. No later predictor is automatically enabled merely because
-its mathematical order is better.
+of each experiment. `final/results.md` records the final ratios, admission
+counts, costs and limitations; `validation/README.md` records Linux, Windows,
+Python, WASM and browser qualification. No later predictor is automatically
+enabled merely because its mathematical order is better.
+
+Additional persistent tangent/coarse-response spaces (M7) were declined at the
+entry gate because short response solves did not repay their work. This is not
+proof that every such space would fail. Shape registration and higher-order
+extensions (M8) remain optional research. The implemented M0–M6 ladder is fully
+available for controlled experiments within the compatibility contract above.
+
+## Relation to prior work
+
+Invariant-subspace continuation is an established method family; see
+[Dieci and Friedman, *Continuation of Invariant Subspaces* (2001)](https://dieci.math.gatech.edu/preps/DiFrContInvSub.pdf).
+Snapshot-space prediction also has a direct precedent in
+[Frame et al., *Eigenvector continuation with subspace learning* (2018)](https://arxiv.org/abs/1711.07090).
+
+For Maxwell problems, prior work includes extrapolated spaces for Bloch
+eigenmodes in [Börm, Köhl and Talebi (2023)](https://arxiv.org/abs/2304.00337),
+and geometry-dependent mode tracking in
+[Georg et al. (2019)](https://arxiv.org/abs/1802.02978).
+Their discretizations and problem settings differ from Blaze's scalar FFT pencil.
+
+The work here concerns the constrained native implementation, exact discrete
+coefficient increments, bounded ownership and complete-workflow evidence.
+The measured second-order local response verifies the implementation; it does
+not establish a new continuation theory or transfer another solver's speedups.

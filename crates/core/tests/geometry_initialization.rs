@@ -149,11 +149,18 @@ fn exact_residuals_do_not_admit_a_seed_with_an_omitted_low_mode() {
     assert!(certificate.absolute_residuals.iter().all(|&r|r<1e-10));
     assert!(values[0]-modes[0].0>1.);
     let mut pc=op.build_homogeneous_preconditioner_adaptive();
-    let mut solver=Eigensolver::new(&mut op,EigensolverConfig{n_bands:5,tol:1e-14,max_iter:200,..Default::default()},Some(&mut pc),Some(&fields));
+    // Coverage is checked against the exact spectrum and fresh residuals;
+    // the scalar stop must remain above the small lowest eigenvalue's roundoff floor.
+    let mut solver=Eigensolver::new(&mut op,EigensolverConfig{n_bands:5,tol:1e-12,max_iter:200,
+        locking_residual_limits:Some([1e-9,1e-9]),..Default::default()},Some(&mut pc),Some(&fields));
     // Unknown coverage cannot use the zero-correction shortcut. The ordinary
     // enlarged block contributes fresh random directions outside the bad span.
     solver.set_initial_acceptance(InitialAcceptance{certified_prefix:0,relative_residual:1e-9,absolute_residual:1e-9,b_orthogonality:1e-9});
-    let result=solver.solve();assert!(result.converged && result.iterations>0);
+    let result=solver.solve();assert!(result.converged && result.iterations>0,"{result:?}");
     assert!(solver.initialization_report().unwrap().random_vectors>0);
     for (&lambda,&(exact,_,_)) in result.eigenvalues.iter().zip(&modes) {assert!((lambda-exact).abs()<1e-8,"{lambda} != {exact}");}
+    let fields=solver.all_eigenvectors();drop(solver);
+    let fresh=blaze2d_core::eigensolver::refine::certify_without_refinement(&mut op,&result.eigenvalues,&fields);
+    assert!(fresh.residuals.iter().zip(&fresh.absolute_residuals).all(|(&r,&a)|r<=1e-9 || a<=1e-9),"{fresh:?}");
+    assert!(fresh.b_orthogonality_defect<1e-10);
 }

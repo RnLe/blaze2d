@@ -39,6 +39,11 @@ def main():
         ],
     }
     for name, options in groups[a.group]:
+        # Eigenvalue-change stagnation at 1e-14 affected otherwise accurate f64
+        # controls. Keep the final residual/Gram contract and use a matched
+        # 1e-13 scalar stop; f32 retains its separately qualified 1e-6 request.
+        if '--tolerance' not in options and '--precision' not in options:
+            options += ['--tolerance', '1e-13']
         command = common + ['--output', str(a.output / name)] + options
         print(' '.join(command), flush=True)
         subprocess.run(command, check=True)

@@ -99,9 +99,17 @@ export interface Bands {
          */
         max_estimated_payload_bytes?: number;
       };
+  /**
+   * Optional setup probes; ordinary solves do not compute condition estimates.
+   */
+  operator_diagnostics?: boolean;
   path?: KPath;
   symmetry?: Symmetry;
   tracking?: boolean;
+  /**
+   * Native parameter continuation. Omitted by default.
+   */
+  warm_start?: GeometryWarmStart | null;
 }
 /**
  * Acceptance is separate from eigenvalue-change stopping. Every mode must
@@ -163,6 +171,30 @@ export interface CoarseStart {
    * @maxItems 2
    */
   resolution: [number, number];
+}
+/**
+ * Bounded native history on a fixed physical grid and lattice.
+ */
+export interface GeometryWarmStart {
+  anchors?: [number, number][];
+  donor_selection?: "same_k" | "previous_k" | "screened";
+  guards?: number;
+  history?: number;
+  innovation_columns?: number;
+  innovation_relative_tolerance?: number;
+  max_cache_bytes?: number;
+  max_guards?: number | null;
+  /**
+   * Zero selects twice the retained positive window.
+   */
+  max_predictor_columns?: number;
+  max_preparation_bytes?: number;
+  method?: "cold" | "copy" | "metric" | "secant" | "history" | "residual" | "response";
+  parameter_order?: "grouped" | "serpentine";
+  response_iterations?: number;
+  response_tolerance?: number;
+  retain_tm_actions?: boolean;
+  scope?: "gamma" | "anchors" | "path";
 }
 export interface Dielectric {
   interface_tolerance?: number;

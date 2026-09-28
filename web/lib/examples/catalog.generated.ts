@@ -79,5 +79,15 @@ export const examples = [
     "accent": "#59b6ff",
     "source": "schema = \"blaze2d/1\"\ntask = \"bands\"\npolarization = \"TM\"\n\n[geometry]\nbackground_epsilon = 1.0\nlattice = { type = \"square\", a = 1.0 }\n\n[[geometry.objects]]\nname = \"rod\"\nkind = \"circle\"\ncenter = [0.0, 0.0]\nradius = 0.2\nepsilon = 8.9\n\n[grid]\nresolution = 32\n\n[bands]\ncount = 8\npath = { preset = \"square\", intervals_per_segment = 3 }\n\n[bands.symmetry]\npolicy = \"auto\"\n\n[bands.accuracy]\nmax_relative_residual = 1e-5\nmax_absolute_residual = 1e-7\nmax_orthogonality_defect = 1e-8\n\n[eigensolver]\nprecision = \"f64\"\ntolerance = 1e-14\nmax_iterations = 600\n",
     "python": "from pathlib import Path\nimport blaze\n\nconfig = blaze.Config.from_file(Path(__file__).with_suffix(\".toml\"))\nresult = blaze.solve(config)\nprint(blaze.execution_summary(result))\nprint(result[\"frequencies\"])\n"
+  },
+  {
+    "slug": "geometry-warm-start",
+    "title": "Geometry warm starts",
+    "description": "Bounded native secant continuation with a matched final accuracy contract.",
+    "category": "Studies",
+    "image": "/examples/geometry-warm-start.svg",
+    "accent": "#7ba6ff",
+    "source": "schema = \"blaze2d/1\"\ntask = \"bands\"\npolarization = \"TE\"\n\n[geometry]\nbackground_epsilon = 1.0\nlattice = { type = \"square\", a = 1.0 }\n\n[[geometry.objects]]\nname = \"rod\"\nkind = \"circle\"\ncenter = [0.0, 0.0]\nradius = 0.19\nepsilon = 11.7\n\n[grid]\nresolution = 48\n\n[dielectric]\nsmoothing = \"voronoi\"\n\n[bands]\ncount = 8\ntracking = true\npath = { points = [[0.0, 0.0], [0.25, 0.0], [0.5, 0.0], [0.5, 0.5], [0.17, 0.13], [0.0, 0.0]], basis = \"reciprocal_fractional\" }\n\n[bands.accuracy]\nmax_relative_residual = 1e-5\nmax_absolute_residual = 1e-7\nmax_orthogonality_defect = 1e-8\n\n[bands.symmetry]\nk_reuse = \"identical\"\n\n[bands.warm_start]\nmethod = \"secant\"\nscope = \"gamma\"\nguards = 2\nhistory = 2\nmax_cache_bytes = 67108864\n\n[eigensolver]\nprecision = \"f64\"\ntolerance = 1e-14\nmax_iterations = 600\n\n[[sweeps]]\nname = \"radius\"\ntarget = \"geometry.objects.rod.radius\"\nvalues = [0.187, 0.189, 0.191, 0.193, 0.195, 0.197]\n",
+    "python": "from pathlib import Path\nimport blaze\n\nconfig = blaze.Config.from_file(Path(__file__).with_suffix(\".toml\"))\nstudy = blaze.run(config, threads=2)\nfor result in study[\"results\"]:\n    print(result[\"job_index\"], result[\"metadata\"][\"geometry_warm_start\"])\n"
   }
 ] as const;
