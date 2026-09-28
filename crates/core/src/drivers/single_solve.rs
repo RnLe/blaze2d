@@ -192,6 +192,7 @@ impl SingleSolveJob {
             n_bands: self.n_bands,
             max_iter: self.max_iterations,
             tol: self.tolerance,
+            near_zero_absolute_tolerance: None,
             block_size: self.block_size,
             record_diagnostics: self.record_diagnostics,
             k_index: None,

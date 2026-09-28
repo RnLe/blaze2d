@@ -192,7 +192,7 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
     assert!(reference.errors.is_empty(),"{:?}",reference.errors);
     c.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {scope:GeometryScope::Path,
         guards:2,max_cache_bytes:256*1024,..Default::default()});
-    for (method,threads) in [(GeometryMethod::Copy,1),(GeometryMethod::Copy,2),(GeometryMethod::Metric,1),(GeometryMethod::Secant,1),(GeometryMethod::History,1)] {
+    for (method,threads) in [(GeometryMethod::Copy,1),(GeometryMethod::Copy,2),(GeometryMethod::Metric,1),(GeometryMethod::Secant,1),(GeometryMethod::History,1),(GeometryMethod::Residual,1),(GeometryMethod::Response,1),(GeometryMethod::Response,2)] {
         let warm=c.bands.as_mut().unwrap().warm_start.as_mut().unwrap();
         warm.method=method;warm.retain_tm_actions=threads==2;
         let candidate=blaze2d_runner::collect(Plan::new(c.clone(),Platform::Native).unwrap(),
@@ -208,9 +208,9 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
             }
             for point in b.metadata["geometry_warm_start"]["points"].as_array().unwrap() {
                 seeds+=usize::from(!point["source"].is_null());
-                if point["prediction"].is_object() && point["prediction"]["fallback"].is_null() {advanced+=1;}
+                if (point["prediction"].is_object() && point["prediction"]["fallback"].is_null()) || point["response"].is_object() {advanced+=1;}
                 if threads==2 && !point["source"].is_null() {
-                    assert!(point["tm_actions_reused"].as_u64().unwrap()>0);
+                    assert!(point[if method==GeometryMethod::Response {"preparation_actions_reused"} else {"tm_actions_reused"}].as_u64().unwrap()>0);
                 }
                 assert_eq!(point["certified_guards"],2,"{point}");
                 assert!(point["insertion"]["payload_bytes"].as_u64().unwrap()<=256*1024/threads as u64);
@@ -225,4 +225,39 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
     assert_eq!(resumed.results.len(),1);
     assert_eq!(resumed.results[0].job_index,2);
     assert_eq!(resumed.results[0].metadata["geometry_warm_start"]["points"][0]["cold_root"],true);
+}
+
+#[test]
+fn geometry_anchors_choose_donors_and_expand_a_split_boundary_with_bounded_work() {
+    let mut c=study();c.grid.resolution=Resolution::Uniform(9);
+    c.eigensolver.tolerance=Some(1e-14);c.eigensolver.max_iterations=Some(500);
+    let b=c.bands.as_mut().unwrap();b.count=3;b.tracking=false;b.accuracy=Some(BandAccuracy::default());
+    b.path.points=Some(vec![vec![0.,0.],vec![0.19,0.13],vec![0.2,0.14],vec![0.,0.]]);
+    let run=|c:Config|blaze2d_runner::collect(Plan::new(c,Platform::Native).unwrap(),Options{threads:1,..Default::default()}).unwrap();
+    let reference=run(c.clone());assert!(reference.errors.is_empty());
+    for (scope,selection,adaptive) in [(GeometryScope::Anchors,GeometryDonorSelection::SameK,true),
+        (GeometryScope::Path,GeometryDonorSelection::PreviousK,false),
+        (GeometryScope::Path,GeometryDonorSelection::Screened,false)] {
+        c.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {scope,anchors:vec![[0.19,0.13]],donor_selection:selection,
+            guards:if adaptive {0}else{2},max_guards:adaptive.then_some(4),..Default::default()});
+        let candidate=run(c.clone());assert!(candidate.errors.is_empty(),"{:?}",candidate.errors);
+        let mut expansions=0;let mut selected_path=0;let mut selected_geometry=0;
+        for (a,b) in reference.results.iter().zip(&candidate.results) {
+            for (&x,&y) in a.arrays["frequencies"].data.iter().zip(&b.arrays["frequencies"].data) {assert!((x-y).abs()<2e-7);}
+            for (i,p) in b.metadata["geometry_warm_start"]["points"].as_array().unwrap().iter().enumerate() {
+                if scope==GeometryScope::Anchors && i==2 {assert!(p.is_null());continue;}
+                assert!(p.is_object());
+                selected_path+=usize::from(p["selection"]["selected"]=="previous_k");
+                selected_geometry+=usize::from(p["selection"]["selected"]=="same_k_geometry");
+                let attempts=p["guard_attempts"].as_array().unwrap();expansions+=attempts.len()-1;
+                assert!(attempts.len()<=3);assert!(p["solved_guards"].as_u64().unwrap()<=4);
+                let rounds:u64=attempts.iter().map(|a|a["iterations"].as_u64().unwrap()).sum();
+                assert_eq!(p["iterations"],rounds,"{p}");
+                if attempts.len()>1 {assert!(p["discarded_iterations"].as_u64().unwrap()>0);}
+            }
+        }
+        assert!(selected_geometry>0);
+        if adaptive {assert!(expansions>0,"split doublet was not detected");}
+        if selection!=GeometryDonorSelection::SameK {assert!(selected_path>0);}
+    }
 }

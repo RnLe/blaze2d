@@ -7,7 +7,7 @@ use crate::{
     backend::{SpectralBackend, SpectralBuffer},
     eigensolver::{Eigensolver, EigensolverConfig, InitialAcceptance},
     field::{Field2D, Real},
-    operators::ThetaOperator,
+    operators::{LinearOperator, ThetaOperator},
     preconditioners::OperatorPreconditioner,
 };
 use serde::Serialize;
@@ -20,23 +20,49 @@ pub enum Method {
     Metric,
     Secant,
     History,
+    Residual,
+    Response,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     Gamma,
+    Anchors,
     Path,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DonorSelection {
+    SameK,
+    PreviousK,
+    Screened,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct SelectionReport {
+    pub policy: DonorSelection,
+    pub geometry_available: bool,
+    pub path_available: bool,
+    pub geometry_distance: Option<f64>,
+    pub path_distance: Option<f64>,
+    pub selected: &'static str,
+    pub reason: &'static str,
 }
 #[derive(Debug, Clone)]
 pub struct Options {
     pub method: Method,
     pub scope: Scope,
+    /// Additional exact reciprocal-fractional points; Gamma is always included.
+    pub anchors: Vec<[f64; 2]>,
+    pub donor_selection: DonorSelection,
     pub guards: usize,
+    pub max_guards: Option<usize>,
     pub history: usize,
     pub max_predictor_columns: usize,
     pub max_preparation_bytes: usize,
     pub max_cache_bytes: usize,
     pub retain_tm_actions: bool,
     pub quality: Quality,
+    pub response_iterations: usize,
+    pub response_tolerance: f64,
 }
 pub struct Context<R: Real> {
     pub bank: NativeBank<R>,
@@ -53,12 +79,16 @@ impl<R: Real> Context<R> {
 #[derive(Debug, Clone, Serialize)]
 pub struct PointReport {
     pub method: Method,
+    pub selection: SelectionReport,
     pub source: Option<BasisGeneration>,
     pub parents: Vec<BasisGeneration>,
     pub prediction: Option<super::predict::PredictionReport>,
+    pub response: Option<super::response::NativeResponseReport>,
+    pub response_failure: Option<crate::symmetry::response::ResponseError>,
     pub preparation_actions_reused: usize,
     pub cold_root: bool,
     pub solved_guards: usize,
+    pub guard_attempts: Vec<GuardAttempt>,
     pub certified_guards: usize,
     pub initial_warm_columns: usize,
     pub initial_random_columns: usize,
@@ -72,6 +102,16 @@ pub struct PointReport {
     pub leased_payload_bytes: usize,
     pub certificate: Option<NativeCertificate>,
 }
+#[derive(Debug, Clone, Serialize)]
+pub struct GuardAttempt {
+    pub guards: usize,
+    pub iterations: usize,
+    pub lookahead: usize,
+    pub boundary_gap: Option<f64>,
+    pub boundary_uncertainty: Option<f64>,
+    pub gap_threshold: f64,
+    pub separated: bool,
+}
 pub struct PointSolution {
     pub values: Vec<f64>,
     pub fields: Vec<Field2D>,
@@ -80,7 +120,7 @@ pub struct PointSolution {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn solve<B: SpectralBackend>(
+pub fn solve<B: SpectralBackend + Clone>(
     theta: &mut ThetaOperator<B>,
     config: &EigensolverConfig,
     mut preconditioner: Option<&mut dyn OperatorPreconditioner<B>>,
@@ -89,25 +129,84 @@ pub fn solve<B: SpectralBackend>(
     options: &Options,
     parameters: Vec<f64>,
     k_index: usize,
+    path_distance: Option<f64>,
 ) -> PointSolution {
     crate::profile_scope!("geometry.point");
     let key = FiberKey::from_operator(theta);
-    let donors = if options.method == Method::Cold {
+    let mut donors = if options.method == Method::Cold {
         Vec::new()
     } else {
-        context.bank.donors(&key, match options.method { Method::History=>options.history,Method::Secant=>2,_=>1 })
+        context.bank.donors(
+            &key,
+            match options.method {
+                Method::History => options.history,
+                Method::Secant => 2,
+                _ => 1,
+            },
+        )
     };
+    let geometry_distance = donors.first().and_then(|d| {
+        (d.parameters.len() == parameters.len() && !parameters.is_empty()).then(|| {
+            (d.parameters
+                .iter()
+                .zip(&parameters)
+                .map(|(&a, &b)| ((b - a) / a.abs().max(b.abs()).max(1.)).powi(2))
+                .sum::<f64>()
+                / parameters.len() as f64)
+                .sqrt()
+        })
+    });
+    let path_available = path_seed.is_some_and(|s| !s.is_empty());
+    let use_path = path_available
+        && (donors.is_empty()
+            || options.donor_selection == DonorSelection::PreviousK
+            || (options.donor_selection == DonorSelection::Screened
+                && geometry_distance
+                    .zip(path_distance)
+                    .is_some_and(|(g, k)| g > k)));
+    let selection = SelectionReport {
+        policy: options.donor_selection,
+        geometry_available: !donors.is_empty(),
+        path_available,
+        geometry_distance,
+        path_distance,
+        selected: if use_path {
+            "previous_k"
+        } else if donors.is_empty() {
+            "cold"
+        } else {
+            "same_k_geometry"
+        },
+        reason: if donors.is_empty() {
+            "no compatible geometry donor"
+        } else if !path_available {
+            "no previous-k candidate"
+        } else if options.donor_selection == DonorSelection::Screened {
+            "dimensionless parameter-step screening; no extra target actions"
+        } else {
+            "explicit donor policy"
+        },
+    };
+    if use_path {
+        donors.clear();
+    }
     let donor = donors.first().cloned();
     let mut report = PointReport {
         method: options.method,
+        selection,
         source: donor.as_ref().map(|s| s.basis_generation()),
         parents: donor.iter().map(|s| s.basis_generation()).collect(),
         prediction: None,
+        response: None,
+        response_failure: None,
         preparation_actions_reused: 0,
-        cold_root: donor.is_none(),
+        cold_root: donor.is_none() && !path_available,
         solved_guards: options.guards,
+        guard_attempts: Vec::new(),
         certified_guards: 0,
-        initial_warm_columns:0,initial_random_columns:0,initial_rejected_columns:0,
+        initial_warm_columns: 0,
+        initial_random_columns: 0,
+        initial_rejected_columns: 0,
         iterations: 0,
         discarded_iterations: 0,
         initial_acceptance: false,
@@ -117,8 +216,20 @@ pub fn solve<B: SpectralBackend>(
         leased_payload_bytes: donors.iter().map(|s| s.payload_bytes()).sum(),
         certificate: None,
     };
+    let max_guards = options
+        .max_guards
+        .unwrap_or(options.guards)
+        .max(options.guards)
+        .min((key.shape[0] * key.shape[1]).saturating_sub(config.n_bands));
+    let adaptive = max_guards > options.guards;
+    let mut guards = donor
+        .as_ref()
+        .filter(|_| adaptive)
+        .map_or(options.guards, |d| {
+            d.guard_count().max(options.guards).min(max_guards)
+        });
     let mut cfg = config.clone();
-    cfg.n_bands += options.guards;
+    cfg.n_bands += guards;
     cfg.k_index = Some(k_index);
     if cfg.block_size != 0 {
         cfg.block_size = cfg.block_size.max(cfg.n_bands);
@@ -130,7 +241,7 @@ pub fn solve<B: SpectralBackend>(
     if donor.is_some()
         && matches!(
             options.method,
-            Method::Metric | Method::Secant | Method::History
+            Method::Metric | Method::Secant | Method::History | Method::Residual
         )
     {
         let retained = cfg.n_bands - usize::from(key.is_gamma());
@@ -147,6 +258,10 @@ pub fn solve<B: SpectralBackend>(
             retained,
             columns,
             options.max_preparation_bytes,
+            options.retain_tm_actions,
+            preconditioner
+                .as_mut()
+                .map(|p| &mut **p as &mut dyn OperatorPreconditioner<B>),
         ) {
             Ok(prepared) => {
                 preparation_actions = prepared.actions.is_some();
@@ -165,6 +280,31 @@ pub fn solve<B: SpectralBackend>(
                     ..Default::default()
                 })
             }
+        }
+    }
+    if let Some(source) = donor
+        .as_ref()
+        .filter(|_| options.method == Method::Response)
+    {
+        let config = crate::symmetry::response::ResponseConfig {
+            max_inner_iterations: options.response_iterations,
+            inner_relative_tolerance: options.response_tolerance,
+        };
+        match super::response::predict(
+            theta,
+            source,
+            config,
+            options.quality,
+            options.retain_tm_actions,
+            options.max_preparation_bytes,
+        ) {
+            Ok(response) => {
+                preparation_actions = response.actions.is_some();
+                seeds = Some(response.vectors);
+                actions = response.actions;
+                report.response = Some(response.report);
+            }
+            Err(error) => report.response_failure = Some(error),
         }
     }
     if seeds.is_none() {
@@ -200,17 +340,24 @@ pub fn solve<B: SpectralBackend>(
     }
     // An identical discrete pencil retains the source's lowest-window coverage.
     // A changed material cannot obtain coverage merely by passing a residual test.
-    let identical = donor.as_ref().is_some_and(|s| {
-        s.material.eps() == theta.dielectric().eps()
-            && s.material.inv_eps() == theta.dielectric().inv_eps()
-            && s.material.inv_eps_tensors() == theta.dielectric().inv_eps_tensors()
-            && s.requested_bands + s.guard_count >= cfg.n_bands
-    });
-    let (result, pairs) = {
+    let identical = !adaptive
+        && donor.as_ref().is_some_and(|s| {
+            s.material.eps() == theta.dielectric().eps()
+                && s.material.inv_eps() == theta.dielectric().inv_eps()
+                && s.material.inv_eps_tensors() == theta.dielectric().inv_eps_tensors()
+                && s.requested_bands + s.guard_count >= cfg.n_bands
+        });
+    let (result, pairs, separated) = loop {
+        let lookahead =
+            usize::from(adaptive && config.n_bands + guards < key.shape[0] * key.shape[1]);
+        cfg.n_bands = config.n_bands + guards + lookahead;
+        if cfg.block_size != 0 {
+            cfg.block_size = cfg.block_size.max(cfg.n_bands);
+        }
         let p = preconditioner
             .as_mut()
             .map(|p| &mut **p as &mut dyn OperatorPreconditioner<B>);
-        let mut solver = Eigensolver::new(theta, cfg, p, path_seed);
+        let mut solver = Eigensolver::new(theta, cfg.clone(), p, path_seed);
         if let Some(seeds) = seeds.take() {
             solver = if let Some(actions) = actions.take() {
                 solver.with_native_seed_actions(seeds, actions)
@@ -220,7 +367,7 @@ pub fn solve<B: SpectralBackend>(
         }
         if identical {
             solver.set_initial_acceptance(InitialAcceptance {
-                certified_prefix: config.n_bands + options.guards,
+                certified_prefix: config.n_bands + guards,
                 relative_residual: options.quality.relative_residual,
                 absolute_residual: options.quality.absolute_residual,
                 b_orthogonality: options.quality.orthogonality,
@@ -228,20 +375,68 @@ pub fn solve<B: SpectralBackend>(
         }
         let result = solver.solve();
         report.initial_acceptance = result.iterations == 0;
-        let hits = solver.initialization_report().map_or(0, |r| r.warm_start_hits);
-        if let Some(init)=solver.initialization_report() {
-            report.initial_warm_columns=init.warm_start_hits;report.initial_random_columns=init.random_vectors;
-            report.initial_rejected_columns=init.rejected_warm_vectors;
+        let hits = solver
+            .initialization_report()
+            .map_or(0, |r| r.warm_start_hits);
+        if let Some(init) = solver.initialization_report() {
+            report.initial_warm_columns += init.warm_start_hits;
+            report.initial_random_columns += init.random_vectors;
+            report.initial_rejected_columns += init.rejected_warm_vectors;
         }
         if source_actions {
-            report.tm_actions_reused = hits;
+            report.tm_actions_reused += hits;
         }
         if preparation_actions {
-            report.preparation_actions_reused = hits;
+            report.preparation_actions_reused += hits;
         }
-        (result, solver.into_native_eigenpairs())
+        let mut pairs = solver.into_native_eigenpairs();
+        let retained = config.n_bands + guards;
+        let gap = if lookahead > 0 && pairs.len() > retained {
+            Some(pairs[retained].0 - pairs[retained - 1].0)
+        } else {
+            None
+        };
+        let uncertainty = gap.map(|_| {
+            pairs[retained - 1..=retained]
+                .iter()
+                .map(|(lambda, x)| boundary_residual(theta, *lambda, x))
+                .sum::<f64>()
+        });
+        let scale = pairs
+            .iter()
+            .skip(retained.saturating_sub(1))
+            .map(|(l, _)| l.abs())
+            .fold(0., f64::max);
+        let threshold =
+            8. * (options.quality.absolute_residual + options.quality.relative_residual * scale);
+        let separated = !adaptive
+            || lookahead == 0
+            || gap
+                .zip(uncertainty)
+                .is_some_and(|(g, u)| u.is_finite() && g > threshold + u);
+        report.iterations += result.iterations;
+        report.guard_attempts.push(GuardAttempt {
+            guards,
+            iterations: result.iterations,
+            lookahead,
+            boundary_gap: gap,
+            boundary_uncertainty: uncertainty,
+            gap_threshold: threshold,
+            separated,
+        });
+        if adaptive && !separated && result.converged && guards < max_guards {
+            report.discarded_iterations += result.iterations;
+            guards = (guards + 2).min(max_guards);
+            seeds = Some(pairs.into_iter().map(|(_, x)| x).collect());
+            actions = None;
+            source_actions = false;
+            preparation_actions = false;
+            continue;
+        }
+        report.solved_guards = guards;
+        pairs.truncate(retained);
+        break (result, pairs, separated);
     };
-    report.iterations = result.iterations;
     let mut values: Vec<_> = pairs.iter().take(config.n_bands).map(|(l, _)| *l).collect();
     let mut fields: Vec<_> = pairs
         .iter()
@@ -270,12 +465,12 @@ pub fn solve<B: SpectralBackend>(
     );
     let accepted = captured.as_ref().is_ok_and(|s| s.admitted(options.quality));
     let mut converged = result.converged;
-    if !accepted && (donor.is_some() || options.guards > 0) {
+    if !accepted && (donor.is_some() || guards > 0 || adaptive) {
         report.fallback = Some(
             "guarded block failed convergence or direct certification; ordinary path retried"
                 .into(),
         );
-        report.discarded_iterations = result.iterations;
+        report.discarded_iterations += result.iterations;
         let mut cfg = config.clone();
         cfg.k_index = Some(k_index);
         let p = preconditioner
@@ -297,8 +492,13 @@ pub fn solve<B: SpectralBackend>(
                 certificate.relative.truncate(config.n_bands);
                 certificate.absolute.truncate(config.n_bands);
                 certificate.dual.truncate(config.n_bands);
+                certificate.dual_relative.truncate(config.n_bands);
                 report.certificate = Some(certificate);
-                report.insertion = context.bank.insert(snapshot, options.quality);
+                if separated {
+                    report.insertion = context.bank.insert(snapshot, options.quality);
+                } else {
+                    report.insertion.reason=Some("guard boundary remains unresolved at its expansion limit; last donor retained".into());
+                }
             }
             Err(reason) => report.insertion.reason = Some(reason),
         }
@@ -310,5 +510,38 @@ pub fn solve<B: SpectralBackend>(
         fields,
         converged,
         report,
+    }
+}
+
+/// Direct source-mass-whitened residual bound in eigenvalue units. These two
+/// probes qualify an estimated boundary gap, not a global eigenvalue count.
+fn boundary_residual<B: SpectralBackend>(
+    theta: &mut ThetaOperator<B>,
+    lambda: f64,
+    x: &B::Buffer,
+) -> f64 {
+    let mut ax = theta.alloc_field();
+    let mut bx = theta.alloc_field();
+    theta.apply(x, &mut ax);
+    theta.apply_mass(x, &mut bx);
+    let norm = theta.backend().dot(x, &bx).re;
+    theta
+        .backend()
+        .axpy(num_complex::Complex64::new(-lambda, 0.), &bx, &mut ax);
+    let tm = theta.polarization() == crate::polarization::Polarization::TM;
+    let residual = ax
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(i, z)| {
+            (z.re.to_accum().powi(2) + z.im.to_accum().powi(2))
+                / if tm { theta.dielectric().eps()[i] } else { 1. }
+        })
+        .sum::<f64>();
+    crate::profiler::count("geometry.guard_probe_columns", 1);
+    if norm > 0. {
+        (residual / norm).sqrt()
+    } else {
+        f64::INFINITY
     }
 }

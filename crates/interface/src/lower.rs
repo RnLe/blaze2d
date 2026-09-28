@@ -54,6 +54,8 @@ impl PlannedJob {
             n_bands: self.resolved.solved_bands,
             max_iter: e.max_iterations.unwrap(),
             tol: e.tolerance.unwrap(),
+            near_zero_absolute_tolerance: self.resolved.config.bands.as_ref()
+                .map(|bands| bands.accuracy.clone().unwrap_or_default().max_absolute_residual),
             block_size: e.block_size,
             ..Default::default()
         }
@@ -115,9 +117,10 @@ impl crate::Bands {
                 use blaze2d_core::geometry_warm_start::{point, snapshot::Quality};
                 let a=self.accuracy.clone().unwrap_or_default();
                 point::Options {
-                    method: match w.method {crate::GeometryMethod::Cold=>point::Method::Cold,crate::GeometryMethod::Copy=>point::Method::Copy,crate::GeometryMethod::Metric=>point::Method::Metric,crate::GeometryMethod::Secant=>point::Method::Secant,crate::GeometryMethod::History=>point::Method::History},
-                    scope: match w.scope {crate::GeometryScope::Gamma=>point::Scope::Gamma,crate::GeometryScope::Path=>point::Scope::Path},
-                    guards:w.guards,history:w.history,max_predictor_columns:w.max_predictor_columns,max_preparation_bytes:w.max_preparation_bytes,max_cache_bytes:w.max_cache_bytes,retain_tm_actions:w.retain_tm_actions,
+                    method: match w.method {crate::GeometryMethod::Cold=>point::Method::Cold,crate::GeometryMethod::Copy=>point::Method::Copy,crate::GeometryMethod::Metric=>point::Method::Metric,crate::GeometryMethod::Secant=>point::Method::Secant,crate::GeometryMethod::History=>point::Method::History,crate::GeometryMethod::Residual=>point::Method::Residual,crate::GeometryMethod::Response=>point::Method::Response},
+                    scope: match w.scope {crate::GeometryScope::Gamma=>point::Scope::Gamma,crate::GeometryScope::Anchors=>point::Scope::Anchors,crate::GeometryScope::Path=>point::Scope::Path},
+                    anchors:w.anchors.clone(),max_guards:w.max_guards,donor_selection:match w.donor_selection {crate::GeometryDonorSelection::SameK=>point::DonorSelection::SameK,crate::GeometryDonorSelection::PreviousK=>point::DonorSelection::PreviousK,crate::GeometryDonorSelection::Screened=>point::DonorSelection::Screened},
+                    response_iterations:w.response_iterations,response_tolerance:w.response_tolerance,guards:w.guards,history:w.history,max_predictor_columns:w.max_predictor_columns,max_preparation_bytes:w.max_preparation_bytes,max_cache_bytes:w.max_cache_bytes,retain_tm_actions:w.retain_tm_actions,
                     quality:Quality {relative_residual:a.max_relative_residual,absolute_residual:a.max_absolute_residual,orthogonality:a.max_orthogonality_defect},
                 }
             }),

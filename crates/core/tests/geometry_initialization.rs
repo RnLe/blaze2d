@@ -58,10 +58,22 @@ fn exact_gamma_is_analytic_but_near_gamma_is_not() {
             assert_eq!(result.eigenvalues,vec![0.]);assert_eq!(solver.block_size(),0);
             assert_eq!(solver.all_eigenvectors().len(),1);
         }
-        let mut op=operator(CpuBackend::<f64>::new(),pol,[1e-13,0.],true);
-        assert!(!op.analytic_kernel_available());
-        let mut solver=Eigensolver::new(&mut op,EigensolverConfig{n_bands:1,..Default::default()},None,None);
-        solver.initialize();assert_eq!(solver.locked_count(),0);
+        for k in [1e-13,1e-5] {for entry in 0..3 {
+            let mut op=operator(CpuBackend::<f64>::new(),pol,[k,0.],true);
+            assert!(!op.analytic_kernel_available());assert!(!op.is_gamma());
+            let mut pc=op.build_homogeneous_preconditioner_adaptive();
+            let mut solver=Eigensolver::new(&mut op,EigensolverConfig{n_bands:4,tol:1e-14,
+                max_iter:100,near_zero_absolute_tolerance:Some(1e-7),..Default::default()},Some(&mut pc),None);
+            solver.initialize();assert_eq!(solver.locked_count(),0);
+            let result=match entry {0=>solver.solve(),1=>solver.solve_with_progress(|_|{}),_=>solver.solve_with_diagnostics("near_gamma").result};
+            assert!(result.converged,"{pol:?} k={k}: {result:?}");
+            assert!(result.iterations>0 && result.iterations<100);
+            let fields=solver.all_eigenvectors();drop(solver);
+            let certificate=blaze2d_core::eigensolver::refine::certify_without_refinement(&mut op,&result.eigenvalues,&fields);
+            assert!(certificate.absolute_residuals[0]<1e-7,"{certificate:?}");
+            assert!(certificate.b_orthogonality_defect<1e-8);
+            eprintln!("near Gamma {pol:?} k={k} entry={entry} iterations={} absolute={:e}",result.iterations,certificate.absolute_residuals[0]);
+        }}
     }
 }
 
@@ -85,4 +97,37 @@ fn qualified_mixed_lowest_span_uses_shared_zero_correction_gate() {
         assert!(result.converged);assert_eq!(result.iterations,0);
         for &lambda in &result.eigenvalues[1..]{assert!((lambda-std::f64::consts::TAU.powi(2)/2.).abs()<1e-10);}
     }
+}
+
+#[test]
+fn exact_residuals_do_not_admit_a_seed_with_an_omitted_low_mode() {
+    let k=[0.13,0.17];
+    let mut op=operator(CpuBackend::<f64>::new(),Polarization::TM,k,false);
+    let grid=op.grid();
+    let mut modes:Vec<_>=(-6..=6).flat_map(|gx|(-6..=6).map(move |gy| {
+        let tau=std::f64::consts::TAU;
+        (((k[0]+tau*gx as f64).powi(2)+(k[1]+tau*gy as f64).powi(2))/2.,gx,gy)
+    })).collect();
+    modes.sort_by(|a,b|a.0.total_cmp(&b.0));
+    let mut fields=Vec::new();let mut values=Vec::new();
+    // Every supplied pair is exact, but the lowest plane-wave sector is absent.
+    for &(lambda,gx,gy) in &modes[1..6] {
+        let mut x=Field2D::zeros(grid);
+        for j in 0..grid.ny {for i in 0..grid.nx {
+            x.as_mut_slice()[grid.idx(i,j)]=C::from_polar(1./(2.*grid.len() as f64).sqrt(),
+                std::f64::consts::TAU*(gx as f64*i as f64+gy as f64*j as f64)/13.);
+        }}
+        fields.push(x);values.push(lambda);
+    }
+    let certificate=blaze2d_core::eigensolver::refine::certify_without_refinement(&mut op,&values,&fields);
+    assert!(certificate.absolute_residuals.iter().all(|&r|r<1e-10));
+    assert!(values[0]-modes[0].0>1.);
+    let mut pc=op.build_homogeneous_preconditioner_adaptive();
+    let mut solver=Eigensolver::new(&mut op,EigensolverConfig{n_bands:5,tol:1e-14,max_iter:200,..Default::default()},Some(&mut pc),Some(&fields));
+    // Unknown coverage cannot use the zero-correction shortcut. The ordinary
+    // enlarged block contributes fresh random directions outside the bad span.
+    solver.set_initial_acceptance(InitialAcceptance{certified_prefix:0,relative_residual:1e-9,absolute_residual:1e-9,b_orthogonality:1e-9});
+    let result=solver.solve();assert!(result.converged && result.iterations>0);
+    assert!(solver.initialization_report().unwrap().random_vectors>0);
+    for (&lambda,&(exact,_,_)) in result.eigenvalues.iter().zip(&modes) {assert!((lambda-exact).abs()<1e-8,"{lambda} != {exact}");}
 }

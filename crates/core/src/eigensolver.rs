@@ -165,6 +165,10 @@ pub struct EigensolverConfig {
     pub max_iter: usize,
     /// Convergence tolerance for relative eigenvalue changes.
     pub tol: f64,
+    /// Optional absolute residual limit, in eigenvalue units, for modes with
+    /// |lambda| below this limit. Such modes cannot reliably use relative
+    /// eigenvalue changes near roundoff. Acceptance uses fresh A/B actions.
+    pub near_zero_absolute_tolerance: Option<f64>,
     /// Block size (0 = automatic based on n_bands).
     pub block_size: usize,
 
@@ -199,6 +203,7 @@ impl Default for EigensolverConfig {
             n_bands: 8,
             max_iter: 200,
             tol: default_tol,
+            near_zero_absolute_tolerance: None,
             block_size: 0,
             record_diagnostics: false,
             k_index: None,
@@ -902,6 +907,37 @@ where
                 (lambda_new - lambda_old).abs() / denom
             })
             .collect()
+    }
+
+    /// Preserve the reported eigenvalue changes while using a dimensional,
+    /// explicitly configured absolute certificate near zero. This never
+    /// inserts an analytic kernel at a nonzero Bloch point.
+    fn lock_certified_near_zero(&mut self, convergence: &mut ConvergenceInfo) {
+        let Some(tolerance) = self.config.near_zero_absolute_tolerance
+            .filter(|t| t.is_finite() && *t > 0.) else { return; };
+        let mut accepted = Vec::new();
+        for i in 0..self.x_block.len() {
+            if self.soft_locked.get(i).copied().unwrap_or(false)
+                || self.eigenvalues[i].abs() > tolerance { continue; }
+            let mut applied = self.operator.alloc_field();
+            let mut mass = self.operator.alloc_field();
+            self.operator.apply(&self.x_block[i].vector, &mut applied);
+            self.operator.apply_mass(&self.x_block[i].vector, &mut mass);
+            self.operator.backend().axpy(Complex64::new(-self.eigenvalues[i], 0.), &mass, &mut applied);
+            let rr = self.operator.backend().dot(&applied, &applied).re;
+            let xx = self.operator.backend().dot(&self.x_block[i].vector, &self.x_block[i].vector).re;
+            if rr.is_finite() && xx.is_finite() && xx > 0. && rr >= 0. && rr <= tolerance * tolerance * xx {
+                accepted.push(i);
+                if let Some(state) = convergence.band_states.get_mut(i) { *state = BandState::Converged; }
+            }
+        }
+        if !accepted.is_empty() {
+            crate::profiler::count("eigensolve.absolute_stopped_columns", accepted.len());
+            self.soft_lock_bands(&accepted);
+            convergence.n_converged = convergence.band_states.iter()
+                .filter(|&&s| s == BandState::Converged || s == BandState::Locked).count();
+            convergence.all_converged = convergence.n_converged >= convergence.band_states.len();
+        }
     }
 
     /// Store current eigenvalues for the next iteration's comparison.
@@ -1880,6 +1916,7 @@ where
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
                     self.config.tol,
                 );
+                self.lock_certified_near_zero(&mut convergence);
             }
 
             // Check for overall convergence (all requested bands)
@@ -2384,6 +2421,7 @@ where
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
                     self.config.tol,
                 );
+                self.lock_certified_near_zero(&mut convergence);
             }
 
             // Compute trace for progress reporting
@@ -2755,6 +2793,7 @@ where
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
                     self.config.tol,
                 );
+                self.lock_certified_near_zero(&mut convergence);
             }
 
             // Check for overall convergence

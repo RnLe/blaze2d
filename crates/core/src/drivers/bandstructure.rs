@@ -983,10 +983,14 @@ fn run_core<B: SpectralBackend + Clone>(
             run_data.config.warm_start_enabled = warm_start_used;
             study.add_run(run_data);
         } else if let (Some(context), Some(warm_options)) = (warm.as_deref_mut(), options.warm_start.as_ref().filter(|o|
-            o.scope == crate::geometry_warm_start::point::Scope::Path || theta.analytic_kernel_available())) {
+            o.scope == crate::geometry_warm_start::point::Scope::Path || theta.analytic_kernel_available()
+                || (o.scope == crate::geometry_warm_start::point::Scope::Anchors && o.anchors.contains(&k_frac)))) {
+            let path_distance=k_idx.checked_sub(1).map(|previous| {
+                let k=job.k_path[previous];((k_frac[0]-k[0]).powi(2)+(k_frac[1]-k[1]).powi(2)).sqrt()
+            });
             let solved = crate::geometry_warm_start::point::solve(&mut theta, &job.eigensolver,
                 preconditioner_opt.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
-                path_warm_slice,context,warm_options,geometry_parameters.clone(),k_idx);
+                path_warm_slice,context,warm_options,geometry_parameters.clone(),k_idx,path_distance);
             k_iterations=solved.report.iterations; k_converged=solved.converged; k_residuals=Vec::new();
             final_evals=solved.values; eigenvectors=solved.fields; warm_report=Some(solved.report);
         } else {

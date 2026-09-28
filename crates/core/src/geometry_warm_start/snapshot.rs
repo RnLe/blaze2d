@@ -105,6 +105,8 @@ pub struct NativeCertificate {
     pub absolute: Vec<f64>,
     /// Absolute residual in the dual mass norm, with unit B-normalized vectors.
     pub dual: Vec<f64>,
+    /// ||B^-1/2 r|| / (||B^-1/2 Ax|| + |lambda| ||B^1/2 x||).
+    pub dual_relative: Vec<f64>,
     pub orthogonality: f64,
     pub kernel_leakage: f64,
 }
@@ -203,6 +205,8 @@ impl<R: Real> NativeSnapshot<R> {
                 + self.certificate.absolute.capacity()
                 + self.certificate.dual.capacity())
                 * 8
+            + self.certificate.dual_relative.capacity()
+                * 8
             + n * (2
                 + 4 * usize::from(self.material.inv_eps_tensors().is_some())
                 + usize::from(self.material.unsmoothed_eps().is_some())
@@ -275,6 +279,7 @@ impl<R: Real> NativeSnapshot<R> {
             let mut bb = 0.;
             let mut xx = 0.;
             let mut dual = 0.;
+            let mut dual_aa = 0.;let mut dual_bb = 0.;
             for (i, ((a, b), x)) in ax
                 .as_slice()
                 .iter()
@@ -289,11 +294,12 @@ impl<R: Real> NativeSnapshot<R> {
                 aa += a.norm_sqr();
                 bb += b.norm_sqr();
                 xx += x.re.to_accum().powi(2) + x.im.to_accum().powi(2);
-                dual += r / if operator.polarization() == Polarization::TM {
+                let weight=if operator.polarization() == Polarization::TM {
                     operator.dielectric().eps()[i]
                 } else {
                     1.
                 };
+                dual += r / weight;dual_aa+=a.norm_sqr()/weight;dual_bb+=b.norm_sqr()/weight;
             }
             let denominator = aa.sqrt() + lambda.abs() * bb.sqrt();
             certificate.relative.push(if denominator > 0. {
@@ -307,6 +313,8 @@ impl<R: Real> NativeSnapshot<R> {
                 f64::INFINITY
             });
             certificate.dual.push(dual.sqrt());
+            let dual_denominator=dual_aa.sqrt()+lambda.abs()*dual_bb.sqrt();
+            certificate.dual_relative.push(if dual_denominator>0. {dual.sqrt()/dual_denominator} else {dual.sqrt()});
             for (i, (_, y)) in pairs.iter().enumerate() {
                 let gram = operator.backend().dot(y, bx);
                 certificate.orthogonality = certificate

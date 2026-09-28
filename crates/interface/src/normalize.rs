@@ -157,8 +157,18 @@ impl Config {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
                 if let Some(warm) = &bands.warm_start {
+                    if warm.anchors.len()>64 || warm.anchors.iter().flatten().any(|x| !x.is_finite()) {
+                        return Err(invalid("bands.warm_start.anchors", "use at most 64 finite reciprocal-fractional points"));
+                    }
                     if warm.guards>32 || warm.history==0 || warm.history>8 || warm.max_cache_bytes==0 {
                         return Err(invalid("bands.warm_start", "use 0..32 guards, 1..8 history blocks and a positive cache budget"));
+                    }
+                    if warm.max_guards.is_some_and(|g|g<warm.guards || g>32) {
+                        return Err(invalid("bands.warm_start.max_guards", "guard expansion must end between guards and 32"));
+                    }
+                    if warm.response_iterations==0 || warm.response_iterations>64 || !warm.response_tolerance.is_finite()
+                        || warm.response_tolerance<=0. || warm.response_tolerance>=1. {
+                        return Err(invalid("bands.warm_start", "use 1..64 response iterations and an inner relative tolerance strictly between zero and one"));
                     }
                     if warm.max_preparation_bytes==0 || warm.max_predictor_columns>512 {
                         return Err(invalid("bands.warm_start", "use a positive predictor workspace budget and at most 512 explicit predictor columns"));

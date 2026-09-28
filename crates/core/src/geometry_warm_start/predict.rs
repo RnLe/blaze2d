@@ -13,6 +13,7 @@ use crate::{
     field::Real,
     operators::{LinearOperator, ThetaOperator},
     polarization::Polarization,
+    preconditioners::OperatorPreconditioner,
 };
 use num_complex::Complex64 as C;
 use serde::Serialize;
@@ -146,6 +147,14 @@ pub(crate) fn repair<B: SpectralBackend>(
     fields: Vec<B::Buffer>,
     limit: usize,
 ) -> Vec<BlockEntry<B>> {
+    repair_with_actions(theta, fields, None, limit)
+}
+fn repair_with_actions<B: SpectralBackend>(
+    theta: &mut ThetaOperator<B>,
+    fields: Vec<B::Buffer>,
+    actions: Option<Vec<B::Buffer>>,
+    limit: usize,
+) -> Vec<BlockEntry<B>> {
     let mut locked = DeflationSubspace::new();
     if theta.analytic_kernel_available() {
         let (q, bq, l) = initialization::create_gamma_mode(theta);
@@ -159,7 +168,7 @@ pub(crate) fn repair<B: SpectralBackend>(
         max_random_attempts: 0,
         zero_tolerance: 1e-10,
     };
-    initialization::initialize_native_block(theta, &config, fields, None, Some(&locked)).0
+    initialization::initialize_native_block(theta, &config, fields, actions, Some(&locked)).0
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -171,6 +180,8 @@ pub fn prepare<B: SpectralBackend>(
     retained: usize,
     max_columns: usize,
     max_bytes: usize,
+    reuse_actions: bool,
+    mut preconditioner: Option<&mut dyn OperatorPreconditioner<B>>,
 ) -> Result<Prediction<B>, String> {
     crate::profile_scope!("geometry.predictor");
     let latest = donors.first().ok_or("no certified donor for prediction")?;
@@ -268,6 +279,48 @@ pub fn prepare<B: SpectralBackend>(
                 report,
             });
         }
+        Method::Residual => {
+            if limit <= retained {
+                return Err("residual enrichment needs room beyond the retained block".into());
+            }
+            let fields = imported(theta, latest, false);
+            let actions = latest
+                .applied_for(&key)
+                .filter(|_| reuse_actions)
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .map(|f| {
+                            let mut a = theta.alloc_field();
+                            a.as_mut_slice().copy_from_slice(f.as_slice());
+                            a
+                        })
+                        .collect()
+                });
+            let entries = repair_with_actions(theta, fields, actions, retained);
+            if entries.len() < retained {
+                return Err("residual enrichment lost source rank".into());
+            }
+            let (entries, values) = initialization::ritz_block(theta.backend(), entries);
+            let mut residuals = Vec::new();
+            for (entry, &lambda) in entries.iter().zip(&values).take(limit - retained) {
+                let mut residual = entry.applied.clone();
+                theta
+                    .backend()
+                    .axpy(C::new(-lambda, 0.), &entry.mass, &mut residual);
+                if let Some(p) = preconditioner.as_deref_mut() {
+                    p.apply(theta.backend(), &mut residual);
+                }
+                residuals.push(residual);
+            }
+            let (mut vectors, actions): (Vec<_>, Vec<_>) =
+                entries.into_iter().map(|e| (e.vector, e.applied)).unzip();
+            vectors.extend(residuals);
+            report.input_columns = vectors.len();
+            // The action prefix belongs to the unchanged base columns. Newly
+            // appended residual directions receive fresh target applications.
+            repair_with_actions(theta, vectors, Some(actions), limit)
+        }
         Method::History => {
             let mut fields = Vec::new();
             report.parent_count = 0;
@@ -299,5 +352,43 @@ pub fn prepare<B: SpectralBackend>(
         vectors,
         actions: Some(actions),
         report,
+    })
+}
+
+/// Target-constrained Rayleigh–Ritz on a supplied native trial space. This does
+/// not claim low-band coverage or eigensolver convergence.
+pub fn rayleigh_ritz_trial<B: SpectralBackend>(
+    theta: &mut ThetaOperator<B>,
+    vectors: Vec<B::Buffer>,
+    retained: usize,
+    max_bytes: usize,
+) -> Result<Prediction<B>, String> {
+    let columns = vectors.len();
+    let bytes = (columns as u128 + 1)
+        * theta.grid().len() as u128
+        * std::mem::size_of::<num_complex::Complex<B::Real>>() as u128
+        * 8
+        + (columns as u128).pow(2) * 16 * 8;
+    if bytes > max_bytes as u128 {
+        return Err("target trial exceeds its payload budget".into());
+    }
+    let entries = repair(theta, vectors, columns);
+    let rank = entries.len();
+    if rank < retained {
+        return Err("target trial lost the retained rank".into());
+    }
+    let (mut entries, _) = initialization::ritz_block(theta.backend(), entries);
+    entries.truncate(retained);
+    let (vectors, actions) = entries.into_iter().map(|e| (e.vector, e.applied)).unzip();
+    Ok(Prediction {
+        vectors,
+        actions: Some(actions),
+        report: PredictionReport {
+            input_columns: columns,
+            independent_columns: Some(rank),
+            retained_columns: retained,
+            estimated_peak_payload_bytes: bytes as usize,
+            ..Default::default()
+        },
     })
 }

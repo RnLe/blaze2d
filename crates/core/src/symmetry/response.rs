@@ -410,6 +410,41 @@ fn solve_correction<B: SpectralBackend>(
     work: &mut ResponseWork,
     basis: Option<&OrbitBasis>,
 ) -> Result<(B::Buffer, ResponseColumnReport), String> {
+    let result = solve_correction_impl(operator, z, inverse, lambda, rhs, config, work, basis)?;
+    Ok((result.whitened, result.report))
+}
+
+pub(crate) struct CorrectionProducts<B: SpectralBackend> {
+    pub whitened: B::Buffer,
+    pub physical: B::Buffer,
+    pub applied: B::Buffer,
+    pub report: ResponseColumnReport,
+}
+/// Native physical correction and its fresh source action from the final inner
+/// certificate. Coordinate-space callers retain the original wrapper above.
+pub(crate) fn solve_correction_products<B: SpectralBackend>(
+    operator: &mut ThetaOperator<B>,
+    z: &[B::Buffer],
+    inverse: &[f64],
+    lambda: f64,
+    rhs: &B::Buffer,
+    config: ResponseConfig,
+    work: &mut ResponseWork,
+) -> Result<CorrectionProducts<B>, String> {
+    solve_correction_impl(operator, z, inverse, lambda, rhs, config, work, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn solve_correction_impl<B: SpectralBackend>(
+    operator: &mut ThetaOperator<B>,
+    z: &[B::Buffer],
+    inverse: &[f64],
+    lambda: f64,
+    rhs: &B::Buffer,
+    config: ResponseConfig,
+    work: &mut ResponseWork,
+    basis: Option<&OrbitBasis>,
+) -> Result<CorrectionProducts<B>, String> {
     let mut solution = operator.backend().alloc_field(rhs.grid());
     let mut residual = rhs.clone();
     let mut direction = rhs.clone();
@@ -445,7 +480,8 @@ fn solve_correction<B: SpectralBackend>(
         if !curvature.re.is_finite()
             || !curvature.im.is_finite()
             || curvature.re <= 0.0
-            || curvature.im.abs() > 1e-9 * scale
+            || curvature.im.abs()
+                > 1e-9_f64.max(64.0 * <B::Real as num_traits::Float>::epsilon().to_accum()) * scale
         {
             return Err("response complement lost Hermitian positive curvature; check retained-cluster coverage and separation".into());
         }
@@ -505,13 +541,15 @@ fn solve_correction<B: SpectralBackend>(
         .map(|column| operator.backend().dot(column, &solution).norm())
         .fold(0.0, f64::max)
         / norm.max(f64::MIN_POSITIVE);
-    Ok((
-        solution,
-        ResponseColumnReport {
+    Ok(CorrectionProducts {
+        whitened: solution,
+        physical,
+        applied: aphysical,
+        report: ResponseColumnReport {
             coordinate_rows: rhs.len(),
             deflation_columns: z.len(),
             cg_workspace_payload_bytes: (4 * rhs.len() + 2 * operator.grid().len())
-                * std::mem::size_of::<C>(),
+                * std::mem::size_of::<num_complex::Complex<B::Real>>(),
             iterations,
             rhs_norm: initial.sqrt(),
             inner_relative_residual: relative,
@@ -520,7 +558,7 @@ fn solve_correction<B: SpectralBackend>(
             correction_mass_norm: norm,
             excluded_space_defect: defect,
         },
-    ))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -547,18 +585,36 @@ fn apply_correction_operator<B: SpectralBackend>(
     multiply_real::<B>(physical, inverse);
     operator.apply(physical, applied);
     work.inner_a_columns += 1;
-    multiply_real::<B>(applied, inverse);
     if let Some(basis) = basis {
-        basis.restrict(applied, output);
+        for ((dst, &src), &factor) in physical
+            .as_mut_slice()
+            .iter_mut()
+            .zip(applied.as_slice())
+            .zip(inverse)
+        {
+            *dst = src * B::Real::from_accum(factor);
+        }
+        basis.restrict(physical, output);
     } else {
-        output.as_mut_slice().copy_from_slice(applied.as_slice());
+        for ((dst, &src), &factor) in output
+            .as_mut_slice()
+            .iter_mut()
+            .zip(applied.as_slice())
+            .zip(inverse)
+        {
+            *dst = src * B::Real::from_accum(factor);
+        }
     }
     operator.backend().axpy(C::new(-lambda, 0.0), input, output);
     project_out(operator.backend(), z, output);
     crate::profiler::count("response.inner_operator_columns", 1);
 }
 
-fn project_out<B: SpectralBackend>(backend: &B, z: &[B::Buffer], vector: &mut B::Buffer) {
+pub(crate) fn project_out<B: SpectralBackend>(
+    backend: &B,
+    z: &[B::Buffer],
+    vector: &mut B::Buffer,
+) {
     for _ in 0..2 {
         for column in z {
             let overlap = backend.dot(column, vector);
@@ -567,7 +623,7 @@ fn project_out<B: SpectralBackend>(backend: &B, z: &[B::Buffer], vector: &mut B:
     }
     crate::profiler::count("response.deflation_dot_terms", 2 * z.len() * vector.len());
 }
-fn multiply_real<B: SpectralBackend>(vector: &mut B::Buffer, factors: &[f64]) {
+pub(crate) fn multiply_real<B: SpectralBackend>(vector: &mut B::Buffer, factors: &[f64]) {
     for (z, &a) in vector.as_mut_slice().iter_mut().zip(factors) {
         *z *= B::Real::from_accum(a);
     }

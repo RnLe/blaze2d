@@ -184,13 +184,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         }
     }
 
-    /// Returns whether this operator is at the Γ-point (k ≈ 0).
+    /// Returns whether this operator is at the exact Γ-point.
     ///
     /// At Γ, the G=0 mode has |k+G|² = 0 and must be deflated.
     /// Away from Γ, the G=0 mode has |k+G|² = |k|² > 0 and is a legitimate mode.
     pub fn is_gamma(&self) -> bool {
-        const GAMMA_TOL: f64 = 1e-12;
-        self.bloch[0].abs() < GAMMA_TOL && self.bloch[1].abs() < GAMMA_TOL
+        self.bloch == [0.0, 0.0]
     }
 
     /// Allocate a new field buffer.

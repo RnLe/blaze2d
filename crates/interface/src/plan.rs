@@ -359,7 +359,9 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
         let mut extra=0_u128;
         if let Some(warm)=&b.warm_start {
             let mut cfg=blaze2d_core::eigensolver::EigensolverConfig {
-                n_bands:resolved.solved_bands+warm.guards,block_size:resolved.config.eigensolver.block_size,..Default::default()
+                n_bands:(resolved.solved_bands+warm.max_guards.unwrap_or(warm.guards)
+                    +usize::from(warm.max_guards.is_some_and(|g|g>warm.guards))).min(rows),
+                block_size:resolved.config.eigensolver.block_size,..Default::default()
             };
             if cfg.block_size>0 {cfg.block_size=cfg.block_size.max(cfg.n_bands);}
             // Conservative worker reserve: full cache, one leased cache and one
