@@ -37,3 +37,46 @@ fn refuses_an_unimplemented_centered_sampling_origin() {
     let grid=Grid2D::new_centered(8,8,1.0,1.0);
     assert!(matches!(BlochActionPlan::new(AffineOp::IDENTITY,[0.0;2],[0.0;2],grid,Polarization::TM,1e-12),Err(blaze2d_core::symmetry::action::ActionError::UnsupportedSamplingOrigin)));
 }
+
+#[test]
+fn translated_antiunitary_actions_keep_their_actual_square_and_semilinearity() {
+    let half = Rational::new(1, 2).unwrap();
+    let grid = Grid2D::new(8, 7, 1.0, 1.0);
+    let backend = CpuBackend::<f64>::new();
+    // Positive Nyquist storage closes the folded boundary at kx = -1/2.
+    // Translation-time-reversal and glide-time-reversal square to a primitive
+    // translation, hence -I here. Shifted PT instead squares to +I.
+    let cases = [
+        ([[1, 0], [0, 1]], [-0.5, 0.0], -1.0),
+        ([[1, 0], [0, -1]], [-0.5, 0.17], -1.0),
+        ([[-1, 0], [0, -1]], [0.13, 0.21], 1.0),
+    ];
+    for pol in [Polarization::TM, Polarization::TE] {
+        for (matrix, k, square) in cases {
+            let op = AffineOp::new(matrix, [half, Rational::ZERO])
+                .unwrap().with_conjugation(true);
+            let plan = BlochActionPlan::new(op, k, k, grid, pol, 1e-12).unwrap();
+            for fourier in [false, true] {
+                let mut input = field(grid);
+                if fourier { backend.forward_fft_2d(&mut input); }
+                let apply = |source: &Field2D, target: &mut Field2D| {
+                    if fourier { plan.apply_fourier(source, target); }
+                    else { plan.apply_spatial(source, target); }
+                };
+                let mut once = Field2D::zeros(grid);
+                let mut twice = Field2D::zeros(grid);
+                apply(&input, &mut once); apply(&once, &mut twice);
+                let expected = Field2D::from_vec(grid,
+                    input.as_slice().iter().map(|&z| square*z).collect());
+                assert!(defect(&expected, &twice) < 2e-13, "{op:?} {pol:?} fourier={fourier}");
+                let scalar = FieldScalar::new(0.37, 0.61);
+                let scaled = Field2D::from_vec(grid,
+                    input.as_slice().iter().map(|&z| scalar*z).collect());
+                apply(&scaled, &mut twice);
+                let expected = Field2D::from_vec(grid,
+                    once.as_slice().iter().map(|&z| scalar.conj()*z).collect());
+                assert!(defect(&expected, &twice) < 2e-13);
+            }
+        }
+    }
+}

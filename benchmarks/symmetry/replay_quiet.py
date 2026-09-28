@@ -177,6 +177,8 @@ def main():
     parser.add_argument('--original', type=Path, required=True)
     parser.add_argument('--workspace', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--desktop-preflight', action='store_true',
+                        help='Use the separately documented qualitative desktop preflight')
     args = parser.parse_args()
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=False)
     original = json.loads(args.original.read_text())
@@ -189,6 +191,8 @@ def main():
     if legacy_name == 'run_coarse_workflow_pairs':
         dependencies += [HERE/name for name in ['run_pairs.py', 'interface_contract.py',
                           'coarse_workflow_contract.py', 'coarse-workflow-protocol.md']]
+    if args.desktop_preflight:
+        dependencies.append(HERE/'qualitative-protocol.md')
     metadata = dict(schema='blaze2d/quiet-replay/1', original=str(args.original.resolve()),
                     measurement_protocol=MEASUREMENT_PROTOCOL,
                     original_sha256=digest(args.original), timestamp=time.time(),
@@ -198,9 +202,12 @@ def main():
                     original_manifest=original['manifest'], runtime_signature_exclusions=sorted(RUNTIME_KEYS),
                     backend_dependencies=backend_dependencies(args.original),
                     additional_signature_exclusions='keys ending in _seconds')
+    metadata['preflight_limits'] = dict(linux=1.0 if args.desktop_preflight else .25,
+                                       windows=3.0 if args.desktop_preflight else 1.5)
     (out/'manifest.json').write_text(json.dumps(metadata, indent=2)+'\n')
     with QuietHost() as host:
-        gates = [host.interval(), host.interval()]
+        gates = [host.interval(limit=metadata['preflight_limits']['linux'],
+                               windows_limit=metadata['preflight_limits']['windows']) for _ in range(2)]
         (out/'admission.json').write_text(json.dumps(gates, indent=2)+'\n')
         if not all(g['accepted'] for g in gates):
             (out/'audit.json').write_text(json.dumps(dict(environment_qualified=False,
