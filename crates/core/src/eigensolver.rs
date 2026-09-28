@@ -169,6 +169,9 @@ pub struct EigensolverConfig {
     /// |lambda| below this limit. Such modes cannot reliably use relative
     /// eigenvalue changes near roundoff. Acceptance uses fresh A/B actions.
     pub near_zero_absolute_tolerance: Option<f64>,
+    /// Optional fresh [relative, absolute] residual bounds on tentative locks.
+    /// Both the eigenvalue-change criterion and one residual bound must pass.
+    pub locking_residual_limits: Option<[f64; 2]>,
     /// Block size (0 = automatic based on n_bands).
     pub block_size: usize,
 
@@ -204,6 +207,7 @@ impl Default for EigensolverConfig {
             max_iter: 200,
             tol: default_tol,
             near_zero_absolute_tolerance: None,
+            locking_residual_limits: None,
             block_size: 0,
             record_diagnostics: false,
             k_index: None,
@@ -514,6 +518,7 @@ where
     /// For soft-locked bands, we skip residual/preconditioning and set P=W=0.
     /// This is numerically more stable than hard locking (deflation).
     soft_locked: Vec<bool>,
+    residual_lock_mask: Vec<bool>,
     /// Current iteration count.
     iteration: usize,
     /// Whether the solver has been initialized.
@@ -551,6 +556,7 @@ where
             eigenvalues: Vec::new(),
             previous_eigenvalues: Vec::new(),
             soft_locked: Vec::new(),
+            residual_lock_mask: Vec::new(),
             iteration: 0,
             initialized: false,
             initialization_report: None,
@@ -940,6 +946,52 @@ where
         }
     }
 
+    /// Recheck tentative and existing locks before residuals are deflated.
+    /// Native low-precision eigenvalue stagnation alone need not imply accurate fields.
+    fn qualify_residual_locks(&mut self) {
+        let Some([relative, absolute]) = self.config.locking_residual_limits else { return; };
+        assert!(relative.is_finite() && relative >= 0. && absolute.is_finite() && absolute >= 0.);
+        self.residual_lock_mask.clear();
+        self.residual_lock_mask.resize(self.x_block.len(), true);
+        if self.iteration < 2 { return; }
+        crate::profile_scope!("eigensolve.lock_certification");
+        let changes=self.compute_relative_eigenvalue_changes();
+        let requested=self.config.n_bands.saturating_sub(self.deflation.len()).min(self.x_block.len());
+        if !(0..requested).any(|i|self.soft_locked[i] || changes.get(i).is_some_and(|&d|d<self.config.tol)) {return;}
+        let mut ax=self.operator.alloc_field();
+        let mut bx=self.operator.alloc_field();
+        for i in 0..requested {
+            if !self.soft_locked[i] && !changes.get(i).is_some_and(|&d|d<self.config.tol) {continue;}
+            let x=&self.x_block[i].vector;
+            self.operator.apply(x,&mut ax);self.operator.apply_mass(x,&mut bx);
+            let aa=self.operator.backend().dot(&ax,&ax).re.max(0.).sqrt();
+            let bb=self.operator.backend().dot(&bx,&bx).re.max(0.).sqrt();
+            let xx=self.operator.backend().dot(x,x).re;
+            self.operator.backend().axpy(Complex64::new(-self.eigenvalues[i],0.),&bx,&mut ax);
+            let rr=self.operator.backend().dot(&ax,&ax).re;
+            let denominator=aa+self.eigenvalues[i].abs()*bb;
+            let pass=rr.is_finite() && rr>=0. && xx.is_finite() && xx>0.
+                && ((denominator.is_finite() && denominator>0. && rr.sqrt()<=relative*denominator)
+                    || rr<=absolute*absolute*xx);
+            self.residual_lock_mask[i]=pass;
+            crate::profiler::count("eigensolve.lock_certificate_columns",1);
+            if !pass {
+                if self.soft_locked[i] {crate::profiler::count("eigensolve.reopened_locks",1);}
+                self.soft_locked[i]=false;
+                crate::profiler::count("eigensolve.residual_declined_locks",1);
+            }
+        }
+    }
+
+    fn apply_residual_lock_mask(&self, convergence: &mut ConvergenceInfo) {
+        if self.config.locking_residual_limits.is_none() { return; }
+        for (state,&allowed) in convergence.band_states.iter_mut().zip(&self.residual_lock_mask) {
+            if !allowed { *state=BandState::Active; }
+        }
+        convergence.n_converged=convergence.band_states.iter().filter(|&&s|matches!(s,BandState::Converged|BandState::Locked)).count();
+        convergence.all_converged=convergence.n_converged>=convergence.band_states.len();
+    }
+
     /// Store current eigenvalues for the next iteration's comparison.
     fn store_previous_eigenvalues(&mut self) {
         self.previous_eigenvalues = self.eigenvalues.clone();
@@ -1024,6 +1076,12 @@ where
     /// # Returns
     /// The number of bands newly soft-locked (not counting already soft-locked).
     fn soft_lock_bands(&mut self, bands_to_lock: &[usize]) -> usize {
+        let bands_to_lock: std::borrow::Cow<'_,[usize]>=if self.residual_lock_mask.is_empty() {
+            std::borrow::Cow::Borrowed(bands_to_lock)
+        } else {
+            std::borrow::Cow::Owned(bands_to_lock.iter().copied()
+                .filter(|&i|self.residual_lock_mask.get(i).copied().unwrap_or(true)).collect())
+        };
         if bands_to_lock.is_empty() {
             return 0;
         }
@@ -1038,7 +1096,7 @@ where
         // For each band that wants to lock, check if all near-degenerate partners also want to lock
         let mut safe_to_lock: Vec<usize> = Vec::new();
 
-        for &band_idx in bands_to_lock {
+        for &band_idx in bands_to_lock.iter() {
             if band_idx >= self.eigenvalues.len() || band_idx >= self.soft_locked.len() {
                 continue;
             }
@@ -1858,6 +1916,7 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
+            self.qualify_residual_locks();
             record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
             crate::profiler::count("search_P.columns", self.w_block.len());
@@ -1916,6 +1975,7 @@ where
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
                     self.config.tol,
                 );
+                self.apply_residual_lock_mask(&mut convergence);
                 self.lock_certified_near_zero(&mut convergence);
             }
 
@@ -2393,6 +2453,7 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
+            self.qualify_residual_locks();
             record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
             crate::profiler::count("search_P.columns", self.w_block.len());
@@ -2421,6 +2482,7 @@ where
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
                     self.config.tol,
                 );
+                self.apply_residual_lock_mask(&mut convergence);
                 self.lock_certified_near_zero(&mut convergence);
             }
 
@@ -2744,6 +2806,7 @@ where
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
+            self.qualify_residual_locks();
             record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
             crate::profiler::count("search_P.columns", self.w_block.len());
@@ -2793,6 +2856,7 @@ where
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
                     self.config.tol,
                 );
+                self.apply_residual_lock_mask(&mut convergence);
                 self.lock_certified_near_zero(&mut convergence);
             }
 

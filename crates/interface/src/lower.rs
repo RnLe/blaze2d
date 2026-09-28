@@ -56,6 +56,8 @@ impl PlannedJob {
             tol: e.tolerance.unwrap(),
             near_zero_absolute_tolerance: self.resolved.config.bands.as_ref()
                 .map(|bands| bands.accuracy.clone().unwrap_or_default().max_absolute_residual),
+            locking_residual_limits: (e.precision==crate::Precision::F32).then(||self.resolved.config.bands.as_ref()
+                .and_then(|b|b.accuracy.as_ref()).map(|a|[a.max_relative_residual,a.max_absolute_residual])).flatten(),
             block_size: e.block_size,
             ..Default::default()
         }

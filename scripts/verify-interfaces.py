@@ -97,7 +97,10 @@ with nullcontext(args.output) if args.output else tempfile.TemporaryDirectory(pr
                 print(f'{fixture.name}: shares a verified calculation', flush=True)
                 continue
             settings = original.to_dict()
-            settings['eigensolver'].update(tolerance=1e-10, max_iterations=600)
+            # Keep an example's stricter stopping request when it also declares
+            # an explicit final field-accuracy contract.
+            tolerance = min(settings['eigensolver'].get('tolerance') or 1e-10, 1e-10)
+            settings['eigensolver'].update(tolerance=tolerance, max_iterations=600)
             if settings['task'] == 'operators':
                 settings['results']['eigenvectors'] = True
             config = blaze.Config.from_dict(settings)

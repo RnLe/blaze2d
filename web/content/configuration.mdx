@@ -79,7 +79,9 @@ whole block must pass B-orthogonality, and every requested point must meet the
 stopping criterion. The absolute branch remains meaningful at zero or near-zero
 Gamma modes. Limits must be finite and positive; omitted limits take the values
 above. Omitting the entire section preserves the previous reporting-only behavior.
-The gate covers ordinary solves, reuse, final fallbacks, metric support and
+For explicit f32 accuracy, tentative soft locks also require fresh residual
+qualification before deflation. This prevents eigenvalue stagnation from freezing
+inaccurate fields. f64 retains its existing stopping behavior. The gate covers ordinary solves, reuse, final fallbacks, metric support and
 external sampled inputs. It never silently tightens the stopping tolerance.
 Rejected ordinary jobs preserve their computed arrays in `partial_result` and
 follow the runner's error policy. An empty or invalid certificate cannot pass.
@@ -130,7 +132,8 @@ automatically; use `print(blaze.execution_summary(result_or_study))`.
 | Recommended within the measured envelope | Native f64 `auto`, final accuracy acceptance, ordinary complex fallback |
 | Advanced, explicitly qualified | Manual PT/Fourier choices, k-star transport, sectors, partner reconstruction, bounded geometry continuation and coarse starts |
 | Explicit discretization choice | Metric Fourier support and Voronoi material averages; compare to the same pencil before claiming acceleration |
-| Experimental Rust APIs | Geometry-response prediction, precision changes, shared iteration engine and specialized scheduling; no general speed recommendation |
+| Experimental public options | Native geometry copying, metric/secant/history/residual/response prediction; bounded anchors, rolling banks and guard expansion; no general speed recommendation |
+| Experimental Rust APIs | Precision changes, shared iteration engine and specialized scheduling |
 
 Some advanced combinations cost more than the ordinary solve. The
 [replacement notes](/symmetry-changelog) retain those negative results.
@@ -157,6 +160,47 @@ axis values, job indices, and integer multi-indices.
 Thread counts, error policy, and output paths are runner options. The default
 failure policy stops the study while retaining completed jobs. Native scheduling
 parallelizes independent configurations with bounded result delivery.
+
+## Native geometry continuation
+
+<ExampleSource slug="geometry-warm-start" language="toml" />
+
+`[bands.warm_start]` enables the native study cache independently of public
+field retention. The section is omitted by default. Do not combine it with
+`bands.symmetry.continuation`; they select different history implementations.
+The [theory and measured limits](/geometry-warm-starts) explain the predictor
+ladder, Gamma kernel, final certificates and fallback behavior.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `method` | `copy` | `cold`, `copy`, `metric`, `secant`, `history`, `residual`, `response` |
+| `scope` | `gamma` | Gamma, explicit `anchors`, or all requested `path` points |
+| `anchors` | `[]` | Additional exact reciprocal-fractional points; Gamma remains included |
+| `donor_selection` | `same_k` | Same-k geometry donor, `previous_k`, or cheap `screened` selection |
+| `parameter_order` | `grouped` | Compatible geometry groups; optional reflected `serpentine` order |
+| `guards` / `max_guards` | `2` / omitted | Solved guard count; optional bounded boundary expansion up to 32 |
+| `history` | `2` | One to eight accepted snapshot blocks per fiber |
+| `innovation_columns` | `0` | Optional two-snapshot history compression; one to 64 older directions |
+| `innovation_relative_tolerance` | `0.001` | Relative innovation-rank threshold, with a native precision floor |
+| `max_predictor_columns` | `0` | Zero selects twice the retained positive window; explicit cap at most 512 |
+| `max_preparation_bytes` | `67108864` | Predictor workspace allowance per worker |
+| `max_cache_bytes` | `67108864` | Global native bank payload allowance divided across worker chains |
+| `retain_tm_actions` | `false` | Retain exact same-k TM source actions on their immutable basis |
+| `response_iterations` | `2` | Inner response budget, one to 64 iterations |
+| `response_tolerance` | `0.25` | Relative inner response stopping request |
+
+The requested band count and public job IDs do not change. Ordinary k-path
+tracking remains in the supplied order. Each worker has a cold chain root;
+checkpoint resume restores results but starts new spectral history. A small
+cache may evict donors or decline insertion while the solve still completes.
+Payload limits exclude solver/library scratch and requested output arrays.
+
+`metadata.geometry_warm_start` records candidate selection, parents, guards,
+rank, preparation, all correction attempts, fallback and cache payload. A
+geometry donor that fails admission cannot replace the last accepted state.
+PT/sector coordinates, metric support and reordered k traversal retain their
+existing solver and explain why raw native history was declined. Native history
+does not silently transform between incompatible coordinate systems.
 
 ## Operators, registry studies, and stencils
 

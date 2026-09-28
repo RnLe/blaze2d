@@ -46,5 +46,11 @@
     "title": "Certified symmetry",
     "description": "Automatic native symmetry with explicit final accuracy acceptance.",
     "category": "Bands"
+  },
+  {
+    "slug": "geometry-warm-start",
+    "title": "Geometry warm starts",
+    "description": "Bounded native secant continuation with a matched final accuracy contract.",
+    "category": "Studies"
   }
 ]

@@ -494,7 +494,7 @@ fn test_eigensolver_spd_diagonal_convergence() {
         tol: 1e-6,     // Relaxed for f32 storage
         block_size: 0, // Auto
         record_diagnostics: false,
-        near_zero_absolute_tolerance: None, k_index: None,
+        near_zero_absolute_tolerance: None, locking_residual_limits: None, k_index: None,
     };
 
     let mut solver = Eigensolver::new(&mut operator, config, None, None);
@@ -546,7 +546,7 @@ fn test_eigensolver_spd_diagonal_convergence_with_diagnostics() {
         tol: 1e-6, // Relaxed for f32 storage
         block_size: 0,
         record_diagnostics: true,
-        near_zero_absolute_tolerance: None, k_index: None,
+        near_zero_absolute_tolerance: None, locking_residual_limits: None, k_index: None,
     };
 
     let mut solver = Eigensolver::new(&mut operator, config, None, None);
@@ -618,7 +618,7 @@ fn test_eigensolver_spd_high_condition_number() {
         tol: 1e-8,     // Slightly relaxed due to conditioning
         block_size: 0,
         record_diagnostics: false,
-        near_zero_absolute_tolerance: None, k_index: None,
+        near_zero_absolute_tolerance: None, locking_residual_limits: None, k_index: None,
     };
 
     let mut solver = Eigensolver::new(&mut operator, config, None, None);

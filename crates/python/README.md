@@ -63,6 +63,24 @@ mass weights for TM. It preserves the original result and does not transfer its
 certificates to the rotated fields. The [API guide](https://rnle.github.io/blaze2d/configuration)
 describes the exact interface and the recommended, advanced and experimental options.
 
+## Geometry warm starts
+
+The optional `[bands.warm_start]` section selects native `copy`, `metric`,
+`secant`, `history`, `residual` or `response` initialization across parameter
+values. Start with `scope = "gamma"`, an explicit `[bands.accuracy]` contract
+and a matched ordinary reference. Worker-owned history is bounded; requested
+bands, parameter values and canonical job IDs are preserved. Checkpoints store
+results rather than reusable native state, so resumed chains start cold.
+
+See `examples/calculations/geometry-warm-start.toml` and the
+[theory and limits](https://rnle.github.io/blaze2d/geometry-warm-starts).
+These options remain experimental: selected secant cases improve, but full
+banks and short response predictors often cost more than they save. The raw
+comparison archive is `benchmarks/geometry-warm-start`. Native f32 requests with
+explicit accuracy now qualify soft locks by fresh residuals; the documented
+24² audit passes, while parts of the 64² set exceed the same accuracy contract.
+Use f64 for unqualified precision/resolution combinations.
+
 ## Run a TOML study
 
 Download an executable [example](https://rnle.github.io/blaze2d/examples) or export a configuration from the Workbench, then run:

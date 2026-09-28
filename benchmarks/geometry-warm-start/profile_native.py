@@ -20,16 +20,24 @@ def main():
     parser.add_argument('--inputs',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--threads',type=int,default=2)
+    parser.add_argument('--expected-jobs',type=int,default=24)
+    parser.add_argument('--filter',default='')
     args=parser.parse_args();args.binary=args.binary.resolve()
     args.output.mkdir(parents=True,exist_ok=True)
     inputs={}
+    references=set()
     for case in sorted(args.inputs.glob('*/candidate.toml')):
+        if args.filter not in case.parent.name:continue
         inputs[case.parent.name]=case
         reference=case.with_name('reference.toml')
-        warm=tomllib.loads(reference.read_text())['bands']['warm_start']
-        method=warm['method']
+        digest=hashlib.sha256(reference.read_bytes()).hexdigest()
+        if digest in references:continue
+        references.add(digest)
+        warm=tomllib.loads(reference.read_text())['bands'].get('warm_start',{})
+        method=warm.get('method','public')
         if method=='response':method+=f"-{warm.get('response_iterations',2)}"
-        inputs.setdefault(case.parent.name.split('-gamma-')[0]+f'-gamma-{method}',reference)
+        name=case.parent.name.split('-gamma-')[0]+f'-gamma-{method}' if '-gamma-' in case.parent.name else case.parent.name+'-reference'
+        inputs.setdefault(name,reference)
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     binary_hash=hashlib.sha256(args.binary.read_bytes()).hexdigest()
     with QuietHost() as host:
@@ -42,7 +50,7 @@ def main():
             run=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,cwd=ROOT)
             after=host.snapshot()
             (args.output/f'{name}.result.json.gz').write_bytes(gzip.compress(run.stdout,mtime=0))
-            try:validation=inspect(json.loads(run.stdout),expected_jobs=24)
+            try:validation=inspect(json.loads(run.stdout),expected_jobs=args.expected_jobs)
             except (ValueError,KeyError,TypeError) as error:validation={'errors':[str(error)]}
             validation.pop('spectra',None)
             manifest.write_text(json.dumps(dict(command=command,returncode=run.returncode,stderr=run.stderr.decode(errors='replace'),

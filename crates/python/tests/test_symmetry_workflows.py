@@ -152,3 +152,35 @@ def test_native_cli_matches_installed_python_coarse_workflow(pol, pt, sectors, t
     same_guarded_span(result, reference)
     assert result['metadata']['iterations'] == reference['metadata']['iterations']
     assert result['metadata']['symmetry']['points'][0]['coarse_start']['used_as_seed'] is True
+
+
+def test_native_response_study_checkpoint_restarts_a_cold_chain(tmp_path):
+    c = configuration('TE')
+    c['bands']['accuracy'] = {}
+    c['bands']['warm_start'] = {'method': 'response', 'scope': 'path', 'guards': 2,
+                              'response_iterations': 2, 'max_cache_bytes': 1 << 22}
+    c['sweeps'] = [{'name': 'radius', 'target': 'geometry.objects.rod.radius',
+                    'values': [.191, .193, .195]}]
+    normalized = blaze.Config.from_dict(c)
+    assert blaze.Config.from_toml(normalized.to_toml()).to_dict() == normalized.to_dict()
+    full = blaze.run(normalized, threads=1)
+    assert not full['errors'] and full['statistics']['status'] == 'completed'
+    points = full['results'][1]['metadata']['geometry_warm_start']['points']
+    assert any(p and p['response'] for p in points)
+    path = tmp_path / 'geometry.ndjson'
+
+    def interrupt(event):
+        if event['event'] == 'result':
+            raise RuntimeError('interrupted after a stored result')
+
+    with pytest.raises(RuntimeError, match='interrupted after'):
+        blaze.run_checkpointed(normalized, path, threads=1, progress=interrupt)
+    resumed = blaze.run_checkpointed(normalized, path, threads=1)
+    assert resumed['statistics']['resumed'] == 1 and not resumed['errors']
+    assert resumed['results'][1]['metadata']['geometry_warm_start']['points'][0]['cold_root']
+    for expected, actual in zip(full['results'], resumed['results'], strict=True):
+        assert actual['job_index'] == expected['job_index']
+        assert actual['metadata']['accuracy']['accepted']
+        np.testing.assert_allclose(np.sort(actual['frequencies'], axis=1),
+                                   np.sort(expected['frequencies'], axis=1), atol=2e-7, rtol=0)
+        same_guarded_span(actual, expected)

@@ -45,7 +45,7 @@ def compare_retained_fields(folder,label):
         metric='Euclidean span angle on identical target grids; independent of phases and internal basis rotations')
 
 
-def configuration(lattice,pol,size,precision,fields,family,method,scope,selection,guards):
+def configuration(lattice,pol,size,precision,fields,family,method,scope,selection,guards,bands=8):
     accuracy=(5e-4,2e-3,2e-5) if precision=='f32' else (1e-5,1e-7,1e-8)
     middle=[0.5,0.5] if lattice=='square' else [2/3,1/3]
     points=[[0.,0.],[0.25,0.],[0.5,0.],middle,[0.17,0.13],[0.08,0.06],[0.,0.]]
@@ -91,7 +91,7 @@ epsilon = 8.9
 {extra}[grid]
 resolution = {size}
 [bands]
-count = 8
+count = {bands}
 tracking = true
 path = {{ points = {points}, basis = "reciprocal_fractional" }}
 [bands.accuracy]
@@ -125,35 +125,46 @@ def main():
     p.add_argument('--size',type=int,default=48);p.add_argument('--threads',type=int,default=2)
     p.add_argument('--pairs',type=int,default=3);p.add_argument('--precision',choices=['f64','f32'],default='f64')
     p.add_argument('--fields',action='store_true');p.add_argument('--family',choices=['radius','contrast','displacement','events'],default='radius')
+    p.add_argument('--reuse-identical',action='store_true',help='give both workflows the existing repeated-k reuse baseline')
+    p.add_argument('--reference-auto',action='store_true',help='compare public candidates with the existing measured symmetry policy')
     p.add_argument('--filter',default='')
+    p.add_argument('--variant',default='',help='select a single scope or donor variant')
+    p.add_argument('--bands',type=int,default=8)
+    p.add_argument('--tolerance',type=float,help='explicit matched stopping override; final residual contract is unchanged')
+    p.add_argument('--method',choices=['copy','metric','secant','history','residual','response'],default='secant')
     a=p.parse_args();a.reference=a.reference.resolve();a.candidate=a.candidate.resolve()
     rng=random.Random(2026092809)
     variants={'native-path':['gamma','path'],'anchors':['anchors','path'],'donors':['previous_k','screened'],
-              'public':['gamma','path'],'guards':['0','4'],'order':['gamma','path']}[a.ablation]
+              'public':['gamma','anchors','path'],'guards':['0','4'],'order':['gamma','path']}[a.ablation]
     for lattice in ['square','triangular']:
       for pol in ['TM','TE']:
        for variant in variants:
+        if a.variant and variant!=a.variant:continue
         name=f'{lattice}-{pol}-{a.size}-{a.precision}-{a.family}-{variant}'
         if a.filter not in name:continue
         output=a.output/name
         if (output/'summary.json').exists():continue
         output.mkdir(parents=True,exist_ok=False)
         for side in ['reference','candidate']:
-            method='secant' if a.ablation in ('public','order') else 'copy'
+            method=a.method if a.ablation in ('public','order') else 'copy'
             if side=='reference' and a.ablation=='public':method='public'
             scope=variant if a.ablation in ('native-path','anchors','public','order') else 'path'
             if a.ablation=='anchors' and side=='reference':scope='gamma'
             selection=variant if side=='candidate' and a.ablation=='donors' else 'same_k'
             guards=int(variant) if side=='candidate' and a.ablation=='guards' else 2
-            text,accuracy=configuration(lattice,pol,a.size,a.precision,a.fields,a.family,method,scope,selection,guards)
+            text,accuracy=configuration(lattice,pol,a.size,a.precision,a.fields,a.family,method,scope,selection,guards,a.bands)
+            if a.tolerance is not None:text=text.replace(f'tolerance = {1e-6 if a.precision=="f32" else 1e-14}',f'tolerance = {a.tolerance}')
             if a.ablation=='order' and side=='candidate':text+='parameter_order = "serpentine"\n'
+            if a.reference_auto and side=='reference':text+='\n[bands.symmetry]\npolicy = "auto"\n'
+            elif a.reuse_identical:text+='\n[bands.symmetry]\nk_reuse = "identical"\n'
             (output/f'{side}.toml').write_text(text)
         cfg=SimpleNamespace(reference=a.reference,candidate=a.candidate,output=output,threads=a.threads,expected_jobs=8,accuracy=accuracy)
         (output/'manifest.json').write_text(json.dumps(dict(source_revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
             binaries={v:dict(path=str(getattr(cfg,v)),sha256=hashlib.sha256(getattr(cfg,v).read_bytes()).hexdigest()) for v in ['reference','candidate']},
             inputs={v:hashlib.sha256((output/f'{v}.toml').read_bytes()).hexdigest() for v in ['reference','candidate']},
             collector_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),shared_collector_sha256=hashlib.sha256((ROOT/'benchmarks/symmetry/run_public_sweep.py').read_bytes()).hexdigest(),
-            threads=a.threads,expected_jobs=8,pairs=a.pairs,warmups=1,accuracy=accuracy,
+            threads=a.threads,expected_jobs=8,pairs=a.pairs,warmups=1,accuracy=accuracy,public_bands=a.bands,stopping_override=a.tolerance,
+            method=a.method,ablation=a.ablation,reuse_identical=a.reuse_identical,reference_auto=a.reference_auto,
             scope='complete public CLI startup, planning, solving, certification and requested JSON output'),indent=2)+'\n')
         blocks=[]
         with QuietHost() as host:

@@ -1,0 +1,222 @@
+---
+nav:
+  group: Theory
+  order: 2
+title: Geometry warm starts
+description: Certified native mode recycling, metric transport, bounded response prediction, and measured tradeoffs in parameter sweeps.
+---
+
+import ExampleSource from '@/components/examples/ExampleSource'
+
+# Geometry warm starts
+
+Nearby photonic crystals often have nearby low-frequency eigenspaces. Blaze can
+retain a certified space from one geometry and use it to initialize the next
+calculation. The objective is lower **complete sweep time at equal accuracy**.
+Fewer correction iterations do not guarantee a faster calculation: extra modes,
+projections, material construction and certification all have a cost.
+
+The native implementation offers copying, metric transport, secants, snapshot
+enrichment, residual enrichment and a bounded response predictor through the
+same `bands.warm_start` configuration. These are explicit options. Current
+evidence does not justify a universal automatic geometry policy. The existing
+[symmetry policy](/symmetries) retains its own measured scope.
+
+## Start with a controlled comparison
+
+<ExampleSource slug="geometry-warm-start" language="toml" />
+
+Remove `[bands.warm_start]` to obtain the ordinary reference while preserving
+the same material, path, precision, accuracy limits and repeated-point reuse.
+Run both configurations with the same worker count and requested outputs.
+Compare total time, failed work, iterations and `metadata.geometry_warm_start`.
+This example demonstrates configuration; it is not a promise of a speedup.
+
+Native Rust and Python runners retain history inside a study. A separate
+`solve` call starts a new context. Browser studies use the same configuration
+and serial context; browser performance needs its own measurements.
+
+## The finite Maxwell problem
+
+For each geometry parameter vector $p$ and Bloch wavevector $k$, the discretized
+problem is
+
+$$
+A(p,k)X=B(p)X\Lambda,\qquad X^\dagger B(p)X=I.
+$$
+
+In TM, $B$ is the sampled dielectric and $A$ is the Bloch Laplacian, independent
+of geometry at fixed grid, lattice and $k$. In TE, $B=I$ and $A$ contains the
+sampled inverse dielectric tensor between Bloch derivatives. Material smoothing
+therefore changes the discrete perturbation in different places for TE and TM.
+
+The initial contract is a fixed grid, lattice, precision and physical spatial
+representation with positive dielectric material. A changed grid, lattice or
+representation cannot reuse raw fields as if they were the same coordinates.
+PT, symmetry sectors, metric Fourier support and reordered k traversal use
+their existing qualified workflows and report why native history was declined.
+External sampled material is rejected by this configuration. Operator-extraction
+tasks keep their existing reference and gauge conventions.
+
+## One kernel at Gamma
+
+At exact $\Gamma$, the scalar analytic zero mode is owned separately from the
+positive modes. A donor stores positive modes and explicitly solved guard modes;
+unconverged iteration slack is never a guard. The initializer projects target
+constraints **before** extracting rank, replenishes missing independent
+directions and performs Rayleigh–Ritz in the target metric.
+
+In TM, even a vector orthogonal to the source kernel can have a kernel component
+in the target dielectric metric. Source and target projections are not
+interchangeable. The native snapshot retains enough information to do the target
+operation correctly. A small nonzero wavevector is not treated as exact Gamma.
+
+An exact repeated discrete pencil may accept an adequate certified initial
+window with zero correction rounds. Changed material cannot obtain this shortcut
+from a small residual alone: a collection of accurate eigenvectors can still
+omit a lower band. The unrestricted solve, guards and boundary checks remain
+necessary. They are practical coverage controls, not a global spectral-count
+proof.
+
+## The predictor ladder
+
+| Method | Construction | Main extra cost |
+|---|---|---|
+| `cold` | Native workflow control without geometry donors | Guarded solves and certificates |
+| `copy` | Previous certified same-k fields | Target rank and Ritz preparation |
+| `metric` | Target-mass isometry | Metric application and normalization |
+| `secant` | Aligned two-state extrapolation along a valid parameter direction | Small overlap factorization and block combinations |
+| `history` | Bounded union of accepted snapshots or older innovations | Extra trial rank, actions and projected solve |
+| `residual` | Target residual directions added to the copied space | Target actions, preconditioning and Ritz extraction |
+| `response` | Approximate first-order source-pencil response | Bounded inner solves plus target correction |
+
+For TM, diagonal mass transport uses $B_1^{-1/2}B_0^{1/2}$. TE's mass
+transport is the identity. Neither removes the need for the target constraint
+and Ritz steps. Secants align subspaces before extrapolating; a parameter turn,
+poor overlap or missing history declines the extrapolation. Individual bases
+inside a degenerate eigenspace are not physical invariants.
+
+History can retain two full snapshots, or the newest full snapshot and a bounded
+number of independent older directions. Set `innovation_columns` with
+`method = "history"` and `history = 2` to select compression. The older
+directions are an unlabeled trial space, not independently certified modes.
+Discarding them changes the trial space but never the final accuracy contract.
+
+## Discrete response and the Gamma complement
+
+The predictor uses the actual coefficient increments between the source and
+target pencils, $\Delta A=A_1-A_0$ and $\Delta B=B_1-B_0$. A source residual
+identity makes their role explicit:
+
+$$
+A_1X-B_1X\Lambda
+= (A_0X-B_0X\Lambda)+\Delta AX-\Delta BX\Lambda.
+$$
+
+In source mass coordinates, define
+$\widehat A=B_0^{-1/2}A_0B_0^{-1/2}$ and
+$\widehat X=B_0^{1/2}X$. The projected correction for column $i$ solves
+
+$$
+Q(\widehat A-\lambda_i I)Qy_i
+=-QB_0^{-1/2}(\Delta A-\lambda_i\Delta B)x_i.
+$$
+
+$Q$ excludes the complete retained source window, including guards and the
+analytic Gamma kernel. Mapping back also includes the first-order mass
+normalization term $-\tfrac12 X(X^\dagger\Delta B X)$. Production inner solves
+are bounded by `response_iterations` and `response_tolerance`; they do not
+construct a full dense complement. Guards are copied while response work
+targets the requested positive modes.
+
+Actual discrete increments matter. Blaze's legacy `analytic` partial-cell
+sampling can have plateaus and jumps as an interface crosses sample locations.
+Its name does not guarantee a differentiable coefficient map. The qualifying
+Voronoi families exhibit the smooth regime needed for second-order prediction;
+interface events and unsmoothed cells require separate checks. No continuum
+shape-derivative order is inferred from a nonsmooth sampled map.
+
+Same-k TM source actions can be retained with `retain_tm_actions = true`.
+Validity includes the exact field basis and operator state. TE actions change
+with material and are not reused by this switch. Final certificates always
+apply the target operator freshly to the actual stored fields.
+
+## Scheduling and bounded ownership
+
+`scope = "gamma"` is the default. `anchors` includes Gamma and the exact
+reciprocal-fractional points listed in `anchors`. `path` uses a rolling same-k
+bank along the full path. No extra k points are silently inserted.
+
+Workers receive deterministic compatible geometry chains with cold roots.
+Geometry-independent axes form separate groups. `parameter_order = "serpentine"`
+reflects neighboring geometry rows while retaining canonical job indices,
+requested parameter values and the supplied k-path tracking order. More workers
+provide concurrency but also create more roots and shorter reusable chains.
+
+`donor_selection` chooses `same_k`, `previous_k` or `screened`. Screening compares
+cheap dimensionless step metadata before preparing one candidate. Its distance
+estimate is a heuristic, not an error bound or learned profitability policy.
+Previous-k history contains at most two native frames. Unneeded candidates are
+not eagerly prepared.
+
+The global `max_cache_bytes` allowance is divided among worker chains. Immutable
+snapshots can be shared by the bank and path history; eviction cannot invalidate
+an active donor. Reported bank payload, leased donors and path payload have
+separate meanings and conservatively count some shared data more than once.
+They exclude solver/library scratch, allocator overhead and collected public
+outputs. `max_preparation_bytes` bounds predictor preparation per worker;
+`max_predictor_columns` bounds trial rank. These are not a total RSS limit.
+
+Guard expansion is opt-in through `max_guards`. It solves a lookahead mode and
+grows the guarded window within that limit when the boundary is unresolved.
+Every attempted solve is charged. Failed candidates preserve the last accepted
+bank entry, then use bounded ordinary recovery. Cancellation releases contexts.
+Checkpoint files contain results, not native spectral state: a resumed process
+starts new cold chains for its remaining jobs.
+
+## Accuracy and precision
+
+Always request a final `bands.accuracy` contract for scientific comparisons.
+Each mode must meet the relative **or** absolute residual limit; the entire
+block must meet mass orthogonality and stopping requirements. Reports also
+include dual-mass residuals, kernel leakage, parentage, cache decisions and
+discarded correction work. Near zero, the absolute criterion is essential and
+does not imply a small relative frequency error.
+
+Explicit f32 accuracy additionally qualifies soft locks with fresh residuals
+before deflation. An inaccurate locked vector reopens instead of disappearing
+from correction. All predictor methods passed a 24² square/triangular TE/TM
+audit with fresh f64 actions, relative/absolute limits $5\cdot10^{-4}$ and
+$2\cdot10^{-3}$, and Gram limit $2\cdot10^{-5}$. The same request fails in parts
+of the 64² covering set, including ordinary solves near Gamma. More iterations
+do not reliably remove the native arithmetic floor. Use f64 for those cases;
+f32 is not universally qualified at that contract.
+
+## What the measurements establish
+
+The repository archive `benchmarks/geometry-warm-start` separates correctness
+repairs, infrastructure savings and predictor effects. Its `plan.md` maps each
+requirement to evidence, and each result directory includes inputs, build hashes,
+raw outputs and the comparison protocol.
+
+- Constraint and rank repairs remove a reproduced Gamma warm-start failure.
+  Persistent infrastructure reduces allocation count by about 96% in the
+  measured 64² TM allocation control; complete runtime gains are much smaller.
+- Small dense Maxwell oracles show approximately first-order copied-space error
+  and second-order response error in qualified smooth regimes, at Gamma and
+  nonzero k. Short production response budgets do not yield a useful total-time
+  gain in the measured ladders.
+- TE secants give promising 16–19% gains in selected Gamma ladders. This does
+  not establish the same gain over a complete ordinary parameter sweep.
+- Compressed history lowers retained memory but did not pass the 10% speed
+  gate. A full k bank was 21–65% slower than Gamma-only reuse in the initial
+  four complete-path controls. Selected extra anchors helped triangular TM
+  there, while other anchor cases regressed.
+
+These are qualitative decision gates from paired whole-workflow runs on a
+shared machine with lenient host-load admission. Rejected timing samples and
+numerical failures are retained. Software byte counts are not measured DRAM
+bandwidth. Linux is the main measurement platform; a macOS runner is unavailable.
+See the evidence ledger for the exact build, accuracy, output and concurrency
+of each experiment. No later predictor is automatically enabled merely because
+its mathematical order is better.

@@ -87,14 +87,20 @@ combinations, measured gains and retained regressions.
 <ModuleStatusTag module="warm" />
 </div>
 
-Native/Python sweeps and serial browser calculations now carry certified mode
-information across geometries and complete k paths. Worker caches are bounded;
-target-mass seed preparation and ordinary-solve fallback preserve numerical
-checks and original job order. Full-path and first-point policies are explicit:
-matched public sweeps did not justify enabling them automatically. The
+The [native geometry warm-start module](/geometry-warm-starts) exposes copying,
+metric transport, aligned secants, compressed history, residual enrichment and
+bounded geometry response through the public configuration. Certified guards,
+selected anchors, rolling k banks and worker-owned native history preserve the
+requested samples and final accuracy contract. Exact Gamma kernel handling and
+initial rank repair are shared with ordinary solves.
+
+Measured gains depend on the workload. Short response predictors pass the
+small-problem order tests but do not pass the runtime gate; full banks can cost
+more than Gamma-only reuse. The options remain explicit, with complete attempt
+and fallback reports. The earlier
 [public workflow measurements](/symmetry-changelog#public-parameter-sweeps)
-include both gains and regressions. Rust research APIs also expose snapshot
-enrichment and geometry-response predictors. MPB's standard run resets fields,
+and the new module's evidence retain both improvements and regressions.
+MPB's standard run resets fields,
 although explicit reuse is possible.<Citation id={2} /> Published methods for
 tracking Maxwell modes as geometry changes provide related context.<Citation id={3} />
 
