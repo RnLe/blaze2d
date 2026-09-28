@@ -148,6 +148,9 @@ impl Default for Resolution { fn default() -> Self { Self::Uniform(32) } }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Bands {
+    /// Native parameter continuation. Omitted by default.
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub warm_start: Option<GeometryWarmStart>,
     /// Optional setup probes; ordinary solves do not compute condition estimates.
     #[serde(default, skip_serializing_if="is_false")]
     pub operator_diagnostics: bool,
@@ -169,7 +172,7 @@ pub struct Bands {
 fn default_tracking() -> bool { true }
 fn is_false(value: &bool) -> bool { !*value }
 impl Default for Bands {
-    fn default() -> Self { Self { operator_diagnostics: false, count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default(), accuracy: None, discretization: Discretization::default() } }
+    fn default() -> Self { Self { warm_start: None, operator_diagnostics: false, count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default(), accuracy: None, discretization: Discretization::default() } }
 }
 
 /// Acceptance is separate from eigenvalue-change stopping. Every mode must
@@ -441,3 +444,25 @@ pub enum Smoothing { #[default] Analytic, Subgrid, Voronoi, None }
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Results { #[serde(default)] pub eigenvectors: bool }
+
+/// Bounded native history on a fixed physical grid and lattice.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct GeometryWarmStart {
+    pub method: GeometryMethod,
+    pub scope: GeometryScope,
+    pub guards: usize,
+    pub history: usize,
+    pub max_cache_bytes: usize,
+    pub retain_tm_actions: bool,
+}
+impl Default for GeometryWarmStart {
+    fn default() -> Self { Self { method: GeometryMethod::Copy, scope: GeometryScope::Gamma,
+        guards: 2, history: 2, max_cache_bytes: 64*1024*1024, retain_tm_actions: false } }
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum GeometryMethod { Cold, Copy }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum GeometryScope { Gamma, Path }

@@ -156,6 +156,20 @@ impl Config {
             Task::Bands => {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
+                if let Some(warm) = &bands.warm_start {
+                    if warm.guards>32 || warm.history==0 || warm.history>8 || warm.max_cache_bytes==0 {
+                        return Err(invalid("bands.warm_start", "use 0..32 guards, 1..8 history blocks and a positive cache budget"));
+                    }
+                    if check_dimensions && bands.count.checked_add(warm.guards).is_none_or(|n|n>=grid_size) {
+                        return Err(invalid("bands.warm_start.guards", "requested bands and guards must fit strictly inside the grid dimension"));
+                    }
+                    if config.dielectric.source==DielectricSource::External {
+                        return Err(invalid("bands.warm_start", "native geometry continuation requires geometry-sampled material"));
+                    }
+                    if bands.symmetry.continuation!=ContinuationPolicy::Off {
+                        return Err(invalid("bands.warm_start", "select either native geometry continuation or the previous symmetry continuation cache"));
+                    }
+                }
                 if let Some(accuracy) = &bands.accuracy {
                     positive(accuracy.max_relative_residual, "bands.accuracy.max_relative_residual")?;
                     positive(accuracy.max_absolute_residual, "bands.accuracy.max_absolute_residual")?;

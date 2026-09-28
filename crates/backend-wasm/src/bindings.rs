@@ -102,7 +102,7 @@ impl Calculation {
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str) -> Result<Calculation,JsValue> {
         let plan = api::Plan::new(api::Config::from_toml(source).map_err(diagnostic)?,api::Platform::Browser).map_err(diagnostic)?;
-        let context = api::ExecutionContext::new(plan.config.bands.as_ref().map_or(0, |b| b.symmetry.max_continuation_bytes));
+        let context = api::ExecutionContext::new(plan.config.bands.as_ref().map_or(0, |b|b.warm_start.as_ref().map_or(b.symmetry.max_continuation_bytes,|w|w.max_cache_bytes)));
         Ok(Self { plan, context })
     }
     #[wasm_bindgen(getter, unchecked_return_type="PlanSummary")]

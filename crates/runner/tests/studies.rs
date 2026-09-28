@@ -176,3 +176,49 @@ fn automatic_policy_uses_qualified_pt_and_stops_retrying_broken_material() {
     assert_eq!(fallback.arrays, solve(config).arrays);
     }
 }
+
+#[test]
+fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
+    let mut c=study();
+    c.grid.resolution=Resolution::Uniform(9);
+    c.eigensolver.tolerance=Some(1e-14);
+    c.eigensolver.max_iterations=Some(500);
+    c.results.eigenvectors=true;
+    let b=c.bands.as_mut().unwrap();
+    b.count=4; b.tracking=false; b.accuracy=Some(BandAccuracy::default());
+    b.path.points=Some(vec![vec![0.,0.],vec![0.19,0.13],vec![0.,0.]]);
+    let reference=blaze2d_runner::collect(Plan::new(c.clone(),Platform::Native).unwrap(),
+        Options {threads:1,..Default::default()}).unwrap();
+    assert!(reference.errors.is_empty(),"{:?}",reference.errors);
+    c.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {scope:GeometryScope::Path,
+        guards:2,max_cache_bytes:256*1024,..Default::default()});
+    for threads in [1,2] {
+        c.bands.as_mut().unwrap().warm_start.as_mut().unwrap().retain_tm_actions=threads==2;
+        let candidate=blaze2d_runner::collect(Plan::new(c.clone(),Platform::Native).unwrap(),
+            Options {threads,..Default::default()}).unwrap();
+        assert!(candidate.errors.is_empty(),"{:?}",candidate.errors);
+        let mut seeds=0;
+        for (a,b) in reference.results.iter().zip(&candidate.results) {
+            assert_eq!(a.job_index,b.job_index);
+            assert_eq!(b.arrays["eigenvectors"].shape,vec![3,4,9,9]);
+            for (&x,&y) in a.arrays["frequencies"].data.iter().zip(&b.arrays["frequencies"].data) {
+                assert!((x-y).abs()<2e-7,"{x} != {y}");
+            }
+            for point in b.metadata["geometry_warm_start"]["points"].as_array().unwrap() {
+                seeds+=usize::from(!point["source"].is_null());
+                if threads==2 && !point["source"].is_null() {
+                    assert!(point["tm_actions_reused"].as_u64().unwrap()>0);
+                }
+                assert_eq!(point["certified_guards"],2,"{point}");
+                assert!(point["insertion"]["payload_bytes"].as_u64().unwrap()<=256*1024/threads as u64);
+            }
+        }
+        assert!(seeds>0);
+    }
+    let resumed=blaze2d_runner::collect(Plan::new(c,Platform::Native).unwrap(),
+        Options {threads:1,completed_jobs:vec![0,1],..Default::default()}).unwrap();
+    assert!(resumed.errors.is_empty());
+    assert_eq!(resumed.results.len(),1);
+    assert_eq!(resumed.results[0].job_index,2);
+    assert_eq!(resumed.results[0].metadata["geometry_warm_start"]["points"][0]["cold_root"],true);
+}

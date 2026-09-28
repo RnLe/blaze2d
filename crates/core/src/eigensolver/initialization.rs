@@ -255,27 +255,53 @@ where
 /// cannot occupy a slot that becomes zero only after block construction.
 pub(crate) fn initialize_block_with_deflation<O,B>(operator:&mut O,config:&InitializationConfig,warm_start:Option<&[Field2D]>,deflation:Option<&super::deflation::DeflationSubspace<B>>)->(Vec<BlockEntry<B>>,InitializationResult)
 where O:LinearOperator<B>, B:SpectralBackend {
+    initialize_input(operator, config, SeedInput::Public(warm_start.unwrap_or(&[]).iter()), deflation)
+}
+
+enum SeedInput<'a, B: SpectralBackend> {
+    Public(std::slice::Iter<'a, Field2D>),
+    Native(std::vec::IntoIter<B::Buffer>, Option<std::vec::IntoIter<B::Buffer>>),
+}
+
+pub(crate) fn initialize_native_block<O: LinearOperator<B>, B: SpectralBackend>(
+    operator: &mut O, config: &InitializationConfig, seeds: Vec<B::Buffer>, actions: Option<Vec<B::Buffer>>,
+    deflation: Option<&super::deflation::DeflationSubspace<B>>,
+) -> (Vec<BlockEntry<B>>, InitializationResult) {
+    initialize_input(operator, config, SeedInput::Native(seeds.into_iter(),actions.map(Vec::into_iter)), deflation)
+}
+
+fn initialize_input<O: LinearOperator<B>, B: SpectralBackend>(
+    operator: &mut O, config: &InitializationConfig, mut seeds: SeedInput<'_, B>,
+    deflation: Option<&super::deflation::DeflationSubspace<B>>,
+) -> (Vec<BlockEntry<B>>, InitializationResult) {
     let mut entries: Vec<BlockEntry<B>> = Vec::with_capacity(config.block_size);
     let mut warm_hits = 0usize;
     let mut warm_attempts = 0usize;
     let rank_tolerance = config.zero_tolerance.max(32.0 * <B::Real as num_traits::Float>::epsilon().to_accum());
 
-    // Phase 1: Try to use warm-start vectors
-    if let Some(seeds) = warm_start {
-        for field in seeds {
-            if entries.len() >= config.block_size { break; }
-            warm_attempts += 1;
-            crate::profiler::count("initialization.warm_attempts", 1);
-            if let Some(entry) =
+    while entries.len() < config.block_size {
+        let entry = match &mut seeds {
+            SeedInput::Public(fields) => {
+                let Some(field) = fields.next() else { break; };
                 build_entry_from_field(operator, field, &entries, rank_tolerance, deflation)
-            {
-                entries.push(entry);
-                warm_hits += 1;
             }
-            if entries.len() >= config.block_size {
-                break;
+            SeedInput::Native(fields, actions) => {
+                let Some(vector) = fields.next() else { break; };
+                let action = actions.as_mut().and_then(Iterator::next);
+                let a = vector.grid(); let b = operator.grid();
+                if (a.nx,a.ny,a.lx,a.ly,a.centered) != (b.nx,b.ny,b.lx,b.ly,b.centered)
+                    || vector.len() != a.len() {
+                    crate::profiler::count("initialization.invalid_fields", 1);
+                    None
+                } else {
+                    crate::profiler::count("initialization.native_imports", 1);
+                    build_entry_with_action(operator, vector, action, &entries, rank_tolerance, deflation)
+                }
             }
-        }
+        };
+        warm_attempts += 1;
+        crate::profiler::count("initialization.warm_attempts", 1);
+        if let Some(entry) = entry { entries.push(entry); warm_hits += 1; }
     }
 
     // Phase 2: Fill remaining slots with random vectors
@@ -349,7 +375,7 @@ where
 /// Build a block entry from a raw buffer, orthogonalizing against existing entries.
 fn build_entry_from_buffer<O, B>(
     operator: &mut O,
-    mut vector: B::Buffer,
+    vector: B::Buffer,
     existing: &[BlockEntry<B>],
     zero_tol: f64,
     deflation:Option<&super::deflation::DeflationSubspace<B>>,
@@ -358,6 +384,19 @@ where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
+    build_entry_with_action(operator, vector, None, existing, zero_tol, deflation)
+}
+
+fn build_entry_with_action<O: LinearOperator<B>, B: SpectralBackend>(
+    operator: &mut O, mut vector: B::Buffer, mut action: Option<B::Buffer>,
+    existing: &[BlockEntry<B>], zero_tol: f64,
+    deflation: Option<&super::deflation::DeflationSubspace<B>>,
+) -> Option<BlockEntry<B>> {
+    // Only the analytic zero eigenspace may be projected without applying A to
+    // its basis. Other locked modes force fresh preparation of the input.
+    if deflation.is_some_and(|d|d.eigenvalues().iter().any(|&l|l!=0.)) {action=None;}
+    if action.as_ref().is_some_and(|a|a.len()!=vector.len()
+        || a.as_slice().iter().any(|z|!z.re.to_accum().is_finite() || !z.im.to_accum().is_finite())) {action=None;}
     // Compare rank after constraints with the incoming norm. In particular,
     // cancellation residue of a projected kernel is not a new direction.
     if vector.as_slice().iter().any(|z| !z.re.to_accum().is_finite() || !z.im.to_accum().is_finite()) {
@@ -374,6 +413,10 @@ where
             locked.project_single(operator.backend(), &mut vector, &mut mass);
         }
         for entry in existing {
+            if let Some(applied)=&mut action {
+                let coefficient=operator.backend().dot(&entry.vector,&mass);
+                operator.backend().axpy(-coefficient,&entry.applied,applied);
+            }
             project_out(operator.backend(), &mut vector, &mut mass, &entry.vector, &entry.mass);
         }
         // In f32, independently updated Bx can retain cancellation error even
@@ -385,9 +428,13 @@ where
     if norm == 0.0 { return None; }
     operator.apply_mass(&vector, &mut mass);
 
-    // Apply the operator to get A*x
-    let mut applied = operator.alloc_field();
-    operator.apply(&vector, &mut applied);
+    let applied = if let Some(mut applied)=action {
+        operator.backend().scale(Complex64::new(1.0/norm,0.0),&mut applied);
+        crate::profiler::count("geometry.initial_actions_reused",1);
+        applied
+    } else {
+        let mut applied=operator.alloc_field(); operator.apply(&vector,&mut applied); applied
+    };
 
     Some(BlockEntry {
         vector,

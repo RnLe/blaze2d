@@ -48,10 +48,18 @@ pub trait SpectralBuffer {
     fn grid(&self) -> Grid2D;
     fn as_slice(&self) -> &[Complex<Self::Real>];
     fn as_mut_slice(&mut self) -> &mut [Complex<Self::Real>];
+
+    /// Transfer native physical storage at an ownership boundary. Backends with
+    /// a different layout must reconstruct a physical field before calling this.
+    fn into_field(self) -> Field2D<Self::Real> where Self: Sized {
+        Field2D::from_vec(self.grid(), self.as_slice().to_vec())
+    }
 }
 
 impl<R: Real> SpectralBuffer for Field2D<R> {
     type Real = R;
+
+    fn into_field(self) -> Field2D<R> { self }
 
     fn len(&self) -> usize {
         Field2D::<R>::len(self)

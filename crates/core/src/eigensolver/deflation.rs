@@ -80,6 +80,10 @@ impl<B: SpectralBackend> DeflationSubspace<B> {
         }
     }
 
+    pub(crate) fn into_eigenpairs(self) -> Vec<(f64, B::Buffer)> {
+        self.eigenvalues.into_iter().zip(self.vectors).collect()
+    }
+
     /// Get the number of locked vectors.
     pub fn len(&self) -> usize {
         self.vectors.len()

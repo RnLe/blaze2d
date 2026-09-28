@@ -47,6 +47,7 @@
 
 use log::{debug, info, warn};
 
+use crate::operators::LinearOperator;
 use crate::{
     backend::SpectralBackend,
     band_tracking::{apply_permutation, track_bands_with_frequencies},
@@ -138,6 +139,7 @@ pub struct BandStructureResult {
 /// Incremental result emitted after a single k-point solve.
 #[derive(Debug, Clone)]
 pub struct KPointResult {
+    pub warm_start: Option<crate::geometry_warm_start::point::PointReport>,
     /// Present only for an explicitly selected metric Fourier support. Its
     /// projected certificate and full-rectangle diagnostic have different roles.
     pub discretization: Option<super::support_bands::SupportPointReport>,
@@ -176,6 +178,7 @@ pub struct KPointResult {
 /// Options for band structure computation.
 #[derive(Debug, Clone)]
 pub struct RunOptions {
+    pub warm_start: Option<crate::geometry_warm_start::point::Options>,
     /// Independently requested, qualified symmetry policies. Defaults to off.
     pub symmetry: SymmetryOptions,
     /// Preconditioner type (None, FourierDiagonalKernelCompensated, TransverseProjection).
@@ -245,6 +248,7 @@ pub struct RunOptions {
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
+            warm_start: None,
             symmetry: SymmetryOptions::default(),
             precond_type: PreconditionerType::default(),
             use_subspace_prediction: true, // Stage 1: rotation-based warm-start
@@ -369,7 +373,7 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     job: &BandStructureJob,
     options: RunOptions,
 ) -> BandStructureResult {
-    run_core(backend, job, options, None, None, None)
+    run_core(backend, job, options, None, None, None, None)
 }
 
 /// Compute the photonic band structure while emitting each completed k-point.
@@ -389,7 +393,7 @@ where
         options,
         None,
         Some(&mut on_k_point as &mut dyn FnMut(KPointResult)),
-        None,
+        None, None,
     )
 }
 
@@ -401,7 +405,17 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
     continuation: Option<&mut crate::symmetry::continuation::BandContinuation>,
     mut on_k_point: impl FnMut(KPointResult),
 ) -> BandStructureResult {
-    run_core(backend, job, options, None, Some(&mut on_k_point), continuation)
+    run_core(backend, job, options, None, Some(&mut on_k_point), continuation, None)
+}
+
+/// Execute a path with native worker-local geometry history.
+pub fn run_with_warm_start<B: SpectralBackend + Clone>(
+    backend: B, job: &BandStructureJob, options: RunOptions,
+    continuation: Option<&mut crate::symmetry::continuation::BandContinuation>,
+    warm: Option<&mut crate::geometry_warm_start::point::Context<B::Real>>,
+    mut on_k_point: impl FnMut(KPointResult),
+) -> BandStructureResult {
+    run_core(backend,job,options,None,Some(&mut on_k_point),continuation,warm)
 }
 
 /// Shared implementation behind [`run_with_options`] and
@@ -419,6 +433,7 @@ fn run_core<B: SpectralBackend + Clone>(
     mut study: Option<&mut ConvergenceStudy>,
     mut on_k_point: Option<&mut dyn FnMut(KPointResult)>,
     mut continuation: Option<&mut crate::symmetry::continuation::BandContinuation>,
+    mut warm: Option<&mut crate::geometry_warm_start::point::Context<B::Real>>,
 ) -> BandStructureResult {
     if study.is_some() || job.eigensolver.record_diagnostics || std::mem::size_of::<B::Real>() != 8 {
         continuation = None;
@@ -659,6 +674,7 @@ fn run_core<B: SpectralBackend + Clone>(
 
     crate::profiler::stop_timer("run.setup");
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
+        let mut warm_report = None;
         let mut point_continuation = continuation.as_deref_mut()
             .filter(|state| !state.first_point_only || k_idx == 0);
         crate::profile_scope!("run.k_point");
@@ -688,6 +704,7 @@ fn run_core<B: SpectralBackend + Clone>(
                 );
                 if let Some(ref mut on_k_point) = on_k_point {
                     (**on_k_point)(KPointResult {
+                        warm_start: None,
                         discretization: None,
                         symmetry: ReuseReport::default(),
                         k_index: k_idx,
@@ -965,6 +982,13 @@ fn run_core<B: SpectralBackend + Clone>(
             run_data.config.preconditioner_type = options.precond_type;
             run_data.config.warm_start_enabled = warm_start_used;
             study.add_run(run_data);
+        } else if let (Some(context), Some(warm_options)) = (warm.as_deref_mut(), options.warm_start.as_ref().filter(|o|
+            o.scope == crate::geometry_warm_start::point::Scope::Path || theta.analytic_kernel_available())) {
+            let solved = crate::geometry_warm_start::point::solve(&mut theta, &job.eigensolver,
+                preconditioner_opt.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
+                path_warm_slice,context,warm_options,geometry_parameters.clone(),k_idx);
+            k_iterations=solved.report.iterations; k_converged=solved.converged; k_residuals=Vec::new();
+            final_evals=solved.values; eigenvectors=solved.fields; warm_report=Some(solved.report);
         } else {
             let mut cfg = job.eigensolver.clone();
             cfg.k_index = Some(k_idx);
@@ -986,16 +1010,26 @@ fn run_core<B: SpectralBackend + Clone>(
             eigenvectors = solver.all_eigenvectors();
         }
 
-        if unrestricted {
+        if unrestricted && warm_report.is_none() {
             reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {method:"unrestricted",iterations:crate::eigensolver::iteration_total().wrapping_sub(unrestricted_start),retained:true,rejection:None});
         }
         reuse_report.retained_iterations=k_iterations;
+        if let Some(report)=&warm_report {
+            if report.discarded_iterations>0 {reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {
+                method:"geometry_candidate", iterations:report.discarded_iterations, retained:false, rejection:report.fallback.clone() });}
+            reuse_report.retained_iterations=k_iterations-report.discarded_iterations;
+            reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {method:"geometry_output",
+                iterations:reuse_report.retained_iterations,retained:true,rejection:None});
+        }
         reuse_report.attempted_iterations=crate::eigensolver::iteration_total().wrapping_sub(iteration_start);
 
         // The iteration cache contains soft-lock placeholders. Certify the
         // returned fields without altering eigenvalues, gauges, or warm starts.
         let mut k_b_orthogonality_defect = if let Some(ref entry) = reused {
             entry.orthogonality_defect
+        } else if let Some(certificate) = warm_report.as_ref().and_then(|r|r.certificate.as_ref()) {
+            k_residuals=certificate.relative.clone(); k_absolute_residuals=certificate.absolute.clone();
+            certificate.orthogonality
         } else if on_k_point.is_some() || options.symmetry.k_reuse != KReuse::Off || point_continuation.is_some() {
             let certificate = crate::eigensolver::refine::certify_without_refinement(
                 &mut theta,
@@ -1169,6 +1203,7 @@ fn run_core<B: SpectralBackend + Clone>(
 
         if let Some(ref mut on_k_point) = on_k_point {
             (**on_k_point)(KPointResult {
+                warm_start: warm_report,
                 discretization: None,
                 symmetry: reuse_report,
                 k_index: k_idx,
@@ -1251,7 +1286,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     options: RunOptions,
 ) -> BandStructureResultWithDiagnostics {
     let mut study = ConvergenceStudy::new(study_name);
-    let result = run_core(backend, job, options, Some(&mut study), None, None);
+    let result = run_core(backend, job, options, Some(&mut study), None, None, None);
     BandStructureResultWithDiagnostics { result, study }
 }
 

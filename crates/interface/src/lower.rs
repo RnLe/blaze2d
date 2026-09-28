@@ -111,6 +111,16 @@ impl crate::Bands {
         blaze2d_core::drivers::bandstructure::RunOptions {
             reuse_gamma: false, disable_band_tracking: !self.tracking, retain_eigenvectors,
             operator_diagnostics: self.operator_diagnostics,
+            warm_start: self.warm_start.as_ref().map(|w| {
+                use blaze2d_core::geometry_warm_start::{point, snapshot::Quality};
+                let a=self.accuracy.clone().unwrap_or_default();
+                point::Options {
+                    method: match w.method {crate::GeometryMethod::Cold=>point::Method::Cold,crate::GeometryMethod::Copy=>point::Method::Copy},
+                    scope: match w.scope {crate::GeometryScope::Gamma=>point::Scope::Gamma,crate::GeometryScope::Path=>point::Scope::Path},
+                    guards:w.guards,history:w.history,max_cache_bytes:w.max_cache_bytes,retain_tm_actions:w.retain_tm_actions,
+                    quality:Quality {relative_residual:a.max_relative_residual,absolute_residual:a.max_absolute_residual,orthogonality:a.max_orthogonality_defect},
+                }
+            }),
             symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
                         automatic_policy: self.symmetry.policy == crate::SymmetryPolicy::Auto,
                         k_reuse: match self.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},

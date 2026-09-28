@@ -492,6 +492,8 @@ where
     preconditioner: Option<&'a mut dyn OperatorPreconditioner<B>>,
     /// Optional warm-start vectors from previous k-point.
     warm_start: Option<&'a [Field2D]>,
+    native_warm_start: Option<Vec<B::Buffer>>,
+    native_seed_actions: Option<Vec<B::Buffer>>,
     /// Current block of eigenvector approximations (active bands).
     x_block: Vec<BlockEntry<B>>,
     /// Previous search directions (W_k from iteration k-1).
@@ -538,7 +540,7 @@ where
             config,
             preconditioner,
             warm_start,
-            x_block: Vec::new(),
+            native_warm_start: None, native_seed_actions: None,            x_block: Vec::new(),
             w_block: Vec::new(),
             deflation: DeflationSubspace::new(),
             eigenvalues: Vec::new(),
@@ -549,6 +551,25 @@ where
             initialization_report: None,
             initial_acceptance: None,
         }
+    }
+
+    /// Transfer native spatial seed ownership without an f64 export/import.
+    /// Imported values still pass target constraints, rank repair and Ritz.
+    pub fn with_native_warm_start(mut self, seeds: Vec<B::Buffer>) -> Self {
+        assert!(!self.initialized, "set native seeds before initialization");
+        self.warm_start = None;
+        self.native_warm_start = Some(seeds);
+        self.native_seed_actions = None;
+        self
+    }
+
+    /// Internal preparation product on unchanged physical coordinates. Callers
+    /// must check both the exact operator component and immutable basis stamp.
+    pub(crate) fn with_native_seed_actions(mut self, seeds: Vec<B::Buffer>, applied: Vec<B::Buffer>) -> Self {
+        assert_eq!(seeds.len(), applied.len());
+        self = self.with_native_warm_start(seeds);
+        self.native_seed_actions = Some(applied);
+        self
     }
 
     /// Initialize the solver (create initial block X_0).
@@ -622,8 +643,11 @@ where
             zero_tolerance: 1e-12,
         };
 
-        let (x_block, init_result) =
-            initialization::initialize_block_with_deflation(self.operator, &init_config, self.warm_start, Some(&self.deflation));
+        let (x_block, init_result) = if let Some(seeds) = self.native_warm_start.take() {
+            initialization::initialize_native_block(self.operator, &init_config, seeds, self.native_seed_actions.take(), Some(&self.deflation))
+        } else {
+            initialization::initialize_block_with_deflation(self.operator, &init_config, self.warm_start, Some(&self.deflation))
+        };
 
         self.initialization_report = Some(init_result);
         (self.x_block, self.eigenvalues) = initialization::ritz_block(self.operator.backend(), x_block);
@@ -2511,6 +2535,17 @@ where
             .collect()
     }
 
+    /// Transfer the requested solved block in native precision. Slack columns
+    /// beyond `config.n_bands` are excluded; guard modes must have been explicitly
+    /// requested and independently certified before becoming future donors.
+    pub fn into_native_eigenpairs(self) -> Vec<(f64, B::Buffer)> {
+        let mut pairs = self.deflation.into_eigenpairs();
+        pairs.extend(self.eigenvalues.into_iter().zip(self.x_block).map(|(value, entry)|(value,entry.vector)));
+        pairs.sort_by(|a,b|a.0.total_cmp(&b.0));
+        pairs.truncate(self.config.n_bands);
+        pairs
+    }
+
     /// Get all eigenvectors (locked + active) as f64 fields, sorted by eigenvalue.
     ///
     /// This returns the complete set of eigenvectors including:
@@ -2559,7 +2594,7 @@ where
                 self.config.tol,
                 self.config.effective_block_size(),
             )
-            .with_toggles(precond_type, self.warm_start.is_some())
+            .with_toggles(precond_type, self.warm_start.is_some() || self.initialization_report.as_ref().is_some_and(|r|r.warm_start_hits+r.rejected_warm_vectors>0))
             .with_k_point(
                 0, // Will be overwritten by caller if part of k-path
                 [
@@ -2588,7 +2623,7 @@ where
                 self.config.tol,
                 self.config.effective_block_size(),
             )
-            .with_toggles(precond_type, self.warm_start.is_some())
+            .with_toggles(precond_type, self.warm_start.is_some() || self.initialization_report.as_ref().is_some_and(|r|r.warm_start_hits+r.rejected_warm_vectors>0))
             .with_k_point(
                 0,
                 [

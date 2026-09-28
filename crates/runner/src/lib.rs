@@ -82,9 +82,9 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
     if options.threads > 1024 || options.queue_capacity > 65536 {
         return Err(Diagnostic::new("runner_options", "", "Use at most 1024 threads and 65536 queued events"));
     }
-    let continuation_budget = plan.config.bands.as_ref().filter(|b|
-        b.symmetry.continuation != ContinuationPolicy::Off && plan.config.eigensolver.precision == Precision::F64)
-        .map_or(0, |b| b.symmetry.max_continuation_bytes);
+    let continuation_budget = plan.config.bands.as_ref().map_or(0, |b|
+        b.warm_start.as_ref().map_or_else(|| if b.symmetry.continuation != ContinuationPolicy::Off
+            && plan.config.eigensolver.precision == Precision::F64 { b.symmetry.max_continuation_bytes } else {0}, |w|w.max_cache_bytes));
     let chains = continuation_budget > 0;
     options.threads = if options.threads == 0 {
         let available = thread::available_parallelism().map_or(1, |n| n.get());
@@ -117,7 +117,8 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                     let mut position = boundary(worker);
                     let end = boundary(worker + 1);
                     let cache_limit = continuation_budget / effective.threads;
-                    let mut context = ExecutionContext::new(cache_limit);
+                    let mut context_f64 = ExecutionContext::<f64>::new(cache_limit);
+                    let mut context_f32 = ExecutionContext::<f32>::new(cache_limit);
                     // A serial workspace persists for the whole worker chain.
                     let mut backend_f64 = CpuBackend::<f64>::new();
                     let mut backend_f32 = CpuBackend::<f32>::new();
@@ -137,8 +138,8 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                             let job = plan.job(index).map_err(|diagnostic| JobFailure { job_index: index, diagnostic, partial_result: None })?;
                             let emit = |event| { if sender.send(event).is_err() { cancel.store(true, Ordering::Release); } };
                             match job.resolved.config.eigensolver.precision {
-                                Precision::F64 => execute_in_context(backend_f64.clone(), "cpu", &job, &mut context, emit),
-                                Precision::F32 => execute_in_context(backend_f32.clone(), "cpu", &job, &mut context, emit),
+                                Precision::F64 => execute_in_context(backend_f64.clone(), "cpu", &job, &mut context_f64, emit),
+                                Precision::F32 => execute_in_context(backend_f32.clone(), "cpu", &job, &mut context_f32, emit),
                             }
                         })).unwrap_or_else(|panic| {
                             let msg = panic.downcast_ref::<String>().map(String::as_str)
@@ -156,7 +157,7 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                                 Event::Result { result: Box::new(result) }
                             },
                             Err(error) => {
-                                context.clear();
+                                context_f64.discard_failed_job(); context_f32.discard_failed_job();
                                 // A failed operator may have unwound through its workspace lock.
                                 backend_f64 = CpuBackend::<f64>::new();
                                 backend_f32 = CpuBackend::<f32>::new();

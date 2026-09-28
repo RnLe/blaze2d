@@ -6,23 +6,26 @@ use crate::{Array, Diagnostic, Event, JobFailure, PlannedJob, Precision, ResultR
 
 /// Persistent state owned by one serial job chain, including browser jobs.
 /// Only certified spectra enter the bounded cache; backend scratch is local.
-pub struct ExecutionContext {
+pub struct ExecutionContext<R: blaze2d_core::field::Real = f64> {
+    geometry: blaze2d_core::geometry_warm_start::point::Context<R>,
     continuation: blaze2d_core::symmetry::continuation::BandContinuation,
     max_continuation_bytes: usize,
 }
 
-impl ExecutionContext {
+impl<R: blaze2d_core::field::Real> ExecutionContext<R> {
     pub fn new(max_continuation_bytes: usize) -> Self {
-        Self { continuation: blaze2d_core::symmetry::continuation::BandContinuation::new(max_continuation_bytes), max_continuation_bytes }
+        Self { geometry: blaze2d_core::geometry_warm_start::point::Context::new(max_continuation_bytes), continuation: blaze2d_core::symmetry::continuation::BandContinuation::new(max_continuation_bytes), max_continuation_bytes }
     }
-    pub fn clear(&mut self) { self.continuation.cache.clear(); }
+    pub fn clear(&mut self) { self.continuation.cache.clear(); self.geometry.bank.clear(); }
+    /// Failed targets never replace or invalidate immutable accepted geometry donors.
+    pub fn discard_failed_job(&mut self) { self.continuation.cache.clear(); }
 }
 
 pub fn execute_in_context<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
-    context: &mut ExecutionContext, on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
+    context: &mut ExecutionContext<B::Real>, on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
 {
     let result = execute_impl(backend, backend_name, job, None, None, Some(&mut *context), on_event);
-    if result.is_err() { context.clear(); }
+    if result.is_err() { context.discard_failed_job(); }
     result
 }
 
@@ -37,14 +40,14 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
     reference: Option<&[blaze2d_core::field::Field2D]>, warmstart: Option<&[blaze2d_core::field::Field2D]>,
     on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
 {
-    let budget = job.resolved.config.bands.as_ref().map_or(0, |b| b.symmetry.max_continuation_bytes);
+    let budget = job.resolved.config.bands.as_ref().map_or(0, |b| b.warm_start.as_ref().map_or(b.symmetry.max_continuation_bytes, |w|w.max_cache_bytes));
     let mut context = ExecutionContext::new(budget);
     execute_impl(backend, backend_name, job, reference, warmstart, Some(&mut context), on_event)
 }
 
 fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
     reference: Option<&[blaze2d_core::field::Field2D]>, warmstart: Option<&[blaze2d_core::field::Field2D]>,
-    context: Option<&mut ExecutionContext>,
+    context: Option<&mut ExecutionContext<B::Real>>,
     mut on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
 {
     let fail = |path: &str, message: &str| JobFailure {job_index:job.index,
@@ -94,6 +97,7 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             let mut orthogonality = Vec::new();
             let mut fields = Vec::new();
             let mut symmetry_reports = Vec::new();
+            let mut warm_reports = Vec::new();
             let mut discretization_reports = Vec::new();
             let mut collect = |point: bandstructure::KPointResult| {
                     on_event(Event::Progress { job_index: job.index, sample_index: point.k_index,
@@ -102,6 +106,7 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
                             k_point:point.k_point,distance:job.resolved.distances[point.k_index]}) });
                     iterations.push(point.iterations); converged.push(point.converged);
                     symmetry_reports.push(point.symmetry);
+                    warm_reports.push(point.warm_start);
                     discretization_reports.push(point.discretization);
                     orthogonality.push(point.b_orthogonality_defect);
                     residuals.extend(point.residuals.into_iter().take(n));
@@ -113,20 +118,36 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             effective_bands.symmetry = effective_symmetry.clone();
             let options=effective_bands.run_options(job.resolved.config.results.eigenvectors);
             let selected=b.discretization.metric_options();
-            let continuation = context.filter(|_| effective_symmetry.continuation != crate::ContinuationPolicy::Off
-                && b.symmetry.max_continuation_bytes > 0 && actual == Precision::F64)
-                .map(|c| {
+            let native_rejection = b.warm_start.as_ref().and_then(|_| {
+                if selected.is_some() { Some("metric-support coordinates use their existing qualified workflow") }
+                else if options.symmetry.arithmetic != blaze2d_core::symmetry::fourier::Arithmetic::SpatialComplex
+                    || options.symmetry.sectors != blaze2d_core::symmetry::sectors::SectorPolicy::Off {
+                    Some("selected symmetry coordinates use their existing qualified workflow; raw native donors require physical spatial coordinates")
+                } else if options.symmetry.k_traversal != blaze2d_core::symmetry::traversal::KTraversal::Given {
+                    Some("native geometry history currently follows the supplied k-path order")
+                } else {None}
+            });
+            let (continuation, native) = if let Some(c) = context {
+                let continuation = if b.warm_start.is_none() && effective_symmetry.continuation != crate::ContinuationPolicy::Off
+                    && b.symmetry.max_continuation_bytes>0 && actual==Precision::F64 {
                     c.continuation.cache.set_payload_limit(c.max_continuation_bytes.min(b.symmetry.max_continuation_bytes));
-                    c.continuation.job_index = job.index;
-                    c.continuation.first_point_only = effective_symmetry.continuation == crate::ContinuationPolicy::FirstPoint;
-                    &mut c.continuation
+                    c.continuation.job_index=job.index;
+                    c.continuation.first_point_only=effective_symmetry.continuation==crate::ContinuationPolicy::FirstPoint;
+                    Some(&mut c.continuation)
+                } else {None};
+                let native = b.warm_start.as_ref().filter(|_|native_rejection.is_none()).map(|w| {
+                    c.geometry.bank.resize(c.max_continuation_bytes.min(w.max_cache_bytes),w.history);
+                    c.geometry.job_index=job.index;
+                    &mut c.geometry
                 });
+                (continuation,native)
+            } else {(None,None)};
             let (result,failure)=if let Some(discretization)=selected {
                 match blaze2d_core::drivers::support_bands::run_with_continuation(backend,&job.bands_job(),options,discretization,continuation,&mut collect) {
                     Ok(result)=>(result,None),
                     Err(failure)=>(failure.partial_result.clone(),Some(failure)),
                 }
-            } else {(bandstructure::run_with_continuation(backend,&job.bands_job(),options,continuation,&mut collect),None)};
+            } else {(bandstructure::run_with_warm_start(backend,&job.bands_job(),options,continuation,native,&mut collect),None)};
             let requested_points=nk;
             let nk=result.bands.len();
             out.arrays.insert("frequencies".into(), Array::real(&[nk,n], &["k_point","band"],
@@ -140,6 +161,11 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
                 out.arrays.insert("eigenvectors".into(), Array::complex(&[nk,n,ny,nx], &["k_point","band","y","x"], fields));
             }
             out.metadata["iterations"] = json!(iterations);
+            if let Some(requested)=&b.warm_start {
+                out.metadata["geometry_warm_start"] = json!({"requested":requested,"points":warm_reports,
+                    "fallback":native_rejection,"coverage":"unrestricted lowest-window solve with explicitly solved and directly certified guards; changed materials do not use residual-only zero-correction acceptance",
+                    "payload_scope":"conservative cached native fields, actions, material and metadata; active donor leases reported separately; excludes solver/library scratch and caller output"});
+            }
             out.metadata["symmetry"] = json!({"requested":b.symmetry,"points":symmetry_reports,
                 "coverage":"unrestricted source spectrum; qualified finite-operator covariance and fresh transformed residuals"});
             if let Some(decision) = policy_decision {

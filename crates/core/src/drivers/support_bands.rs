@@ -639,6 +639,7 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
         result.distances.push(distances[index]);
         result.bands.push(omegas.clone());
         on_k_point(KPointResult {
+            warm_start: None,
             discretization: Some(report.clone()),
             symmetry: ledger.clone(),
             k_index: index,

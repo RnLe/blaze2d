@@ -82,6 +82,7 @@ pub mod operator_data;
 pub mod eigensolver;
 pub mod field;
 pub mod geometry;
+pub mod geometry_warm_start;
 pub mod grid;
 pub mod lattice;
 pub mod metrics;
