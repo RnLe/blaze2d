@@ -310,3 +310,43 @@ fn nonzero_response_uses_its_own_pencil_through_radius_and_displacement_changes(
         }
     }
 }
+
+#[test]
+fn compressed_history_preserves_the_full_trial_span_at_the_next_metric() {
+    use blaze2d_core::geometry_warm_start::innovation::compress;
+    for pol in [Polarization::TM,Polarization::TE] {
+        let mut source=operator(7,pol,0.203);let pairs=dense(&mut source,7);
+        let previous=NativeSnapshot::capture(&mut source,pairs,4,BasisGeneration{job:0,k_index:0,accepted_generation:1},vec![],vec![0.203],true,false).unwrap();
+        let mut middle=operator(7,pol,0.205);let pairs=dense(&mut middle,7);
+        let newest=NativeSnapshot::capture(&mut middle,pairs,4,BasisGeneration{job:1,k_index:0,accepted_generation:2},vec![],vec![0.205],true,false).unwrap();
+        let compressed=compress(&mut middle,&newest,&previous,6,1e-7,1<<24).unwrap();
+        assert!(compressed.matches(&newest));assert!(!compressed.matches(&previous));
+        assert!(!compressed.fields().is_empty());assert!(compressed.fields().len()<=6);
+        assert!(compressed.report.maximum_newest_overlap<1e-11);
+        let mut target=operator(7,pol,0.207);
+        let transport=|fields:&[Field2D],from:&Op,to:&Op|fields.iter().map(|f| {
+            let values=f.as_slice().iter().enumerate().map(|(i,&z)|z*if pol==Polarization::TM {
+                (from.dielectric().eps()[i]/to.dielectric().eps()[i]).sqrt()
+            } else {1.}).collect();Field2D::from_vec(f.grid(),values)
+        }).collect::<Vec<_>>();
+        let mut full=transport(newest.fields(),&middle,&target);full.extend(transport(previous.fields(),&source,&target));
+        let mut thin=transport(newest.fields(),&middle,&target);thin.extend(transport(compressed.fields(),&middle,&target));
+        let full=rayleigh_ritz_trial(&mut target,full,6,1<<24).unwrap();
+        let thin=rayleigh_ritz_trial(&mut target,thin,6,1<<24).unwrap();
+        let reference:Vec<_>=full.vectors.into_iter().map(|x|(0.,x)).collect();
+        let error=span_error(&mut target,&thin.vectors,&reference);
+        eprintln!("{pol:?}: innovation rank {}, kernel component {}, next-metric span error {error:e}",compressed.fields().len(),compressed.report.maximum_kernel_component);
+        assert!(error<1e-8);
+        let field_bytes=7*7*std::mem::size_of::<C>();
+        let prepared=compressed.fields().len();
+        let cap=newest.payload_bytes()+compressed.payload_bytes()-(prepared/2)*field_bytes;
+        let mut bank=blaze2d_core::geometry_warm_start::cache::NativeBank::new(cap,1);
+        let key=newest.key().clone();
+        let report=bank.insert_with_innovation(newest,Quality::default(),Some(compressed));
+        assert!(report.stored);assert!(report.innovation_trimmed_columns>0);assert!(report.payload_bytes<=cap);
+        let leased=bank.donors(&key,1);let frame=bank.innovations_for(&leased[0]).unwrap();
+        assert_eq!(frame.fields().len()+report.innovation_trimmed_columns,prepared);
+        bank.clear();assert_eq!(bank.payload_bytes(),0);
+        assert!(frame.matches(&leased[0]));assert!(!frame.fields().is_empty());
+    }
+}

@@ -21,6 +21,7 @@ def native_work(path):
     result=dict(roots=0,seeded=0,guards=0,discarded_iterations=0,zero_correction=0,max_cache_payload=0,tm_actions_reused=0,
                 preparation_actions_reused=0,response_points=0,response_failures=0,inner_iterations=0,inner_a_columns=0,
                 difference_a_columns=0,difference_b_columns=0,approximate_response_columns=0)
+    result.update(compressed_directions=0,prepared_innovations=0,trimmed_innovations=0,max_innovation_payload=0)
     for job in data.get('results',[]):
         for point in job['metadata'].get('geometry_warm_start',{}).get('points',[]):
             if not point: continue
@@ -32,6 +33,10 @@ def native_work(path):
             result['max_cache_payload']=max(result['max_cache_payload'],point['insertion']['payload_bytes'])
             result['tm_actions_reused']+=point.get('tm_actions_reused',0)
             result['preparation_actions_reused']+=point.get('preparation_actions_reused',0)
+            result['compressed_directions']+=(point.get('prediction') or {}).get('innovation_columns',0)
+            result['prepared_innovations']+=(point.get('compression') or {}).get('retained_columns',0)
+            result['trimmed_innovations']+=point['insertion'].get('innovation_trimmed_columns',0)
+            result['max_innovation_payload']=max(result['max_innovation_payload'],point['insertion'].get('innovation_payload_bytes',0))
             response=point.get('response') or {}
             failure=point.get('response_failure') or {}
             result['response_points']+=bool(response)
@@ -54,22 +59,24 @@ def main():
     parser.add_argument('--threads',type=int,default=2)
     parser.add_argument('--filter',default='')
     parser.add_argument('--actions',action='store_true')
-    parser.add_argument('--ablation',choices=['copy','actions','block','predictors','responses','response-actions'],default='copy')
+    parser.add_argument('--ablation',choices=['copy','actions','block','predictors','responses','response-actions','compression'],default='copy')
     parser.add_argument('--smoothing',choices=['none','analytic','voronoi'])
+    parser.add_argument('--cache-bytes',type=int)
     args=parser.parse_args()
     args.reference=args.reference.resolve();args.candidate=args.candidate.resolve()
     rng=random.Random(2026092805)
     for size in [32,64]:
       for pol in ['TM','TE']:
        for control in (['public','guarded'] if args.ablation=='copy' else ['metric','secant','history'] if args.ablation=='predictors'
-                       else ['secant','history','residual','response-1','response-2','response-4'] if args.ablation=='responses' else [args.ablation]):
+                       else ['secant','history','residual','response-1','response-2','response-4'] if args.ablation=='responses'
+                       else ['innovation-2','innovation-4','innovation-8'] if args.ablation=='compression' else [args.ablation]):
         name=f'square-{pol}-{size}-gamma-{control}'
         if args.filter not in name: continue
         out=args.output/name
         if (out/'summary.json').exists(): continue
         out.mkdir(parents=True,exist_ok=False)
         base=(ROOT/f'benchmarks/geometry-warm-start/baseline/public/square-{pol}-gamma-copy/reference.toml').read_text().replace('resolution = 32',f'resolution = {size}')
-        ladder=args.ablation in ('predictors','responses','response-actions')
+        ladder=args.ablation in ('predictors','responses','response-actions','compression')
         if args.smoothing:
             base=base.replace('smoothing = "analytic"',f'smoothing = "{args.smoothing}"')
         if ladder:
@@ -82,8 +89,12 @@ def main():
                 if args.ablation=='predictors':method=control if variant=='candidate' else 'copy'
                 if args.ablation=='responses':method=control.split('-')[0] if variant=='candidate' else 'copy'
                 if args.ablation=='response-actions':method='response'
+                if args.ablation=='compression':method='history'
                 actions=args.actions or (args.ablation in ('actions','response-actions') and variant=='candidate')
                 text+=f'\n[bands.warm_start]\nmethod = "{method}"\nguards = 2\nretain_tm_actions = {str(actions).lower()}\n'
+                if args.cache_bytes:text+=f'max_cache_bytes = {args.cache_bytes}\n'
+                if args.ablation=='compression' and variant=='candidate':
+                    text+=f'innovation_columns = {int(control.split("-")[-1])}\ninnovation_relative_tolerance = 0.001\n'
                 if method=='response':
                     budget=int(control.split('-')[-1]) if args.ablation=='responses' else 2
                     text+=f'response_iterations = {budget}\nresponse_tolerance = 0.25\n'
@@ -118,7 +129,7 @@ def main():
                 (out/'blocks.json').write_text(json.dumps(blocks,indent=2)+'\n')
                 print(name,label,'valid',block['valid'],'admitted',block['admitted'],{v:round(block[v]['elapsed_seconds'],4) for v in variants},flush=True)
                 if not block['valid']:break
-        ratios=[b['reference']['elapsed_seconds']/b['candidate']['elapsed_seconds'] for b in blocks[1:] if b['valid']]
+        ratios=[b['reference']['elapsed_seconds']/b['candidate']['elapsed_seconds'] for b in blocks[1:] if b['valid'] and b['admitted']]
         (out/'summary.json').write_text(json.dumps({'numerical_pass':all(b['valid'] for b in blocks),
             'ratio':estimate(ratios) if ratios else None,'paired_median_ratio':statistics.median(ratios) if ratios else None,
             'admitted_pairs':sum(b['admitted'] for b in blocks[1:]),'scope':'exploratory complete-workflow result; defaults unchanged'},indent=2)+'\n')

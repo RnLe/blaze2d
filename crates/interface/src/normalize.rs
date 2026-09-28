@@ -163,6 +163,11 @@ impl Config {
                     if warm.guards>32 || warm.history==0 || warm.history>8 || warm.max_cache_bytes==0 {
                         return Err(invalid("bands.warm_start", "use 0..32 guards, 1..8 history blocks and a positive cache budget"));
                     }
+                    if warm.innovation_columns>64 || !warm.innovation_relative_tolerance.is_finite()
+                        || warm.innovation_relative_tolerance<=0. || warm.innovation_relative_tolerance>=1.
+                        || (warm.innovation_columns>0 && (warm.method!=GeometryMethod::History || warm.history!=2)) {
+                        return Err(invalid("bands.warm_start.innovation_columns", "compressed two-snapshot history needs method history, history 2, 1..64 innovation columns and a rank tolerance between zero and one"));
+                    }
                     if warm.max_guards.is_some_and(|g|g<warm.guards || g>32) {
                         return Err(invalid("bands.warm_start.max_guards", "guard expansion must end between guards and 32"));
                     }

@@ -367,6 +367,9 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             // Conservative worker reserve: full cache, one leased cache and one
             // guarded solve. This overcounts the baseline solver already modeled.
             extra+=2*warm.max_cache_bytes as u128+warm.max_preparation_bytes as u128+memory::worker_payload(rows,cfg.effective_block_size(),0).map_err(error)? as u128;
+            // Two native path frames and their prediction buffers. f64 is a
+            // conservative reserve for either storage precision and shared Arcs.
+            extra+=2*memory::worker_payload(rows,0,cfg.n_bands).map_err(error)? as u128;
         }
         if b.symmetry.continuation != ContinuationPolicy::Off && b.symmetry.max_continuation_bytes > 0 {
             extra += b.symmetry.max_continuation_bytes as u128 + 4 * entry as u128;

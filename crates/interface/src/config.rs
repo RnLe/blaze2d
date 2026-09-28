@@ -456,6 +456,8 @@ pub struct GeometryWarmStart {
     pub guards: usize,
     pub max_guards: Option<usize>,
     pub history: usize,
+    pub innovation_columns: usize,
+    pub innovation_relative_tolerance:f64,
     /// Zero selects twice the retained positive window.
     pub max_predictor_columns: usize,
     pub max_preparation_bytes: usize,
@@ -466,7 +468,7 @@ pub struct GeometryWarmStart {
 }
 impl Default for GeometryWarmStart {
     fn default() -> Self { Self { method: GeometryMethod::Copy, scope: GeometryScope::Gamma,
-        anchors:vec![],donor_selection:GeometryDonorSelection::SameK,guards: 2,max_guards:None,history: 2, max_predictor_columns: 0, max_preparation_bytes: 64*1024*1024, max_cache_bytes: 64*1024*1024, retain_tm_actions: false, response_iterations: 2, response_tolerance: 0.25 } }
+        anchors:vec![],donor_selection:GeometryDonorSelection::SameK,guards: 2,max_guards:None,history: 2,innovation_columns:0,innovation_relative_tolerance:1e-3, max_predictor_columns: 0, max_preparation_bytes: 64*1024*1024, max_cache_bytes: 64*1024*1024, retain_tm_actions: false, response_iterations: 2, response_tolerance: 0.25 } }
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]

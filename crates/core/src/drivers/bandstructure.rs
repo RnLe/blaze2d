@@ -587,8 +587,14 @@ fn run_core<B: SpectralBackend + Clone>(
     let warm_start_limit = job.eigensolver.n_bands;
     let mut warm_start_store: std::sync::Arc<[Field2D]> = Vec::new().into();
 
+    let native_path = warm.is_some() && options.warm_start.is_some() && study.is_none();
+    if native_path {
+        warm.as_deref_mut().unwrap().path = crate::geometry_warm_start::path::PathHistory::new(
+            options.use_subspace_prediction, options.use_extrapolation);
+    }
+
     // Subspace prediction history (rotation-based warm-start)
-    let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction {
+    let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction && !native_path {
         let mut history = SubspaceHistory::new(warm_start_limit);
         if options.use_extrapolation {
             history.enable_extrapolation();
@@ -675,6 +681,7 @@ fn run_core<B: SpectralBackend + Clone>(
     crate::profiler::stop_timer("run.setup");
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
         let mut warm_report = None;
+        let mut native_frame = None;
         let mut point_continuation = continuation.as_deref_mut()
             .filter(|state| !state.first_point_only || k_idx == 0);
         crate::profile_scope!("run.k_point");
@@ -982,15 +989,17 @@ fn run_core<B: SpectralBackend + Clone>(
             run_data.config.preconditioner_type = options.precond_type;
             run_data.config.warm_start_enabled = warm_start_used;
             study.add_run(run_data);
-        } else if let (Some(context), Some(warm_options)) = (warm.as_deref_mut(), options.warm_start.as_ref().filter(|o|
-            o.scope == crate::geometry_warm_start::point::Scope::Path || theta.analytic_kernel_available()
-                || (o.scope == crate::geometry_warm_start::point::Scope::Anchors && o.anchors.contains(&k_frac)))) {
+        } else if let (Some(context), Some(warm_options)) = (warm.as_deref_mut(), options.warm_start.as_ref()) {
+            let geometry_anchor = warm_options.scope == crate::geometry_warm_start::point::Scope::Path
+                || theta.analytic_kernel_available()
+                || (warm_options.scope == crate::geometry_warm_start::point::Scope::Anchors && warm_options.anchors.contains(&k_frac));
             let path_distance=k_idx.checked_sub(1).map(|previous| {
                 let k=job.k_path[previous];((k_frac[0]-k[0]).powi(2)+(k_frac[1]-k[1]).powi(2)).sqrt()
             });
             let solved = crate::geometry_warm_start::point::solve(&mut theta, &job.eigensolver,
                 preconditioner_opt.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
-                path_warm_slice,context,warm_options,geometry_parameters.clone(),k_idx,path_distance);
+                context,warm_options,geometry_parameters.clone(),k_idx,path_distance,k_frac,geometry_anchor);
+            native_frame=solved.native_frame;
             k_iterations=solved.report.iterations; k_converged=solved.converged; k_residuals=Vec::new();
             final_evals=solved.values; eigenvectors=solved.fields; warm_report=Some(solved.report);
         } else {
@@ -1133,6 +1142,7 @@ fn run_core<B: SpectralBackend + Clone>(
         // Band Tracking: reorder by overlap with previous k-point
         // Uses polar decomposition + frequency continuity for degenerate blocks.
         // ====================================================================
+        let mut native_order: Vec<usize> = (0..eigenvectors.len()).collect();
         if !options.disable_band_tracking {
             if let (Some(prev_vecs), Some(prev_freqs)) = (&prev_eigenvectors, &prev_omegas) {
                 let tracking_result = track_bands_with_frequencies(
@@ -1160,6 +1170,7 @@ fn run_core<B: SpectralBackend + Clone>(
                 );
 
                 if tracking_result.had_swaps {
+                    native_order=tracking_result.permutation.clone();
                     apply_permutation(&tracking_result.permutation, &mut omegas, &mut eigenvectors);
                     let original = k_residuals.clone();
                     let absolute_original = k_absolute_residuals.clone();
@@ -1192,8 +1203,14 @@ fn run_core<B: SpectralBackend + Clone>(
         if options.use_band_window_shift { prev_eigenvalues = Some(final_evals.clone()); }
         if let Some(ref mut history) = subspace_history {
             history.update_shared(k_frac, eigenvectors.clone());
-        } else {
+        } else if !native_path {
             warm_start_store = eigenvectors.clone();
+        }
+        if native_path {
+            let context=warm.as_deref_mut().unwrap();
+            if let Some(frame)=native_frame { context.path.push(frame,k_frac,native_order); }
+            else { context.path.clear(); }
+            if let Some(report)=warm_report.as_mut() {report.path_payload_bytes=context.path.payload_bytes();}
         }
 
         crate::profiler::stop_timer("run.cache_update");

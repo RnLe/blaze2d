@@ -167,6 +167,12 @@ impl<R: Real> NativeSnapshot<R> {
     pub fn kernel(&self) -> Option<&Field2D<R>> {
         self.kernel.as_ref()
     }
+    /// Sorted public column, including the separately owned analytic kernel.
+    pub fn public_field(&self, index: usize) -> Option<&Field2D<R>> {
+        if index >= self.requested_bands { return None; }
+        if self.kernel.is_some() && index == 0 { self.kernel.as_ref() }
+        else { self.fields.get(index - usize::from(self.kernel.is_some())) }
+    }
     pub fn applied(&self) -> Option<&[Field2D<R>]> {
         self.applied_for(&self.key)
     }

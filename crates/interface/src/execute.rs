@@ -16,9 +16,9 @@ impl<R: blaze2d_core::field::Real> ExecutionContext<R> {
     pub fn new(max_continuation_bytes: usize) -> Self {
         Self { geometry: blaze2d_core::geometry_warm_start::point::Context::new(max_continuation_bytes), continuation: blaze2d_core::symmetry::continuation::BandContinuation::new(max_continuation_bytes), max_continuation_bytes }
     }
-    pub fn clear(&mut self) { self.continuation.cache.clear(); self.geometry.bank.clear(); }
+    pub fn clear(&mut self) { self.continuation.cache.clear(); self.geometry.bank.clear(); self.geometry.path.clear(); }
     /// Failed targets never replace or invalidate immutable accepted geometry donors.
-    pub fn discard_failed_job(&mut self) { self.continuation.cache.clear(); }
+    pub fn discard_failed_job(&mut self) { self.continuation.cache.clear(); self.geometry.path.clear(); }
 }
 
 pub fn execute_in_context<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
@@ -136,7 +136,7 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
                     Some(&mut c.continuation)
                 } else {None};
                 let native = b.warm_start.as_ref().filter(|_|native_rejection.is_none()).map(|w| {
-                    c.geometry.bank.resize(c.max_continuation_bytes.min(w.max_cache_bytes),w.history);
+                    c.geometry.bank.resize(c.max_continuation_bytes.min(w.max_cache_bytes),if w.innovation_columns>0 {1} else {w.history});
                     c.geometry.job_index=job.index;
                     &mut c.geometry
                 });
@@ -164,7 +164,7 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             if let Some(requested)=&b.warm_start {
                 out.metadata["geometry_warm_start"] = json!({"requested":requested,"points":warm_reports,
                     "fallback":native_rejection,"coverage":"unrestricted lowest-window solve with explicitly solved and directly certified guards; changed materials do not use residual-only zero-correction acceptance",
-                    "payload_scope":"conservative cached native fields, actions, material and metadata; active donor leases reported separately; excludes solver/library scratch and caller output"});
+                    "payload_scope":"conservative cached native fields, actions, material and metadata; active donor leases and up to two shared native path frames reported separately; excludes solver/library scratch and caller output"});
             }
             out.metadata["symmetry"] = json!({"requested":b.symmetry,"points":symmetry_reports,
                 "coverage":"unrestricted source spectrum; qualified finite-operator covariance and fresh transformed residuals"});

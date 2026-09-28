@@ -1,4 +1,5 @@
 //! Worker-local rolling history. Donors remain immutable while borrowed.
+use super::innovation::Innovations;
 use super::snapshot::{BasisGeneration, FiberKey, NativeSnapshot, Quality};
 use crate::field::Real;
 use serde::Serialize;
@@ -9,16 +10,34 @@ pub struct BankReport {
     pub stored: bool,
     pub entries: usize,
     pub payload_bytes: usize,
+    pub innovation_columns: usize,
+    pub innovation_payload_bytes: usize,
+    pub innovation_trimmed_columns: usize,
     pub evicted: Vec<BasisGeneration>,
     pub reason: Option<String>,
 }
 
 pub struct NativeBank<R: Real> {
-    entries: VecDeque<Arc<NativeSnapshot<R>>>,
+    entries: VecDeque<Entry<R>>,
     limit: usize,
     bytes: usize,
     history_per_fiber: usize,
     generation: u64,
+}
+struct Entry<R: Real> {
+    snapshot: Arc<NativeSnapshot<R>>,
+    innovation: Option<Arc<Innovations<R>>>,
+}
+impl<R: Real> std::ops::Deref for Entry<R> {
+    type Target = NativeSnapshot<R>;
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+impl<R: Real> Entry<R> {
+    fn payload_bytes(&self) -> usize {
+        self.snapshot.payload_bytes() + self.innovation.as_ref().map_or(0, |i| i.payload_bytes())
+    }
 }
 impl<R: Real> NativeBank<R> {
     pub fn new(limit: usize, history_per_fiber: usize) -> Self {
@@ -32,6 +51,14 @@ impl<R: Real> NativeBank<R> {
     }
     pub fn payload_bytes(&self) -> usize {
         self.bytes
+    }
+    pub fn innovation_payload(&self) -> (usize, usize) {
+        self.entries
+            .iter()
+            .filter_map(|e| e.innovation.as_ref())
+            .fold((0, 0), |(columns, bytes), i| {
+                (columns + i.fields().len(), bytes + i.payload_bytes())
+            })
     }
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -60,8 +87,16 @@ impl<R: Real> NativeBank<R> {
             .rev()
             .filter(|x| x.key == *key)
             .take(count)
-            .cloned()
+            .map(|e| e.snapshot.clone())
             .collect()
+    }
+    pub fn innovations_for(&self, source: &NativeSnapshot<R>) -> Option<Arc<Innovations<R>>> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.basis_generation() == source.basis_generation() && e.key() == source.key())
+            .and_then(|e| e.innovation.clone())
+            .filter(|i| i.matches(source))
     }
     pub fn resize(&mut self, limit: usize, history_per_fiber: usize) {
         self.limit = limit;
@@ -93,9 +128,27 @@ impl<R: Real> NativeBank<R> {
     /// Commit only a directly accepted target. Failed candidates do not evict
     /// the last good donor. Gamma history is protected from unrelated k writes.
     pub fn insert(&mut self, snapshot: NativeSnapshot<R>, quality: Quality) -> BankReport {
+        self.insert_with_innovation(snapshot, quality, None)
+    }
+    pub fn insert_with_innovation(
+        &mut self,
+        snapshot: NativeSnapshot<R>,
+        quality: Quality,
+        innovation: Option<Innovations<R>>,
+    ) -> BankReport {
+        self.insert_shared(Arc::new(snapshot), quality, innovation)
+    }
+    pub(crate) fn insert_shared(
+        &mut self,
+        snapshot: Arc<NativeSnapshot<R>>,
+        quality: Quality,
+        mut innovation: Option<Innovations<R>>,
+    ) -> BankReport {
         let mut report = BankReport {
             entries: self.len(),
             payload_bytes: self.bytes,
+            innovation_columns: self.innovation_payload().0,
+            innovation_payload_bytes: self.innovation_payload().1,
             ..Default::default()
         };
         if !snapshot.admitted(quality) {
@@ -103,7 +156,40 @@ impl<R: Real> NativeBank<R> {
                 Some("source block failed convergence, count or direct accuracy admission".into());
             return report;
         }
-        let size = snapshot.payload_bytes();
+        if innovation
+            .as_ref()
+            .is_some_and(|i| !i.matches(&snapshot) || i.fields().is_empty())
+        {
+            innovation = None;
+        }
+        let protected = if snapshot.key.is_gamma() {
+            0
+        } else {
+            self.entries
+                .iter()
+                .filter(|e| e.key.is_gamma())
+                .map(Entry::payload_bytes)
+                .sum()
+        };
+        if let Some(frame) = innovation.as_mut() {
+            let prepared = frame.fields().len();
+            frame.fit_payload(
+                self.limit
+                    .saturating_sub(snapshot.payload_bytes())
+                    .saturating_sub(protected),
+            );
+            report.innovation_trimmed_columns = prepared - frame.fields().len();
+            if report.innovation_trimmed_columns > 0 {
+                report.reason = Some(
+                    "innovation rank reduced to preserve the newest full snapshot within budget"
+                        .into(),
+                );
+            }
+        }
+        if innovation.as_ref().is_some_and(|i| i.fields().is_empty()) {
+            innovation = None;
+        }
+        let size = snapshot.payload_bytes() + innovation.as_ref().map_or(0, |i| i.payload_bytes());
         if size > self.limit {
             report.reason = Some("snapshot exceeds the worker cache budget".into());
             return report;
@@ -169,11 +255,26 @@ impl<R: Real> NativeBank<R> {
             }
             !discard
         });
-        self.entries.push_back(Arc::new(snapshot));
+        self.entries.push_back(Entry {
+            snapshot,
+            innovation: innovation.map(Arc::new),
+        });
         self.bytes = retained + size;
         report.stored = true;
         report.entries = self.len();
         report.payload_bytes = self.bytes;
+        report.innovation_columns = self
+            .entries
+            .iter()
+            .filter_map(|e| e.innovation.as_ref())
+            .map(|i| i.fields().len())
+            .sum();
+        report.innovation_payload_bytes = self
+            .entries
+            .iter()
+            .filter_map(|e| e.innovation.as_ref())
+            .map(|i| i.payload_bytes())
+            .sum();
         report
     }
 }

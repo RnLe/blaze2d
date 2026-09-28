@@ -56,6 +56,8 @@ pub struct Options {
     pub guards: usize,
     pub max_guards: Option<usize>,
     pub history: usize,
+    pub innovation_columns: usize,
+    pub innovation_relative_tolerance: f64,
     pub max_predictor_columns: usize,
     pub max_preparation_bytes: usize,
     pub max_cache_bytes: usize,
@@ -67,24 +69,31 @@ pub struct Options {
 pub struct Context<R: Real> {
     pub bank: NativeBank<R>,
     pub job_index: usize,
+    pub path: super::path::PathHistory<R>,
 }
 impl<R: Real> Context<R> {
     pub fn new(limit: usize) -> Self {
         Self {
             bank: NativeBank::new(limit, 2),
             job_index: 0,
+            path: super::path::PathHistory::new(false, false),
         }
     }
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct PointReport {
     pub method: Method,
+    pub geometry_anchor: bool,
+    pub path: Option<super::path::PathReport>,
+    pub path_payload_bytes: usize,
     pub selection: SelectionReport,
     pub source: Option<BasisGeneration>,
     pub parents: Vec<BasisGeneration>,
     pub prediction: Option<super::predict::PredictionReport>,
     pub response: Option<super::response::NativeResponseReport>,
     pub response_failure: Option<crate::symmetry::response::ResponseError>,
+    pub compression: Option<super::innovation::CompressionReport>,
+    pub compression_failure: Option<String>,
     pub preparation_actions_reused: usize,
     pub cold_root: bool,
     pub solved_guards: usize,
@@ -112,11 +121,12 @@ pub struct GuardAttempt {
     pub gap_threshold: f64,
     pub separated: bool,
 }
-pub struct PointSolution {
+pub struct PointSolution<R: Real> {
     pub values: Vec<f64>,
     pub fields: Vec<Field2D>,
     pub converged: bool,
     pub report: PointReport,
+    pub native_frame: Option<std::sync::Arc<NativeSnapshot<R>>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -124,16 +134,17 @@ pub fn solve<B: SpectralBackend + Clone>(
     theta: &mut ThetaOperator<B>,
     config: &EigensolverConfig,
     mut preconditioner: Option<&mut dyn OperatorPreconditioner<B>>,
-    path_seed: Option<&[Field2D]>,
     context: &mut Context<B::Real>,
     options: &Options,
     parameters: Vec<f64>,
     k_index: usize,
     path_distance: Option<f64>,
-) -> PointSolution {
+    k_fractional: [f64; 2],
+    geometry_anchor: bool,
+) -> PointSolution<B::Real> {
     crate::profile_scope!("geometry.point");
     let key = FiberKey::from_operator(theta);
-    let mut donors = if options.method == Method::Cold {
+    let mut donors = if options.method == Method::Cold || !geometry_anchor {
         Vec::new()
     } else {
         context.bank.donors(
@@ -156,7 +167,7 @@ pub fn solve<B: SpectralBackend + Clone>(
                 .sqrt()
         })
     });
-    let path_available = path_seed.is_some_and(|s| !s.is_empty());
+    let path_available = context.path.available(theta);
     let use_path = path_available
         && (donors.is_empty()
             || options.donor_selection == DonorSelection::PreviousK
@@ -187,21 +198,34 @@ pub fn solve<B: SpectralBackend + Clone>(
             "explicit donor policy"
         },
     };
+    let compression_donor = donors
+        .first()
+        .filter(|_| options.innovation_columns > 0)
+        .cloned();
     if use_path {
         donors.clear();
     }
     let donor = donors.first().cloned();
+    let innovations = donor
+        .as_ref()
+        .filter(|_| options.innovation_columns > 0)
+        .and_then(|s| context.bank.innovations_for(s));
     let mut report = PointReport {
         method: options.method,
+        geometry_anchor,
+        path: None,
+        path_payload_bytes: context.path.payload_bytes(),
         selection,
         source: donor.as_ref().map(|s| s.basis_generation()),
         parents: donor.iter().map(|s| s.basis_generation()).collect(),
         prediction: None,
         response: None,
         response_failure: None,
+        compression: None,
+        compression_failure: None,
         preparation_actions_reused: 0,
         cold_root: donor.is_none() && !path_available,
-        solved_guards: options.guards,
+        solved_guards: 0,
         guard_attempts: Vec::new(),
         certified_guards: 0,
         initial_warm_columns: 0,
@@ -213,20 +237,26 @@ pub fn solve<B: SpectralBackend + Clone>(
         tm_actions_reused: 0,
         fallback: None,
         insertion: BankReport::default(),
-        leased_payload_bytes: donors.iter().map(|s| s.payload_bytes()).sum(),
+        leased_payload_bytes: donors.iter().map(|s| s.payload_bytes()).sum::<usize>()
+            + innovations.as_ref().map_or(0, |i| i.payload_bytes())
+            + compression_donor
+                .as_ref()
+                .filter(|_| donors.is_empty())
+                .map_or(0, |s| s.payload_bytes()),
         certificate: None,
     };
-    let max_guards = options
+    let base_guards = if geometry_anchor { options.guards } else { 0 };
+    let max_guards = if geometry_anchor { options
         .max_guards
-        .unwrap_or(options.guards)
-        .max(options.guards)
-        .min((key.shape[0] * key.shape[1]).saturating_sub(config.n_bands));
-    let adaptive = max_guards > options.guards;
+        .unwrap_or(base_guards)
+        .max(base_guards)
+        .min((key.shape[0] * key.shape[1]).saturating_sub(config.n_bands)) } else { 0 };
+    let adaptive = max_guards > base_guards;
     let mut guards = donor
         .as_ref()
         .filter(|_| adaptive)
-        .map_or(options.guards, |d| {
-            d.guard_count().max(options.guards).min(max_guards)
+        .map_or(base_guards, |d| {
+            d.guard_count().max(base_guards).min(max_guards)
         });
     let mut cfg = config.clone();
     cfg.n_bands += guards;
@@ -262,6 +292,7 @@ pub fn solve<B: SpectralBackend + Clone>(
             preconditioner
                 .as_mut()
                 .map(|p| &mut **p as &mut dyn OperatorPreconditioner<B>),
+            innovations.as_deref(),
         ) {
             Ok(prepared) => {
                 preparation_actions = prepared.actions.is_some();
@@ -270,6 +301,11 @@ pub fn solve<B: SpectralBackend + Clone>(
                     .take(prepared.report.parent_count)
                     .map(|s| s.basis_generation())
                     .collect();
+                for &generation in &prepared.report.innovation_parents {
+                    if !report.parents.contains(&generation) {
+                        report.parents.push(generation);
+                    }
+                }
                 seeds = Some(prepared.vectors);
                 actions = prepared.actions;
                 report.prediction = Some(prepared.report);
@@ -338,6 +374,13 @@ pub fn solve<B: SpectralBackend + Clone>(
             });
         source_actions = actions.is_some();
     }
+    if seeds.is_none() && use_path {
+        if let Some((fields, path)) = context.path.predict(theta, k_fractional) {
+            report.parents = path.parents.clone();
+            report.path = Some(path);
+            seeds = Some(fields);
+        }
+    }
     // An identical discrete pencil retains the source's lowest-window coverage.
     // A changed material cannot obtain coverage merely by passing a residual test.
     let identical = !adaptive
@@ -357,7 +400,7 @@ pub fn solve<B: SpectralBackend + Clone>(
         let p = preconditioner
             .as_mut()
             .map(|p| &mut **p as &mut dyn OperatorPreconditioner<B>);
-        let mut solver = Eigensolver::new(theta, cfg.clone(), p, path_seed);
+        let mut solver = Eigensolver::new(theta, cfg.clone(), p, None);
         if let Some(seeds) = seeds.take() {
             solver = if let Some(actions) = actions.take() {
                 solver.with_native_seed_actions(seeds, actions)
@@ -438,20 +481,7 @@ pub fn solve<B: SpectralBackend + Clone>(
         break (result, pairs, separated);
     };
     let mut values: Vec<_> = pairs.iter().take(config.n_bands).map(|(l, _)| *l).collect();
-    let mut fields: Vec<_> = pairs
-        .iter()
-        .take(config.n_bands)
-        .map(|(_, x)| {
-            crate::field::record_public_export::<B::Real>(x.len());
-            Field2D::from_vec(
-                x.grid(),
-                x.as_slice()
-                    .iter()
-                    .map(|z| num_complex::Complex64::new(z.re.to_accum(), z.im.to_accum()))
-                    .collect(),
-            )
-        })
-        .collect();
+    let mut fields = export_fields::<B>(&pairs, config.n_bands);
     let generation = context.bank.next_generation(context.job_index, k_index);
     let captured = NativeSnapshot::capture(
         theta,
@@ -459,13 +489,14 @@ pub fn solve<B: SpectralBackend + Clone>(
         config.n_bands,
         generation,
         report.parents.clone(),
-        parameters,
+        parameters.clone(),
         result.converged,
         options.retain_tm_actions,
     );
     let accepted = captured.as_ref().is_ok_and(|s| s.admitted(options.quality));
     let mut converged = result.converged;
-    if !accepted && (donor.is_some() || guards > 0 || adaptive) {
+    let mut native_frame = None;
+    if !accepted && (donor.is_some() || guards > 0 || adaptive || use_path) {
         report.fallback = Some(
             "guarded block failed convergence or direct certification; ordinary path retried"
                 .into(),
@@ -476,17 +507,38 @@ pub fn solve<B: SpectralBackend + Clone>(
         let p = preconditioner
             .as_mut()
             .map(|p| &mut **p as &mut dyn OperatorPreconditioner<B>);
-        let mut solver = Eigensolver::new(theta, cfg, p, path_seed);
+        // Geometry failure falls back to the current path; a failed path seed
+        // itself receives one cold retry. The previous accepted bank survives.
+        let retry_seed = if donor.is_some() { context.path.predict(theta, k_fractional) } else { None };
+        let mut solver = Eigensolver::new(theta, cfg, p, None);
+        if let Some((seed, path)) = retry_seed {
+            report.path = Some(path);
+            solver = solver.with_native_warm_start(seed);
+        }
         let retry = solver.solve();
-        fields = solver.all_eigenvectors();
-        values = retry.eigenvalues;
+        if let Some(init) = solver.initialization_report() {
+            report.initial_warm_columns += init.warm_start_hits;
+            report.initial_random_columns += init.random_vectors;
+            report.initial_rejected_columns += init.rejected_warm_vectors;
+        }
+        let pairs = solver.into_native_eigenpairs();
+        values = pairs.iter().map(|(value,_)| *value).collect();
+        fields = export_fields::<B>(&pairs, config.n_bands);
         converged = retry.converged;
         report.iterations += retry.iterations;
+        if let Ok(snapshot) = NativeSnapshot::capture(theta, pairs, config.n_bands,
+            context.bank.next_generation(context.job_index, k_index), Vec::new(), parameters,
+            retry.converged, false) {
+            report.certificate = Some(snapshot.certificate().clone());
+            if snapshot.admitted(options.quality) { native_frame = Some(std::sync::Arc::new(snapshot)); }
+        }
         report.insertion.reason =
             Some("last accepted donor retained after failed candidate".into());
     } else {
         match captured {
             Ok(snapshot) => {
+                let snapshot = std::sync::Arc::new(snapshot);
+                if accepted { native_frame = Some(snapshot.clone()); }
                 report.certified_guards = if accepted { snapshot.guard_count() } else { 0 };
                 let mut certificate = snapshot.certificate().clone();
                 certificate.relative.truncate(config.n_bands);
@@ -494,8 +546,49 @@ pub fn solve<B: SpectralBackend + Clone>(
                 certificate.dual.truncate(config.n_bands);
                 certificate.dual_relative.truncate(config.n_bands);
                 report.certificate = Some(certificate);
-                if separated {
-                    report.insertion = context.bank.insert(snapshot, options.quality);
+                if !geometry_anchor {
+                    report.insertion.reason = Some("point belongs only to native path history".into());
+                } else if separated {
+                    let identical_frame = compression_donor.as_ref().is_some_and(|old| {
+                        old.parameters == snapshot.parameters
+                            && old.material.eps() == snapshot.material.eps()
+                            && old.material.inv_eps() == snapshot.material.inv_eps()
+                            && old.material.inv_eps_tensors() == snapshot.material.inv_eps_tensors()
+                            && old.fields().len() >= snapshot.fields().len()
+                    });
+                    if identical_frame {
+                        report.insertion.reason =
+                            Some("identical accepted frame and its innovations retained".into());
+                    } else {
+                        let compressed =
+                            compression_donor
+                                .as_ref()
+                                .filter(|_| accepted)
+                                .and_then(|previous| {
+                                    match super::innovation::compress(
+                                        theta,
+                                        &snapshot,
+                                        previous,
+                                        options.innovation_columns,
+                                        options.innovation_relative_tolerance,
+                                        options.max_preparation_bytes,
+                                    ) {
+                                        Ok(innovation) => {
+                                            report.compression = Some(innovation.report.clone());
+                                            Some(innovation)
+                                        }
+                                        Err(reason) => {
+                                            report.compression_failure = Some(reason);
+                                            None
+                                        }
+                                    }
+                                });
+                        report.insertion = context.bank.insert_shared(
+                            snapshot,
+                            options.quality,
+                            compressed,
+                        );
+                    }
                 } else {
                     report.insertion.reason=Some("guard boundary remains unresolved at its expansion limit; last donor retained".into());
                 }
@@ -505,12 +598,25 @@ pub fn solve<B: SpectralBackend + Clone>(
     }
     report.insertion.entries = context.bank.len();
     report.insertion.payload_bytes = context.bank.payload_bytes();
+    (
+        report.insertion.innovation_columns,
+        report.insertion.innovation_payload_bytes,
+    ) = context.bank.innovation_payload();
     PointSolution {
         values,
         fields,
         converged,
         report,
+        native_frame,
     }
+}
+
+fn export_fields<B: SpectralBackend>(pairs: &[(f64, B::Buffer)], count: usize) -> Vec<Field2D> {
+    pairs.iter().take(count).map(|(_, x)| {
+        crate::field::record_public_export::<B::Real>(x.len());
+        Field2D::from_vec(x.grid(), x.as_slice().iter()
+            .map(|z| num_complex::Complex64::new(z.re.to_accum(), z.im.to_accum())).collect())
+    }).collect()
 }
 
 /// Direct source-mass-whitened residual bound in eigenvalue units. These two

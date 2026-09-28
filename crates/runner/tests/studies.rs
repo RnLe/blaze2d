@@ -192,14 +192,16 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
     assert!(reference.errors.is_empty(),"{:?}",reference.errors);
     c.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {scope:GeometryScope::Path,
         guards:2,max_cache_bytes:256*1024,..Default::default()});
-    for (method,threads) in [(GeometryMethod::Copy,1),(GeometryMethod::Copy,2),(GeometryMethod::Metric,1),(GeometryMethod::Secant,1),(GeometryMethod::History,1),(GeometryMethod::Residual,1),(GeometryMethod::Response,1),(GeometryMethod::Response,2)] {
+    for (method,threads,innovations) in [(GeometryMethod::Copy,1,0),(GeometryMethod::Copy,2,0),(GeometryMethod::Metric,1,0),(GeometryMethod::Secant,1,0),(GeometryMethod::History,1,0),(GeometryMethod::Residual,1,0),(GeometryMethod::Response,1,0),(GeometryMethod::Response,2,0),(GeometryMethod::History,1,4)] {
         let warm=c.bands.as_mut().unwrap().warm_start.as_mut().unwrap();
         warm.method=method;warm.retain_tm_actions=threads==2;
+        warm.innovation_columns=innovations;
         let candidate=blaze2d_runner::collect(Plan::new(c.clone(),Platform::Native).unwrap(),
             Options {threads,..Default::default()}).unwrap();
         assert!(candidate.errors.is_empty(),"{:?}",candidate.errors);
         let mut seeds=0;
         let mut advanced=0;
+        let mut compressed_seeds=0;
         for (a,b) in reference.results.iter().zip(&candidate.results) {
             assert_eq!(a.job_index,b.job_index);
             assert_eq!(b.arrays["eigenvectors"].shape,vec![3,4,9,9]);
@@ -208,6 +210,7 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
             }
             for point in b.metadata["geometry_warm_start"]["points"].as_array().unwrap() {
                 seeds+=usize::from(!point["source"].is_null());
+                compressed_seeds+=point["prediction"]["innovation_columns"].as_u64().unwrap_or(0);
                 if (point["prediction"].is_object() && point["prediction"]["fallback"].is_null()) || point["response"].is_object() {advanced+=1;}
                 if threads==2 && !point["source"].is_null() {
                     assert!(point[if method==GeometryMethod::Response {"preparation_actions_reused"} else {"tm_actions_reused"}].as_u64().unwrap()>0);
@@ -217,6 +220,7 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
             }
         }
         assert!(seeds>0);
+        if innovations>0 {assert!(compressed_seeds>0,"compressed directions were not consumed");}
         if method!=GeometryMethod::Copy {assert!(advanced>0,"{method:?} never admitted a prediction");}
     }
     let resumed=blaze2d_runner::collect(Plan::new(c,Platform::Native).unwrap(),
@@ -245,7 +249,10 @@ fn geometry_anchors_choose_donors_and_expand_a_split_boundary_with_bounded_work(
         for (a,b) in reference.results.iter().zip(&candidate.results) {
             for (&x,&y) in a.arrays["frequencies"].data.iter().zip(&b.arrays["frequencies"].data) {assert!((x-y).abs()<2e-7);}
             for (i,p) in b.metadata["geometry_warm_start"]["points"].as_array().unwrap().iter().enumerate() {
-                if scope==GeometryScope::Anchors && i==2 {assert!(p.is_null());continue;}
+                if scope==GeometryScope::Anchors && i==2 {
+                    assert_eq!(p["geometry_anchor"],false); assert_eq!(p["solved_guards"],0);
+                    assert!(p["path"].is_object()); continue;
+                }
                 assert!(p.is_object());
                 selected_path+=usize::from(p["selection"]["selected"]=="previous_k");
                 selected_geometry+=usize::from(p["selection"]["selected"]=="same_k_geometry");

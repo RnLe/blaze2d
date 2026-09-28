@@ -102,6 +102,8 @@ fn roundtrip<R: Real, B: SpectralBackend<Real = R, Buffer = Field2D<R>> + Clone>
     assert_eq!(snapshot.guard_count(), 4);
     assert!(snapshot.kernel().is_some());
     assert_eq!(snapshot.applied().unwrap().len(), 8);
+    let unchanged=blaze2d_core::geometry_warm_start::innovation::compress(&mut source,&snapshot,&snapshot,8,1e-3,1<<24).unwrap();
+    assert!(unchanged.fields().is_empty(),"arithmetic noise became a normalized innovation");
     let mut other_fiber=snapshot.key().clone();
     other_fiber.coordinate_bits[6]=0.1_f64.to_bits();
     assert!(snapshot.applied_for(&other_fiber).is_none());

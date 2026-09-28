@@ -29,6 +29,8 @@ pub struct PredictionReport {
     pub estimated_peak_payload_bytes: usize,
     pub parent_count: usize,
     pub fallback: Option<String>,
+    pub innovation_columns: usize,
+    pub innovation_parents: Vec<super::snapshot::BasisGeneration>,
 }
 pub struct Prediction<B: SpectralBackend> {
     pub vectors: Vec<B::Buffer>,
@@ -64,19 +66,26 @@ pub fn secant_ratio(older: &[f64], current: &[f64], target: &[f64]) -> Option<f6
     (alpha > 0. && alpha <= 2. && error <= 1e-16 * next).then_some(alpha)
 }
 
-fn imported<B: SpectralBackend>(
+pub(crate) fn imported<B: SpectralBackend>(
     theta: &ThetaOperator<B>,
     source: &NativeSnapshot<B::Real>,
     isometry: bool,
 ) -> Vec<B::Buffer> {
-    source
-        .fields()
+    transport_fields(theta, source.fields(), &source.material, isometry)
+}
+fn transport_fields<B: SpectralBackend>(
+    theta: &ThetaOperator<B>,
+    fields: &[crate::field::Field2D<B::Real>],
+    material: &crate::dielectric::Dielectric2D,
+    isometry: bool,
+) -> Vec<B::Buffer> {
+    fields
         .iter()
         .map(|f| {
             let mut out = theta.alloc_field();
             for (i, (dst, src)) in out.as_mut_slice().iter_mut().zip(f.as_slice()).enumerate() {
                 let factor = if isometry && theta.polarization() == Polarization::TM {
-                    (source.material.eps()[i] / theta.dielectric().eps()[i]).sqrt()
+                    (material.eps()[i] / theta.dielectric().eps()[i]).sqrt()
                 } else {
                     1.
                 };
@@ -182,6 +191,7 @@ pub fn prepare<B: SpectralBackend>(
     max_bytes: usize,
     reuse_actions: bool,
     mut preconditioner: Option<&mut dyn OperatorPreconditioner<B>>,
+    innovations: Option<&super::innovation::Innovations<B::Real>>,
 ) -> Result<Prediction<B>, String> {
     crate::profile_scope!("geometry.predictor");
     let latest = donors.first().ok_or("no certified donor for prediction")?;
@@ -332,6 +342,19 @@ pub fn prepare<B: SpectralBackend>(
                 block.truncate(limit - fields.len());
                 fields.extend(block);
                 report.parent_count += 1;
+            }
+            if let Some(innovation) = innovations {
+                if !innovation.matches(latest) {
+                    return Err(
+                        "innovation belongs to a different metric frame or basis generation".into(),
+                    );
+                }
+                let mut extra =
+                    transport_fields(theta, innovation.fields(), &latest.material, true);
+                extra.truncate(limit.saturating_sub(fields.len()));
+                report.innovation_columns = extra.len();
+                report.innovation_parents = innovation.report.parents.clone();
+                fields.extend(extra);
             }
             report.input_columns = fields.len();
             repair(theta, fields, limit)

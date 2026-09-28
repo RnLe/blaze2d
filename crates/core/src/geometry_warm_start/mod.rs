@@ -5,5 +5,7 @@ pub mod snapshot;
 pub mod point;
 pub mod predict;
 pub mod difference;
+pub mod innovation;
+pub mod path;
 pub mod projected;
 pub mod response;
