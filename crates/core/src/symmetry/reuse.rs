@@ -75,6 +75,8 @@ pub struct ReuseReport {
     pub qualification:Option<super::qualification::QualificationReport>,
     pub seed:Option<super::seed::SeedReport>,
     #[serde(skip_serializing_if="Option::is_none")]
+    pub continuation:Option<super::continuation::BandContinuationReport>,
+    #[serde(skip_serializing_if="Option::is_none")]
     pub coarse_start:Option<super::coarse::CoarseStartReport>,
     pub sectors:Option<super::sectors::CoverageReport>,
     pub coordinates:Option<super::fourier::CoordinateReport>,

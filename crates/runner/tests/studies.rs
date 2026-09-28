@@ -66,3 +66,47 @@ fn cancel_does_not_report_completion() {
     while let Some(e) = stream.next_event() { if let Event::Terminal {status,..} = e { terminal = Some(status); } }
     assert_eq!(terminal,Some(RunStatus::Cancelled));
 }
+
+#[test]
+fn geometry_chains_carry_full_paths_with_bounded_fields_and_original_job_ids() {
+    let mut c = study();
+    c.grid.resolution = Resolution::Uniform(9);
+    c.eigensolver.tolerance = Some(1e-13);
+    c.eigensolver.max_iterations = Some(400);
+    let b = c.bands.as_mut().unwrap();
+    b.count = 4;
+    b.tracking = false;
+    b.path.points = Some(vec![vec![0.0, 0.0], vec![0.19, 0.13], vec![0.31, 0.07]]);
+    c.results.eigenvectors = true;
+    c.sweeps.push(Sweep { name:"polarization".into(), target:"polarization".into(),
+        values:Some(vec![json!("TM"), json!("TE")]), linspace:None });
+    let reference = blaze2d_runner::collect(Plan::new(c.clone(), Platform::Native).unwrap(),
+        Options {threads:1,..Default::default()}).unwrap();
+    assert!(reference.errors.is_empty());
+    c.bands.as_mut().unwrap().symmetry.continuation = ContinuationPolicy::PreviousGeometry;
+    let budget = 256 * 1024;
+    c.bands.as_mut().unwrap().symmetry.max_continuation_bytes = budget;
+    for threads in [1, 2] {
+        let plan = Plan::new(c.clone(), Platform::Native).unwrap();
+        assert_eq!((0..6).map(|i|plan.continuation_job_index(i)).collect::<Vec<_>>(), vec![0,2,4,1,3,5]);
+        let candidate = blaze2d_runner::collect(plan, Options {threads,..Default::default()}).unwrap();
+        assert!(candidate.errors.is_empty(), "{:?}", candidate.errors);
+        let mut seeded = 0;
+        for (expected, actual) in reference.results.iter().zip(&candidate.results) {
+            assert_eq!(actual.job_index, expected.job_index);
+            assert_eq!(actual.arrays["eigenvectors"].shape, vec![3,4,9,9]);
+            assert_eq!(actual.metadata["runner"]["parallelism"], "geometry_chains");
+            for (&a, &b) in actual.arrays["frequencies"].data.iter().zip(&expected.arrays["frequencies"].data) {
+                assert!((a-b).abs() < 2e-7, "frequency {a} != {b}");
+            }
+            assert_eq!(actual.metadata["converged"], true);
+            assert!(actual.metadata["certification"]["b_orthogonality_defect"].as_f64().unwrap() < 1e-8);
+            for point in actual.metadata["symmetry"]["points"].as_array().unwrap() {
+                let continuation = &point["continuation"];
+                assert!(continuation["cache_payload_bytes"].as_u64().unwrap() <= (budget / threads) as u64);
+                if !continuation["seed"].is_null() { seeded += 1; }
+            }
+        }
+        assert_eq!(seeded, 12, "two later geometries per polarization, each with three k points");
+    }
+}

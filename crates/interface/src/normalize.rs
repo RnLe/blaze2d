@@ -182,6 +182,9 @@ impl Config {
                     }
                 }
                 if let Some(selected)=bands.discretization.metric_options() {
+                    if bands.symmetry.continuation != ContinuationPolicy::Off {
+                        return Err(invalid("bands.symmetry.continuation", "metric support requires support-aware continuation"));
+                    }
                     if config.dielectric.source==DielectricSource::External {
                         return Err(invalid("dielectric.source","the public metric-support band workflow currently requires geometry-sampled material; external arrays remain available through the core Galerkin API"));
                     }

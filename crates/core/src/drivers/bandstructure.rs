@@ -366,7 +366,7 @@ pub fn run_with_options<B: SpectralBackend + Clone>(
     job: &BandStructureJob,
     options: RunOptions,
 ) -> BandStructureResult {
-    run_core(backend, job, options, None, None)
+    run_core(backend, job, options, None, None, None)
 }
 
 /// Compute the photonic band structure while emitting each completed k-point.
@@ -386,7 +386,19 @@ where
         options,
         None,
         Some(&mut on_k_point as &mut dyn FnMut(KPointResult)),
+        None,
     )
+}
+
+/// Execute a full path with a worker-owned history of certified geometries.
+pub fn run_with_continuation<B: SpectralBackend + Clone>(
+    backend: B,
+    job: &BandStructureJob,
+    options: RunOptions,
+    continuation: Option<&mut crate::symmetry::continuation::BandContinuation>,
+    mut on_k_point: impl FnMut(KPointResult),
+) -> BandStructureResult {
+    run_core(backend, job, options, None, Some(&mut on_k_point), continuation)
 }
 
 /// Shared implementation behind [`run_with_options`] and
@@ -403,7 +415,11 @@ fn run_core<B: SpectralBackend + Clone>(
     mut options: RunOptions,
     mut study: Option<&mut ConvergenceStudy>,
     mut on_k_point: Option<&mut dyn FnMut(KPointResult)>,
+    mut continuation: Option<&mut crate::symmetry::continuation::BandContinuation>,
 ) -> BandStructureResult {
+    if study.is_some() || job.eigensolver.record_diagnostics || std::mem::size_of::<B::Real>() != 8 {
+        continuation = None;
+    }
     let requested_reuse=options.symmetry.k_reuse;
     let diagnostic_fallback=(study.is_some() || job.eigensolver.record_diagnostics) &&
         (options.symmetry.k_reuse!=KReuse::Off || options.symmetry.sectors!=crate::symmetry::sectors::SectorPolicy::Off ||
@@ -424,7 +440,7 @@ fn run_core<B: SpectralBackend + Clone>(
         if study.is_some() || job.eigensolver.record_diagnostics {
             traversal_rejection=Some("convergence diagnostics keep the supplied k-point order".to_string());
         } else {
-            match crate::symmetry::traversal::run_reordered(backend.clone(),job,options.clone(),&mut on_k_point) {
+            match crate::symmetry::traversal::run_reordered(backend.clone(),job,options.clone(),&mut on_k_point,continuation.as_deref_mut()) {
                 Ok(result)=>return result,
                 Err(reason)=>traversal_rejection=Some(reason),
             }
@@ -617,6 +633,9 @@ fn run_core<B: SpectralBackend + Clone>(
     let mut bands: Vec<Vec<f64>> = Vec::with_capacity(job.k_path.len());
     let mut total_iterations = 0usize;
     let mut symmetry_cache = SpectralCache::new(options.symmetry.max_cache_bytes);
+    let geometry_parameters: Vec<_> = std::iter::once(job.geom.eps_bg)
+        .chain(job.geom.atoms.iter().flat_map(|atom| [atom.pos[0], atom.pos[1], atom.radius, atom.eps_inside]))
+        .collect();
     let symmetry_operations = if matches!(options.symmetry.k_reuse,KReuse::Unitary|KReuse::TimeReversal) {
         let mut operations=candidate_operations(&job.geom.lattice,options.symmetry.plane_group);
         if options.symmetry.k_reuse==KReuse::TimeReversal {
@@ -633,6 +652,7 @@ fn run_core<B: SpectralBackend + Clone>(
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
         crate::profile_scope!("run.k_point");
         let mut reuse_report = ReuseReport { requested: requested_reuse, ..Default::default() };
+        if continuation.is_some() { reuse_report.continuation = Some(Default::default()); }
         if diagnostic_fallback {reuse_report.rejected.push(diagnostic_note.into());}
         if let Some(reason)=&traversal_rejection {reuse_report.rejected.push(reason.clone());}
         let mut reused = if options.symmetry.k_reuse != KReuse::Off {
@@ -725,10 +745,37 @@ fn run_core<B: SpectralBackend + Clone>(
             crate::profile_scope!("run.operator_setup");
             ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch)
         };
+        let path_warm_slice = warm_slice;
+        if reused.is_none() {
+            if let Some(state) = continuation.as_deref_mut() {
+                match state.cache.reuse_exact(&mut theta, k_frac, job.eigensolver.n_bands, &options.symmetry) {
+                    Ok(Some(hit)) => {
+                        reuse_report.continuation.as_mut().unwrap().exact_source = Some(hit.source_id);
+                        reused = Some(hit.spectrum);
+                    }
+                    Ok(None) => {}
+                    Err(reason) => reuse_report.rejected.push(reason),
+                }
+            }
+        }
         if reused.is_none() && matches!(options.symmetry.k_reuse,KReuse::Unitary|KReuse::TimeReversal) {
             reused = symmetry_cache.related(&mut theta,&job.geom.lattice,&dielectric,k_frac,&symmetry_operations,&options.symmetry,&mut reuse_report);
         }
-        let rank_seed = if reused.is_none() && options.symmetry.seed_transfer==crate::symmetry::seed::SeedTransfer::RankAware {
+        let geometry_seed = if reused.is_none() {
+            continuation.as_deref_mut().and_then(|state| {
+                match state.cache.prepare(&mut theta, crate::symmetry::continuation::SeedHistory::Latest,
+                    job.eigensolver.n_bands, options.symmetry.relative_rank_tolerance) {
+                    Ok(Some(seed)) => {
+                        reuse_report.continuation.as_mut().unwrap().seed = Some(seed.report.clone());
+                        Some(seed)
+                    }
+                    Ok(None) => None,
+                    Err(reason) => { reuse_report.rejected.push(reason); None }
+                }
+            })
+        } else { None };
+        let warm_slice = geometry_seed.as_ref().map(|s| s.fields.as_slice()).or(warm_slice);
+        let rank_seed = if reused.is_none() && geometry_seed.is_none() && options.symmetry.seed_transfer==crate::symmetry::seed::SeedTransfer::RankAware {
             warm_slice.and_then(|input|match crate::symmetry::seed::rank_aware_seed(&mut theta,input,options.symmetry.relative_rank_tolerance) {
                 Ok(seed)=>{reuse_report.seed=Some(seed.report.clone());Some(seed)},
                 Err(error)=>{reuse_report.rejected.push(error.to_string());None},
@@ -749,7 +796,7 @@ fn run_core<B: SpectralBackend + Clone>(
             })
         } else {None};
         let warm_slice=coarse_seed.as_ref().or(rank_seed.as_ref()).map(|s|s.fields.as_slice()).or(warm_slice);
-        let warm_start_used=(warm_start_used || coarse_seed.is_some()) && warm_slice.is_some_and(|s|!s.is_empty());
+        let warm_start_used=(warm_start_used || coarse_seed.is_some() || geometry_seed.is_some()) && warm_slice.is_some_and(|s|!s.is_empty());
 
         // Build preconditioner for this operator
         // Use band-window shift if enabled AND we have previous eigenvalues,
@@ -847,10 +894,10 @@ fn run_core<B: SpectralBackend + Clone>(
         let unrestricted=reused.is_none() && sector_result.is_none() && coordinate_result.is_none();
         let unrestricted_start=crate::eigensolver::iteration_total();
         let k_iterations;
-        let k_converged;
+        let mut k_converged;
         let mut k_residuals;
         let mut k_absolute_residuals = Vec::new();
-        let final_evals: Vec<f64>;
+        let mut final_evals: Vec<f64>;
         let mut eigenvectors: Vec<Field2D>;
         if let Some(ref entry) = reused {
             k_iterations = 0;
@@ -923,13 +970,12 @@ fn run_core<B: SpectralBackend + Clone>(
         }
         reuse_report.retained_iterations=k_iterations;
         reuse_report.attempted_iterations=crate::eigensolver::iteration_total().wrapping_sub(iteration_start);
-        let k_iterations=reuse_report.attempted_iterations;
 
         // The iteration cache contains soft-lock placeholders. Certify the
         // returned fields without altering eigenvalues, gauges, or warm starts.
-        let k_b_orthogonality_defect = if let Some(ref entry) = reused {
+        let mut k_b_orthogonality_defect = if let Some(ref entry) = reused {
             entry.orthogonality_defect
-        } else if on_k_point.is_some() || options.symmetry.k_reuse != KReuse::Off {
+        } else if on_k_point.is_some() || options.symmetry.k_reuse != KReuse::Off || continuation.is_some() {
             let certificate = crate::eigensolver::refine::certify_without_refinement(
                 &mut theta,
                 &final_evals,
@@ -941,6 +987,64 @@ fn run_core<B: SpectralBackend + Clone>(
         } else {
             0.0
         };
+
+        // A geometry prediction is optional initialization. Retry the ordinary
+        // path if its solve or fresh certificate fails, retaining all work.
+        let acceptable = || {
+            k_converged && final_evals.len() == job.eigensolver.n_bands
+                && eigenvectors.len() == job.eigensolver.n_bands && k_b_orthogonality_defect.is_finite()
+                && k_b_orthogonality_defect <= options.symmetry.max_orthogonality_defect
+                && final_evals.iter().enumerate().all(|(i, &value)| {
+                    let (residual, limit) = if value == 0.0 && is_gamma {
+                        (k_absolute_residuals.get(i), options.symmetry.max_zero_mode_absolute_residual)
+                    } else { (k_residuals.get(i), options.symmetry.max_relative_residual) };
+                    residual.is_some_and(|r| r.is_finite() && *r <= limit)
+                })
+        };
+        if geometry_seed.is_some() && !acceptable() {
+            let reason = "geometry-seeded solve failed convergence or fresh certification";
+            reuse_report.continuation.as_mut().unwrap().fallback = Some(reason.into());
+            for attempt in &mut reuse_report.solver_attempts { attempt.retained = false; }
+            reuse_report.coordinates = None;
+            reuse_report.sectors = None;
+            let retry_start = crate::eigensolver::iteration_total();
+            let mut cfg = job.eigensolver.clone();
+            cfg.k_index = Some(k_idx);
+            let mut solver = Eigensolver::new(&mut theta, cfg,
+                preconditioner_opt.as_mut().map(|p| &mut **p as &mut dyn crate::preconditioners::OperatorPreconditioner<B>),
+                path_warm_slice);
+            let retry = solver.solve();
+            eigenvectors = solver.all_eigenvectors();
+            drop(solver);
+            final_evals = retry.eigenvalues;
+            k_converged = retry.converged;
+            let certificate = crate::eigensolver::refine::certify_without_refinement(&mut theta, &final_evals, &eigenvectors);
+            k_residuals = certificate.residuals;
+            k_absolute_residuals = certificate.absolute_residuals;
+            k_b_orthogonality_defect = certificate.b_orthogonality_defect;
+            let iterations = crate::eigensolver::iteration_total().wrapping_sub(retry_start);
+            reuse_report.retained_iterations = iterations;
+            reuse_report.solver_attempts.push(crate::symmetry::reuse::SolveAttempt {
+                method: "continuation_fallback", iterations, retained: true, rejection: None,
+            });
+        }
+        reuse_report.attempted_iterations = crate::eigensolver::iteration_total().wrapping_sub(iteration_start);
+        let k_iterations = reuse_report.attempted_iterations;
+
+        if let Some(state) = continuation.as_deref_mut() {
+            if k_converged {
+                let entry = CachedSpectrum { source_index: k_idx, k: k_frac,
+                    eigenvalues: final_evals.clone(), fields: eigenvectors.clone(),
+                    residuals: k_residuals.clone(), absolute_residuals: k_absolute_residuals.clone(),
+                    orthogonality_defect: k_b_orthogonality_defect };
+                match state.cache.insert_latest_certified(&mut theta, format!("{}:{k_idx}", state.job_index),
+                    geometry_parameters.clone(), entry, &options.symmetry) {
+                    Ok(report) => reuse_report.continuation.as_mut().unwrap().insertion = Some(report),
+                    Err(reason) => reuse_report.rejected.push(reason),
+                }
+            }
+            reuse_report.continuation.as_mut().unwrap().cache_payload_bytes = state.cache.payload_bytes();
+        }
 
         // Cache sorted physical pairs before path tracking permutes the output.
         if options.symmetry.k_reuse != KReuse::Off && reused.is_none() && k_converged {
@@ -1134,7 +1238,7 @@ pub fn run_with_diagnostics_and_options<B: SpectralBackend + Clone>(
     options: RunOptions,
 ) -> BandStructureResultWithDiagnostics {
     let mut study = ConvergenceStudy::new(study_name);
-    let result = run_core(backend, job, options, Some(&mut study), None);
+    let result = run_core(backend, job, options, Some(&mut study), None, None);
     BandStructureResultWithDiagnostics { result, study }
 }
 

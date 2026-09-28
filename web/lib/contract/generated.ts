@@ -110,10 +110,16 @@ export interface KPath {
 export interface Symmetry {
   arithmetic?: "spatial_complex" | "fourier_complex" | "pt_real";
   coarse_start?: CoarseStart | null;
+  continuation?: "off" | "previous_geometry";
   correction_projection_interval?: number;
   k_reuse?: "off" | "identical" | "unitary" | "time_reversal";
   k_traversal?: "given" | "nearest";
   max_cache_bytes?: number;
+  /**
+   * Total resident continuation payload across native worker chains.
+   * Solver scratch and retained output use separate memory estimates.
+   */
+  max_continuation_bytes?: number;
   /**
    * Numerical payload admission for rectangular sector plans and solves.
    * Metric Fourier supports use bands.discretization's budget instead.

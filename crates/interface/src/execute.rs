@@ -4,6 +4,26 @@ use blaze2d_core::{backend::SpectralBackend, drivers::{bandstructure, operator_d
 use serde_json::json;
 use crate::{Array, Diagnostic, Event, JobFailure, PlannedJob, Precision, ResultRecord, Task};
 
+/// Persistent state owned by one serial job chain, including browser jobs.
+/// Only certified spectra enter the bounded cache; backend scratch is local.
+pub struct ExecutionContext {
+    continuation: blaze2d_core::symmetry::continuation::BandContinuation,
+    max_continuation_bytes: usize,
+}
+
+impl ExecutionContext {
+    pub fn new(max_continuation_bytes: usize) -> Self {
+        Self { continuation: blaze2d_core::symmetry::continuation::BandContinuation::new(max_continuation_bytes), max_continuation_bytes }
+    }
+    pub fn clear(&mut self) { self.continuation.cache.clear(); }
+}
+
+pub fn execute_in_context<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
+    context: &mut ExecutionContext, on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
+{
+    execute_impl(backend, backend_name, job, None, None, Some(context), on_event)
+}
+
 pub fn execute<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
     on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
 {
@@ -13,6 +33,16 @@ pub fn execute<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: 
 /// Native reference and warm-start blocks use the full solved band window.
 pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
     reference: Option<&[blaze2d_core::field::Field2D]>, warmstart: Option<&[blaze2d_core::field::Field2D]>,
+    on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
+{
+    let budget = job.resolved.config.bands.as_ref().map_or(0, |b| b.symmetry.max_continuation_bytes);
+    let mut context = ExecutionContext::new(budget);
+    execute_impl(backend, backend_name, job, reference, warmstart, Some(&mut context), on_event)
+}
+
+fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
+    reference: Option<&[blaze2d_core::field::Field2D]>, warmstart: Option<&[blaze2d_core::field::Field2D]>,
+    context: Option<&mut ExecutionContext>,
     mut on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
 {
     let fail = |path: &str, message: &str| JobFailure {job_index:job.index,
@@ -78,12 +108,19 @@ pub fn execute_with_fields<B: SpectralBackend + Clone>(backend: B, backend_name:
                 };
             let options=b.run_options(job.resolved.config.results.eigenvectors);
             let selected=b.discretization.metric_options();
+            let continuation = context.filter(|_| b.symmetry.continuation != crate::ContinuationPolicy::Off
+                && b.symmetry.max_continuation_bytes > 0 && actual == Precision::F64)
+                .map(|c| {
+                    c.continuation.cache.set_payload_limit(c.max_continuation_bytes.min(b.symmetry.max_continuation_bytes));
+                    c.continuation.job_index = job.index;
+                    &mut c.continuation
+                });
             let (result,failure)=if let Some(discretization)=selected {
                 match blaze2d_core::drivers::support_bands::run_with_k_streaming(backend,&job.bands_job(),options,discretization,&mut collect) {
                     Ok(result)=>(result,None),
                     Err(failure)=>(failure.partial_result.clone(),Some(failure)),
                 }
-            } else {(bandstructure::run_with_k_streaming(backend,&job.bands_job(),options,&mut collect),None)};
+            } else {(bandstructure::run_with_continuation(backend,&job.bands_job(),options,continuation,&mut collect),None)};
             let requested_points=nk;
             let nk=result.bands.len();
             out.arrays.insert("frequencies".into(), Array::real(&[nk,n], &["k_point","band"],

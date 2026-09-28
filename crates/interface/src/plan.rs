@@ -141,6 +141,26 @@ pub fn set_parameter(config: &mut Config, target: &str, mut value: Value) -> Int
 }
 
 impl Plan {
+    /// Put geometry axes inside incompatible axes without resolving or storing
+    /// every job. Original indices remain the output and checkpoint identity.
+    pub fn continuation_job_index(&self, position: usize) -> usize {
+        let geometry_axis = |i: usize| {
+            let target = &self.config.sweeps[i].target;
+            target == "geometry.background_epsilon" || target.starts_with("geometry.objects.")
+        };
+        let order: Vec<_> = (0..self.axis_lengths.len()).filter(|&i| !geometry_axis(i))
+            .chain((0..self.axis_lengths.len()).filter(|&i| geometry_axis(i))).collect();
+        let registry = position % self.summary.registry_points;
+        let mut remainder = position / self.summary.registry_points;
+        let mut coordinates = vec![0; order.len()];
+        for &axis in order.iter().rev() {
+            coordinates[axis] = remainder % self.axis_lengths[axis];
+            remainder /= self.axis_lengths[axis];
+        }
+        coordinates.into_iter().zip(&self.axis_lengths).fold(0, |n, (i, length)| n * length + i)
+            * self.summary.registry_points + registry
+    }
+
     pub fn new(config: Config, platform: Platform) -> InterfaceResult<Self> {
         let base = config.resolve()?;
         let config = base.config.clone();
@@ -326,6 +346,10 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
         let error=|reason|invalid("bands.symmetry",reason);
         let entry=memory::spectrum_payload(rows,resolved.solved_bands).map_err(error)?;
         let mut extra=0_u128;
+        if b.symmetry.continuation != ContinuationPolicy::Off && b.symmetry.max_continuation_bytes > 0 {
+            extra += b.symmetry.max_continuation_bytes as u128 + 4 * entry as u128;
+            extra += memory::worker_payload(rows, 0, resolved.solved_bands).map_err(error)? as u128;
+        }
         if let Some(coarse)=options.coarse_start.filter(|c|c.max_seed_field_bytes>0) {
             let cfg=blaze2d_core::eigensolver::EigensolverConfig {
                 n_bands:resolved.solved_bands,block_size:resolved.config.eigensolver.block_size,

@@ -121,10 +121,12 @@
           "$ref": "#/$defs/Symmetry",
           "default": {
             "arithmetic": "spatial_complex",
+            "continuation": "off",
             "correction_projection_interval": 1,
             "k_reuse": "off",
             "k_traversal": "given",
             "max_cache_bytes": 67108864,
+            "max_continuation_bytes": 67108864,
             "max_traversal_field_bytes": 67108864,
             "reconstruct_partners": false,
             "sector_kernel": "full_grid",
@@ -314,6 +316,13 @@
         "schema",
         "task",
         "geometry"
+      ]
+    },
+    "ContinuationPolicy": {
+      "type": "string",
+      "enum": [
+        "off",
+        "previous_geometry"
       ]
     },
     "DType": {
@@ -1516,6 +1525,10 @@
             }
           ]
         },
+        "continuation": {
+          "$ref": "#/$defs/ContinuationPolicy",
+          "default": "off"
+        },
         "correction_projection_interval": {
           "type": "integer",
           "format": "uint",
@@ -1531,6 +1544,13 @@
           "default": "given"
         },
         "max_cache_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "default": 67108864,
+          "minimum": 0
+        },
+        "max_continuation_bytes": {
+          "description": "Total resident continuation payload across native worker chains.\nSolver scratch and retained output use separate memory estimates.",
           "type": "integer",
           "format": "uint",
           "default": 67108864,

@@ -7,7 +7,7 @@ use crate::{
     dielectric::Dielectric2D,
     drivers::bandstructure::{
         BandStructureJob, BandStructureResult, KPointResult, RunOptions, compute_k_path_distances,
-        run_with_k_streaming,
+        run_with_continuation,
     },
     field::Field2D,
     lattice::Lattice2D,
@@ -82,6 +82,7 @@ pub(crate) fn run_reordered<B: SpectralBackend + Clone>(
     job: &BandStructureJob,
     options: RunOptions,
     on_k_point: &mut Option<&mut dyn FnMut(KPointResult)>,
+    continuation: Option<&mut super::continuation::BandContinuation>,
 ) -> Result<BandStructureResult, String> {
     if options.reuse_gamma {
         return Err("nearest traversal requires legacy closing-Gamma reuse to be disabled".into());
@@ -130,7 +131,7 @@ pub(crate) fn run_reordered<B: SpectralBackend + Clone>(
     let mut pending_bytes = 0;
     let mut peak_pending_bytes = 0;
     let mut previous: Option<(Vec<Field2D>, Vec<f64>)> = None;
-    run_with_k_streaming(backend, &routed, inner, |mut point| {
+    run_with_continuation(backend, &routed, inner, continuation, |mut point| {
         let position = point.k_index;
         let original = order[position];
         point.k_index = original;

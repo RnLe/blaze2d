@@ -1,11 +1,12 @@
-//! Native scheduling across independent configurations, with bounded delivery.
+//! Native scheduling with bounded delivery and optional geometry continuation.
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
 use std::thread;
 use crossbeam_channel::{Receiver, bounded};
 use serde::{Serialize, Deserialize};
 use blaze2d_backend_cpu::CpuBackend;
-use blaze2d_interface::{Diagnostic, Event, InterfaceResult, JobFailure, Plan, Precision, RunStatus, execute};
+use blaze2d_interface::{Diagnostic, Event, InterfaceResult, JobFailure, Plan, Precision, RunStatus,
+    ContinuationPolicy, ExecutionContext, execute_in_context};
 pub mod export;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,7 +81,15 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
     if options.threads > 1024 || options.queue_capacity > 65536 {
         return Err(Diagnostic::new("runner_options", "", "Use at most 1024 threads and 65536 queued events"));
     }
-    options.threads = if options.threads == 0 { thread::available_parallelism().map_or(1, |n| n.get()) } else { options.threads }
+    let continuation_budget = plan.config.bands.as_ref().filter(|b|
+        b.symmetry.continuation != ContinuationPolicy::Off && plan.config.eigensolver.precision == Precision::F64)
+        .map_or(0, |b| b.symmetry.max_continuation_bytes);
+    let chains = continuation_budget > 0;
+    options.threads = if options.threads == 0 {
+        let available = thread::available_parallelism().map_or(1, |n| n.get());
+        // Leave several geometries per chain when choosing workers implicitly.
+        if chains { available.min((plan.summary.jobs / 4).max(1)) } else { available }
+    } else { options.threads }
         .min(plan.summary.jobs).max(1);
     if options.queue_capacity == 0 { options.queue_capacity = 2 * options.threads; }
     let (sender, receiver) = bounded(options.queue_capacity);
@@ -96,21 +105,35 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
         let failed = AtomicUsize::new(0);
         let halt = AtomicBool::new(false);
         thread::scope(|scope| {
-            for _ in 0..effective.threads {
+            for worker in 0..effective.threads {
                 let (sender, plan, cancel, effective) = (&sender, &plan, &run_cancel, &effective);
                 let (next, completed, failed, halt) = (&next, &completed, &failed, &halt);
                 let skipped = &skipped;
                 scope.spawn(move || {
+                    let boundary = |worker: usize| plan.summary.jobs / effective.threads * worker
+                        + (plan.summary.jobs % effective.threads).min(worker);
+                    let mut position = boundary(worker);
+                    let end = boundary(worker + 1);
+                    let cache_limit = continuation_budget / effective.threads;
+                    let mut context = ExecutionContext::new(cache_limit);
                     while !cancel.load(Ordering::Acquire) && !halt.load(Ordering::Acquire) {
-                        let Ok(index) = next.fetch_update(Ordering::AcqRel, Ordering::Acquire,
-                            |i| (i < plan.summary.jobs).then(|| i + 1)) else { break };
+                        let index = if chains {
+                            if position == end { break; }
+                            let index = plan.continuation_job_index(position);
+                            position += 1;
+                            index
+                        } else {
+                            let Ok(index) = next.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+                                |i| (i < plan.summary.jobs).then(|| i + 1)) else { break };
+                            index
+                        };
                         if skipped.contains(&index) { continue; }
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let job = plan.job(index).map_err(|diagnostic| JobFailure { job_index: index, diagnostic, partial_result: None })?;
                             let emit = |event| { if sender.send(event).is_err() { cancel.store(true, Ordering::Release); } };
                             match job.resolved.config.eigensolver.precision {
-                                Precision::F64 => execute(CpuBackend::<f64>::new(), "cpu", &job, emit),
-                                Precision::F32 => execute(CpuBackend::<f32>::new(), "cpu", &job, emit),
+                                Precision::F64 => execute_in_context(CpuBackend::<f64>::new(), "cpu", &job, &mut context, emit),
+                                Precision::F32 => execute_in_context(CpuBackend::<f32>::new(), "cpu", &job, &mut context, emit),
                             }
                         })).unwrap_or_else(|panic| {
                             let msg = panic.downcast_ref::<String>().map(String::as_str)
@@ -122,10 +145,13 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                                 completed.fetch_add(1, Ordering::Relaxed);
                                 result.metadata["runner"] = serde_json::json!({"threads":effective.threads,
                                     "queue_capacity":effective.queue_capacity, "error_policy":effective.error_policy,
-                                    "parallelism":"independent_configurations", "nested_threads":false});
+                                    "parallelism":if chains {"geometry_chains"} else {"independent_configurations"},
+                                    "chain":chains.then_some(worker), "continuation_payload_limit":cache_limit,
+                                    "total_continuation_payload_limit":continuation_budget, "nested_threads":false});
                                 Event::Result { result: Box::new(result) }
                             },
                             Err(error) => {
+                                context.clear();
                                 failed.fetch_add(1, Ordering::Relaxed);
                                 if effective.error_policy == ErrorPolicy::Stop { halt.store(true, Ordering::Release); }
                                 Event::JobFailure { error: Box::new(error) }

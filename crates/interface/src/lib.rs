@@ -10,7 +10,7 @@ pub mod operator_result;
 pub mod execute;
 pub mod external;
 pub mod edit;
-pub use execute::{execute, execute_with_fields};
+pub use execute::{execute, execute_with_fields, execute_in_context, ExecutionContext};
 pub use result::*;
 
 pub use config::*;

@@ -78,6 +78,28 @@ pub struct ContinuationSeed {
     pub report: ContinuationReport,
 }
 
+/// One worker's bounded history across complete band jobs. Stored spectra are
+/// sorted physical pairs; path tracking and exported fields remain job-local.
+pub struct BandContinuation {
+    pub cache: GeometryContinuationCache,
+    pub job_index: usize,
+}
+
+impl BandContinuation {
+    pub fn new(payload_limit: usize) -> Self {
+        Self { cache: GeometryContinuationCache::new(payload_limit), job_index: 0 }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BandContinuationReport {
+    pub exact_source: Option<String>,
+    pub seed: Option<ContinuationReport>,
+    pub insertion: Option<InsertionReport>,
+    pub fallback: Option<String>,
+    pub cache_payload_bytes: usize,
+}
+
 /// Bounded geometry cache, FIFO by default. Capacity covers numerical/string
 /// payloads, not allocator or policy bookkeeping. Seed compatibility compares
 /// the physical fiber; exact reuse additionally compares every operator bit.
@@ -118,6 +140,18 @@ impl GeometryContinuationCache {
         self.entries.is_empty()
     }
 
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.payload_bytes = 0;
+    }
+
+    pub fn set_payload_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        while self.payload_bytes > limit {
+            self.payload_bytes -= self.entries.pop_front().unwrap().payload_bytes;
+        }
+    }
+
     /// Source certification is part of insertion, including its operator work.
     /// Duplicate IDs replace their old entry. Oversized entries do not evict a
     /// usable cache. The caller supplies parameter coordinates as provenance;
@@ -127,8 +161,35 @@ impl GeometryContinuationCache {
         operator: &mut ThetaOperator<B>,
         id: String,
         parameters: Vec<f64>,
+        spectrum: CachedSpectrum,
+        options: &SymmetryOptions,
+    ) -> Result<InsertionReport, String> {
+        self.insert_impl(operator, id, parameters, spectrum, options, true, false)
+    }
+
+    /// The band driver has just certified these unchanged physical pairs.
+    /// Avoid duplicate certification and replace earlier geometries at this
+    /// fiber. The public previous-geometry policy retains one source per k.
+    pub(crate) fn insert_latest_certified<B: SpectralBackend>(
+        &mut self,
+        operator: &mut ThetaOperator<B>,
+        id: String,
+        parameters: Vec<f64>,
+        spectrum: CachedSpectrum,
+        options: &SymmetryOptions,
+    ) -> Result<InsertionReport, String> {
+        self.insert_impl(operator, id, parameters, spectrum, options, false, true)
+    }
+
+    fn insert_impl<B: SpectralBackend>(
+        &mut self,
+        operator: &mut ThetaOperator<B>,
+        id: String,
+        parameters: Vec<f64>,
         mut spectrum: CachedSpectrum,
         options: &SymmetryOptions,
+        recertify: bool,
+        replace_fiber: bool,
     ) -> Result<InsertionReport, String> {
         crate::profile_scope!("continuation.capture");
         if std::mem::size_of::<B::Real>() != 8 {
@@ -165,11 +226,13 @@ impl GeometryContinuationCache {
                 return Err("source k metadata differs from the actual operator".into());
             }
         }
-        let certificate =
-            certify_without_refinement(operator, &spectrum.eigenvalues, &spectrum.fields);
-        spectrum.residuals = certificate.residuals;
-        spectrum.absolute_residuals = certificate.absolute_residuals;
-        spectrum.orthogonality_defect = certificate.b_orthogonality_defect;
+        if recertify {
+            let certificate =
+                certify_without_refinement(operator, &spectrum.eigenvalues, &spectrum.fields);
+            spectrum.residuals = certificate.residuals;
+            spectrum.absolute_residuals = certificate.absolute_residuals;
+            spectrum.orthogonality_defect = certificate.b_orthogonality_defect;
+        }
         if !spectrum.passes(options) {
             return Err(format!(
                 "source geometry snapshot failed fresh certification: residuals={:?}, orthogonality={:e}",
@@ -190,6 +253,15 @@ impl GeometryContinuationCache {
                 .clock
                 .checked_add(1)
                 .ok_or("geometry usage clock overflow")?;
+            if replace_fiber {
+                self.entries.retain(|entry| {
+                    if same_fiber(&entry.identity, &identity) {
+                        self.payload_bytes -= entry.payload_bytes;
+                        evicted_ids.push(entry.id.clone());
+                        false
+                    } else { true }
+                });
+            }
             if let Some(position) = self.entries.iter().position(|e| e.id == id) {
                 self.payload_bytes -= self.entries.remove(position).unwrap().payload_bytes;
             }

@@ -95,22 +95,24 @@ pub fn select_task(source: &str,task: &str) -> Result<String,JsValue> {
 }
 
 #[wasm_bindgen]
-pub struct Calculation { plan: api::Plan }
+pub struct Calculation { plan: api::Plan, context: api::ExecutionContext }
 
 #[wasm_bindgen]
 impl Calculation {
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str) -> Result<Calculation,JsValue> {
-        Ok(Self { plan:api::Plan::new(api::Config::from_toml(source).map_err(diagnostic)?,api::Platform::Browser).map_err(diagnostic)? })
+        let plan = api::Plan::new(api::Config::from_toml(source).map_err(diagnostic)?,api::Platform::Browser).map_err(diagnostic)?;
+        let context = api::ExecutionContext::new(plan.config.bands.as_ref().map_or(0, |b| b.symmetry.max_continuation_bytes));
+        Ok(Self { plan, context })
     }
     #[wasm_bindgen(getter, unchecked_return_type="PlanSummary")]
     pub fn summary(&self) -> Result<JsValue,JsValue> { js(&self.plan.summary) }
 
     #[wasm_bindgen(js_name=runJob, unchecked_return_type="Result")]
-    pub fn run_job(&self,index: usize,progress: &Function) -> Result<JsValue,JsValue> {
+    pub fn run_job(&mut self,index: usize,progress: &Function) -> Result<JsValue,JsValue> {
         let job = self.plan.job(index).map_err(diagnostic)?;
         let mut callback_error = None;
-        let result = api::execute(crate::WasmBackend::new(),"wasm",&job,|event| {
+        let result = api::execute_in_context(crate::WasmBackend::new(),"wasm",&job,&mut self.context,|event| {
             if callback_error.is_none() {
                 match js(&event).and_then(|v|progress.call1(&JsValue::NULL,&v)) {
                     Ok(_) => {}, Err(e) => callback_error=Some(e),
@@ -121,6 +123,7 @@ impl Calculation {
         match result {
             Ok(result) => result_to_js(result),
             Err(failure) => {
+                self.context.clear();
                 let object = js(&serde_json::json!({"job_index":failure.job_index,"diagnostic":failure.diagnostic}))?;
                 if let Some(result) = failure.partial_result { set(&object,"partial_result",&result_to_js(*result)?)?; }
                 Err(object)
