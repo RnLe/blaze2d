@@ -32,6 +32,25 @@ fn wave<B: SpectralBackend>(
     options: Options,
     tolerance: f64,
 ) -> f64 {
+    wave_at(
+        backend,
+        grid,
+        lattice,
+        target,
+        options,
+        [2., -1.],
+        tolerance,
+    )
+}
+fn wave_at<B: SpectralBackend>(
+    backend: B,
+    grid: Grid2D,
+    lattice: Lattice2D,
+    target: &[f64],
+    options: Options,
+    frequency: [f64; 2],
+    tolerance: f64,
+) -> f64 {
     let k = lattice.reciprocal().fractional_to_cartesian([0.17, 0.13]);
     let map = Map::new(
         &key(grid, lattice, k),
@@ -40,7 +59,6 @@ fn wave<B: SpectralBackend>(
         options,
     )
     .unwrap();
-    let frequency = [2., -1.];
     let at = |f: [f64; 2]| C::from_polar(1., TAU * (frequency[0] * f[0] + frequency[1] * f[1]));
     let mut field = Field2D::<B::Real>::zeros(grid);
     for (i, v) in field.as_mut_slice().iter_mut().enumerate() {
@@ -86,6 +104,25 @@ fn rigid_pullbacks_include_bloch_phase_across_periodic_boundaries_in_both_precis
             grid.centered = centered;
             for shift in [1. / 16., 0.0237] {
                 let target = [1., 0.49 + shift, 0.07, 0.16, 8.9];
+                let nyquist = [grid.nx as f64 / 2., grid.ny as f64 / 2.];
+                wave_at(
+                    CpuBackend::<f64>::new(),
+                    grid,
+                    lattice,
+                    &target,
+                    Options::default(),
+                    nyquist,
+                    1e-12,
+                );
+                wave_at(
+                    CpuBackend::<f32>::new(),
+                    grid,
+                    lattice,
+                    &target,
+                    Options::default(),
+                    nyquist,
+                    2e-6,
+                );
                 wave(
                     CpuBackend::<f64>::new(),
                     grid,

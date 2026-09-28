@@ -13,12 +13,15 @@ def main():
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--inputs', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--filter', default='', help='Select case directory names containing this text')
     a = p.parse_args()
     a.output.mkdir(parents=True, exist_ok=False)
     seen, records = {}, []
     with tempfile.TemporaryDirectory(prefix='blaze-stored-audit-') as folder:
         restored = Path(folder) / 'study.json'
         for source in sorted(a.inputs.glob('*/*.json.gz')):
+            if a.filter not in source.parent.name:
+                continue
             if not source.stem.endswith(('-reference.json', '-candidate.json')):
                 continue
             document = json.loads(gzip.decompress(source.read_bytes()))

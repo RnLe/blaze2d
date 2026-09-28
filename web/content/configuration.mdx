@@ -174,7 +174,7 @@ ladder, Gamma kernel, final certificates and fallback behavior.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `method` | `copy` | `cold`, `copy`, `metric`, `secant`, `history`, `residual`, `response` |
+| `method` | `copy` | `cold`, `copy`, `metric`, `secant`, `history`, `residual`, `response`, `tangent`, `reduced_response` |
 | `scope` | `gamma` | Gamma, explicit `anchors`, or all requested `path` points |
 | `anchors` | `[]` | Additional exact reciprocal-fractional points; Gamma remains included |
 | `donor_selection` | `same_k` | Same-k geometry donor, `previous_k`, or cheap `screened` selection |
@@ -189,6 +189,34 @@ ladder, Gamma kernel, final certificates and fallback behavior.
 | `retain_tm_actions` | `false` | Retain exact same-k TM source actions on their immutable basis |
 | `response_iterations` | `2` | Inner response budget, one to 64 iterations |
 | `response_tolerance` | `0.25` | Relative inner response stopping request |
+
+Reusable models use `[bands.warm_start.model]`:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `basis` | `fourier` | Complement directions: `fourier`, `history`, or `residual` |
+| `columns` | `8` | At most 1–64 complementary directions |
+| `training_iterations` | `128` | Accurate tangent training budget, 1–1024 |
+| `training_tolerance` | `0.0001` | Required inner relative residual before caching a tangent |
+| `max_reuses` | `4` | Reuses after training, 0–64; zero is a retraining control |
+| `max_step` | `4.0` | Maximum anchor displacement relative to training displacement, 1–16 |
+| `max_relative_residual` | `0.1` | Target trial residual gate; final accuracy remains independent |
+
+Optional `[bands.warm_start.transport]` composes a periodic geometric trial
+with any donor method. It is absent by default and cannot be combined with
+`method = "cold"`.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `interpolation` | `cubic` | Periodic cubic or direct `fourier` evaluation for local maps |
+| `jacobian` | `false` | Multiply by the square root of the inverse-map determinant |
+| `max_stretch` | `2.0` | Global deformation limit, strictly above one and at most four |
+| `max_interpolation_terms` | `32000000` | Total interpolation terms per prepared transport block |
+
+M7 models require solved guards. Model products count against the native bank
+budget; composed M8 trials also obey the preparation and column limits above.
+Reports retain training/refresh attempts, omitted response residuals, shape-map
+bounds, interpolation work, and explicit reasons for declined trials.
 
 The requested band count and public job IDs do not change. Ordinary k-path
 tracking remains in the supplied order. Each worker has a cold chain root;

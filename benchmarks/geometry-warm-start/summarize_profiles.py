@@ -39,6 +39,11 @@ def main():
             solver_inclusive_seconds=ns('eigensolve')/1e9,
             initialization_seconds=ns('initialization')/1e9,
             predictor_seconds=(ns('geometry.predictor') + ns('geometry.source_response'))/1e9,
+            model_prepare_seconds=ns('geometry.model_prepare')/1e9,
+            model_build_seconds=ns('geometry.model_build')/1e9,
+            model_evaluate_seconds=ns('geometry.model_evaluate')/1e9,
+            shape_prepare_seconds=ns('geometry.shape_prepare')/1e9,
+            shape_interpolation_seconds=ns('geometry.shape_transport')/1e9,
             path_prediction_seconds=ns('geometry.path_prediction')/1e9,
             final_certificate_seconds=certificate_ns/1e9,
             final_certificate_worker_fraction=certificate_ns/run_ns if run_ns else None,
@@ -49,7 +54,9 @@ def main():
             gamma_point_fraction=ns('run.gamma_point')/point_ns if point_ns else None,
             stage_actions={s: actions(stages.get(s, {})) for s in certificates +
                           ['eigensolve.lock_certification', 'run.gamma_point', 'run.nonzero_point',
-                           'geometry.predictor', 'geometry.source_response', 'geometry.path_prediction']})
+                           'geometry.predictor', 'geometry.source_response', 'geometry.model_prepare',
+                           'geometry.model_build', 'geometry.model_evaluate', 'geometry.shape_prepare',
+                           'geometry.shape_transport', 'geometry.path_prediction']})
         records.append(row)
     if not records:
         raise SystemExit('No profiles found')
@@ -69,7 +76,7 @@ def main():
             if not block['valid']:
                 continue
             for side in ['reference', 'candidate']:
-                key = (d['inputs'][side], d['threads'])
+                key = (d['inputs'][side], d.get('threads', d.get('case', {}).get('threads', 2)))
                 inputs.setdefault(key, set()).add(block[side]['validation']['work']['iterations'])
     matches = []
     for manifest in sorted(a.directory.rglob('*.manifest.json')):

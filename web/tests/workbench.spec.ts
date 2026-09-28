@@ -257,6 +257,20 @@ test('reload marks an unfinished calculation as interrupted', async ({ page }) =
   await expect(page.getByRole('dialog')).toContainText('interrupted');
 });
 
+test('reusable response and shape options survive browser execution and export', async ({ page }) => {
+  const source = readFileSync('../crates/interface/tests/fixtures/geometry-reduced_response.toml', 'utf8');
+  await open(page); await apply(page, source); await run(page);
+  const study = JSON.parse((await exported(page, 'json')).toString());
+  expect(study.config.bands.warm_start.method).toBe('reduced_response');
+  expect(study.config.bands.warm_start.model.columns).toBe(6);
+  expect(study.config.bands.warm_start.transport.interpolation).toBe('cubic');
+  expect(study.results).toHaveLength(4);
+  const points = study.results.flatMap((result: { metadata: { geometry_warm_start: { points: unknown[] } } }) => result.metadata.geometry_warm_start.points);
+  expect(points.some((point: { model?: { accepted: boolean } }) => point?.model?.accepted)).toBe(true);
+  expect(points.some((point: { transport?: { accepted: boolean } }) => point?.transport?.accepted)).toBe(true);
+  for (const result of study.results) expect(result.metadata.accuracy.accepted).toBe(true);
+});
+
 test('all examples load their complete configuration in one workspace', async ({ page }) => {
   await page.goto(`${base}/workbench/?view=examples`);
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();

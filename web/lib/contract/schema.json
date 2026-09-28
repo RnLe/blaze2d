@@ -750,6 +750,13 @@
         "screened"
       ]
     },
+    "GeometryInterpolation": {
+      "type": "string",
+      "enum": [
+        "cubic",
+        "fourier"
+      ]
+    },
     "GeometryMethod": {
       "type": "string",
       "enum": [
@@ -759,7 +766,9 @@
         "secant",
         "history",
         "residual",
-        "response"
+        "response",
+        "tangent",
+        "reduced_response"
       ]
     },
     "GeometryParameterOrder": {
@@ -769,6 +778,58 @@
         "serpentine"
       ]
     },
+    "GeometryResponseBasis": {
+      "type": "string",
+      "enum": [
+        "fourier",
+        "history",
+        "residual"
+      ]
+    },
+    "GeometryResponseModel": {
+      "description": "Reusable source response limits. These do not weaken final field accuracy.",
+      "type": "object",
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/GeometryResponseBasis",
+          "default": "fourier"
+        },
+        "columns": {
+          "type": "integer",
+          "format": "uint",
+          "default": 8,
+          "minimum": 0
+        },
+        "max_relative_residual": {
+          "type": "number",
+          "format": "double",
+          "default": 0.1
+        },
+        "max_reuses": {
+          "type": "integer",
+          "format": "uint",
+          "default": 4,
+          "minimum": 0
+        },
+        "max_step": {
+          "type": "number",
+          "format": "double",
+          "default": 4
+        },
+        "training_iterations": {
+          "type": "integer",
+          "format": "uint",
+          "default": 128,
+          "minimum": 0
+        },
+        "training_tolerance": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0001
+        }
+      },
+      "additionalProperties": false
+    },
     "GeometryScope": {
       "type": "string",
       "enum": [
@@ -776,6 +837,32 @@
         "anchors",
         "path"
       ]
+    },
+    "GeometryTransport": {
+      "description": "Optional periodic shape transport, composed as an independent target trial.",
+      "type": "object",
+      "properties": {
+        "interpolation": {
+          "$ref": "#/$defs/GeometryInterpolation",
+          "default": "cubic"
+        },
+        "jacobian": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_interpolation_terms": {
+          "type": "integer",
+          "format": "uint",
+          "default": 32000000,
+          "minimum": 0
+        },
+        "max_stretch": {
+          "type": "number",
+          "format": "double",
+          "default": 2
+        }
+      },
+      "additionalProperties": false
     },
     "GeometryWarmStart": {
       "description": "Bounded native history on a fixed physical grid and lattice.",
@@ -853,6 +940,18 @@
           "$ref": "#/$defs/GeometryMethod",
           "default": "copy"
         },
+        "model": {
+          "$ref": "#/$defs/GeometryResponseModel",
+          "default": {
+            "basis": "fourier",
+            "columns": 8,
+            "max_relative_residual": 0.1,
+            "max_reuses": 4,
+            "max_step": 4,
+            "training_iterations": 128,
+            "training_tolerance": 0.0001
+          }
+        },
         "parameter_order": {
           "$ref": "#/$defs/GeometryParameterOrder",
           "default": "grouped"
@@ -875,6 +974,17 @@
         "scope": {
           "$ref": "#/$defs/GeometryScope",
           "default": "gamma"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GeometryTransport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "additionalProperties": false

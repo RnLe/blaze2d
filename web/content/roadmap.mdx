@@ -88,8 +88,9 @@ combinations, measured gains and retained regressions.
 </div>
 
 The [native geometry warm-start module](/geometry-warm-starts) exposes copying,
-metric transport, aligned secants, compressed history, residual enrichment and
-bounded geometry response through the public configuration. Certified guards,
+metric transport, aligned secants, compressed history, residual enrichment,
+bounded and reusable geometry responses, and periodic shape transport through
+the public configuration. Certified guards,
 selected anchors, rolling k banks and worker-owned native history preserve the
 requested samples and final accuracy contract. Exact Gamma kernel handling and
 initial rank repair are shared with ordinary solves.
@@ -97,7 +98,9 @@ initial rank repair are shared with ordinary solves.
 Measured gains depend on the workload. Short response predictors pass the
 small-problem order tests but do not pass the runtime gate; full banks can cost
 more than Gamma-only reuse. The options remain explicit, with complete attempt
-and fallback reports. The earlier
+and fallback reports. Reusable tangents and shape registration are implemented;
+combined production sweeps still show that fewer iterations can cost more total
+time and memory. The earlier
 [public workflow measurements](/symmetry-changelog#public-parameter-sweeps)
 and the new module's evidence retain both improvements and regressions.
 MPB's standard run resets fields,

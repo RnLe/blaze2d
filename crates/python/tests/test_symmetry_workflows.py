@@ -154,11 +154,15 @@ def test_native_cli_matches_installed_python_coarse_workflow(pol, pt, sectors, t
     assert result['metadata']['symmetry']['points'][0]['coarse_start']['used_as_seed'] is True
 
 
-def test_native_response_study_checkpoint_restarts_a_cold_chain(tmp_path):
+@pytest.mark.parametrize("method", ["response", "tangent", "reduced_response"])
+def test_native_response_study_checkpoint_restarts_a_cold_chain(tmp_path, method):
     c = configuration('TE')
     c['bands']['accuracy'] = {}
-    c['bands']['warm_start'] = {'method': 'response', 'scope': 'path', 'guards': 2,
+    c['bands']['warm_start'] = {'method': method, 'scope': 'path', 'guards': 2,
                               'response_iterations': 2, 'max_cache_bytes': 1 << 22}
+    if method != 'response':
+        c['dielectric'] = {'smoothing': 'voronoi'}
+        c['bands']['warm_start']['transport'] = {}
     c['sweeps'] = [{'name': 'radius', 'target': 'geometry.objects.rod.radius',
                     'values': [.191, .193, .195]}]
     normalized = blaze.Config.from_dict(c)
@@ -166,7 +170,11 @@ def test_native_response_study_checkpoint_restarts_a_cold_chain(tmp_path):
     full = blaze.run(normalized, threads=1)
     assert not full['errors'] and full['statistics']['status'] == 'completed'
     points = full['results'][1]['metadata']['geometry_warm_start']['points']
-    assert any(p and p['response'] for p in points)
+    if method == 'response':
+        assert any(p and p['response'] for p in points)
+    else:
+        assert any(p and p['model'] and p['model']['accepted'] for p in points)
+        assert any(p and p['transport'] and p['transport']['accepted'] for p in points)
     path = tmp_path / 'geometry.ndjson'
 
     def interrupt(event):

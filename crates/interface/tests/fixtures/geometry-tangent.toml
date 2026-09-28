@@ -1,0 +1,43 @@
+schema = "blaze2d/1"
+task = "bands"
+polarization = "TE"
+[geometry]
+background_epsilon = 1.0
+lattice = { type = "triangular", a = 1.0 }
+[[geometry.objects]]
+name = "rod"
+kind = "circle"
+center = [0.0, 0.0]
+radius = 0.19
+epsilon = 8.9
+[grid]
+resolution = 9
+[dielectric]
+smoothing = "voronoi"
+[bands]
+count = 4
+tracking = false
+path = { points = [[0.0, 0.0], [0.17, 0.13], [0.0, 0.0]], basis = "reciprocal_fractional" }
+[bands.accuracy]
+max_relative_residual = 1e-5
+max_absolute_residual = 1e-7
+max_orthogonality_defect = 1e-8
+[bands.warm_start]
+method = "tangent"
+scope = "path"
+guards = 2
+[bands.warm_start.model]
+columns = 6
+[bands.warm_start.transport]
+interpolation = "cubic"
+jacobian = false
+[eigensolver]
+precision = "f64"
+tolerance = 1e-13
+max_iterations = 600
+[results]
+eigenvectors = true
+[[sweeps]]
+name = "radius"
+target = "geometry.objects.rod.radius"
+values = [0.19, 0.191, 0.192, 0.193]

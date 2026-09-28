@@ -189,12 +189,35 @@ export interface GeometryWarmStart {
    */
   max_predictor_columns?: number;
   max_preparation_bytes?: number;
-  method?: "cold" | "copy" | "metric" | "secant" | "history" | "residual" | "response";
+  method?: "cold" | "copy" | "metric" | "secant" | "history" | "residual" | "response" | "tangent" | "reduced_response";
+  model?: GeometryResponseModel;
   parameter_order?: "grouped" | "serpentine";
   response_iterations?: number;
   response_tolerance?: number;
   retain_tm_actions?: boolean;
   scope?: "gamma" | "anchors" | "path";
+  transport?: GeometryTransport | null;
+}
+/**
+ * Reusable source response limits. These do not weaken final field accuracy.
+ */
+export interface GeometryResponseModel {
+  basis?: "fourier" | "history" | "residual";
+  columns?: number;
+  max_relative_residual?: number;
+  max_reuses?: number;
+  max_step?: number;
+  training_iterations?: number;
+  training_tolerance?: number;
+}
+/**
+ * Optional periodic shape transport, composed as an independent target trial.
+ */
+export interface GeometryTransport {
+  interpolation?: "cubic" | "fourier";
+  jacobian?: boolean;
+  max_interpolation_terms?: number;
+  max_stretch?: number;
 }
 export interface Dielectric {
   interface_tolerance?: number;

@@ -17,7 +17,8 @@ Fewer correction iterations do not guarantee a faster calculation: extra modes,
 projections, material construction and certification all have a cost.
 
 The native implementation offers copying, metric transport, secants, snapshot
-enrichment, residual enrichment and a bounded response predictor through the
+enrichment, residual enrichment, bounded and reusable response predictors, and
+periodic shape transport through the
 same `bands.warm_start` configuration. These are explicit options. Current
 evidence does not justify a universal automatic geometry policy. The existing
 [symmetry policy](/symmetries) retains its own measured scope.
@@ -89,6 +90,8 @@ proof.
 | `history` | Bounded union of accepted snapshots or older innovations | Extra trial rank, actions and projected solve |
 | `residual` | Target residual directions added to the copied space | Target actions, preconditioning and Ritz extraction |
 | `response` | Approximate first-order source-pencil response | Bounded inner solves plus target correction |
+| `tangent` | Reuse an accurately trained response from an immutable anchor | Training, bounded refresh and target correction |
+| `reduced_response` | Solve response equations in a small complementary space | Basis construction, small solves and target correction |
 
 For TM, diagonal mass transport uses $B_1^{-1/2}B_0^{1/2}$. TE's mass
 transport is the identity. Neither removes the need for the target constraint
@@ -147,6 +150,86 @@ Validity includes the exact field basis and operator state. TE actions change
 with material and are not reused by this switch. Final certificates always
 apply the target operator freshly to the actual stored fields.
 
+## Reusable responses (M7)
+
+A `tangent` model trains an accurate directional correction at one accepted
+anchor. It scales that correction by the displacement from the **same anchor**;
+it does not repeatedly add the correction to successive solutions. A turn or
+reversal, an exhausted reuse count, excessive displacement, drift relative to
+the guard gap, or a poor target Ritz residual causes a bounded refresh. Failed
+training remains charged and falls back to the ordinary donor. Unlike M6's
+short approximate solves, a tangent is cached only when every requested inner
+response converges at the declared training tolerance.
+
+`reduced_response` builds a source-mass orthogonal complement $C$, excluding
+all source modes, guards and the Gamma kernel. It solves
+
+$$
+(C^\dagger A_0 C)Y-(C^\dagger B_0 C)Y\Lambda
+=-C^\dagger(\Delta AX-\Delta BX\Lambda),\qquad K=CY.
+$$
+
+The selectable basis sources are low Fourier waves (`fourier`), independent
+older snapshot directions (`history`), and preconditioned discrete forcing
+(`residual`). Low Fourier directions complete a rank-deficient preferred basis
+within the explicit column cap. The small matrices, source actions and anchor
+are immutable and share one admission lifetime. These cached TE actions belong
+to the source response equation; they are never passed off as target actions.
+
+Reports distinguish the small projected equation residual from the omitted
+full equation residual. Solving a rank-eight model accurately does not imply
+an accurate full response. Dense complete-complement and reused-tangent
+controls recover second-order subspace error in smooth TE/TM cases, including
+nonzero k and triangular cells. That mathematical order is separate from the
+profitability of a bounded production space.
+
+The model's anchor and products count against `max_cache_bytes`. If they do not
+fit, the latest accepted donor has priority. Bank eviction does not invalidate
+an already leased model. Model parameters live in `[bands.warm_start.model]`;
+these methods require at least one solved guard. Guard separation is a practical
+local check, not a proof that every lower mode was found.
+
+## Periodic shape transport (M8)
+
+The optional `[bands.warm_start.transport]` table registers the source geometry
+with the target before the ordinary correction. For the inverse map
+$y=\Phi^{-1}(x)=x+d(x)$, the periodic Bloch factor transforms as
+
+$$
+u_{\rm trial}(x)=e^{i k\cdot d(x)}u_0(x+d(x)).
+$$
+
+`jacobian = true` additionally multiplies by
+$\sqrt{\det D\Phi^{-1}(x)}$, preserving the continuous $L^2$ norm of a scalar
+pullback. It does not by itself preserve the target dielectric norm or the
+sampled-grid norm. The target constraints and Ritz normalization remain needed.
+This is an initializer for the unchanged target Maxwell pencil, not an exact
+coordinate transformation of that pencil.
+
+A rigid translation of the entire circular pattern uses Fourier phases and is
+exact for the represented periodic field; integer-grid shifts use a permutation.
+Subcell-shifted sampled material need not have identical spectra. For changing
+radii and relative positions, compact periodic inverse maps send each target
+circle interface onto its source interface. Their quintic transition annuli
+have disjoint support. A bound on the displacement derivative below one
+establishes global injectivity and a positive Jacobian. Large changes, overlapping
+supports and insufficient transition space are declined explicitly.
+
+Local maps use periodic cubic interpolation by default. `interpolation =
+"fourier"` evaluates the represented trigonometric field directly at mapped
+points. Its quadratic grid-point work is bounded by `max_interpolation_terms`;
+it is intended as a controlled comparison, not an inexpensive default. Rigid
+translation uses the exact phase path with either setting. Object order, lattice,
+grid and physical Bloch fiber must match. A material-only change has an identity
+shape map and keeps its ordinary initializer.
+
+With copying, the transported source supplies the trial. With another predictor,
+Blaze combines its prediction and the independently transported source in a
+bounded target Ritz space. Transporting an already predicted response would
+count first-order motion twice. All transported actions are recomputed on the
+target, and the final certificate still uses fresh actions on the stored fields.
+Map, interpolation, rank or budget failures retain the existing initializer.
+
 ## Scheduling and bounded ownership
 
 `scope = "gamma"` is the default. `anchors` includes Gamma and the exact
@@ -183,6 +266,28 @@ bank entry, then use bounded ordinary recovery. Cancellation releases contexts.
 Checkpoint files contain results, not native spectral state: a resumed process
 starts new cold chains for its remaining jobs.
 
+A minimal opt-in composition is:
+
+```toml
+[bands.warm_start]
+method = "reduced_response"
+scope = "path"
+guards = 2
+
+[bands.warm_start.model]
+basis = "residual"
+columns = 8
+max_reuses = 4
+
+[bands.warm_start.transport]
+interpolation = "cubic"
+jacobian = false
+```
+
+Keep the same final accuracy, worker count and requested outputs in the reference.
+This composition selects mechanisms for an experiment; it is not a profitability
+recommendation.
+
 ## Accuracy and precision
 
 Always request a final `bands.accuracy` contract for scientific comparisons.
@@ -195,7 +300,7 @@ does not imply a small relative frequency error.
 Explicit accuracy requests additionally qualify soft locks with fresh residuals
 before deflation in both precisions. An inaccurate locked vector reopens instead
 of disappearing from correction. Eigenvalue-change stopping alone did not ensure
-accurate fields in larger f64 TE sweeps either. All predictor methods passed a
+accurate fields in larger f64 TE sweeps either. The original M0–M6 predictor workflows passed a
 24² square/triangular TE/TM f32
 audit with fresh f64 actions, relative/absolute limits $5\cdot10^{-4}$ and
 $2\cdot10^{-3}$, and Gram limit $2\cdot10^{-5}$. The same request fails in parts
@@ -249,11 +354,53 @@ counts, costs and limitations; `validation/README.md` records Linux, Windows,
 Python, WASM and browser qualification. No later predictor is automatically
 enabled merely because its mathematical order is better.
 
-Additional persistent tangent/coarse-response spaces (M7) were declined at the
-entry gate because short response solves did not repay their work. This is not
-proof that every such space would fail. Shape registration and higher-order
-extensions (M8) remain optional research. The implemented M0–M6 ladder is fully
-available for controlled experiments within the compatibility contract above.
+The M0–M6 results above precede the M7/M8 extension. Both reusable response
+models and periodic shape transport are now implemented as explicit options.
+Their separate evidence archive is `benchmarks/geometry-warm-start/m7-m8`.
+The earlier entry-gate rejection remains a historical measurement, not a claim
+that these mechanisms are unavailable.
+
+## M7/M8 decision gate
+
+The extension has 74 numerically passing comparisons and 3,808 independently
+audited stored field blocks. Of 182 measured pairs, 166 pass the lenient host-load
+screen. f32, pure-contrast and follow-up training checks use one measured pair for qualification;
+the main timing comparisons use three. These are qualitative results, not precise
+hardware constants.
+
+- Reusable tangents preserve the expected local prediction order, but training
+  dominates the measured benefit. The 32² square Gamma sweeps are 1.53 times
+  slower in TE and 3.26 times slower in TM than native copying. Correction
+  rounds also increase slightly in these cases.
+- Reduced spaces are cheaper, but no tested rank or basis source establishes
+  a useful general speedup. A tiny projected-equation residual can coexist
+  with a large omitted full-equation residual. The target corrector still
+  enforces the same final accuracy.
+- Exact rigid transport on the 32² triangular TE path reduces correction rounds
+  by about 8% and total time by about 4%. This narrow result does not meet the
+  promotion threshold. Local deformation is approximately neutral there.
+  Close-neighbor square cases decline these conservative maps entirely. Wider
+  spacing admits local transport on both lattices, with another roughly 4%
+  triangular TE gain. Direct Fourier evaluation of local maps costs much more
+  than cubic interpolation.
+- In 64-geometry, eight-worker 48² square/triangular sweeps, combined reduced
+  response and cubic transport save 19–26% of correction rounds, but take
+  12–27% more total time and use about 52–55% more process RSS than the ordinary
+  workflow. Existing automatic symmetry remains substantially faster.
+
+The default 128-step tangent budget fails its training contract throughout the
+64² Gamma cases. A 512-step control admits all 22 TM targets; TE training then
+converges, but only 11 of 22 target predictions pass their residual gate. Total
+time remains worse. The default reduced Fourier space also declines all f32 TE
+radius trials, whereas the smaller contrast-step controls admit all 84 eligible
+TE targets on each lattice. Correct final outputs through fallback are therefore
+reported separately from successful model use.
+
+Both extensions remain opt-in. Their mathematical qualification does not justify
+automatic selection. The archive's `table.md` preserves every comparison,
+`summary.json` contains work and memory records, and `results.md` explains the
+profiles, constraints, failures and reproduction procedure. All final field
+acceptance checks remain enabled.
 
 ## Relation to prior work
 
