@@ -102,6 +102,9 @@ fn roundtrip<R: Real, B: SpectralBackend<Real = R, Buffer = Field2D<R>> + Clone>
     assert_eq!(snapshot.guard_count(), 4);
     assert!(snapshot.kernel().is_some());
     assert_eq!(snapshot.applied().unwrap().len(), 8);
+    let mut other_fiber=snapshot.key().clone();
+    other_fiber.coordinate_bits[6]=0.1_f64.to_bits();
+    assert!(snapshot.applied_for(&other_fiber).is_none());
     let mut target = op(backend, 2.1);
     let mut solver = Eigensolver::new(&mut target, config, None, None)
         .with_native_warm_start(snapshot.fields().to_vec());
@@ -207,4 +210,14 @@ fn rejected_and_oversized_targets_preserve_borrowed_gamma_donors() {
     let rejected = bank.insert(capture(&mut target, next, 2.1, true), Quality::default());
     assert!(!rejected.stored);
     assert!(rejected.reason.unwrap().contains("budget"));
+}
+
+#[test]
+fn signed_secants_reject_turns_reversals_and_unbounded_steps() {
+    use blaze2d_core::geometry_warm_start::predict::secant_ratio;
+    assert!((secant_ratio(&[0.1,2.],&[0.2,3.],&[0.25,3.5]).unwrap()-0.5).abs()<1e-12);
+    assert!(secant_ratio(&[0.1,2.],&[0.2,3.],&[0.1,2.]).is_none());
+    assert!(secant_ratio(&[0.1,2.],&[0.2,3.],&[0.3,3.]).is_none());
+    assert!(secant_ratio(&[0.1],&[0.2],&[0.6]).is_none());
+    assert!(secant_ratio(&[0.1],&[0.1],&[0.2]).is_none());
 }

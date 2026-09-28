@@ -694,38 +694,9 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         crate::profiler::count("operator_A.columns", 1);
         crate::profiler::count("operator_A.elements", self.grid.len());
 
-        copy_buffer(&mut self.scratch, input);
-        self.backend.forward_fft_2d(&mut self.scratch);
-
-        compute_gradients_from_potential(
-            self.scratch.as_slice(),
-            self.grad_x.as_mut_slice(),
-            self.grad_y.as_mut_slice(),
-            &self.k_plus_g_x,
-            &self.k_plus_g_y,
-        );
-
-        self.backend.inverse_fft_2d(&mut self.grad_x);
-        self.backend.inverse_fft_2d(&mut self.grad_y);
-
-        apply_inv_eps(
-            self.grad_x.as_mut_slice(),
-            self.grad_y.as_mut_slice(),
-            &self.dielectric,
-        );
-
-        self.backend.forward_fft_2d(&mut self.grad_x);
-        self.backend.forward_fft_2d(&mut self.grad_y);
-
-        assemble_divergence(
-            self.grad_x.as_slice(),
-            self.grad_y.as_slice(),
-            output.as_mut_slice(),
-            &self.k_plus_g_x,
-            &self.k_plus_g_y,
-        );
-
-        self.backend.inverse_fft_2d(output);
+        self.compute_spatial_gradients(input);
+        apply_inv_eps(self.grad_x.as_mut_slice(), self.grad_y.as_mut_slice(), &self.dielectric);
+        self.finish_flux(output);
 
         crate::profiler::stop_timer("apply_te");
     }
@@ -1459,45 +1430,46 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         output: &mut B::Buffer,
         diel_deriv: &DielectricDerivative,
     ) {
-        // Step 1: FFT input
-        copy_buffer(&mut self.scratch, input);
+        self.compute_spatial_gradients(input);
+        apply_dielectric_derivative(self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),diel_deriv);
+        self.finish_flux(output);
+    }
+
+    fn compute_spatial_gradients(&mut self,input:&B::Buffer) {
+        copy_buffer(&mut self.scratch,input);
         self.backend.forward_fft_2d(&mut self.scratch);
-
-        // Step 2: Compute gradients D u = i(k+G) û
-        compute_gradients_from_potential(
-            self.scratch.as_slice(),
-            self.grad_x.as_mut_slice(),
-            self.grad_y.as_mut_slice(),
-            &self.k_plus_g_x,
-            &self.k_plus_g_y,
-        );
-
-        // Step 3: IFFT gradients to spatial domain
+        compute_gradients_from_potential(self.scratch.as_slice(),self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),&self.k_plus_g_x,&self.k_plus_g_y);
         self.backend.inverse_fft_2d(&mut self.grad_x);
         self.backend.inverse_fft_2d(&mut self.grad_y);
+    }
 
-        // Step 4: Apply ∂ε⁻¹/∂Rⱼ (instead of ε⁻¹)
-        apply_dielectric_derivative(
-            self.grad_x.as_mut_slice(),
-            self.grad_y.as_mut_slice(),
-            diel_deriv,
-        );
-
-        // Step 5: FFT back to Fourier domain
+    fn finish_flux(&mut self,output:&mut B::Buffer) {
         self.backend.forward_fft_2d(&mut self.grad_x);
         self.backend.forward_fft_2d(&mut self.grad_y);
-
-        // Step 6: Assemble divergence (negated)
-        assemble_divergence(
-            self.grad_x.as_slice(),
-            self.grad_y.as_slice(),
-            output.as_mut_slice(),
-            &self.k_plus_g_x,
-            &self.k_plus_g_y,
-        );
-
-        // Step 7: IFFT
+        assemble_divergence(self.grad_x.as_slice(),self.grad_y.as_slice(),output.as_mut_slice(),&self.k_plus_g_x,&self.k_plus_g_y);
         self.backend.inverse_fft_2d(output);
+    }
+
+    /// Physical D(k) gradients of an unchanged basis, in native storage.
+    pub fn spatial_gradients(&mut self,input:&B::Buffer)->[B::Buffer;2] {
+        crate::profile_scope!("geometry.gradient_preparation");
+        crate::profiler::count("geometry.gradient_columns",1);
+        self.compute_spatial_gradients(input);
+        [self.grad_x.clone(),self.grad_y.clone()]
+    }
+
+    /// Exact coefficient-linear TE increment D(k)^* delta(eta) D(k).
+    /// Delta may be indefinite. It is not treated as a new positive material.
+    pub fn apply_inverse_coefficient_increment(&mut self,input:&B::Buffer,output:&mut B::Buffer,
+        scalar:&[f64],tensors:Option<&[[f64;4]]>) {
+        assert_eq!(self.polarization,Polarization::TE);
+        assert_eq!(scalar.len(),self.grid.len());
+        if let Some(t)=tensors {assert_eq!(t.len(),self.grid.len());}
+        crate::profile_scope!("geometry.coefficient_action");
+        crate::profiler::count("geometry.delta_A.columns",1);
+        self.compute_spatial_gradients(input);
+        apply_inverse_coefficients(self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),scalar,tensors);
+        self.finish_flux(output);
     }
 
     // ---- TM derivative implementations ----
@@ -1857,7 +1829,12 @@ fn apply_inv_eps<R: Real>(
     grad_y: &mut [Complex<R>],
     dielectric: &Dielectric2D,
 ) {
-    if let Some(tensors) = dielectric.inv_eps_tensors() {
+    apply_inverse_coefficients(grad_x,grad_y,dielectric.inv_eps(),dielectric.inv_eps_tensors());
+}
+
+fn apply_inverse_coefficients<R:Real>(grad_x:&mut [Complex<R>],grad_y:&mut [Complex<R>],
+    scalar:&[f64],tensors:Option<&[[f64;4]]>) {
+    if let Some(tensors) = tensors {
         for ((gx, gy), tensor) in grad_x.iter_mut().zip(grad_y.iter_mut()).zip(tensors.iter()) {
             let orig_x = *gx;
             let orig_y = *gy;
@@ -1872,7 +1849,7 @@ fn apply_inv_eps<R: Real>(
         for ((gx, gy), &inv) in grad_x
             .iter_mut()
             .zip(grad_y.iter_mut())
-            .zip(dielectric.inv_eps().iter())
+            .zip(scalar.iter())
         {
             let s = R::from_accum(inv);
             *gx *= s;
@@ -1955,30 +1932,7 @@ fn apply_dielectric_derivative<R: Real>(
     grad_y: &mut [Complex<R>],
     diel_deriv: &DielectricDerivative,
 ) {
-    if let Some(ref d_tensors) = diel_deriv.d_inv_eps_tensors {
-        // Anisotropic: multiply by ∂ε⁻¹/∂Rⱼ tensor (2×2 matrix per grid point)
-        for ((gx, gy), tensor) in grad_x.iter_mut().zip(grad_y.iter_mut()).zip(d_tensors.iter()) {
-            let orig_x = *gx;
-            let orig_y = *gy;
-            let t0 = R::from_accum(tensor[0]);
-            let t1 = R::from_accum(tensor[1]);
-            let t2 = R::from_accum(tensor[2]);
-            let t3 = R::from_accum(tensor[3]);
-            *gx = orig_x * t0 + orig_y * t1;
-            *gy = orig_x * t2 + orig_y * t3;
-        }
-    } else {
-        // Isotropic: multiply by scalar ∂(1/ε)/∂Rⱼ
-        for ((gx, gy), &d_inv) in grad_x
-            .iter_mut()
-            .zip(grad_y.iter_mut())
-            .zip(diel_deriv.d_inv_eps.iter())
-        {
-            let s = R::from_accum(d_inv);
-            *gx *= s;
-            *gy *= s;
-        }
-    }
+    apply_inverse_coefficients(grad_x,grad_y,&diel_deriv.d_inv_eps,diel_deriv.d_inv_eps_tensors.as_deref());
 }
 
 // ============================================================================

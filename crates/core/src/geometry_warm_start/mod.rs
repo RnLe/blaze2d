@@ -3,3 +3,6 @@
 pub mod cache;
 pub mod snapshot;
 pub mod point;
+pub mod predict;
+pub mod difference;
+pub mod projected;

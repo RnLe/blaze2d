@@ -143,6 +143,7 @@ pub struct NativeSnapshot<R: Real> {
 }
 
 impl<R: Real> NativeSnapshot<R> {
+    pub(crate) fn shared_fields(&self)->Arc<[Field2D<R>]> {self.fields.clone()}
     pub fn fields(&self) -> &[Field2D<R>] {
         &self.fields
     }

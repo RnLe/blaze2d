@@ -160,6 +160,9 @@ impl Config {
                     if warm.guards>32 || warm.history==0 || warm.history>8 || warm.max_cache_bytes==0 {
                         return Err(invalid("bands.warm_start", "use 0..32 guards, 1..8 history blocks and a positive cache budget"));
                     }
+                    if warm.max_preparation_bytes==0 || warm.max_predictor_columns>512 {
+                        return Err(invalid("bands.warm_start", "use a positive predictor workspace budget and at most 512 explicit predictor columns"));
+                    }
                     if check_dimensions && bands.count.checked_add(warm.guards).is_none_or(|n|n>=grid_size) {
                         return Err(invalid("bands.warm_start.guards", "requested bands and guards must fit strictly inside the grid dimension"));
                     }

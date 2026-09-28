@@ -192,12 +192,14 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
     assert!(reference.errors.is_empty(),"{:?}",reference.errors);
     c.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {scope:GeometryScope::Path,
         guards:2,max_cache_bytes:256*1024,..Default::default()});
-    for threads in [1,2] {
-        c.bands.as_mut().unwrap().warm_start.as_mut().unwrap().retain_tm_actions=threads==2;
+    for (method,threads) in [(GeometryMethod::Copy,1),(GeometryMethod::Copy,2),(GeometryMethod::Metric,1),(GeometryMethod::Secant,1),(GeometryMethod::History,1)] {
+        let warm=c.bands.as_mut().unwrap().warm_start.as_mut().unwrap();
+        warm.method=method;warm.retain_tm_actions=threads==2;
         let candidate=blaze2d_runner::collect(Plan::new(c.clone(),Platform::Native).unwrap(),
             Options {threads,..Default::default()}).unwrap();
         assert!(candidate.errors.is_empty(),"{:?}",candidate.errors);
         let mut seeds=0;
+        let mut advanced=0;
         for (a,b) in reference.results.iter().zip(&candidate.results) {
             assert_eq!(a.job_index,b.job_index);
             assert_eq!(b.arrays["eigenvectors"].shape,vec![3,4,9,9]);
@@ -206,6 +208,7 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
             }
             for point in b.metadata["geometry_warm_start"]["points"].as_array().unwrap() {
                 seeds+=usize::from(!point["source"].is_null());
+                if point["prediction"].is_object() && point["prediction"]["fallback"].is_null() {advanced+=1;}
                 if threads==2 && !point["source"].is_null() {
                     assert!(point["tm_actions_reused"].as_u64().unwrap()>0);
                 }
@@ -214,6 +217,7 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
             }
         }
         assert!(seeds>0);
+        if method!=GeometryMethod::Copy {assert!(advanced>0,"{method:?} never admitted a prediction");}
     }
     let resumed=blaze2d_runner::collect(Plan::new(c,Platform::Native).unwrap(),
         Options {threads:1,completed_jobs:vec![0,1],..Default::default()}).unwrap();

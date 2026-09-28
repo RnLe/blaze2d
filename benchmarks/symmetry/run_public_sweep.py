@@ -82,7 +82,7 @@ values = {radii}
 '''
 
 
-def inspect(study):
+def inspect(study, expected_jobs=6):
     errors = []
     work = dict(iterations=0, seeded_points=0, exact_geometry_hits=0,
                 reused_points=0, continuation_fallbacks=0, max_cache_bytes=0,
@@ -91,7 +91,7 @@ def inspect(study):
     spectra = []
     if study['errors'] or study['statistics']['status'] != 'completed':
         errors.append('incomplete study')
-    if [r['job_index'] for r in study['results']] != list(range(6)):
+    if [r['job_index'] for r in study['results']] != list(range(expected_jobs)):
         errors.append('missing or reordered jobs')
     for result in study['results']:
         arrays, metadata = result['arrays'], result['metadata']
@@ -157,7 +157,7 @@ def execute(args, host, variant, name):
                   host=assess(before, after, limit=2.0, windows_limit=4.0),
                   resources=json.loads(next(line for line in reversed(rss.read_text().splitlines()) if line.startswith('{'))))
     try:
-        record['validation'] = inspect(json.loads(output.read_text()))
+        record['validation'] = inspect(json.loads(output.read_text()), expected_jobs=getattr(args,'expected_jobs',6))
     except (ValueError, KeyError, TypeError) as error:
         record['validation'] = dict(errors=[str(error)])
     data = output.read_bytes()

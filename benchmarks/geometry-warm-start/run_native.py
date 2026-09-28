@@ -41,32 +41,40 @@ def main():
     parser.add_argument('--threads',type=int,default=2)
     parser.add_argument('--filter',default='')
     parser.add_argument('--actions',action='store_true')
+    parser.add_argument('--ablation',choices=['copy','actions','block','predictors'],default='copy')
     args=parser.parse_args()
     args.reference=args.reference.resolve();args.candidate=args.candidate.resolve()
     rng=random.Random(2026092805)
     for size in [32,64]:
       for pol in ['TM','TE']:
-       for control in ['public','guarded']:
+       for control in (['public','guarded'] if args.ablation=='copy' else ['metric','secant','history'] if args.ablation=='predictors' else [args.ablation]):
         name=f'square-{pol}-{size}-gamma-{control}'
         if args.filter not in name: continue
         out=args.output/name
         if (out/'summary.json').exists(): continue
         out.mkdir(parents=True,exist_ok=False)
         base=(ROOT/f'benchmarks/geometry-warm-start/baseline/public/square-{pol}-gamma-copy/reference.toml').read_text().replace('resolution = 32',f'resolution = {size}')
+        if args.ablation=='predictors':
+            base=base.replace('values = [0.18, 0.2, 0.22]', 'values = ['+', '.join(f'{0.18+0.002*i:.3f}' for i in range(12))+']')
+            base=base.replace('[eigensolver]','[eigensolver]\nblock_size = 10')
         for variant in ['reference','candidate']:
             text=base
-            if variant=='candidate' or control=='guarded':
-                method='copy' if variant=='candidate' else 'cold'
-                text+=f'\n[bands.warm_start]\nmethod = "{method}"\nguards = 2\nretain_tm_actions = {str(args.actions).lower()}\n'
+            if variant=='candidate' or control=='guarded' or args.ablation!='copy':
+                method='copy' if variant=='candidate' or args.ablation!='copy' else 'cold'
+                if args.ablation=='predictors':method=control if variant=='candidate' else 'copy'
+                actions=args.actions or (args.ablation=='actions' and variant=='candidate')
+                text+=f'\n[bands.warm_start]\nmethod = "{method}"\nguards = 2\nretain_tm_actions = {str(actions).lower()}\n'
+            if args.ablation=='block' and variant=='candidate':
+                text=text.replace('[eigensolver]','[eigensolver]\nblock_size = 10')
             (out/f'{variant}.toml').write_text(text)
-        cfg=SimpleNamespace(reference=args.candidate if control=='guarded' else args.reference,
-            candidate=args.candidate,output=out,threads=args.threads,fields=False)
+        cfg=SimpleNamespace(reference=args.candidate if control!='public' else args.reference,
+            candidate=args.candidate,output=out,threads=args.threads,fields=False,expected_jobs=24 if args.ablation=='predictors' else 6)
         (out/'manifest.json').write_text(json.dumps({
             'source_revision':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
             'binaries':{v:{'path':str(getattr(cfg,v)),'sha256':hashlib.sha256(getattr(cfg,v).read_bytes()).hexdigest()} for v in ['reference','candidate']},
             'inputs':{v:hashlib.sha256((out/f'{v}.toml').read_bytes()).hexdigest() for v in ['reference','candidate']},
             'collector_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            'threads':args.threads,'pairs':args.pairs,'warmups':1,'protocol':'benchmarks/geometry-warm-start/plan.md',
+            'threads':args.threads,'expected_jobs':cfg.expected_jobs,'pairs':args.pairs,'warmups':1,'protocol':'benchmarks/geometry-warm-start/plan.md',
             'scope':'public control measures guard and certificate overhead; guarded control holds explicit solve-window size fixed'},indent=2)+'\n')
         blocks=[]
         with QuietHost() as host:

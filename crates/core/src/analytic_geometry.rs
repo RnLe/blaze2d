@@ -1,6 +1,6 @@
 //! Analytic geometry utilities for MPB-style subpixel smoothing.
 //!
-//! This module provides exact geometric computations for interface smoothing,
+//! This module provides geometric classification and partial-cell sampling for smoothing,
 //! replacing the approximate sub-grid sampling approach with analytically correct
 //! filling fractions and interface normals.
 //!
@@ -23,7 +23,9 @@
 //! # Supported Geometries
 //!
 //! Currently implemented:
-//! - **Circle**: Exact circle-rectangle intersection using geometric formulas
+//! - **Circle**: Geometric trivial cases and 16-by-16 sampling of partial rectangles.
+//!   Filling fractions are quantized; this legacy mode is not differentiable
+//!   across sampling events. Voronoi smoothing uses exact cell intersections.
 //!
 //! Future geometries (with implementation notes):
 //! - **Rectangle**: Polygon clipping (Sutherland-Hodgman)
@@ -166,16 +168,16 @@ impl AnalyticShape for Circle {
     }
 }
 
-/// Compute the exact intersection of a circle with an axis-aligned rectangle.
+/// Compute the legacy circle intersection with an axis-aligned rectangle.
 ///
-/// This uses the analytic formula for circle-rectangle intersection area
-/// and computes the interface normal as the direction from circle center
-/// to the centroid of the intersection region.
+/// Trivial cases are geometric; partial areas use fixed 16-by-16 sampling.
+/// The interface normal is radial at the pixel center. Small shape steps can
+/// therefore leave the fill fraction unchanged or cross a sampling event.
 ///
 /// # Algorithm
 ///
 /// 1. Check trivial cases: circle fully inside, fully outside, or rectangle fully inside circle
-/// 2. For partial intersections, use the circular segment formula
+/// 2. For partial intersections, use fixed subcell sampling
 /// 3. Handle corner cases where circle intersects at rectangle corners
 ///
 /// The area of a circular segment with central angle θ is:

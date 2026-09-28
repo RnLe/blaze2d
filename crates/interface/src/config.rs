@@ -453,16 +453,19 @@ pub struct GeometryWarmStart {
     pub scope: GeometryScope,
     pub guards: usize,
     pub history: usize,
+    /// Zero selects twice the retained positive window.
+    pub max_predictor_columns: usize,
+    pub max_preparation_bytes: usize,
     pub max_cache_bytes: usize,
     pub retain_tm_actions: bool,
 }
 impl Default for GeometryWarmStart {
     fn default() -> Self { Self { method: GeometryMethod::Copy, scope: GeometryScope::Gamma,
-        guards: 2, history: 2, max_cache_bytes: 64*1024*1024, retain_tm_actions: false } }
+        guards: 2, history: 2, max_predictor_columns: 0, max_preparation_bytes: 64*1024*1024, max_cache_bytes: 64*1024*1024, retain_tm_actions: false } }
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
-pub enum GeometryMethod { Cold, Copy }
+pub enum GeometryMethod { Cold, Copy, Metric, Secant, History }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
 pub enum GeometryScope { Gamma, Path }

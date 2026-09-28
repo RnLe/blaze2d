@@ -2,10 +2,11 @@
 //!
 //! This module provides two smoothing modes:
 //! - **Subgrid sampling**: Uses numerical integration over a sub-grid
-//! - **Analytic geometry** (default): Uses exact geometric formulas for known shapes (circles)
+//! - **Analytic geometry** (default): Uses geometric circle classification,
+//!   fixed 16-by-16 partial-cell sampling and radial interface normals.
 //!
 //! The analytic mode provides more accurate results at material interfaces by
-//! computing exact filling fractions and interface normals, following the MPB/Meep
+//! estimating filling fractions and interface normals for the MPB/Meep
 //! approach described in Farjadpour et al., Optics Letters 31, 2972 (2006).
 //!
 //! # Grid Sampling Convention
@@ -29,7 +30,8 @@ pub enum SmoothingMethod {
     /// Numerical subgrid sampling (original method)
     Subgrid,
     /// Analytic geometry-aware smoothing (MPB-style)
-    /// Uses exact filling fractions and interface normals for circles.
+    /// Uses geometric classification, 16-by-16 partial-cell sampling and radial
+    /// interface normals for circles. Filling fractions are quantized.
     #[default]
     Analytic,
     /// Exact circle intersections with the sampling lattice's Voronoi cell.
@@ -470,13 +472,13 @@ fn build_smoothed_dielectric_subgrid(
 
 /// Build smoothed dielectric using analytic geometry calculations.
 ///
-/// This method computes exact filling fractions and interface normals for
+/// This legacy method estimates filling fractions and interface normals for
 /// circles (BasisAtoms), providing more accurate results at material interfaces.
 ///
 /// For each pixel, we:
 /// 1. Check if any atom (circle) intersects the pixel
-/// 2. Use exact circle-rectangle intersection formulas for filling fraction
-/// 3. Compute the exact interface normal from the geometry
+/// 2. Use geometric trivial cases and fixed sampling of partial rectangles
+/// 3. Approximate the interface normal by the radial direction at the pixel center
 /// 4. Apply the MPB smoothing formula: ε̃⁻¹ = P⟨ε⁻¹⟩ + (1-P)⟨ε⟩⁻¹
 fn build_smoothed_dielectric_analytic(
     geom: &Geometry2D,

@@ -364,7 +364,7 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             if cfg.block_size>0 {cfg.block_size=cfg.block_size.max(cfg.n_bands);}
             // Conservative worker reserve: full cache, one leased cache and one
             // guarded solve. This overcounts the baseline solver already modeled.
-            extra+=2*warm.max_cache_bytes as u128+memory::worker_payload(rows,cfg.effective_block_size(),0).map_err(error)? as u128;
+            extra+=2*warm.max_cache_bytes as u128+warm.max_preparation_bytes as u128+memory::worker_payload(rows,cfg.effective_block_size(),0).map_err(error)? as u128;
         }
         if b.symmetry.continuation != ContinuationPolicy::Off && b.symmetry.max_continuation_bytes > 0 {
             extra += b.symmetry.max_continuation_bytes as u128 + 4 * entry as u128;
