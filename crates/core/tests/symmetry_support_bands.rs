@@ -510,6 +510,7 @@ fn projected_pt_star_reuse_coarse_and_geometry_chains_match_dense_spectra() {
             continuation.job_index = index; j.geom.atoms[0].radius = radius;
             support_bands::run_with_continuation(CpuBackend::<f64>::new(),&j,o.clone(),selected(),Some(&mut continuation),|point| {
                 assert!(point.converged);
+                assert_eq!(point.symmetry.attempted_iterations, point.symmetry.solver_attempts.iter().map(|a|a.iterations).sum::<usize>());
                 seeds += usize::from(point.symmetry.continuation.as_ref().and_then(|r|r.seed.as_ref()).is_some());
                 reuses += usize::from(point.symmetry.source_index.is_some());
                 coarse += usize::from(point.symmetry.coarse_start.as_ref().is_some_and(|r|r.used_as_seed));

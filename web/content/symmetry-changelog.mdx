@@ -50,7 +50,88 @@ not assert that every listed mistake occurred in the pinned baseline.
 The K correction changes the physical path, so it receives a corrected baseline
 and is never counted as an optimization speedup.
 
-## Results and their scope
+## Public parameter sweeps
+
+The public runner now carries bounded certified continuation across full paths
+and changing geometries, with private worker caches and deterministic geometry
+chains. Original job IDs, output order and requested physical fields are
+preserved. `bands.symmetry.policy = "auto"` adds a measured, versioned native
+policy; the manual policy remains the default.
+
+These complete CLI measurements use six **unique** radius/contrast combinations,
+held-out radii 0.175/0.215/0.255 and dielectric constants 6.5/13, native f64,
+tolerance 1e-14 and four workers. The 64² cases request 16 bands on a 16-point
+closed path. They compare the original rectangle workflow at `3990221` with
+automatic PT plus certified identical-point reuse, including process startup,
+planning and JSON output. Each row has nine admitted randomized pairs, matching
+spectra and fresh certificate/output checks. Linux raw and Windows QPC clocks
+agree. Host checks permit light use; they do not reserve the machine.
+
+| Public rectangle sweep | Reference / automatic time | Total iterations | Median peak RSS |
+|---|---:|---:|---:|
+| Square TM, 64² | 2.25× [2.23, 2.28] | 1790 → 1524 | 185.2 → 101.8 MiB |
+| Square TE, 64² | 2.05× [2.03, 2.06] | 3600 → 3101 | 192.3 → 102.7 MiB |
+| Triangular TM, 64² | 2.43× [2.40, 2.46] | 1915 → 1346 | 183.0 → 101.1 MiB |
+| Triangular TE, 64² | 2.09× [2.07, 2.11] | 3758 → 3056 | 189.7 → 102.5 MiB |
+
+The intervals are paired bootstrap 95% intervals for reference/candidate time.
+Full complex field output was separately requested at 32², eight bands and ten
+path points: square TE reached **1.52×**, triangular TE **1.54×**. The smaller
+32² calibration sweeps with two workers reached about 1.45–1.54× for both
+polarizations. These are fixture-specific gains, not multiplied microbenchmarks
+or a guarantee for arbitrary motifs, paths, outputs or worker counts.
+
+For the separately chosen triangular Voronoi material and metric support,
+automatic PT plus identical-point reuse reaches **1.64× TM** and **1.54× TE**
+at 64², 16 bands, cutoff R=28 and four workers. The reference uses exactly the
+same material and support with complex Fourier arithmetic. At 32²/R=14, full
+TE field output gives **1.22×**. These comparisons do not count a smaller
+Fourier support as an unchanged-physics speedup.
+The [public workflow data](/data/symmetry-public-sweeps.json) identifies each
+comparison, revision, admitted/excluded blocks, time interval, iterations and
+RSS. The repository report is `benchmarks/symmetry/public-sweep-completion.md`.
+
+### Negative results govern the automatic policy
+
+Full-path geometry seeds were about 5% slower than matched controls. First-point
+TM seeds triggered five rejected PT attempts and required ordinary fallback,
+taking about **2.80 times** the control time. First-point TE reduced iterations
+slightly but did not produce a useful time saving. The triangular sector plus
+coarse/geometry combination also regressed, despite matching spectra: the
+held-out four-worker full-field case took **40% more time**, with total iterations
+increasing from 1904 to 5098 (including 376 coarse iterations). Along
+these high-symmetry path segments, complex group sectors take precedence; merely
+requesting PT does not mean PT executed inside those complex sectors.
+
+Automatic selection therefore keeps geometry continuation, coarse starts and
+sectors off in its calibrated native envelope. They remain available explicitly.
+Each decision reports reasons and numerical fallbacks. A correctness certificate
+does not establish profitability. Packed columns halve scalar storage, but output
+and scratch costs remain; RSS and FFT counters are not DRAM-bandwidth measurements.
+
+### Triangular TE qualification
+
+Voronoi-cell material averaging restores C6 covariance of the sampled scalar
+and inverse-tensor data for the supported disks. Complete small-matrix defects
+are around floating-point roundoff; the original analytic smoother's defects
+remain visible. Independent source/support checks still authorize each action.
+
+The new convergence series varies material sampling and cutoff independently.
+At Gamma, the maximum scaled frequency difference from a separately certified
+same-grid full rectangle decreases from 0.00702 at 33²/R=14 to 0.00214 at
+65²/R=28 and 0.00118 at 129²/R=56. It still misses the declared 0.001 target.
+A separate edge-cutoff follow-up at 129²/R=64 passes that target at Gamma and K,
+with differences 0.000583 and 0.000600 and guarded-subspace sine errors below
+0.00181. This is finite-reference agreement, not a continuum error bound.
+At the generic point, six corrective iterations at the original tolerance
+bring the independent reference through its residual gate. The R=64 comparison
+then has scaled frequency error 0.000561 and guarded-subspace sine 0.00232.
+All three points pass the stated finite-reference targets. Sampling changes
+also decrease along the refinement sequence; this does not establish a continuum
+error bound. All initial failures and unsuccessful over-tight stopping
+experiments remain in the record.
+
+## Earlier mechanism measurements and their scope
 
 The replacement measurements use frozen executables and inputs, randomized
 paired runs, independent Linux raw and Windows QPC clocks, and numerical checks
@@ -68,7 +149,7 @@ under WSL2, not a general performance guarantee. The
 [machine-readable benchmark record](/data/symmetry-benchmarks.json) carries the
 comparison identities, intervals, both timing estimates, memory measurements
 and excluded results.
-All 263 declared comparisons are addressed: 214 have usable timing estimates,
+The earlier 263 declared mechanism comparisons are addressed: 214 have usable timing estimates,
 13 fail accuracy or requested-path checks, nine retain excluded timing, and
 27 are diagnostic-only profiled comparisons. One of the failed comparisons is
 also instrumented; none of the instrumented runs supplies a primary speed claim.
@@ -103,7 +184,7 @@ justify enabling every reduction together. An iteration on a coarse grid is
 not equal in cost to one on a fine grid. RSS measures resident process memory;
 FFT element counts and modeled payloads do not measure DRAM bandwidth or energy.
 
-The corrected support-convergence study also reproduces exactly. All 184
+The earlier corrected support-convergence study also reproduces exactly. All 184
 uninstrumented conditions pass their projected solver checks, but only 33 meet
 the separate approximation target against the full rectangle, and all 33 are
 TM. Smaller support changes the finite pencil; it is not automatically an
@@ -127,6 +208,14 @@ the path and records the correction. The acceptance tolerance was unchanged.
 On the portable backend, a failed PT continuation can fall back to certified
 spatial arithmetic, with discarded work included in the total.
 
+**Public profile publication.** Automatic scoped-worker completion could
+precede publication from thread-local destructors, omitting entire workers from
+the exported profile while numerical results were complete. Explicitly joining
+every worker before the terminal event fixes the race. Replacement profiles
+require their iteration counter to equal the independent result ledger. Initial
+incomplete profiles are retained as invalid work evidence; uninstrumented
+primary timings are separate.
+
 **Profiling semantics.** Nested inclusive times cannot be added into a cost
 breakdown. The profiler now distinguishes inclusive/exclusive timing and work
 counters. Frozen trial-matrix tests and the actual shared iteration engine are
@@ -149,14 +238,18 @@ Composition still depends on the material, finite support and representation.
 An unsupported real sector keeps complex coordinates where the workflow permits
 it; invalid configuration combinations produce an error.
 
-The public reciprocal-metric support currently requires f64 complex arithmetic,
-geometry sampling and supplied path order. PT, star reuse and coarse starts on
-that separate pencil are not implemented combinations. Cell-corner spatial
-sampling is supported; unsupported cell-centered action plans are rejected.
+The public reciprocal-metric support accepts f64 geometry sampling, PT,
+star/time-reversal reuse, coarse starts and bounded cross-geometry continuation.
+It retains supplied path order. Complex group sectors and the unrestricted PT
+path are selected separately; packing a general complex irrep as real is not
+claimed. Voronoi-cell smoothing supplies a separately selected C6-compatible
+material for nonoverlapping periodic disks. Existing analytic smoothing keeps
+its original values and observable qualification failures.
 No GPU backend or general magnetic corepresentation implementation is claimed.
 
-Later research mechanisms have Rust APIs and frozen experiments. Their presence
-does not imply automatic high-level scheduling in the browser or Python.
+Later research mechanisms have Rust APIs and frozen experiments. Response and precision experiments remain explicit research choices. Certified
+continuation now runs through native/Python sweeps and serial browser calculation
+objects; automatic policy promotion additionally requires public timing evidence.
 Native/portable tests, actual WASM execution, Python/CLI checks and three-browser
 checks cover the shared public workflows. Legacy parent/candidate comparisons
 also check full numerical outputs. Independent physical audits distinguish

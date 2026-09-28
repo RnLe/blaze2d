@@ -3,8 +3,8 @@
 use blaze2d_backend_cpu::CpuBackend;
 use blaze2d_core::{
     dielectric::{Dielectric2D, DielectricOptions},
-    drivers::single_solve::{SingleSolveJob, solve},
-    eigensolver::{EigensolverConfig, refine::certify_without_refinement},
+    drivers::single_solve::{solve, SingleSolveJob},
+    eigensolver::{refine::certify_without_refinement, EigensolverConfig},
     geometry::{BasisAtom, Geometry2D},
     grid::Grid2D,
     lattice::Lattice2D,
@@ -13,8 +13,8 @@ use blaze2d_core::{
     symmetry::{
         affine::PlaneGroup,
         galerkin::{
-            GalerkinApplication as Application, GalerkinOperator, dense_pencil, solve_dense,
-            solve_iterative,
+            dense_pencil, solve_dense, solve_iterative, GalerkinApplication as Application,
+            GalerkinOperator,
         },
         support::{CoefficientAction, FourierSupport},
     },
@@ -134,7 +134,10 @@ fn main() {
             lattice,
             k,
             std::f64::consts::TAU * cutoff,
-            blaze2d_core::symmetry::support::SupportBudget { max_coefficients: 32768, ..Default::default() },
+            blaze2d_core::symmetry::support::SupportBudget {
+                max_coefficients: 32768,
+                ..Default::default()
+            },
         )
         .unwrap();
         let result = match method {
@@ -194,7 +197,10 @@ fn main() {
             lattice,
             k,
             std::f64::consts::TAU * cutoff,
-            blaze2d_core::symmetry::support::SupportBudget { max_coefficients: 32768, ..Default::default() },
+            blaze2d_core::symmetry::support::SupportBudget {
+                max_coefficients: 32768,
+                ..Default::default()
+            },
         )
         .unwrap();
         let d = Dielectric2D::from_geometry(&geom, grid, &options);
@@ -252,34 +258,71 @@ fn main() {
         );
         let mut p = full.build_homogeneous_preconditioner_adaptive();
         let reference_bands = bands.saturating_add(8).min(grid.len());
-        let reference = solve(
+        let mut reference = solve(
             &mut full,
             Some(&mut p),
             &SingleSolveJob::new(reference_bands)
                 .with_tolerance(tolerance)
                 .with_max_iterations(1000),
         );
-        let cert =
+        let mut cert =
             certify_without_refinement(&mut full, &reference.eigenvalues, &reference.eigenvectors);
-        let accepted = reference.converged
-            && reference.eigenvalues.len() == reference_bands
-            && reference.eigenvectors.len() == reference_bands
-            && cert.b_orthogonality_defect.is_finite()
-            && cert.b_orthogonality_defect <= 1e-8
-            && cert
-                .residuals
-                .iter()
-                .zip(&cert.absolute_residuals)
-                .enumerate()
-                .all(|(j, (&r, &a))| {
-                    r.is_finite()
-                        && a.is_finite()
-                        && if k == [0.0; 2] && j == 0 {
-                            a <= 1e-7
-                        } else {
-                            r <= 1e-5
-                        }
-                });
+        let passes = |reference: &blaze2d_core::drivers::single_solve::SingleSolveResult,
+                      cert: &blaze2d_core::eigensolver::BlockCertification| {
+            reference.converged
+                && reference.eigenvalues.len() == reference_bands
+                && reference.eigenvectors.len() == reference_bands
+                && cert.b_orthogonality_defect.is_finite()
+                && cert.b_orthogonality_defect <= 1e-8
+                && cert
+                    .residuals
+                    .iter()
+                    .zip(&cert.absolute_residuals)
+                    .enumerate()
+                    .all(|(j, (&r, &a))| {
+                        r.is_finite()
+                            && a.is_finite()
+                            && if k == [0.0; 2] && j == 0 {
+                                a <= 1e-7
+                            } else {
+                                r <= 1e-5
+                            }
+                    })
+        };
+        let mut accepted = passes(&reference, &cert);
+        let mut attempts = vec![
+            json!({"iterations":reference.iterations,"solver_converged":reference.converged,
+            "accepted":accepted,"residuals":cert.residuals,"absolute_residuals":cert.absolute_residuals}),
+        ];
+        if get(11, "no-repair") == "repair-reference" && !accepted {
+            // Correct only the reference, on the same sampled pencil and at
+            // the same stopping tolerance. Retain the rejected attempt's work.
+            for _ in 0..2 {
+                reference = blaze2d_core::drivers::single_solve::solve_with_warmstart(
+                    &mut full,
+                    Some(&mut p),
+                    &SingleSolveJob::new(reference_bands)
+                        .with_tolerance(tolerance)
+                        .with_max_iterations(200),
+                    &reference.eigenvectors,
+                );
+                cert = certify_without_refinement(
+                    &mut full,
+                    &reference.eigenvalues,
+                    &reference.eigenvectors,
+                );
+                accepted = passes(&reference, &cert);
+                attempts.push(json!({"iterations":reference.iterations,"solver_converged":reference.converged,
+                    "accepted":accepted,"residuals":cert.residuals,"absolute_residuals":cert.absolute_residuals}));
+                if accepted {
+                    break;
+                }
+            }
+        }
+        let total_iterations: u64 = attempts
+            .iter()
+            .map(|a| a["iterations"].as_u64().unwrap())
+            .sum();
         let reference_spectrum = &reference.eigenvalues;
         let frequency_errors: Vec<_> = spectrum
             .iter()
@@ -339,7 +382,7 @@ fn main() {
         } else {
             serde_json::Value::Null
         };
-        json!({"accepted":accepted,"bands":reference_bands,"iterations":reference.iterations,"spectrum":reference_spectrum,
+        json!({"accepted":accepted,"bands":reference_bands,"iterations":total_iterations,"attempts":attempts,"spectrum":reference_spectrum,
             "residuals":cert.residuals,"absolute_residuals":cert.absolute_residuals,"b_orthogonality_defect":cert.b_orthogonality_defect,
             "scaled_frequency_errors":frequency_errors,"angular_gap_absolute_errors":gap_errors,"field_subspace":subspace,
             "scope":"supplementary same-grid/material full-rectangle solve, outside candidate clock and counters"})

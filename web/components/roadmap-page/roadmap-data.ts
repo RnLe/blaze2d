@@ -16,12 +16,12 @@ export const modules = {
   },
   symmetries: {
     title: 'Symmetries', anchor: 'symmetries',
-    description: 'Qualified reuse, sectors and real or reduced coordinates.', status: 'Done',
+    description: 'Qualified reuse, real or reduced coordinates, and measured automatic selection.', status: 'Done',
     motivation: 'Avoid solving equivalent problems and reduce eligible mode spaces. Using the crystal’s symmetry can save computation before adding new hardware or dimensions.',
   },
   warm: {
     title: 'Configuration warm starts', anchor: 'configuration-warm-starts',
-    description: 'Measure geometry predictors and bounded continuation policies.', status: 'In Development',
+    description: 'Certified geometry continuation in public sweeps with bounded worker caches.', status: 'Done',
     motivation: '',
   },
   evidence: {

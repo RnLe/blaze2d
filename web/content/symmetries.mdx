@@ -245,36 +245,95 @@ control is the unrestricted problem on the same support. A passing projected
 residual does not prove convergence to the rectangular problem or the continuum;
 resolution and material-sampling convergence remain separate checks.
 
-The public metric-support workflow currently requires f64 complex arithmetic,
-geometry-sampled material and supplied path order. PT, star reuse and coarse
-starts on that support are rejected combinations. Choosing raw material sampling
-also changes the discretization: it cannot silently repair a smoother that
-breaks the desired tensor covariance.
+The public metric-support workflow accepts f64 geometry-sampled material,
+qualified PT, star/time-reversal reuse, target-metric seeds and coarse starts.
+It keeps the supplied path order. A projected cache includes the exact support
+identity and a projected certificate; it cannot authorize reuse on the original
+rectangle. Group sectors retain complex coefficients. At a trivial little group,
+or after sector rejection, the unrestricted support can use qualified PT.
 
-## Continuation and the later research tracks
+### Symmetry-compatible material averages
 
-The implementation also includes snapshot enrichment across geometries,
-projected geometry-response solves, symmetry selection rules for those responses,
-coarse-grid initialization, precision experiments, bounded sector workers and
-parameter-chain scheduling. These have Rust research APIs and executable
-experiments; they are not all high-level browser policies.
+Select `dielectric.smoothing = "voronoi"` to average over the sampling lattice's
+Wigner–Seitz cells. For a disk $D$ and a cell $V_i$, its exact area fraction is
+$f_i=|D\cap V_i|/|V_i|$. Blaze computes both
 
-Their cost includes preparation and failed work. Response solves can create a
-better initial field while increasing total operator work. Coarse starts solve
-and lift a smaller problem, then extract rank in the fine mass metric. The public
-coarse policy initializes only the first executed point and preserves the fine
-operator and preconditioner. Precision experiments must pass fresh f64 physical
-certificates. Parallel chains can lose continuation information and cache hits.
+$$
+\bar\epsilon_i=\epsilon_b+f_i(\epsilon_a-\epsilon_b),\qquad
+\overline{\epsilon^{-1}}_i=\epsilon_b^{-1}
++f_i(\epsilon_a^{-1}-\epsilon_b^{-1}).
+$$
 
-Each mechanism is compared against its own fixed control. Measured gains from
-separate experiments are not multiplied. PT with reuse and PT with sectors have
-explicit interaction experiments; several correct sector combinations regress.
+Circle/polygon boundary integrals supply the area and the averaged interface
+normal. The existing TE interface rule then forms, in the grad-div convention,
+
+$$
+\eta_i=\bar\epsilon_i^{-1}\mathbf n_i\mathbf n_i^T
++\overline{\epsilon^{-1}}_i(I-\mathbf n_i\mathbf n_i^T).
+$$
+
+On an equal-resolution triangular grid, these cells and normals rotate with C6.
+Area conservation and scalar/tensor covariance are checked independently of the
+solver. This changes the sampled material explicitly; the existing analytic
+smoother retains its original behavior and its observable C6 failures.
+Voronoi smoothing currently requires nonoverlapping periodic disks and
+node-centered sampling. Refining the Fourier cutoff and the material grid remain
+separate accuracy requirements.
+
+## Geometry continuation and automatic selection
+
+`bands.symmetry.continuation = "previous_geometry"` carries the latest certified
+spectrum at each compatible k point into the next geometry. `"first_point"`
+limits this to the first executed point. Different sampled materials provide
+initial directions after target-mass rank extraction and Ritz preparation.
+Only an identical sampled operator and support, followed by a fresh certificate,
+can skip a solve. Failed prepared initializers retry the ordinary path, and the
+iteration ledger retains discarded work.
+
+`max_continuation_bytes` bounds stored numerical payload across native workers.
+Workers own private caches and deterministic geometry chains; job IDs and output
+order remain stable. Explicit thread counts are respected. With automatic worker
+counts, continuation chains retain multiple geometries where possible. Browser
+calculation objects retain the same serial context between `runJob` calls.
+Output arrays, FFT plans and library scratch have separate memory costs.
+
+`bands.symmetry.policy = "auto"` selects among measured options and records its
+model version, reasons, resolved configuration and runtime fallbacks. Numerical
+qualification still governs every selected optimization. Automatic mode does
+not change the material, Fourier support or precision. The manual policy remains
+the default and permits explicit experiments.
+
+The `public-sweep-v2` policy is calibrated on native f64 square/triangular grids
+with equal dimensions 31–65 and 8–16 bands. For triangular metric balls its
+cutoff satisfies $0.40 \le R/N \le 0.46$, with $R$ measured in units of
+$2\pi/a$. Within that envelope it attempts PT and caches repeated requested
+k points. Outside it, the original complex solve remains available. A failed
+PT attempt disables further automatic PT retries for that geometry. Calibration
+used centered circular rods; numerical qualification is still required for
+other motifs. These size bounds are an empirical policy, not a theorem about
+performance.
+
+The current public controls do not justify automatic geometry continuation:
+unconditional full-path seeds regressed slightly, and first-point seeds could
+trigger costly PT fallback. Qualification establishes correctness, not a timing
+gain. Coarse starts and sectors likewise need their own matched workload evidence.
+
+The implementation also retains research APIs for snapshot enrichment, projected
+geometry-response solves, response selection rules, precision experiments and
+bounded sector workers. Their preparation and failed work count toward cost.
+Results from separate experiments are never multiplied into a combined speedup.
 
 ## Configuring an experiment
 
 The [Workbench](/workbench), native command and Python interface share the public
-configuration contract. These blocks illustrate an optional PT experiment for
-an otherwise complete, compatible calculation:
+configuration contract. To use the measured native policy in an otherwise complete calculation:
+
+```toml
+[bands.symmetry]
+policy = "auto"
+```
+
+The following blocks instead illustrate an explicit PT experiment:
 
 ```toml
 [eigensolver]

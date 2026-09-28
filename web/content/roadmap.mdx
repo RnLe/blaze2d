@@ -69,7 +69,9 @@ provide the baseline for further work.
 Exact affine actions qualify the sampled material, tensor and finite Maxwell
 pencil before reuse or reduction. Blaze implements equivalent-wavevector reuse,
 ordinary/projective sectors, qualified PT real coordinates and selected reduced
-kernels. Read the [Symmetries theory](/symmetries) and
+kernels. A measured automatic policy selects native PT and repeated-point reuse;
+triangular support and Voronoi material qualification have separate convergence
+evidence. Read the [Symmetries theory](/symmetries) and
 [replacement notes with benchmarks](/symmetry-changelog) for the supported
 combinations, measured gains and retained regressions.
 
@@ -85,16 +87,19 @@ combinations, measured gains and retained regressions.
 <ModuleStatusTag module="warm" />
 </div>
 
-Blaze now has Rust research APIs for snapshot enrichment, geometry-response
-predictors, coarse starts and bounded parameter-chain scheduling. They prepare
-seeds in the target mass metric and check the resulting fields. A general
-high-level automatic policy remains experimental: extra predictor work or lost
-cache hits can outweigh fewer final iterations. MPB's standard run resets fields,
+Native/Python sweeps and serial browser calculations now carry certified mode
+information across geometries and complete k paths. Worker caches are bounded;
+target-mass seed preparation and ordinary-solve fallback preserve numerical
+checks and original job order. Full-path and first-point policies are explicit:
+matched public sweeps did not justify enabling them automatically. The
+[public workflow measurements](/symmetry-changelog#public-parameter-sweeps)
+include both gains and regressions. Rust research APIs also expose snapshot
+enrichment and geometry-response predictors. MPB's standard run resets fields,
 although explicit reuse is possible.<Citation id={2} /> Published methods for
 tracking Maxwell modes as geometry changes provide related context.<Citation id={3} />
 
 <ModuleBanner module="warm" />
-<Motivation module="warm">Warm starts already matter within a single crystal's k-space workflow; published Bloch-Maxwell work demonstrates substantial iteration reductions.<Citation id={4} /> Extending reuse to nearby geometries offers significant speed-up potential, to be measured at equal accuracy across a full sweep.</Motivation>
+<Motivation module="warm">Warm starts already matter within a single crystal's k-space workflow.<Citation id={4} /> Cross-geometry reuse needs its own complete-sweep evidence: preparation and failed attempts can outweigh fewer final iterations.</Motivation>
 </section>
 
 <section className="roadmap-module" data-module="evidence">

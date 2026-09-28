@@ -169,8 +169,8 @@ impl Config {
                     }
                 }
                 if let Some(coarse)=&bands.symmetry.coarse_start {
-                    if !bands.discretization.is_fft_rectangle() || config.dielectric.source==DielectricSource::External {
-                        return Err(invalid("bands.symmetry.coarse_start","coarse initialization requires a geometry-sampled FFT rectangle"));
+                    if config.dielectric.source==DielectricSource::External {
+                        return Err(invalid("bands.symmetry.coarse_start","coarse initialization requires geometry-sampled material"));
                     }
                     if config.eigensolver.precision!=Precision::F64 {
                         return Err(invalid("bands.symmetry.coarse_start","coarse initialization requires f64; precision is not promoted"));

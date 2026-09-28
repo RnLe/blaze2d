@@ -92,7 +92,10 @@ fn geometry_chains_carry_full_paths_with_bounded_fields_and_original_job_ids() {
         Options {threads:1,..Default::default()}).unwrap();
     assert!(reference.errors.is_empty());
     c.bands.as_mut().unwrap().symmetry.continuation = ContinuationPolicy::PreviousGeometry;
-    if metric { c.bands.as_mut().unwrap().symmetry.arithmetic = SymmetryArithmetic::PtReal; }
+    if metric {
+        c.bands.as_mut().unwrap().symmetry.arithmetic = SymmetryArithmetic::PtReal;
+        c.bands.as_mut().unwrap().symmetry.coarse_start = Some(CoarseStart { resolution: [5,5], max_seed_field_bytes: 1<<20 });
+    }
     let budget = 256 * 1024;
     c.bands.as_mut().unwrap().symmetry.max_continuation_bytes = budget;
     for (threads, policy, expected_seeds) in [(1, ContinuationPolicy::PreviousGeometry, 12),
@@ -125,6 +128,7 @@ fn geometry_chains_carry_full_paths_with_bounded_fields_and_original_job_ids() {
 
 #[test]
 fn automatic_policy_uses_qualified_pt_and_stops_retrying_broken_material() {
+    for metric in [false,true] {
     let mut config = Config::default();
     config.grid.resolution = Resolution::Uniform(31);
     config.eigensolver.tolerance = Some(1e-13);
@@ -132,6 +136,14 @@ fn automatic_policy_uses_qualified_pt_and_stops_retrying_broken_material() {
     bands.path = KPath { points:Some(vec![vec![0.19,0.13], vec![0.27,0.13], vec![0.19,0.13]]),
         intervals_per_segment:None, ..Default::default() };
     bands.symmetry.policy = SymmetryPolicy::Auto;
+    if metric {
+        let mut value = serde_json::to_value(&config).unwrap();
+        value["geometry"]["lattice"] = json!({"type":"triangular","a":1.0});
+        value["dielectric"]["smoothing"] = json!("voronoi");
+        value["bands"]["discretization"] = json!({"kind":"metric_ball","angular_cutoff":std::f64::consts::TAU * 14.0});
+        config = Config::from_value(value).unwrap();
+    }
+    let method = if metric { "metric_support_pt_real" } else { "fourier" };
     let solve = |c| {
         let job = Plan::new(c, Platform::Native).unwrap().job(0).unwrap();
         execute(blaze2d_backend_cpu::CpuBackend::<f64>::new(), "cpu", &job, |_|{}).unwrap()
@@ -149,10 +161,12 @@ fn automatic_policy_uses_qualified_pt_and_stops_retrying_broken_material() {
     config.geometry.objects[0].center = vec![0.13,0.07];
     let fallback = solve(config.clone());
     let points = fallback.metadata["symmetry"]["points"].as_array().unwrap();
-    assert!(points[0]["solver_attempts"].as_array().unwrap().iter().any(|a| a["method"] == "fourier" && a["retained"] == false));
-    assert!(points[1]["solver_attempts"].as_array().unwrap().iter().all(|a| a["method"] != "fourier"));
+    assert!(points[0]["solver_attempts"].as_array().unwrap().iter().any(|a| a["method"] == method && a["retained"] == false));
+    assert!(points[1]["solver_attempts"].as_array().unwrap().iter().all(|a| a["method"] != method));
     assert!(points[1]["rejected"].as_array().unwrap().iter().any(|v| v.as_str().unwrap().contains("automatic arithmetic fallback")));
     config.bands.as_mut().unwrap().symmetry.policy = SymmetryPolicy::Manual;
     config.bands.as_mut().unwrap().symmetry.k_reuse = KReuse::Identical;
+    if metric { config.bands.as_mut().unwrap().symmetry.arithmetic = SymmetryArithmetic::FourierComplex; }
     assert_eq!(fallback.arrays, solve(config).arrays);
+    }
 }

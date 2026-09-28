@@ -1,0 +1,5324 @@
+{
+  "schema": "blaze2d/public-sweep-evidence/1",
+  "scope": "Complete public sweeps; each comparison retains its own baseline, output contract and timing qualification. No pooled speedup.",
+  "comparisons": [
+    {
+      "name": "square-te-continuation",
+      "directory": "benchmarks/symmetry/public-sweep-pilot/square-te-continuation",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TE",
+        "size": 31,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 1,
+        "policy": "continuation",
+        "control": null,
+        "fields": false,
+        "smoothing": null,
+        "support_cutoff": null,
+        "heldout": null
+      },
+      "executables": null,
+      "collector_source_revision": null,
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.1384744541338156,
+          "interval": [
+            1.0882540074576605,
+            1.1910124601730139
+          ],
+          "pairs": 2
+        },
+        "admitted": null,
+        "admitted_pair_ids": [],
+        "excluded_pair_ids": [
+          0,
+          1
+        ]
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 4.660322968498804,
+          "median_rss_kib": 15962.0,
+          "work": {
+            "iterations": 2055,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 4.0918858384975465,
+          "median_rss_kib": 25340.0,
+          "work": {
+            "iterations": 1907,
+            "seeded_points": 45,
+            "exact_geometry_hits": 6,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 10165140
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "bd9a390d65d26039b1ea656ca9d30a7a2290699564729a12758a3a0ec8bddb26",
+      "max_frequency_difference": 2.9004576518332215e-14
+    },
+    {
+      "name": "square-te-pt-isolated",
+      "directory": "benchmarks/symmetry/public-sweep-pilot/square-te-pt-isolated",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TE",
+        "size": 31,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 1,
+        "policy": "pt_continuation",
+        "control": "pt",
+        "fields": false,
+        "smoothing": null,
+        "support_cutoff": null,
+        "heldout": null
+      },
+      "executables": null,
+      "collector_source_revision": null,
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.9480461522160029,
+          "interval": [
+            0.9412512530968996,
+            0.9546413447078572
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.9480461522160029,
+          "interval": [
+            0.9412512530968996,
+            0.9546413447078572
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "small or inconclusive"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 2.7183534639916616,
+          "median_rss_kib": 12744,
+          "work": {
+            "iterations": 1793,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 2.865094433989725,
+          "median_rss_kib": 14856,
+          "work": {
+            "iterations": 1861,
+            "seeded_points": 45,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 1525059
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "20d5a4d4a442e71d750297c1c57d9f8ba83e7cc32974cec2f9f6ac304320afbd",
+      "max_frequency_difference": 8.881784197001252e-15
+    },
+    {
+      "name": "square-tm-continuation-02",
+      "directory": "benchmarks/symmetry/public-sweep-pilot/square-tm-continuation-02",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TM",
+        "size": 31,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 1,
+        "policy": "continuation",
+        "control": null,
+        "fields": false,
+        "smoothing": null,
+        "support_cutoff": null,
+        "heldout": null
+      },
+      "executables": null,
+      "collector_source_revision": null,
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.0924700744185882,
+          "interval": [
+            1.0864343066919362,
+            1.0985393743080465
+          ],
+          "pairs": 2
+        },
+        "admitted": {
+          "ratio": 1.0924700744185882,
+          "interval": [
+            1.0864343066919362,
+            1.0985393743080465
+          ],
+          "pairs": 2
+        },
+        "admitted_pair_ids": [
+          0,
+          1
+        ],
+        "excluded_pair_ids": []
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.98934723099228,
+          "median_rss_kib": 15466.0,
+          "work": {
+            "iterations": 803,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.9055958425014978,
+          "median_rss_kib": 24590.0,
+          "work": {
+            "iterations": 750,
+            "seeded_points": 45,
+            "exact_geometry_hits": 6,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 10165140
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "6d350fdfc47709ca50cd9b1127ceab69f4dc4a6df3271235f0266a4d04ab87a4",
+      "max_frequency_difference": 3.164135620181696e-15
+    },
+    {
+      "name": "square-tm-isolated",
+      "directory": "benchmarks/symmetry/public-sweep-pilot/square-tm-isolated",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TM",
+        "size": 31,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 1,
+        "policy": "continuation",
+        "control": "identical",
+        "fields": false,
+        "smoothing": null,
+        "support_cutoff": null,
+        "heldout": null
+      },
+      "executables": null,
+      "collector_source_revision": null,
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.9559517653793258,
+          "interval": [
+            0.933445550107983,
+            0.979427000377683
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.9559517653793258,
+          "interval": [
+            0.933445550107983,
+            0.979427000377683
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "small or inconclusive"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.8791468809940852,
+          "median_rss_kib": 16228,
+          "work": {
+            "iterations": 715,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.9105498120043194,
+          "median_rss_kib": 17424,
+          "work": {
+            "iterations": 750,
+            "seeded_points": 45,
+            "exact_geometry_hits": 6,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 1525059
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "78902c1b969a0cd0efdffd1f28fef719df6a752b0c898d6c552a04970354de7e",
+      "max_frequency_difference": 3.164135620181696e-15
+    },
+    {
+      "name": "square-TE-32-workers2",
+      "directory": "benchmarks/symmetry/public-sweep-auto-v1/square-TE-32-workers2",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": null,
+        "support_cutoff": null,
+        "heldout": null
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        }
+      },
+      "collector_source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.4484768290955992,
+          "interval": [
+            1.4279587722385823,
+            1.4690903470071772
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.4484768290955992,
+          "interval": [
+            1.4279587722385823,
+            1.4690903470071772
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 1.4768511620059144,
+          "median_rss_kib": 22960,
+          "work": {
+            "iterations": 2057,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 1.0143810379959177,
+          "median_rss_kib": 15892,
+          "work": {
+            "iterations": 1853,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "a6f37af47f36e499764c8b92ffce1d30e17cc352e2257e05216854ccb4996102",
+      "max_frequency_difference": 8.382183835919932e-15
+    },
+    {
+      "name": "square-TE-first-point",
+      "directory": "benchmarks/symmetry/public-sweep-auto-v1/square-TE-first-point",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_first_point",
+        "control": "pt",
+        "fields": false,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        }
+      },
+      "collector_source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.964368700785403,
+          "interval": [
+            0.9575946413378053,
+            0.9717508467951654
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.964368700785403,
+          "interval": [
+            0.9575946413378053,
+            0.9717508467951654
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "small or inconclusive"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 1.0023372290015686,
+          "median_rss_kib": 17132,
+          "work": {
+            "iterations": 1853,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 1.0405821949971141,
+          "median_rss_kib": 17284,
+          "work": {
+            "iterations": 1819,
+            "seeded_points": 4,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 180539
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "e9414aba3743732ec2396b37ccc2ebc843c6e0cc11f637cf059afc211041b9f2",
+      "max_frequency_difference": 3.9968028886505635e-15
+    },
+    {
+      "name": "square-TM-32-workers2",
+      "directory": "benchmarks/symmetry/public-sweep-auto-v1/square-TM-32-workers2",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": null,
+        "support_cutoff": null,
+        "heldout": null
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        }
+      },
+      "collector_source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.4948671738775852,
+          "interval": [
+            1.477602919306064,
+            1.5171691656243087
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.4948671738775852,
+          "interval": [
+            1.477602919306064,
+            1.5171691656243087
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.4058280250028474,
+          "median_rss_kib": 22004,
+          "work": {
+            "iterations": 827,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.2728127879963722,
+          "median_rss_kib": 15572,
+          "work": {
+            "iterations": 716,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "9a942fdc5ac7d8ddbc67f9c4ce566ce128492a8e1c0e287d00129c8670021097",
+      "max_frequency_difference": 4.288236432614667e-15
+    },
+    {
+      "name": "square-TM-first-point",
+      "directory": "benchmarks/symmetry/public-sweep-auto-v1/square-TM-first-point",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_first_point",
+        "control": "pt",
+        "fields": false,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        }
+      },
+      "collector_source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.3574052198609407,
+          "interval": [
+            0.3533392356219388,
+            0.36111242850123115
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.35732237883908224,
+          "interval": [
+            0.35285837835752054,
+            0.36150722063211177
+          ],
+          "pairs": 8
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [
+          3
+        ],
+        "timing_qualified": true,
+        "conclusion": "regression"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.27754169699619524,
+          "median_rss_kib": 16920.0,
+          "work": {
+            "iterations": 716,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/square-TM-first-point-reference.profile.json",
+            "sha256": "93cf2487a5aaa68d36cc36d5f3d49243366ad3b9bff76fd752e543b7433b1766",
+            "counters": {
+              "active_X.columns": 7160,
+              "eigensolve.calls": 54,
+              "fft.forward.elements": 15898624,
+              "fft.forward.vectors": 15526,
+              "fft.inverse.elements": 15947776,
+              "fft.inverse.vectors": 15574,
+              "initialization.random_accepts": 152,
+              "initialization.random_attempts": 152,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 388,
+              "initialization.warm_attempts": 768,
+              "iterations": 716,
+              "operator_A.columns": 18112,
+              "operator_A.elements": 18546688,
+              "operator_B.columns": 14860,
+              "operator_B.elements": 15216640,
+              "preconditioner.columns": 5077,
+              "real_dense_ritz.calls": 1324,
+              "real_dense_ritz.dimension_cubes": 22579760,
+              "real_dense_ritz.dimension_sum": 32468,
+              "real_gram.multiply_terms": 859234304,
+              "real_vector.multiply_terms": 1515827200,
+              "ritz_gram.elements": 419548,
+              "ritz_gram.multiply_terms": 429617152,
+              "search_P.columns": 6094,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 16234,
+              "subspace.retained_columns": 16234,
+              "svqb_gram.elements": 419548,
+              "svqb_gram.multiply_terms": 429617152,
+              "symmetry.reused_solves": 6,
+              "symmetry.transform.elements": 331776
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 0.7775642460037488,
+          "median_rss_kib": 19972.0,
+          "work": {
+            "iterations": 1458,
+            "seeded_points": 4,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 180539
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/square-TM-first-point-candidate.profile.json",
+            "sha256": "55f6b4fdc6cf364464570237af17c501d49b5ad1c162e49eeb80d8ef6416d44b",
+            "counters": {
+              "active_X.columns": 14580,
+              "dense_ritz.calls": 69,
+              "dense_ritz.dimension_cubes": 1016472,
+              "dense_ritz.dimension_sum": 1542,
+              "eigensolve.calls": 59,
+              "fft.forward.elements": 28491776,
+              "fft.forward.vectors": 27824,
+              "fft.inverse.elements": 28508160,
+              "fft.inverse.vectors": 27840,
+              "initialization.random_accepts": 115,
+              "initialization.random_attempts": 115,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 475,
+              "initialization.warm_attempts": 822,
+              "iterations": 1458,
+              "operator_A.columns": 36543,
+              "operator_A.elements": 37420032,
+              "operator_B.columns": 26412,
+              "operator_B.elements": 27045888,
+              "preconditioner.columns": 10565,
+              "real_dense_ritz.calls": 2678,
+              "real_dense_ritz.dimension_cubes": 44623216,
+              "real_dense_ritz.dimension_sum": 66124,
+              "real_gram.multiply_terms": 1733763072,
+              "real_vector.multiply_terms": 3077750784,
+              "ritz_gram.elements": 884424,
+              "ritz_gram.multiply_terms": 905650176,
+              "search_P.columns": 13282,
+              "seed.dropped_columns": 0,
+              "seed.retained_rank": 32,
+              "seed.source_columns": 32,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 34540,
+              "subspace.retained_columns": 34540,
+              "svqb_gram.elements": 884424,
+              "svqb_gram.multiply_terms": 905650176,
+              "symmetry.reused_solves": 6,
+              "symmetry.transform.elements": 331776
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "20cb93a7c1b7977e11bfc0649fa3442259ebcce2e6631664edff574ecdb5cdb2",
+      "max_frequency_difference": 3.156382044622319e-09
+    },
+    {
+      "name": "triangular-TE-32-workers2-retry",
+      "directory": "benchmarks/symmetry/public-sweep-auto-v1/triangular-TE-32-workers2-retry",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        }
+      },
+      "collector_source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.452475615472529,
+          "interval": [
+            1.437183682905261,
+            1.4653544807387322
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.452475615472529,
+          "interval": [
+            1.437183682905261,
+            1.4653544807387322
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 1.338928812998347,
+          "median_rss_kib": 23084,
+          "work": {
+            "iterations": 1950,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.9224035480001476,
+          "median_rss_kib": 15596,
+          "work": {
+            "iterations": 1661,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "95260511833396afd28ced1574276694bb08f5a8136e721754250e9abefbbae1",
+      "max_frequency_difference": 6.994405055138486e-15
+    },
+    {
+      "name": "triangular-TM-32-workers2",
+      "directory": "benchmarks/symmetry/public-sweep-auto-v1/triangular-TM-32-workers2",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": null,
+        "support_cutoff": null,
+        "heldout": null
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+          "source_patch_sha256": null,
+          "binary_sha256": "17ec0bd4f1c25be0694366b1d06aa0df1a88f3e74bbba9955a2439a81be12a15",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        }
+      },
+      "collector_source_revision": "d0b7fcf0bd9254dbac2705bd4915d4e0e12425a2",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.5370239577809206,
+          "interval": [
+            1.5162011290530162,
+            1.5600269505648754
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.5407861794632318,
+          "interval": [
+            1.5185420463205415,
+            1.5642183919819332
+          ],
+          "pairs": 8
+        },
+        "admitted_pair_ids": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [
+          0
+        ],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.4104609665009775,
+          "median_rss_kib": 22166.0,
+          "work": {
+            "iterations": 842,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.2673705404959037,
+          "median_rss_kib": 15680.0,
+          "work": {
+            "iterations": 668,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "f82c1b26a039b9faabf3ad99e248ffb0f37f8d5126cba76a952937b48e3b673a",
+      "max_frequency_difference": 4.690692279041286e-15
+    },
+    {
+      "name": "triangular-TE-pt-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v1/triangular-TE-pt-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "9ea10402359183466cedc99285f10f08e28f0446",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.2471297973187898,
+          "interval": [
+            1.234159552317657,
+            1.2594553138114135
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.2525126387534207,
+          "interval": [
+            1.237790403122373,
+            1.2625093175210462
+          ],
+          "pairs": 5
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          4,
+          7
+        ],
+        "excluded_pair_ids": [
+          3,
+          5,
+          6,
+          8
+        ],
+        "timing_qualified": false,
+        "conclusion": "pilot or unresolved"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.9166013399953954,
+          "median_rss_kib": 19508,
+          "work": {
+            "iterations": 1986,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1986,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.7308768420043634,
+          "median_rss_kib": 17364,
+          "work": {
+            "iterations": 1731,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1731,
+            "discarded_iterations": 0,
+            "qualification_attempts": 6
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "1f2174ea47c2f8b7b5a02efb20310548cb10b65b454bbffb37da3475f20cdd1b",
+      "max_frequency_difference": 8.382183835919932e-15
+    },
+    {
+      "name": "triangular-TE-pt_groups-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v1/triangular-TE-pt_groups-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_groups",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "9ea10402359183466cedc99285f10f08e28f0446",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.7859579993712735,
+          "interval": [
+            0.7790715102827445,
+            0.792415191953107
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.7890148225484256,
+          "interval": [
+            0.7806106687366364,
+            0.7975094565497908
+          ],
+          "pairs": 4
+        },
+        "admitted_pair_ids": [
+          0,
+          2,
+          3,
+          4
+        ],
+        "excluded_pair_ids": [
+          1,
+          5,
+          6,
+          7,
+          8
+        ],
+        "timing_qualified": false,
+        "conclusion": "pilot or unresolved"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.9232038484988152,
+          "median_rss_kib": 19948.0,
+          "work": {
+            "iterations": 1986,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1986,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 1.1619691715022782,
+          "median_rss_kib": 19156.0,
+          "work": {
+            "iterations": 4726,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 54,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 4726,
+            "discarded_iterations": 0,
+            "qualification_attempts": 54
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "bd5ee3bc1aa4dd4b1a2e9a304f621c30a9cc9bf2278376b24ec408ccc6c3ea54",
+      "max_frequency_difference": 8.659739592076221e-15
+    },
+    {
+      "name": "triangular-TM-pt-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v1/triangular-TM-pt-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "9ea10402359183466cedc99285f10f08e28f0446",
+      "summary": {
+        "numerical_pass": false,
+        "all_blocks": null,
+        "admitted": null,
+        "admitted_pair_ids": [],
+        "excluded_pair_ids": [],
+        "timing_qualified": false,
+        "conclusion": "pilot or unresolved"
+      },
+      "variants": {},
+      "manifest_sha256": "cee37dacbd4974c9d7430f09826e2c7e32f93452fc7c7f42b9abc4df7c0e9b4f",
+      "max_frequency_difference": null
+    },
+    {
+      "name": "triangular-TM-pt_groups-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v1/triangular-TM-pt_groups-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_groups",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ba836c8dfcc43d7b763f18387b230654d1f87dde",
+          "binary_sha256": "fded4c1b79756e968f3d71e59b256a8e5e82844b2c43c83d6812f8c0e8179748",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "9ea10402359183466cedc99285f10f08e28f0446",
+      "summary": {
+        "numerical_pass": false,
+        "all_blocks": null,
+        "admitted": null,
+        "admitted_pair_ids": [],
+        "excluded_pair_ids": [],
+        "timing_qualified": false,
+        "conclusion": "pilot or unresolved"
+      },
+      "variants": {},
+      "manifest_sha256": "3ce40a641e8264ecdc4e8ab6fda2fe6698d682b9f13c722c00cdf9fcc88880d9",
+      "max_frequency_difference": null
+    },
+    {
+      "name": "triangular-TE-pt-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v2/triangular-TE-pt-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.266114056682546,
+          "interval": [
+            1.2560019043568935,
+            1.2763385273653034
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.2700439524745413,
+          "interval": [
+            1.2576586099929736,
+            1.2816946284874446
+          ],
+          "pairs": 6
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "excluded_pair_ids": [
+          6,
+          7,
+          8
+        ],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.9083682900018175,
+          "median_rss_kib": 20028.0,
+          "work": {
+            "iterations": 1986,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1986,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.7183463179972023,
+          "median_rss_kib": 16896.0,
+          "work": {
+            "iterations": 1731,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1731,
+            "discarded_iterations": 0,
+            "qualification_attempts": 6
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "4dea946cbdf6272c188e38a170853184e6b509f01ef207de740f46d33fa74975",
+      "max_frequency_difference": 8.382183835919932e-15
+    },
+    {
+      "name": "triangular-TE-pt_combined-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v2/triangular-TE-pt_combined-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_combined",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.7245824027826329,
+          "interval": [
+            0.7186693031728968,
+            0.7302685130860087
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.7245824027826329,
+          "interval": [
+            0.7186693031728968,
+            0.7302685130860087
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "regression"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.9081637339986628,
+          "median_rss_kib": 19888,
+          "work": {
+            "iterations": 1986,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1986,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 1.2538212399958866,
+          "median_rss_kib": 21676,
+          "work": {
+            "iterations": 4940,
+            "seeded_points": 36,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 1137699,
+            "pt_points": 0,
+            "sector_points": 54,
+            "coarse_points": 2,
+            "coarse_iterations": 165,
+            "retained_iterations": 4775,
+            "discarded_iterations": 0,
+            "qualification_attempts": 54
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "cc1c1a5f764f197082e71d073562bac05082e16203abf3987adbaf6c18b77a79",
+      "max_frequency_difference": 8.43769498715119e-15
+    },
+    {
+      "name": "triangular-TE-pt_groups-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v2/triangular-TE-pt_groups-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_groups",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.82194445484818,
+          "interval": [
+            0.7993830381815468,
+            0.8448648752154496
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.8220928432150604,
+          "interval": [
+            0.81028456234389,
+            0.8320597022268207
+          ],
+          "pairs": 3
+        },
+        "admitted_pair_ids": [
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "timing_qualified": false,
+        "conclusion": "pilot or unresolved"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.9091980500088539,
+          "median_rss_kib": 19620,
+          "work": {
+            "iterations": 1986,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1986,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 1.1015269900090061,
+          "median_rss_kib": 19088,
+          "work": {
+            "iterations": 4726,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 54,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 4726,
+            "discarded_iterations": 0,
+            "qualification_attempts": 54
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "2a7d1b51bac348b4cce863125a08071ce024964cac09fc6de7a612d99f107804",
+      "max_frequency_difference": 8.659739592076221e-15
+    },
+    {
+      "name": "triangular-TM-pt-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v2/triangular-TM-pt-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.215270242566317,
+          "interval": [
+            1.1971541313504883,
+            1.234211730653647
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.215270242566317,
+          "interval": [
+            1.1971541313504883,
+            1.234211730653647
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.2390986720129149,
+          "median_rss_kib": 19328,
+          "work": {
+            "iterations": 791,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 791,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.19642049900721759,
+          "median_rss_kib": 16916,
+          "work": {
+            "iterations": 696,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 696,
+            "discarded_iterations": 0,
+            "qualification_attempts": 6
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "bb0baf622d0911954cca3d093ecb70aedae35c10b8deeecfb8f92c8a85134939",
+      "max_frequency_difference": 1.2878587085651816e-14
+    },
+    {
+      "name": "triangular-TM-pt_combined-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v2/triangular-TM-pt_combined-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_combined",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.6317944377650359,
+          "interval": [
+            0.6250672882347607,
+            0.6404882125633745
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.6317944377650359,
+          "interval": [
+            0.6250672882347607,
+            0.6404882125633745
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "regression"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.24416415899759158,
+          "median_rss_kib": 19692,
+          "work": {
+            "iterations": 791,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 791,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.3877693329995964,
+          "median_rss_kib": 21908,
+          "work": {
+            "iterations": 2287,
+            "seeded_points": 36,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 1137699,
+            "pt_points": 0,
+            "sector_points": 54,
+            "coarse_points": 2,
+            "coarse_iterations": 35,
+            "retained_iterations": 2252,
+            "discarded_iterations": 0,
+            "qualification_attempts": 54
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "4b2c9cbe3c6f282d28b8704d58b65fffbe984fd8dcd1dfb42a045150bd49f77e",
+      "max_frequency_difference": 2.4424906541753444e-15
+    },
+    {
+      "name": "triangular-TM-pt_groups-32",
+      "directory": "benchmarks/symmetry/public-sweep-metric-v2/triangular-TM-pt_groups-32",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 2,
+        "policy": "pt_groups",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": false
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.6787969476153726,
+          "interval": [
+            0.6732583007764558,
+            0.6840610105817079
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.6787969476153726,
+          "interval": [
+            0.6732583007764558,
+            0.6840610105817079
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "regression"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.24417352100135759,
+          "median_rss_kib": 19476,
+          "work": {
+            "iterations": 791,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 791,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.3592108380107675,
+          "median_rss_kib": 19188,
+          "work": {
+            "iterations": 2182,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 54,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 2182,
+            "discarded_iterations": 0,
+            "qualification_attempts": 54
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "e663cd6f54d6d587699c545efa8515ce21bd55c7d51c8f78c6ac2b98c67592e1",
+      "max_frequency_difference": 2.220446049250313e-15
+    },
+    {
+      "name": "square-TE-32-fields-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/square-TE-32-fields-workers4",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 4,
+        "policy": "auto",
+        "control": "off",
+        "fields": true,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.5223810494300867,
+          "interval": [
+            1.5102915158627692,
+            1.5325037576939406
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.5223810494300867,
+          "interval": [
+            1.5102915158627692,
+            1.5325037576939406
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.8973416770022595,
+          "median_rss_kib": 64924,
+          "work": {
+            "iterations": 1892,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1892,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.5871113199973479,
+          "median_rss_kib": 53140,
+          "work": {
+            "iterations": 1696,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1696,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "372024e105ca63cd22791d86ab6172a258e3b05cfb33389553b3160b54832309",
+      "max_frequency_difference": 9.492406860545088e-15
+    },
+    {
+      "name": "square-TE-64-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/square-TE-64-workers4",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TE",
+        "size": 64,
+        "bands": 16,
+        "intervals": 5,
+        "threads": 4,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 2.0470973060308424,
+          "interval": [
+            2.032869113920467,
+            2.0626570722316906
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 2.0470973060308424,
+          "interval": [
+            2.032869113920467,
+            2.0626570722316906
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 20.835894793010084,
+          "median_rss_kib": 196864,
+          "work": {
+            "iterations": 3600,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 3600,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/square-TE-64-workers4-reference.profile.json",
+            "sha256": "b6abda0d388b35e8e3697d7a793d8803f987db49bedf133130e74b8c80e7e89c",
+            "counters": {
+              "active_X.columns": 64800,
+              "dense_ritz.calls": 3504,
+              "dense_ritz.dimension_cubes": 278110240,
+              "dense_ritz.dimension_sum": 135856,
+              "eigensolve.calls": 96,
+              "fft.forward.elements": 2173575168,
+              "fft.forward.vectors": 530658,
+              "fft.inverse.elements": 2173575168,
+              "fft.inverse.vectors": 530658,
+              "initialization.random_accepts": 288,
+              "initialization.random_attempts": 288,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1440,
+              "initialization.warm_attempts": 1440,
+              "iterations": 3600,
+              "operator_A.columns": 139540,
+              "operator_A.elements": 571555840,
+              "operator_B.columns": 88372,
+              "operator_B.elements": 361971712,
+              "preconditioner.columns": 37256,
+              "ritz_gram.elements": 5905728,
+              "ritz_gram.multiply_terms": 24189861888,
+              "search_P.columns": 46156,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 135856,
+              "subspace.retained_columns": 135856,
+              "svqb_gram.elements": 5905728,
+              "svqb_gram.multiply_terms": 24189861888
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 10.23495377600193,
+          "median_rss_kib": 105196,
+          "work": {
+            "iterations": 3101,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 90,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 3101,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/square-TE-64-workers4-candidate.profile.json",
+            "sha256": "93c32897572460f81a4e2509f8fb77e22515974b396b6bb6f4859e0b60ff8c72",
+            "counters": {
+              "active_X.columns": 55818,
+              "eigensolve.calls": 90,
+              "fft.forward.elements": 1345634304,
+              "fft.forward.vectors": 328524,
+              "fft.inverse.elements": 1346027520,
+              "fft.inverse.vectors": 328620,
+              "initialization.random_accepts": 271,
+              "initialization.random_attempts": 271,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1349,
+              "initialization.warm_attempts": 2687,
+              "iterations": 3101,
+              "operator_A.columns": 127074,
+              "operator_A.elements": 520495104,
+              "operator_B.columns": 85380,
+              "operator_B.elements": 349716480,
+              "preconditioner.columns": 34665,
+              "real_dense_ritz.calls": 6022,
+              "real_dense_ritz.dimension_cubes": 516310464,
+              "real_dense_ritz.dimension_sum": 243816,
+              "real_gram.multiply_terms": 44430917632,
+              "real_vector.multiply_terms": 79213592576,
+              "ritz_gram.elements": 5423696,
+              "ritz_gram.multiply_terms": 22215458816,
+              "search_P.columns": 42790,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 121908,
+              "subspace.retained_columns": 121908,
+              "svqb_gram.elements": 5423696,
+              "svqb_gram.multiply_terms": 22215458816,
+              "symmetry.reused_solves": 6,
+              "symmetry.transform.elements": 2211840
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "eed998ef1078616b3cf00ab9f3b880536b64c1a10de9b82c24f631bd6624962d",
+      "max_frequency_difference": 1.587618925213974e-14
+    },
+    {
+      "name": "square-TM-64-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/square-TM-64-workers4",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TM",
+        "size": 64,
+        "bands": 16,
+        "intervals": 5,
+        "threads": 4,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 2.254383635322741,
+          "interval": [
+            2.231349151787506,
+            2.281401921746636
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 2.254383635322741,
+          "interval": [
+            2.231349151787506,
+            2.281401921746636
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 6.956323236998287,
+          "median_rss_kib": 189648,
+          "work": {
+            "iterations": 1790,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1790,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/square-TM-64-workers4-reference.profile.json",
+            "sha256": "cad35c2cca0454be9b1ea6412ec8c0d9db2794098a3f73cbe1edd7894eb48368",
+            "counters": {
+              "active_X.columns": 32220,
+              "dense_ritz.calls": 1694,
+              "dense_ritz.dimension_cubes": 101957368,
+              "dense_ritz.dimension_sum": 57994,
+              "eigensolve.calls": 96,
+              "fft.forward.elements": 312864768,
+              "fft.forward.vectors": 76383,
+              "fft.inverse.elements": 312864768,
+              "fft.inverse.vectors": 76383,
+              "initialization.random_accepts": 288,
+              "initialization.random_attempts": 288,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1440,
+              "initialization.warm_attempts": 1440,
+              "iterations": 1790,
+              "operator_A.columns": 61678,
+              "operator_A.elements": 252633088,
+              "operator_B.columns": 41596,
+              "operator_B.elements": 170377216,
+              "preconditioner.columns": 14615,
+              "ritz_gram.elements": 2299356,
+              "ritz_gram.multiply_terms": 9418162176,
+              "search_P.columns": 18484,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 57994,
+              "subspace.retained_columns": 57994,
+              "svqb_gram.elements": 2299356,
+              "svqb_gram.multiply_terms": 9418162176
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 3.0891062829905422,
+          "median_rss_kib": 104216,
+          "work": {
+            "iterations": 1524,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 90,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1524,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/square-TM-64-workers4-candidate.profile.json",
+            "sha256": "8e316b9a6f99afc21b3bf6005ac4887ad71dfc7d4ef583e4a95957863c5d4885",
+            "counters": {
+              "active_X.columns": 27432,
+              "eigensolve.calls": 90,
+              "fft.forward.elements": 176750592,
+              "fft.forward.vectors": 43152,
+              "fft.inverse.elements": 177143808,
+              "fft.inverse.vectors": 43248,
+              "initialization.random_accepts": 266,
+              "initialization.random_attempts": 266,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1354,
+              "initialization.warm_attempts": 2688,
+              "iterations": 1524,
+              "operator_A.columns": 56314,
+              "operator_A.elements": 230662144,
+              "operator_B.columns": 41526,
+              "operator_B.elements": 170090496,
+              "preconditioner.columns": 13478,
+              "real_dense_ritz.calls": 2868,
+              "real_dense_ritz.dimension_cubes": 187743104,
+              "real_dense_ritz.dimension_sum": 102296,
+              "real_gram.multiply_terms": 17079992320,
+              "real_vector.multiply_terms": 31349620736,
+              "ritz_gram.elements": 2084960,
+              "ritz_gram.multiply_terms": 8539996160,
+              "search_P.columns": 16922,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 51148,
+              "subspace.retained_columns": 51148,
+              "svqb_gram.elements": 2084960,
+              "svqb_gram.multiply_terms": 8539996160,
+              "symmetry.reused_solves": 6,
+              "symmetry.transform.elements": 2211840
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "ba80f33a7dfc04f2a12da0d24c7104f74ff8bc5d5b9e545ee885cb8577efc2cf",
+      "max_frequency_difference": 6.6064931303344565e-12
+    },
+    {
+      "name": "triangular-TE-32-fields-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/triangular-TE-32-fields-workers4",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 4,
+        "policy": "auto",
+        "control": "off",
+        "fields": true,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.5432752460287285,
+          "interval": [
+            1.5320027767198985,
+            1.554573494248039
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.5432752460287285,
+          "interval": [
+            1.5320027767198985,
+            1.554573494248039
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.9054183410044061,
+          "median_rss_kib": 66276,
+          "work": {
+            "iterations": 1871,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1871,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.5909445149882231,
+          "median_rss_kib": 52884,
+          "work": {
+            "iterations": 1660,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1660,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "459da90be228987ee3b2069bda72dd35ffb469f72ee1434279de148b2755be8a",
+      "max_frequency_difference": 2.4841240175987878e-14
+    },
+    {
+      "name": "triangular-TE-32-metric-auto-fields-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/triangular-TE-32-metric-auto-fields-workers4",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 4,
+        "policy": "auto",
+        "control": "fourier",
+        "fields": true,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.2152879656499758,
+          "interval": [
+            1.2064314113164016,
+            1.2230805709683688
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.2152879656499758,
+          "interval": [
+            1.2064314113164016,
+            1.2230805709683688
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.5823713409918128,
+          "median_rss_kib": 57828,
+          "work": {
+            "iterations": 1904,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1904,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.4808100899972487,
+          "median_rss_kib": 52016,
+          "work": {
+            "iterations": 1717,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1717,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "76405bdbcabc8d96eeb2c7c8f5a8d6fb17386e471a706a16000bc110152d853b",
+      "max_frequency_difference": 7.549516567451064e-15
+    },
+    {
+      "name": "triangular-TE-32-metric-combined-fields-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/triangular-TE-32-metric-combined-fields-workers4",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 4,
+        "policy": "pt_combined",
+        "control": "fourier",
+        "fields": true,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.7133037152318421,
+          "interval": [
+            0.703377279298731,
+            0.7235479593962297
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.7133037152318421,
+          "interval": [
+            0.703377279298731,
+            0.7235479593962297
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "regression"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.5847687570058042,
+          "median_rss_kib": 58268,
+          "work": {
+            "iterations": 1904,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1904,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TE-32-metric-combined-fields-workers4-reference.profile.json",
+            "sha256": "c9e973bfdad359f00f1bf2ec78ea0ab76e9733369700e0346f7edeb971915f0b",
+            "counters": {
+              "active_X.columns": 19040,
+              "dense_ritz.calls": 1964,
+              "dense_ritz.dimension_cubes": 36186336,
+              "dense_ritz.dimension_sum": 48708,
+              "eigensolve.calls": 60,
+              "fft.forward.elements": 133967872,
+              "fft.forward.vectors": 130828,
+              "fft.inverse.elements": 133844992,
+              "fft.inverse.vectors": 130708,
+              "initialization.random_accepts": 168,
+              "initialization.random_attempts": 168,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 432,
+              "initialization.warm_attempts": 432,
+              "iterations": 1904,
+              "operator_A.columns": 49920,
+              "operator_A.elements": 51118080,
+              "operator_B.columns": 35610,
+              "operator_B.elements": 19237306,
+              "preconditioner.columns": 14954,
+              "ritz_gram.elements": 1293216,
+              "ritz_gram.multiply_terms": 690068004,
+              "search_P.columns": 17208,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 47748,
+              "subspace.retained_columns": 47748,
+              "svqb_gram.elements": 1293216,
+              "svqb_gram.multiply_terms": 690068004,
+              "symmetry.galerkin.A_coefficients": 26378686,
+              "symmetry.support.expand_coefficients": 256128,
+              "symmetry.support.restrict_coefficients": 320160
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 0.8221566029969836,
+          "median_rss_kib": 60448,
+          "work": {
+            "iterations": 5098,
+            "seeded_points": 18,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 1137699,
+            "pt_points": 0,
+            "sector_points": 54,
+            "coarse_points": 4,
+            "coarse_iterations": 376,
+            "retained_iterations": 4722,
+            "discarded_iterations": 0,
+            "qualification_attempts": 54
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TE-32-metric-combined-fields-workers4-candidate.profile.json",
+            "sha256": "3c118272c86b913362aa3228e2185046e5c1c585176b61b98d467060470e3ccc",
+            "counters": {
+              "active_X.columns": 37651,
+              "coarse.prolongated_columns": 32,
+              "dense_ritz.calls": 5652,
+              "dense_ritz.dimension_cubes": 41211615,
+              "dense_ritz.dimension_sum": 97839,
+              "eigensolve.calls": 170,
+              "fft.forward.elements": 251431936,
+              "fft.forward.vectors": 271249,
+              "fft.inverse.elements": 251162624,
+              "fft.inverse.vectors": 270962,
+              "initialization.random_accepts": 519,
+              "initialization.random_attempts": 519,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 674,
+              "initialization.warm_attempts": 680,
+              "iterations": 5098,
+              "operator_A.columns": 102091,
+              "operator_A.elements": 96606208,
+              "operator_B.columns": 76269,
+              "operator_B.elements": 39068634,
+              "preconditioner.columns": 29234,
+              "ritz_gram.elements": 1904603,
+              "ritz_gram.multiply_terms": 416617217,
+              "search_P.columns": 34956,
+              "seed.dropped_columns": 532,
+              "seed.retained_rank": 934,
+              "seed.source_columns": 1466,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 93733,
+              "subspace.retained_columns": 93733,
+              "svqb_gram.elements": 1904603,
+              "svqb_gram.multiply_terms": 416617217,
+              "symmetry.galerkin.A_coefficients": 48653156,
+              "symmetry.support.expand_coefficients": 350064,
+              "symmetry.support.orbit.expand_terms": 93498834,
+              "symmetry.support.orbit.restrict_terms": 93740666,
+              "symmetry.support.project_coefficients": 5668296,
+              "symmetry.support.qualify.probes": 816,
+              "symmetry.support.restrict_coefficients": 503006
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "80ea302aa99a6e084e66c9a5de6502ec7031f09e81fb44babfd8268002f6b599",
+      "max_frequency_difference": 7.771561172376096e-15
+    },
+    {
+      "name": "triangular-TE-64-metric-auto-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/triangular-TE-64-metric-auto-workers4",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 64,
+        "bands": 16,
+        "intervals": 5,
+        "threads": 4,
+        "policy": "auto",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 28.0,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.539793548289238,
+          "interval": [
+            1.5219050094810376,
+            1.5577720340340602
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.539793548289238,
+          "interval": [
+            1.5219050094810376,
+            1.5577720340340602
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 11.143673286991543,
+          "median_rss_kib": 131544,
+          "work": {
+            "iterations": 3341,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 3341,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TE-64-metric-auto-workers4-reference.profile.json",
+            "sha256": "6ba461f31601e4b5ae1232670a0423d06494db8bfc5d909b4f2c3b506cf7524b",
+            "counters": {
+              "active_X.columns": 60138,
+              "dense_ritz.calls": 3437,
+              "dense_ritz.dimension_cubes": 290964480,
+              "dense_ritz.dimension_sum": 136908,
+              "eigensolve.calls": 96,
+              "fft.forward.elements": 1479548928,
+              "fft.forward.vectors": 361218,
+              "fft.inverse.elements": 1478762496,
+              "fft.inverse.vectors": 361026,
+              "initialization.random_accepts": 288,
+              "initialization.random_attempts": 288,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1440,
+              "initialization.warm_attempts": 1440,
+              "iterations": 3341,
+              "operator_A.columns": 140400,
+              "operator_A.elements": 575078400,
+              "operator_B.columns": 94050,
+              "operator_B.elements": 203488474,
+              "preconditioner.columns": 38577,
+              "ritz_gram.elements": 6037112,
+              "ritz_gram.multiply_terms": 12867830436,
+              "search_P.columns": 47006,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 133836,
+              "subspace.retained_columns": 133836,
+              "svqb_gram.elements": 6037112,
+              "svqb_gram.multiply_terms": 12867830436,
+              "symmetry.galerkin.A_coefficients": 295980658,
+              "symmetry.support.expand_coefficients": 3274560,
+              "symmetry.support.restrict_coefficients": 3683880
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 7.293211320997216,
+          "median_rss_kib": 89984,
+          "work": {
+            "iterations": 3278,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 89,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 3225,
+            "discarded_iterations": 53,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TE-64-metric-auto-workers4-candidate.profile.json",
+            "sha256": "46eac4ce3a691216e6bce8c0009a2ae0cd540b3d24602aae9a7fda57a209ac44",
+            "counters": {
+              "active_X.columns": 59004,
+              "dense_ritz.calls": 62,
+              "dense_ritz.dimension_cubes": 3726200,
+              "dense_ritz.dimension_sum": 2114,
+              "eigensolve.calls": 91,
+              "fft.forward.elements": 1404559360,
+              "fft.forward.vectors": 342910,
+              "fft.inverse.elements": 1405337600,
+              "fft.inverse.vectors": 343100,
+              "initialization.random_accepts": 273,
+              "initialization.random_attempts": 273,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1365,
+              "initialization.warm_attempts": 2704,
+              "iterations": 3278,
+              "operator_A.columns": 133532,
+              "operator_A.elements": 546947072,
+              "operator_B.columns": 89061,
+              "operator_B.elements": 193629600,
+              "preconditioner.columns": 36286,
+              "real_dense_ritz.calls": 6254,
+              "real_dense_ritz.dimension_cubes": 539018032,
+              "real_dense_ritz.dimension_sum": 252436,
+              "real_gram.multiply_terms": 24013523168,
+              "real_vector.multiply_terms": 42724371632,
+              "ritz_gram.elements": 5715088,
+              "ritz_gram.multiply_terms": 12183730504,
+              "search_P.columns": 44268,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 128300,
+              "subspace.retained_columns": 128300,
+              "svqb_gram.elements": 5715088,
+              "svqb_gram.multiply_terms": 12183730504,
+              "symmetry.galerkin.A_coefficients": 280584558,
+              "symmetry.support.expand_coefficients": 3308640,
+              "symmetry.support.restrict_coefficients": 2904900,
+              "symmetry.transform.elements": 2211840
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "bf5a371f8c8b8cab4f91b36102852f335c235841d51c109ee98149d3283ecc6a",
+      "max_frequency_difference": 9.769962616701378e-15
+    },
+    {
+      "name": "triangular-TE-64-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/triangular-TE-64-workers4",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 64,
+        "bands": 16,
+        "intervals": 5,
+        "threads": 4,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 2.091697124782671,
+          "interval": [
+            2.067944829870429,
+            2.1107302168165605
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 2.091697124782671,
+          "interval": [
+            2.067944829870429,
+            2.1107302168165605
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 20.515752907987917,
+          "median_rss_kib": 194204,
+          "work": {
+            "iterations": 3758,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 3758,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TE-64-workers4-reference.profile.json",
+            "sha256": "9848eeeb7084f3457d194fe73b258add4958491ee875b5ce5cc42de60d5033f9",
+            "counters": {
+              "active_X.columns": 67644,
+              "dense_ritz.calls": 3662,
+              "dense_ritz.dimension_cubes": 272175144,
+              "dense_ritz.dimension_sum": 137334,
+              "eigensolve.calls": 96,
+              "fft.forward.elements": 2183344128,
+              "fft.forward.vectors": 533043,
+              "fft.inverse.elements": 2183344128,
+              "fft.inverse.vectors": 533043,
+              "initialization.random_accepts": 288,
+              "initialization.random_attempts": 288,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1440,
+              "initialization.warm_attempts": 1440,
+              "iterations": 3758,
+              "operator_A.columns": 141018,
+              "operator_A.elements": 577609728,
+              "operator_B.columns": 87024,
+              "operator_B.elements": 356450304,
+              "preconditioner.columns": 36573,
+              "ritz_gram.elements": 5845396,
+              "ritz_gram.multiply_terms": 23942742016,
+              "search_P.columns": 45572,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 137334,
+              "subspace.retained_columns": 137334,
+              "svqb_gram.elements": 5845396,
+              "svqb_gram.multiply_terms": 23942742016
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 9.765810301993042,
+          "median_rss_kib": 104920,
+          "work": {
+            "iterations": 3056,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 90,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 3056,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TE-64-workers4-candidate.profile.json",
+            "sha256": "e3793a3bf46054bb1d55c10e0d1a1a3a4c32b0ead1e0b71dcc0a58d66224f5af",
+            "counters": {
+              "active_X.columns": 55008,
+              "eigensolve.calls": 90,
+              "fft.forward.elements": 1311031296,
+              "fft.forward.vectors": 320076,
+              "fft.inverse.elements": 1311424512,
+              "fft.inverse.vectors": 320172,
+              "initialization.random_accepts": 276,
+              "initialization.random_attempts": 276,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1344,
+              "initialization.warm_attempts": 2688,
+              "iterations": 3056,
+              "operator_A.columns": 123988,
+              "operator_A.elements": 507854848,
+              "operator_B.columns": 83056,
+              "operator_B.elements": 340197376,
+              "preconditioner.columns": 33527,
+              "real_dense_ritz.calls": 5932,
+              "real_dense_ritz.dimension_cubes": 497610896,
+              "real_dense_ritz.dimension_sum": 237644,
+              "real_gram.multiply_terms": 43001675776,
+              "real_vector.multiply_terms": 76837142528,
+              "ritz_gram.elements": 5249228,
+              "ritz_gram.multiply_terms": 21500837888,
+              "search_P.columns": 41542,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 118822,
+              "subspace.retained_columns": 118822,
+              "svqb_gram.elements": 5249228,
+              "svqb_gram.multiply_terms": 21500837888,
+              "symmetry.reused_solves": 6,
+              "symmetry.transform.elements": 2211840
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "ae38ce46290f2a1c32e43222126a11cd1dd583e5cc7bcc83edbfa436a8c464a9",
+      "max_frequency_difference": 2.1316282072803006e-14
+    },
+    {
+      "name": "triangular-TM-64-metric-auto-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/triangular-TM-64-metric-auto-workers4",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 64,
+        "bands": 16,
+        "intervals": 5,
+        "threads": 4,
+        "policy": "auto",
+        "control": "fourier",
+        "fields": false,
+        "smoothing": "voronoi",
+        "support_cutoff": 28.0,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 1.6394973943277709,
+          "interval": [
+            1.6241228601774795,
+            1.656754948467377
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 1.6394973943277709,
+          "interval": [
+            1.6241228601774795,
+            1.656754948467377
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 3.144969847999164,
+          "median_rss_kib": 126564,
+          "work": {
+            "iterations": 1430,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1430,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TM-64-metric-auto-workers4-reference.profile.json",
+            "sha256": "7a2ba9c9b3cf2a48fd6419eb4afa0fb42863e574474a7f8ae54802bbca9dc2e0",
+            "counters": {
+              "active_X.columns": 25740,
+              "dense_ritz.calls": 1526,
+              "dense_ritz.dimension_cubes": 101495448,
+              "dense_ritz.dimension_sum": 54210,
+              "eigensolve.calls": 96,
+              "fft.forward.elements": 187392000,
+              "fft.forward.vectors": 45750,
+              "fft.inverse.elements": 186605568,
+              "fft.inverse.vectors": 45558,
+              "initialization.random_accepts": 288,
+              "initialization.random_attempts": 288,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1440,
+              "initialization.warm_attempts": 1440,
+              "iterations": 1430,
+              "operator_A.columns": 57702,
+              "operator_A.elements": 126000832,
+              "operator_B.columns": 44022,
+              "operator_B.elements": 180314112,
+              "preconditioner.columns": 28854,
+              "ritz_gram.elements": 2181436,
+              "ritz_gram.multiply_terms": 4649391224,
+              "search_P.columns": 17868,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 51138,
+              "subspace.retained_columns": 51138,
+              "svqb_gram.elements": 2181436,
+              "svqb_gram.multiply_terms": 4649391224,
+              "symmetry.galerkin.A_coefficients": 119709376,
+              "symmetry.support.expand_coefficients": 93835240,
+              "symmetry.support.restrict_coefficients": 94244560
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 1.927931679005269,
+          "median_rss_kib": 71612,
+          "work": {
+            "iterations": 1395,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 90,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1395,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TM-64-metric-auto-workers4-candidate.profile.json",
+            "sha256": "91b56d64ab0eacce527c696e041e1fde6e814865fe57a7ad6aa930210ff0c39b",
+            "counters": {
+              "active_X.columns": 25110,
+              "eigensolve.calls": 90,
+              "fft.forward.elements": 176680960,
+              "fft.forward.vectors": 43135,
+              "fft.inverse.elements": 177467392,
+              "fft.inverse.vectors": 43327,
+              "initialization.random_accepts": 267,
+              "initialization.random_attempts": 267,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1353,
+              "initialization.warm_attempts": 2688,
+              "iterations": 1395,
+              "operator_A.columns": 54154,
+              "operator_A.elements": 119163768,
+              "operator_B.columns": 41791,
+              "operator_B.elements": 171175936,
+              "preconditioner.columns": 27118,
+              "real_dense_ritz.calls": 2610,
+              "real_dense_ritz.dimension_cubes": 189058304,
+              "real_dense_ritz.dimension_sum": 97976,
+              "real_gram.multiply_terms": 8794076104,
+              "real_vector.multiply_terms": 15983591972,
+              "ritz_gram.elements": 2062600,
+              "ritz_gram.multiply_terms": 4397038052,
+              "search_P.columns": 16888,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 48988,
+              "subspace.retained_columns": 48988,
+              "svqb_gram.elements": 2062600,
+              "svqb_gram.multiply_terms": 4397038052,
+              "symmetry.galerkin.A_coefficients": 111397752,
+              "symmetry.support.expand_coefficients": 88331458,
+              "symmetry.support.restrict_coefficients": 87923458,
+              "symmetry.transform.elements": 2211840
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "d7ab530a53f8423105d2b898b782ac1f2feedc8f8d1b2054ae6abf28358899e1",
+      "max_frequency_difference": 9.068079620533354e-12
+    },
+    {
+      "name": "triangular-TM-64-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-final/triangular-TM-64-workers4",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TM",
+        "size": 64,
+        "bands": 16,
+        "intervals": 5,
+        "threads": 4,
+        "policy": "auto",
+        "control": "off",
+        "fields": false,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3990221644f57080f53cf50601bcaebd9a22d8b4",
+          "source_patch_sha256": null,
+          "binary_sha256": "682a2bfebc510dca729d6e77ca809beaee846272be9dae6bfd696c15b21f1aed",
+          "build_command": [
+            "cargo",
+            "build",
+            "-p",
+            "blaze2d-cli",
+            "--release",
+            "--locked"
+          ],
+          "profiling": false
+        },
+        "candidate": {
+          "source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+          "binary_sha256": "515ccbc125d5be7270b3dee79a0986a2c464cb96cea0d28cb7cf6cbe7e995073",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "ff0ea98e8766c6cc9115ae83626b843210531f31",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 2.4314246110163564,
+          "interval": [
+            2.4003239717915137,
+            2.4623901252613227
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 2.4314246110163564,
+          "interval": [
+            2.4003239717915137,
+            2.4623901252613227
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "improvement"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 7.142874810990179,
+          "median_rss_kib": 187352,
+          "work": {
+            "iterations": 1915,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 0,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 0,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1915,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TM-64-workers4-reference.profile.json",
+            "sha256": "5b37313cc422d916c95926452394312e7c449a541b8ea3361c688273aeb82f65",
+            "counters": {
+              "active_X.columns": 34470,
+              "dense_ritz.calls": 1819,
+              "dense_ritz.dimension_cubes": 103155496,
+              "dense_ritz.dimension_sum": 60694,
+              "eigensolve.calls": 96,
+              "fft.forward.elements": 324845568,
+              "fft.forward.vectors": 79308,
+              "fft.inverse.elements": 324845568,
+              "fft.inverse.vectors": 79308,
+              "initialization.random_accepts": 288,
+              "initialization.random_attempts": 288,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1440,
+              "initialization.warm_attempts": 1440,
+              "iterations": 1915,
+              "operator_A.columns": 64378,
+              "operator_A.elements": 263692288,
+              "operator_B.columns": 42028,
+              "operator_B.elements": 172146688,
+              "preconditioner.columns": 14840,
+              "ritz_gram.elements": 2357084,
+              "ritz_gram.multiply_terms": 9654616064,
+              "search_P.columns": 18936,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 60694,
+              "subspace.retained_columns": 60694,
+              "svqb_gram.elements": 2357084,
+              "svqb_gram.multiply_terms": 9654616064
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        },
+        "candidate": {
+          "median_seconds": 2.921975220000604,
+          "median_rss_kib": 103476,
+          "work": {
+            "iterations": 1346,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 90,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1346,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true,
+          "profile": {
+            "source": "benchmarks/symmetry/public-sweep-profiles-v2/triangular-TM-64-workers4-candidate.profile.json",
+            "sha256": "d7f4893653926acddf44fcaba3d5df69e800b234849de0938e696756268c1810",
+            "counters": {
+              "active_X.columns": 24228,
+              "eigensolve.calls": 90,
+              "fft.forward.elements": 175185920,
+              "fft.forward.vectors": 42770,
+              "fft.inverse.elements": 175579136,
+              "fft.inverse.vectors": 42866,
+              "initialization.random_accepts": 276,
+              "initialization.random_attempts": 276,
+              "initialization.random_rejections": 0,
+              "initialization.warm_accepts": 1344,
+              "initialization.warm_attempts": 2688,
+              "iterations": 1346,
+              "operator_A.columns": 52718,
+              "operator_A.elements": 215932928,
+              "operator_B.columns": 41144,
+              "operator_B.elements": 168525824,
+              "preconditioner.columns": 13282,
+              "real_dense_ritz.calls": 2512,
+              "real_dense_ritz.dimension_cubes": 184086496,
+              "real_dense_ritz.dimension_sum": 95104,
+              "real_gram.multiply_terms": 16451698688,
+              "real_vector.multiply_terms": 29887692800,
+              "ritz_gram.elements": 2008264,
+              "ritz_gram.multiply_terms": 8225849344,
+              "search_P.columns": 16584,
+              "subspace.dropped_columns": 0,
+              "subspace.input_columns": 47552,
+              "subspace.retained_columns": 47552,
+              "svqb_gram.elements": 2008264,
+              "svqb_gram.multiply_terms": 8225849344,
+              "symmetry.reused_solves": 6,
+              "symmetry.transform.elements": 2211840
+            },
+            "arrays_identical": true,
+            "iteration_ledger_agrees": true,
+            "role": "instrumented work counters, not primary latency"
+          }
+        }
+      },
+      "manifest_sha256": "fc3181dc6a567e16f4a261299210704cf1328448cebce30b3726f086f846b203",
+      "max_frequency_difference": 4.6629367034256575e-14
+    },
+    {
+      "name": "square-TE-32-fields-workers4",
+      "directory": "benchmarks/symmetry/public-sweep-join-controls/square-TE-32-fields-workers4",
+      "comparison": {
+        "lattice": "square",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 4,
+        "policy": "auto",
+        "control": "auto",
+        "fields": true,
+        "smoothing": "analytic",
+        "support_cutoff": null,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "585e73e647ec514c44e6f8ffebe198677c7f4b48",
+          "binary_sha256": "49529bc01da59035ff2da2407975fcb50d5c61c19cf65de80077c93b6ce194c7",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "585e73e647ec514c44e6f8ffebe198677c7f4b48",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.9912516813590909,
+          "interval": [
+            0.9827538133849202,
+            1.0003118268628968
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.9912516813590909,
+          "interval": [
+            0.9827538133849202,
+            1.0003118268628968
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "small or inconclusive"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.5819297030102462,
+          "median_rss_kib": 53268,
+          "work": {
+            "iterations": 1696,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1696,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.5883406130014919,
+          "median_rss_kib": 53432,
+          "work": {
+            "iterations": 1696,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1696,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "e3ad40d7d9e9b1844527b4a67c9b20582afffb95e2aadede383fff456051606f",
+      "max_frequency_difference": 0.0
+    },
+    {
+      "name": "triangular-TE-32-metric-auto-fields-workers4-retry",
+      "directory": "benchmarks/symmetry/public-sweep-join-controls/triangular-TE-32-metric-auto-fields-workers4-retry",
+      "comparison": {
+        "lattice": "triangular",
+        "polarization": "TE",
+        "size": 32,
+        "bands": 8,
+        "intervals": 3,
+        "threads": 4,
+        "policy": "auto",
+        "control": "auto",
+        "fields": true,
+        "smoothing": "voronoi",
+        "support_cutoff": 14.0,
+        "heldout": true
+      },
+      "executables": {
+        "reference": {
+          "source_revision": "3c24f3d553f26bdb72260b37bd7f74d96bebe055",
+          "binary_sha256": "b4b428b5d25628dd9ba8bbbcbdb9b3fbe919526dcb5f67546aff92a29197cbe0",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli -p blaze2d-core --bin blaze2d --example symmetry_galerkin_bench",
+          "source_patch_sha256": null
+        },
+        "candidate": {
+          "source_revision": "585e73e647ec514c44e6f8ffebe198677c7f4b48",
+          "binary_sha256": "49529bc01da59035ff2da2407975fcb50d5c61c19cf65de80077c93b6ce194c7",
+          "profiled": false,
+          "build_command": "cargo build --release --locked -p blaze2d-cli",
+          "source_patch_sha256": null
+        }
+      },
+      "collector_source_revision": "585e73e647ec514c44e6f8ffebe198677c7f4b48",
+      "summary": {
+        "numerical_pass": true,
+        "all_blocks": {
+          "ratio": 0.9902213278314177,
+          "interval": [
+            0.9819960561880013,
+            0.998309667049582
+          ],
+          "pairs": 9
+        },
+        "admitted": {
+          "ratio": 0.9902213278314177,
+          "interval": [
+            0.9819960561880013,
+            0.998309667049582
+          ],
+          "pairs": 9
+        },
+        "admitted_pair_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "excluded_pair_ids": [],
+        "timing_qualified": true,
+        "conclusion": "small or inconclusive"
+      },
+      "variants": {
+        "reference": {
+          "median_seconds": 0.4772287310042884,
+          "median_rss_kib": 51760,
+          "work": {
+            "iterations": 1717,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1717,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        },
+        "candidate": {
+          "median_seconds": 0.48455254299915396,
+          "median_rss_kib": 51244,
+          "work": {
+            "iterations": 1717,
+            "seeded_points": 0,
+            "exact_geometry_hits": 0,
+            "reused_points": 6,
+            "continuation_fallbacks": 0,
+            "max_cache_bytes": 0,
+            "pt_points": 54,
+            "sector_points": 0,
+            "coarse_points": 0,
+            "coarse_iterations": 0,
+            "retained_iterations": 1717,
+            "discarded_iterations": 0,
+            "qualification_attempts": 0
+          },
+          "work_repeatable": true
+        }
+      },
+      "manifest_sha256": "19a64429ea93aba7f52e5b633e8169e0722f2c69b0db3293d91d17594cb1a60b",
+      "max_frequency_difference": 0.0
+    }
+  ],
+  "triangular_convergence": {
+    "records": [
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/00-hex-gamma-TE-33-7-voronoi.json",
+        "case": "hex-gamma",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 7.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 32,
+        "reference_iterations": 104,
+        "reference_attempts": null,
+        "coefficient_count": 127,
+        "scaled_frequency_error": 0.037575755996740234,
+        "subspace_sine": 0.1023938726607283,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 3.543900281244089e-31,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/01-hex-gamma-TE-33-14-voronoi.json",
+        "case": "hex-gamma",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 79,
+        "reference_iterations": 104,
+        "reference_attempts": null,
+        "coefficient_count": 535,
+        "scaled_frequency_error": 0.007018216553197942,
+        "subspace_sine": 0.019518474815800064,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 3.6745155812893925e-31,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/02-hex-gamma-TE-65-14-voronoi.json",
+        "case": "hex-gamma",
+        "size": 65,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 77,
+        "reference_iterations": 106,
+        "reference_attempts": null,
+        "coefficient_count": 535,
+        "scaled_frequency_error": 0.015628951531442187,
+        "subspace_sine": 0.03194630673522447,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/03-hex-gamma-TE-65-28-voronoi.json",
+        "case": "hex-gamma",
+        "size": 65,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 81,
+        "reference_iterations": 106,
+        "reference_attempts": null,
+        "coefficient_count": 2125,
+        "scaled_frequency_error": 0.0021430131412803087,
+        "subspace_sine": 0.005502008948009772,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/04-hex-gamma-TE-129-28-voronoi.json",
+        "case": "hex-gamma",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 76,
+        "reference_iterations": 105,
+        "reference_attempts": null,
+        "coefficient_count": 2125,
+        "scaled_frequency_error": 0.007303677641651642,
+        "subspace_sine": 0.014658883670987676,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/05-hex-gamma-TE-129-56-voronoi.json",
+        "case": "hex-gamma",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 56.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 75,
+        "reference_iterations": 105,
+        "reference_attempts": null,
+        "coefficient_count": 8509,
+        "scaled_frequency_error": 0.0011827955946884922,
+        "subspace_sine": 0.0025624318447805103,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/06-hex-k-TE-33-7-voronoi.json",
+        "case": "hex-k",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 7.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 41,
+        "reference_iterations": 95,
+        "reference_attempts": null,
+        "coefficient_count": 135,
+        "scaled_frequency_error": 0.04160638565103644,
+        "subspace_sine": 0.12385331749353218,
+        "prefix": 6,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/07-hex-k-TE-33-14-voronoi.json",
+        "case": "hex-k",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 83,
+        "reference_iterations": 95,
+        "reference_attempts": null,
+        "coefficient_count": 540,
+        "scaled_frequency_error": 0.0071377312912140785,
+        "subspace_sine": 0.024931552154097945,
+        "prefix": 6,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/08-hex-k-TE-65-14-voronoi.json",
+        "case": "hex-k",
+        "size": 65,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 85,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 540,
+        "scaled_frequency_error": 0.01375924129144152,
+        "subspace_sine": 0.03838771307932276,
+        "prefix": 6,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/09-hex-k-TE-65-28-voronoi.json",
+        "case": "hex-k",
+        "size": 65,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 89,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 2142,
+        "scaled_frequency_error": 0.0020963639930753728,
+        "subspace_sine": 0.006497498875338227,
+        "prefix": 6,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/10-hex-k-TE-129-28-voronoi.json",
+        "case": "hex-k",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 87,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 2142,
+        "scaled_frequency_error": 0.006671565237913662,
+        "subspace_sine": 0.016482903303312358,
+        "prefix": 6,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/11-hex-k-TE-129-56-voronoi.json",
+        "case": "hex-k",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 56.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 86,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 8526,
+        "scaled_frequency_error": 0.001127223050517747,
+        "subspace_sine": 0.00304748315617453,
+        "prefix": 6,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/12-hex-generic-TE-33-7-voronoi.json",
+        "case": "hex-generic",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 7.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 35,
+        "reference_iterations": 106,
+        "reference_attempts": null,
+        "coefficient_count": 131,
+        "scaled_frequency_error": 0.03484010037175989,
+        "subspace_sine": 0.14322837021562676,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/13-hex-generic-TE-33-14-voronoi.json",
+        "case": "hex-generic",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 80,
+        "reference_iterations": 106,
+        "reference_attempts": null,
+        "coefficient_count": 530,
+        "scaled_frequency_error": 0.007089610568855321,
+        "subspace_sine": 0.02723688336577057,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/14-hex-generic-TE-65-14-voronoi.json",
+        "case": "hex-generic",
+        "size": 65,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 83,
+        "reference_iterations": 117,
+        "reference_attempts": null,
+        "coefficient_count": 530,
+        "scaled_frequency_error": 0.015276918688739897,
+        "subspace_sine": 0.043874953876863125,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/15-hex-generic-TE-65-28-voronoi.json",
+        "case": "hex-generic",
+        "size": 65,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 84,
+        "reference_iterations": 117,
+        "reference_attempts": null,
+        "coefficient_count": 2131,
+        "scaled_frequency_error": 0.0020883824009718804,
+        "subspace_sine": 0.0079383382450169,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/16-hex-generic-TE-129-28-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": false,
+        "iterations": 119,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 2131,
+        "scaled_frequency_error": 0.00708468764040158,
+        "subspace_sine": null,
+        "prefix": null,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": null,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/17-hex-generic-TE-129-56-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 56.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": false,
+        "iterations": 84,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 8526,
+        "scaled_frequency_error": 0.0011473858125888117,
+        "subspace_sine": null,
+        "prefix": null,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": null,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/18-hex-gamma-TM-33-14-voronoi.json",
+        "case": "hex-gamma",
+        "size": 33,
+        "polarization": "TM",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 17,
+        "reference_iterations": 19,
+        "reference_attempts": null,
+        "coefficient_count": 535,
+        "scaled_frequency_error": 0.00011948963345572667,
+        "subspace_sine": 0.002342049020666886,
+        "prefix": 7,
+        "approximation_target": true,
+        "max_scaled_ritz_lower_bound_violation": 1.5163183182167263e-30,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/19-hex-gamma-TM-65-28-voronoi.json",
+        "case": "hex-gamma",
+        "size": 65,
+        "polarization": "TM",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 17,
+        "reference_iterations": 17,
+        "reference_attempts": null,
+        "coefficient_count": 2125,
+        "scaled_frequency_error": 7.905131575962607e-06,
+        "subspace_sine": 0.00033002266075095625,
+        "prefix": 7,
+        "approximation_target": true,
+        "max_scaled_ritz_lower_bound_violation": 5.859186411601298e-30,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/20-hex-gamma-TE-33-14-analytic.json",
+        "case": "hex-gamma",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "analytic",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 81,
+        "reference_iterations": 105,
+        "reference_attempts": null,
+        "coefficient_count": 535,
+        "scaled_frequency_error": 0.0057643974693869626,
+        "subspace_sine": 0.017082996781289782,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 4.664220363337166e-31,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/21-hex-gamma-TE-33-14-raw.json",
+        "case": "hex-gamma",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "raw",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 77,
+        "reference_iterations": 108,
+        "reference_attempts": null,
+        "coefficient_count": 535,
+        "scaled_frequency_error": 0.01448289619270618,
+        "subspace_sine": 0.03490943140457011,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 3.0881142214215096e-31,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/22-hex-k-TM-33-14-voronoi.json",
+        "case": "hex-k",
+        "size": 33,
+        "polarization": "TM",
+        "cutoff": 14.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 14,
+        "reference_iterations": 16,
+        "reference_attempts": null,
+        "coefficient_count": 540,
+        "scaled_frequency_error": 0.00010246580870720271,
+        "subspace_sine": 0.0014022433558450304,
+        "prefix": 6,
+        "approximation_target": true,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/23-hex-k-TM-65-28-voronoi.json",
+        "case": "hex-k",
+        "size": 65,
+        "polarization": "TM",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 14,
+        "reference_iterations": 17,
+        "reference_attempts": null,
+        "coefficient_count": 2142,
+        "scaled_frequency_error": 7.095570964046924e-06,
+        "subspace_sine": 0.00021142758745048583,
+        "prefix": 6,
+        "approximation_target": true,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/24-hex-k-TE-33-14-analytic.json",
+        "case": "hex-k",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "analytic",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 84,
+        "reference_iterations": 94,
+        "reference_attempts": null,
+        "coefficient_count": 540,
+        "scaled_frequency_error": 0.005878956835617623,
+        "subspace_sine": 0.3802810878838247,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/25-hex-k-TE-33-14-raw.json",
+        "case": "hex-k",
+        "size": 33,
+        "polarization": "TE",
+        "cutoff": 14.0,
+        "smoothing": "raw",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 81,
+        "reference_iterations": 96,
+        "reference_attempts": null,
+        "coefficient_count": 540,
+        "scaled_frequency_error": 0.015491098831502024,
+        "subspace_sine": 0.042794796966836524,
+        "prefix": 6,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/26-hex-gamma-TM-17-3.5-analytic.json",
+        "case": "hex-gamma",
+        "size": 17,
+        "polarization": "TM",
+        "cutoff": 3.5,
+        "smoothing": "analytic",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 10,
+        "reference_iterations": 18,
+        "reference_attempts": null,
+        "coefficient_count": 37,
+        "scaled_frequency_error": 0.06708769468203982,
+        "subspace_sine": 0.9999999999999999,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": {
+          "authorizes_symmetry": false,
+          "projected_A_relative_frobenius": 2.304215932582374e-16,
+          "projected_B_relative_frobenius": 0.005475812408715553
+        }
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/27-hex-gamma-TE-17-3.5-analytic.json",
+        "case": "hex-gamma",
+        "size": 17,
+        "polarization": "TE",
+        "cutoff": 3.5,
+        "smoothing": "analytic",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 11,
+        "reference_iterations": 89,
+        "reference_attempts": null,
+        "coefficient_count": 37,
+        "scaled_frequency_error": 0.2560978308629885,
+        "subspace_sine": 0.33263668315822326,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": {
+          "authorizes_symmetry": false,
+          "projected_A_relative_frobenius": 0.0015154269087018573,
+          "projected_B_relative_frobenius": 0.0
+        }
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/28-hex-gamma-TM-17-3.5-raw.json",
+        "case": "hex-gamma",
+        "size": 17,
+        "polarization": "TM",
+        "cutoff": 3.5,
+        "smoothing": "raw",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 10,
+        "reference_iterations": 17,
+        "reference_attempts": null,
+        "coefficient_count": 37,
+        "scaled_frequency_error": 0.11820756005405988,
+        "subspace_sine": 0.2002637984127288,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 9.273851907450224e-33,
+        "covariance": {
+          "authorizes_symmetry": false,
+          "projected_A_relative_frobenius": 2.304215932582374e-16,
+          "projected_B_relative_frobenius": 2.0615745508638492e-16
+        }
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/29-hex-gamma-TE-17-3.5-raw.json",
+        "case": "hex-gamma",
+        "size": 17,
+        "polarization": "TE",
+        "cutoff": 3.5,
+        "smoothing": "raw",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 11,
+        "reference_iterations": 88,
+        "reference_attempts": null,
+        "coefficient_count": 37,
+        "scaled_frequency_error": 0.26542665136514815,
+        "subspace_sine": 0.3436421495264533,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": {
+          "authorizes_symmetry": false,
+          "projected_A_relative_frobenius": 2.462934450741454e-16,
+          "projected_B_relative_frobenius": 0.0
+        }
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/30-hex-gamma-TM-17-3.5-voronoi.json",
+        "case": "hex-gamma",
+        "size": 17,
+        "polarization": "TM",
+        "cutoff": 3.5,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 10,
+        "reference_iterations": 18,
+        "reference_attempts": null,
+        "coefficient_count": 37,
+        "scaled_frequency_error": 0.06851983665083548,
+        "subspace_sine": 1.0,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 2.989098801471417e-32,
+        "covariance": {
+          "authorizes_symmetry": false,
+          "projected_A_relative_frobenius": 2.304215932582374e-16,
+          "projected_B_relative_frobenius": 5.608906864397235e-16
+        }
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-completion-v1/31-hex-gamma-TE-17-3.5-voronoi.json",
+        "case": "hex-gamma",
+        "size": 17,
+        "polarization": "TE",
+        "cutoff": 3.5,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 11,
+        "reference_iterations": 87,
+        "reference_attempts": null,
+        "coefficient_count": 37,
+        "scaled_frequency_error": 0.25621971205981064,
+        "subspace_sine": 0.3345098397668873,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": {
+          "authorizes_symmetry": false,
+          "projected_A_relative_frobenius": 2.8510067974913983e-16,
+          "projected_B_relative_frobenius": 0.0
+        }
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-edge-refinement-v1/00-hex-gamma-TE-129-64-voronoi.json",
+        "case": "hex-gamma",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 64.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 77,
+        "reference_iterations": 105,
+        "reference_attempts": null,
+        "coefficient_count": 11119,
+        "scaled_frequency_error": 0.0005826281169606451,
+        "subspace_sine": 0.0014454028217422464,
+        "prefix": 7,
+        "approximation_target": true,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-edge-refinement-v1/01-hex-k-TE-129-64-voronoi.json",
+        "case": "hex-k",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 64.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 87,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 11142,
+        "scaled_frequency_error": 0.0005997360448283774,
+        "subspace_sine": 0.0018023163798801607,
+        "prefix": 6,
+        "approximation_target": true,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-edge-refinement-v1/02-hex-generic-TE-129-64-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 64.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": false,
+        "iterations": 101,
+        "reference_iterations": 97,
+        "reference_attempts": null,
+        "coefficient_count": 11139,
+        "scaled_frequency_error": 0.0005605988343202261,
+        "subspace_sine": null,
+        "prefix": null,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": null,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-tight-reference-v1/00-hex-generic-TE-129-28-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-18,
+        "projected_accepted": false,
+        "reference_accepted": false,
+        "iterations": 1000,
+        "reference_iterations": 1000,
+        "reference_attempts": null,
+        "coefficient_count": 2131,
+        "scaled_frequency_error": 0.007084687640409851,
+        "subspace_sine": null,
+        "prefix": null,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": null,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-tight-reference-v1/01-hex-generic-TE-129-56-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 56.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-18,
+        "projected_accepted": true,
+        "reference_accepted": false,
+        "iterations": 395,
+        "reference_iterations": 1000,
+        "reference_attempts": null,
+        "coefficient_count": 8526,
+        "scaled_frequency_error": 0.0011473858126023317,
+        "subspace_sine": null,
+        "prefix": null,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": null,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-tight-reference-v2/00-hex-generic-TE-129-28-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-16,
+        "projected_accepted": false,
+        "reference_accepted": false,
+        "iterations": 1000,
+        "reference_iterations": 1000,
+        "reference_attempts": null,
+        "coefficient_count": 2131,
+        "scaled_frequency_error": 0.007084687640409851,
+        "subspace_sine": null,
+        "prefix": null,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": null,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-tight-reference-v2/01-hex-generic-TE-129-56-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 56.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-16,
+        "projected_accepted": true,
+        "reference_accepted": false,
+        "iterations": 395,
+        "reference_iterations": 1000,
+        "reference_attempts": null,
+        "coefficient_count": 8526,
+        "scaled_frequency_error": 0.0011473858126023317,
+        "subspace_sine": null,
+        "prefix": null,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": null,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-reference-correction-v1/00-hex-generic-TE-129-28-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 28.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 119,
+        "reference_iterations": 103,
+        "reference_attempts": [
+          {
+            "absolute_residuals": [
+              5.26744429505436e-05,
+              8.667544574316028e-05,
+              3.347940026081611e-05,
+              4.392547320281122e-05,
+              2.523773805200223e-05,
+              4.241805879506025e-05,
+              6.268478369672286e-05,
+              4.125037499673135e-05,
+              3.3293413359652044e-05,
+              4.9732804755592634e-05,
+              0.00011269351902378643,
+              7.416047138132764e-05,
+              8.842355368947432e-05,
+              0.00012269656332748578,
+              9.706694023475397e-05,
+              0.0002189845863673394
+            ],
+            "accepted": false,
+            "iterations": 97,
+            "residuals": [
+              2.8462469442361536e-05,
+              2.7351575387868064e-06,
+              5.901816786767268e-07,
+              7.556998822092439e-07,
+              3.269847434198744e-07,
+              4.743328398844189e-07,
+              5.87351279475106e-07,
+              3.6989457542331473e-07,
+              2.8190382067503787e-07,
+              3.5526580193441725e-07,
+              7.759147982877091e-07,
+              5.008932275482902e-07,
+              4.4065105479623784e-07,
+              5.921961181103706e-07,
+              4.518675693120366e-07,
+              8.7216221844187e-07
+            ],
+            "solver_converged": true
+          },
+          {
+            "absolute_residuals": [
+              1.2993632756935176e-06,
+              1.8969806534375404e-06,
+              8.410586044132376e-07,
+              1.9626254558468764e-06,
+              9.502654079796255e-07,
+              1.9605982119360314e-06,
+              3.10070998177047e-06,
+              2.028541850251188e-06,
+              1.564186686777172e-06,
+              7.574333894260945e-06,
+              6.047746700504752e-06,
+              4.775291248467546e-06,
+              4.695064990980453e-06,
+              7.381691203639613e-06,
+              4.83147868938335e-06,
+              1.6598716028505394e-05
+            ],
+            "accepted": true,
+            "iterations": 6,
+            "residuals": [
+              7.021068565192854e-07,
+              5.986171620733561e-08,
+              1.4826352179290309e-08,
+              3.376527826933644e-08,
+              1.2311812174640668e-08,
+              2.192406121725765e-08,
+              2.9053398092366025e-08,
+              1.8190055884016808e-08,
+              1.324436754165714e-08,
+              5.410717972348807e-08,
+              4.16398050382093e-08,
+              3.2253180183140907e-08,
+              2.3397446203964482e-08,
+              3.5627802094332494e-08,
+              2.249157670237697e-08,
+              6.610863912784762e-08
+            ],
+            "solver_converged": true
+          }
+        ],
+        "coefficient_count": 2131,
+        "scaled_frequency_error": 0.007084687640415849,
+        "subspace_sine": 0.01987116665216144,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-reference-correction-v1/01-hex-generic-TE-129-56-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 56.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 84,
+        "reference_iterations": 103,
+        "reference_attempts": [
+          {
+            "absolute_residuals": [
+              5.26744429505436e-05,
+              8.667544574316028e-05,
+              3.347940026081611e-05,
+              4.392547320281122e-05,
+              2.523773805200223e-05,
+              4.241805879506025e-05,
+              6.268478369672286e-05,
+              4.125037499673135e-05,
+              3.3293413359652044e-05,
+              4.9732804755592634e-05,
+              0.00011269351902378643,
+              7.416047138132764e-05,
+              8.842355368947432e-05,
+              0.00012269656332748578,
+              9.706694023475397e-05,
+              0.0002189845863673394
+            ],
+            "accepted": false,
+            "iterations": 97,
+            "residuals": [
+              2.8462469442361536e-05,
+              2.7351575387868064e-06,
+              5.901816786767268e-07,
+              7.556998822092439e-07,
+              3.269847434198744e-07,
+              4.743328398844189e-07,
+              5.87351279475106e-07,
+              3.6989457542331473e-07,
+              2.8190382067503787e-07,
+              3.5526580193441725e-07,
+              7.759147982877091e-07,
+              5.008932275482902e-07,
+              4.4065105479623784e-07,
+              5.921961181103706e-07,
+              4.518675693120366e-07,
+              8.7216221844187e-07
+            ],
+            "solver_converged": true
+          },
+          {
+            "absolute_residuals": [
+              1.2993632756935176e-06,
+              1.8969806534375404e-06,
+              8.410586044132376e-07,
+              1.9626254558468764e-06,
+              9.502654079796255e-07,
+              1.9605982119360314e-06,
+              3.10070998177047e-06,
+              2.028541850251188e-06,
+              1.564186686777172e-06,
+              7.574333894260945e-06,
+              6.047746700504752e-06,
+              4.775291248467546e-06,
+              4.695064990980453e-06,
+              7.381691203639613e-06,
+              4.83147868938335e-06,
+              1.6598716028505394e-05
+            ],
+            "accepted": true,
+            "iterations": 6,
+            "residuals": [
+              7.021068565192854e-07,
+              5.986171620733561e-08,
+              1.4826352179290309e-08,
+              3.376527826933644e-08,
+              1.2311812174640668e-08,
+              2.192406121725765e-08,
+              2.9053398092366025e-08,
+              1.8190055884016808e-08,
+              1.324436754165714e-08,
+              5.410717972348807e-08,
+              4.16398050382093e-08,
+              3.2253180183140907e-08,
+              2.3397446203964482e-08,
+              3.5627802094332494e-08,
+              2.249157670237697e-08,
+              6.610863912784762e-08
+            ],
+            "solver_converged": true
+          }
+        ],
+        "coefficient_count": 8526,
+        "scaled_frequency_error": 0.0011473858126029967,
+        "subspace_sine": 0.0038626915845668833,
+        "prefix": 7,
+        "approximation_target": false,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      },
+      {
+        "source": "benchmarks/symmetry/triangular-reference-correction-v1/02-hex-generic-TE-129-64-voronoi.json",
+        "case": "hex-generic",
+        "size": 129,
+        "polarization": "TE",
+        "cutoff": 64.0,
+        "smoothing": "voronoi",
+        "tolerance": 1e-14,
+        "projected_accepted": true,
+        "reference_accepted": true,
+        "iterations": 101,
+        "reference_iterations": 103,
+        "reference_attempts": [
+          {
+            "absolute_residuals": [
+              5.26744429505436e-05,
+              8.667544574316028e-05,
+              3.347940026081611e-05,
+              4.392547320281122e-05,
+              2.523773805200223e-05,
+              4.241805879506025e-05,
+              6.268478369672286e-05,
+              4.125037499673135e-05,
+              3.3293413359652044e-05,
+              4.9732804755592634e-05,
+              0.00011269351902378643,
+              7.416047138132764e-05,
+              8.842355368947432e-05,
+              0.00012269656332748578,
+              9.706694023475397e-05,
+              0.0002189845863673394
+            ],
+            "accepted": false,
+            "iterations": 97,
+            "residuals": [
+              2.8462469442361536e-05,
+              2.7351575387868064e-06,
+              5.901816786767268e-07,
+              7.556998822092439e-07,
+              3.269847434198744e-07,
+              4.743328398844189e-07,
+              5.87351279475106e-07,
+              3.6989457542331473e-07,
+              2.8190382067503787e-07,
+              3.5526580193441725e-07,
+              7.759147982877091e-07,
+              5.008932275482902e-07,
+              4.4065105479623784e-07,
+              5.921961181103706e-07,
+              4.518675693120366e-07,
+              8.7216221844187e-07
+            ],
+            "solver_converged": true
+          },
+          {
+            "absolute_residuals": [
+              1.2993632756935176e-06,
+              1.8969806534375404e-06,
+              8.410586044132376e-07,
+              1.9626254558468764e-06,
+              9.502654079796255e-07,
+              1.9605982119360314e-06,
+              3.10070998177047e-06,
+              2.028541850251188e-06,
+              1.564186686777172e-06,
+              7.574333894260945e-06,
+              6.047746700504752e-06,
+              4.775291248467546e-06,
+              4.695064990980453e-06,
+              7.381691203639613e-06,
+              4.83147868938335e-06,
+              1.6598716028505394e-05
+            ],
+            "accepted": true,
+            "iterations": 6,
+            "residuals": [
+              7.021068565192854e-07,
+              5.986171620733561e-08,
+              1.4826352179290309e-08,
+              3.376527826933644e-08,
+              1.2311812174640668e-08,
+              2.192406121725765e-08,
+              2.9053398092366025e-08,
+              1.8190055884016808e-08,
+              1.324436754165714e-08,
+              5.410717972348807e-08,
+              4.16398050382093e-08,
+              3.2253180183140907e-08,
+              2.3397446203964482e-08,
+              3.5627802094332494e-08,
+              2.249157670237697e-08,
+              6.610863912784762e-08
+            ],
+            "solver_converged": true
+          }
+        ],
+        "coefficient_count": 11139,
+        "scaled_frequency_error": 0.0005605988343344028,
+        "subspace_sine": 0.0023197063342738095,
+        "prefix": 7,
+        "approximation_target": true,
+        "max_scaled_ritz_lower_bound_violation": 0.0,
+        "covariance": null
+      }
+    ],
+    "cutoff_refinements": [
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/00-hex-gamma-TE-33-7-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/01-hex-gamma-TE-33-14-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/02-hex-gamma-TE-65-14-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/03-hex-gamma-TE-65-28-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/04-hex-gamma-TE-129-28-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/05-hex-gamma-TE-129-56-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/06-hex-k-TE-33-7-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/07-hex-k-TE-33-14-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/08-hex-k-TE-65-14-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/09-hex-k-TE-65-28-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/10-hex-k-TE-129-28-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/11-hex-k-TE-129-56-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/12-hex-generic-TE-33-7-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/13-hex-generic-TE-33-14-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/14-hex-generic-TE-65-14-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/15-hex-generic-TE-65-28-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-completion-v1/16-hex-generic-TE-129-28-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-completion-v1/17-hex-generic-TE-129-56-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-tight-reference-v1/00-hex-generic-TE-129-28-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-tight-reference-v1/01-hex-generic-TE-129-56-voronoi.json",
+        "accepted": false,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-tight-reference-v2/00-hex-generic-TE-129-28-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-tight-reference-v2/01-hex-generic-TE-129-56-voronoi.json",
+        "accepted": false,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-reference-correction-v1/00-hex-generic-TE-129-28-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-reference-correction-v1/01-hex-generic-TE-129-56-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      },
+      {
+        "coarse": "benchmarks/symmetry/triangular-reference-correction-v1/01-hex-generic-TE-129-56-voronoi.json",
+        "fine": "benchmarks/symmetry/triangular-reference-correction-v1/02-hex-generic-TE-129-64-voronoi.json",
+        "accepted": true,
+        "max_scaled_monotonicity_violation": 0.0
+      }
+    ]
+  },
+  "frontend_checks": {
+    "wasm": {
+      "binary_sha256": "02c1788c09d17b583206be7ecf15c1ea975d9f6bbd2900adad2ec4037332d9d4",
+      "build": {
+        "config_schema": "blaze2d/1",
+        "result_schema": "blaze2d/result/1",
+        "source_revision": "585e73e647ec514c44e6f8ffebe198677c7f4b48",
+        "version": "0.7.0"
+      },
+      "records": [
+        {
+          "polarization": "TM",
+          "maxDifference": 1.461053500406706e-13,
+          "seeds": 2,
+          "reuses": 4,
+          "coarse": 1
+        },
+        {
+          "polarization": "TE",
+          "maxDifference": 3.3584246494910985e-15,
+          "seeds": 2,
+          "reuses": 4,
+          "coarse": 1
+        }
+      ],
+      "issues": []
+    },
+    "python": {
+      "native_sha256": "aaa1f722fe92a5dbeaa33d5310d018012113a767ea82e30fc04f6a56af349d2e",
+      "records": [
+        {
+          "polarization": "TM",
+          "max_frequency_difference": 4.5075054799781356e-14,
+          "seeded_points": 2,
+          "reused_points": 6,
+          "coarse_starts": 2
+        },
+        {
+          "polarization": "TE",
+          "max_frequency_difference": 1.1102230246251565e-15,
+          "seeded_points": 2,
+          "reused_points": 6,
+          "coarse_starts": 2
+        }
+      ]
+    }
+  },
+  "environment": {
+    "scope": "Environment recorded after collection; each executable has its own source/hash/build provenance.",
+    "cpu": "13th Gen Intel(R) Core(TM) i9-13900K",
+    "architecture": "x86_64",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "python": "3.12.3",
+    "rustc": "rustc 1.91.1 (ed61e7d7e 2025-11-07)\nbinary: rustc\ncommit-hash: ed61e7d7e242494fb7057f2657300d9e77bb4fcb\ncommit-date: 2025-11-07\nhost: x86_64-unknown-linux-gnu\nrelease: 1.91.1\nLLVM version: 21.1.2",
+    "cargo": "cargo 1.91.1 (ea2d97820 2025-10-10)",
+    "lockfile_sha256": "2059483c4302394224bcf354dec6a2f52002e1fbeb50e69ba64698333fcb179b",
+    "primary_build": "release, locked, unprofiled, default batched FFT",
+    "profile_build": "release, locked, profiling feature",
+    "native_threads": 4,
+    "timing_clock": "CLOCK_MONOTONIC_RAW with independent Windows QPC witness"
+  }
+}

@@ -81,6 +81,34 @@ impl SupportSpectralCache {
     ) -> Option<GalerkinResult> {
         crate::profile_scope!("symmetry.support.reuse");
         report.candidate_operation_count = operations.len();
+        // Identical requests have precedence over any nontrivial star action.
+        // This also preserves their original basis and avoids needless probes.
+        let identity = support.identity();
+        if let Some(entry) = self
+            .entries
+            .iter()
+            .find(|e| e.support.identity() == identity)
+        {
+            match galerkin::certify_coefficients(
+                target,
+                support,
+                config,
+                entry.values.clone(),
+                entry.columns.clone(),
+                budget,
+                "identical_support_reuse",
+            ) {
+                Ok(result) => {
+                    report.source_index = Some(entry.source);
+                    report.operation = Some(AffineOp::IDENTITY);
+                    return Some(result);
+                }
+                Err(reason) => {
+                    report.rejected.push(reason);
+                    return None;
+                }
+            }
+        }
         for entry in &self.entries {
             for &operation in operations {
                 let mapped = operation.map_wavevector(entry.support.k());
@@ -91,40 +119,30 @@ impl SupportSpectralCache {
                 }) {
                     continue;
                 }
-                let exact = operation == AffineOp::IDENTITY
-                    && entry.support.identity() == support.identity();
-                let (columns, qualification) = if exact {
-                    (entry.columns.clone(), None)
-                } else {
-                    report.qualification_attempts += 1;
-                    let (action, qualification) =
-                        match super::support_qualification::qualify_transport(
-                            target,
-                            &entry.support,
-                            support,
-                            operation,
-                            options.qualification_tolerance,
-                            budget.max_estimated_payload_bytes,
-                        ) {
-                            Ok(v) => v,
-                            Err(reason) => {
-                                report.rejected.push(reason);
-                                continue;
-                            }
-                        };
-                    (
-                        entry
-                            .columns
-                            .iter()
-                            .map(|field| {
-                                let mut out = Field2D::zeros(support.coordinate_grid());
-                                action.apply(field.as_slice(), out.as_mut_slice());
-                                out
-                            })
-                            .collect(),
-                        Some(qualification),
-                    )
+                report.qualification_attempts += 1;
+                let (action, qualification) = match super::support_qualification::qualify_transport(
+                    target,
+                    &entry.support,
+                    support,
+                    operation,
+                    options.qualification_tolerance,
+                    budget.max_estimated_payload_bytes,
+                ) {
+                    Ok(v) => v,
+                    Err(reason) => {
+                        report.rejected.push(reason);
+                        continue;
+                    }
                 };
+                let columns = entry
+                    .columns
+                    .iter()
+                    .map(|field| {
+                        let mut out = Field2D::zeros(support.coordinate_grid());
+                        action.apply(field.as_slice(), out.as_mut_slice());
+                        out
+                    })
+                    .collect();
                 match galerkin::certify_coefficients(
                     target,
                     support,
@@ -137,7 +155,7 @@ impl SupportSpectralCache {
                     Ok(result) => {
                         report.source_index = Some(entry.source);
                         report.operation = Some(operation);
-                        report.support_transport = qualification;
+                        report.support_transport = Some(qualification);
                         return Some(result);
                     }
                     Err(reason) => report.rejected.push(reason),

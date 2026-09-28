@@ -310,9 +310,9 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             if b.symmetry.sectors==SectorPolicy::Off {
                 let driver=blaze2d_core::drivers::support_bands::driver_payload_bytes(samples as usize,bands as usize,nk as usize).map_err(|e|invalid("bands.discretization",e))?;
                 let solve=blaze2d_core::symmetry::galerkin::estimated_payload_bytes_for_dimensions(samples as usize,coefficients as usize,&cfg,false).map_err(|e|invalid("bands.discretization",e))?;
-                let cache = if b.symmetry.k_reuse != KReuse::Off { b.symmetry.max_cache_bytes as u128 } else { 0 };
+                let cache = if b.symmetry.k_reuse != KReuse::Off || b.symmetry.policy == SymmetryPolicy::Auto { b.symmetry.max_cache_bytes as u128 } else { 0 };
                 let continuation = if b.symmetry.continuation != ContinuationPolicy::Off { b.symmetry.max_continuation_bytes as u128 } else { 0 };
-                let qualification = if b.symmetry.arithmetic == SymmetryArithmetic::PtReal { 256*samples as u128 } else { 0 };
+                let qualification = if b.symmetry.arithmetic == SymmetryArithmetic::PtReal || b.symmetry.policy == SymmetryPolicy::Auto { 256*samples as u128 } else { 0 };
                 reserved=reserved.min(driver as u128+solve as u128+cache+continuation+qualification);
             }
             // Retained physical outputs need both temporary complex fields and

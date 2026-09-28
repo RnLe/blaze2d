@@ -278,6 +278,7 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
     let mut previous: Option<Vec<Field2D>> = None;
     let mut previous_omegas: Option<Vec<f64>> = None;
     let mut previous_values: Option<Vec<f64>> = None;
+    let mut arithmetic_rejection: Option<String> = None;
     let mut cache = crate::symmetry::support_reuse::SupportSpectralCache::new(options.symmetry.max_cache_bytes);
     let operations = match options.symmetry.k_reuse {
         KReuse::Off => Vec::new(),
@@ -367,6 +368,7 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
         let warm = geometry_seed.as_ref().map(|s|s.fields.as_slice()).or(warm);
         let coarse_seed = if spectrum.is_none() && warm.is_none() && index == 0 {
             options.symmetry.coarse_start.and_then(|settings| {
+                let coarse_timer = crate::timing::Timer::start();
                 let (seed,mut r) = crate::symmetry::coarse::prepare_initializer(&mut theta,&job.geom,&job.dielectric,
                     k,&job.eigensolver,settings,options.symmetry.relative_rank_tolerance);
                 let seed = seed.and_then(|s| match galerkin::prepare_physical_seed(&mut theta,&support,&s.fields,
@@ -374,6 +376,9 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
                     Ok(s) => { r.prepared = Some(s.report.clone()); Some(s) }
                     Err(reason) => { r.rejection = Some(reason); r.used_as_seed = false; None }
                 });
+                r.seconds = coarse_timer.elapsed_secs();
+                ledger.solver_attempts.push(SolveAttempt { method: "metric_support_coarse_start",
+                    iterations: r.iterations, retained: false, rejection: r.rejection.clone() });
                 ledger.coarse_start = Some(r);
                 seed
             })
@@ -483,6 +488,9 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
             });
         }
         if spectrum.is_none() && options.symmetry.arithmetic == Arithmetic::PtRealTe {
+            if let Some(reason) = &arithmetic_rejection {
+                ledger.rejected.push(format!("automatic arithmetic fallback after an earlier rejection: {reason}"));
+            } else {
             let attempt_start = iteration_total();
             let attempt = crate::symmetry::fourier::projected::solve(
                 &mut theta, &support, &job.eigensolver, warm, &options.symmetry,
@@ -490,10 +498,14 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
             );
             let rejection = match attempt {
                 Ok((result, coordinates)) => { ledger.coordinates = Some(coordinates); spectrum = Some(result); None }
-                Err(reason) => { ledger.rejected.push(reason.clone()); Some(reason) }
+                Err(reason) => {
+                    if options.symmetry.automatic_policy { arithmetic_rejection = Some(reason.clone()); }
+                    ledger.rejected.push(reason.clone()); Some(reason)
+                }
             };
             ledger.solver_attempts.push(SolveAttempt { method: "metric_support_pt_real",
                 iterations: iteration_total().wrapping_sub(attempt_start), retained: spectrum.is_some(), rejection });
+            }
         }
         let mut initialization_failure = false;
         if spectrum.is_none() {

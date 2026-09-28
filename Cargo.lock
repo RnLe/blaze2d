@@ -240,6 +240,7 @@ name = "blaze2d-runner"
 version = "0.7.0"
 dependencies = [
  "blaze2d-backend-cpu",
+ "blaze2d-core",
  "blaze2d-interface",
  "crossbeam-channel",
  "npyz",

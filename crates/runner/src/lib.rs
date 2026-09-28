@@ -105,11 +105,12 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
         let failed = AtomicUsize::new(0);
         let halt = AtomicBool::new(false);
         thread::scope(|scope| {
+            let mut workers = Vec::with_capacity(effective.threads);
             for worker in 0..effective.threads {
                 let (sender, plan, cancel, effective) = (&sender, &plan, &run_cancel, &effective);
                 let (next, completed, failed, halt) = (&next, &completed, &failed, &halt);
                 let skipped = &skipped;
-                scope.spawn(move || {
+                workers.push(scope.spawn(move || {
                     let boundary = |worker: usize| plan.summary.jobs / effective.threads * worker
                         + (plan.summary.jobs % effective.threads).min(worker);
                     let mut position = boundary(worker);
@@ -159,7 +160,12 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                         };
                         if sender.send(event).is_err() { cancel.store(true, Ordering::Release); break; }
                     }
-                });
+                }));
+            }
+            // Explicit joins also wait for thread-local destructors, which
+            // publish profiling totals before the terminal event is delivered.
+            for worker in workers {
+                worker.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic));
             }
         });
         let completed = completed.load(Ordering::Relaxed);
