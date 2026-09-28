@@ -47,6 +47,7 @@ struct GeometrySnapshot {
     id: String,
     parameters: Vec<f64>,
     identity: SnapshotIdentity,
+    space: Option<super::support::SupportIdentity>,
     spectrum: CachedSpectrum,
     payload_bytes: usize,
     last_used: u64,
@@ -83,11 +84,12 @@ pub struct ContinuationSeed {
 pub struct BandContinuation {
     pub cache: GeometryContinuationCache,
     pub job_index: usize,
+    pub first_point_only: bool,
 }
 
 impl BandContinuation {
     pub fn new(payload_limit: usize) -> Self {
-        Self { cache: GeometryContinuationCache::new(payload_limit), job_index: 0 }
+        Self { cache: GeometryContinuationCache::new(payload_limit), job_index: 0, first_point_only: false }
     }
 }
 
@@ -130,6 +132,7 @@ impl GeometryContinuationCache {
     pub fn resident_ids(&self) -> Vec<&str> {
         self.entries.iter().map(|e| e.id.as_str()).collect()
     }
+    pub fn payload_limit(&self) -> usize { self.limit }
     pub fn payload_bytes(&self) -> usize {
         self.payload_bytes
     }
@@ -198,13 +201,6 @@ impl GeometryContinuationCache {
         if id.is_empty() || parameters.is_empty() || parameters.iter().any(|p| !p.is_finite()) {
             return Err("source ID and finite parameter coordinates are required".into());
         }
-        if let GeometryEviction::FarthestFromIncoming { metric } = &self.eviction {
-            metric.validate(&parameters)?;
-            // Validate all distances before an insertion can evict any entry.
-            for e in &self.entries {
-                metric.distance(&parameters, &e.parameters)?;
-            }
-        }
         if spectrum.fields.is_empty()
             || spectrum.fields.len() != spectrum.eigenvalues.len()
             || spectrum.fields.iter().any(|f| {
@@ -239,10 +235,26 @@ impl GeometryContinuationCache {
                 spectrum.residuals, spectrum.orthogonality_defect
             ));
         }
-        let identity = SnapshotIdentity::from_operator(operator);
+        self.insert_snapshot(id, parameters, SnapshotIdentity::from_operator(operator), None, spectrum, replace_fiber)
+    }
+
+    fn insert_snapshot(&mut self, id: String, parameters: Vec<f64>, identity: SnapshotIdentity,
+        space: Option<super::support::SupportIdentity>, spectrum: CachedSpectrum, replace_fiber: bool,
+    ) -> Result<InsertionReport, String> {
+        if id.is_empty() || parameters.is_empty() || parameters.iter().any(|p| !p.is_finite()) {
+            return Err("source ID and finite parameter coordinates are required".into());
+        }
+        if let GeometryEviction::FarthestFromIncoming { metric } = &self.eviction {
+            metric.validate(&parameters)?;
+            // Validate all distances before an insertion can evict any entry.
+            for e in &self.entries {
+                metric.distance(&parameters, &e.parameters)?;
+            }
+        }
         let payload_bytes = spectrum
             .bytes()
             .checked_add(identity.operator_bits.len() * 8)
+            .and_then(|n| n.checked_add(space.as_ref().map_or(0, |s| s.modes.len() * 16 + 128)))
             .and_then(|n| n.checked_add(id.len()))
             .and_then(|n| n.checked_add(parameters.len() * 8))
             .ok_or("geometry cache payload size overflows")?;
@@ -255,7 +267,7 @@ impl GeometryContinuationCache {
                 .ok_or("geometry usage clock overflow")?;
             if replace_fiber {
                 self.entries.retain(|entry| {
-                    if same_fiber(&entry.identity, &identity) {
+                    if entry.space == space && same_fiber(&entry.identity, &identity) {
                         self.payload_bytes -= entry.payload_bytes;
                         evicted_ids.push(entry.id.clone());
                         false
@@ -303,6 +315,7 @@ impl GeometryContinuationCache {
                 id,
                 parameters,
                 identity,
+                space,
                 spectrum,
                 payload_bytes,
                 last_used: stamp,
@@ -350,7 +363,7 @@ impl GeometryContinuationCache {
             .iter()
             .enumerate()
             .rev()
-            .filter(|(_, e)| same_fiber(&e.identity, &identity))
+            .filter(|(_, e)| e.space.is_none() && same_fiber(&e.identity, &identity))
             .take(snapshots)
             .map(|(i, _)| i)
             .collect();
@@ -388,7 +401,7 @@ impl GeometryContinuationCache {
             .enumerate()
             .rev()
             .filter(|(_, e)| {
-                same_fiber(&e.identity, &identity) && e.parameters.len() == parameters.len()
+                e.space.is_none() && same_fiber(&e.identity, &identity) && e.parameters.len() == parameters.len()
             })
             .map(|(i, e)| metric.distance(parameters, &e.parameters).map(|d| (i, d)))
             .collect::<Result<_, _>>()?;
@@ -431,7 +444,7 @@ impl GeometryContinuationCache {
             return Err("geometry continuation currently requires f64".into());
         }
         let position = self.entries.iter().rposition(|e| {
-            e.identity == identity
+            e.space.is_none() && e.identity == identity
                 && e.spectrum.k.map(f64::to_bits) == k.map(f64::to_bits)
                 && e.spectrum.fields.len() == columns
         });
@@ -457,9 +470,56 @@ impl GeometryContinuationCache {
         }))
     }
 
-    fn prepare_indices<B: SpectralBackend>(
+    /// Coefficient snapshots are a different numerical space. Their projected
+    /// certificate can never authorize a full-rectangle reuse.
+    pub(crate) fn insert_projected<B: SpectralBackend>(
+        &mut self, full: &ThetaOperator<B>, support: &super::support::FourierSupport,
+        id: String, parameters: Vec<f64>, source_index: usize, result: &super::galerkin::GalerkinResult,
+    ) -> Result<InsertionReport, String> {
+        if !result.report.accepted || result.support_identity != support.identity() {
+            return Err("uncertified or incompatible projected continuation source".into());
+        }
+        let c = result.report.projected.as_ref().ok_or("missing projected certificate")?;
+        let spectrum = CachedSpectrum { source_index, k: support.k(), eigenvalues: result.eigenvalues.clone(),
+            fields: result.coefficients.clone(), residuals: c.residuals.clone(),
+            absolute_residuals: c.absolute_residuals.clone(), orthogonality_defect: c.b_orthogonality_defect };
+        self.insert_snapshot(id, parameters, SnapshotIdentity::from_operator(full), Some(support.identity()), spectrum, true)
+    }
+
+    pub(crate) fn prepare_projected<B: SpectralBackend>(
+        &self, full: &mut ThetaOperator<B>, support: &super::support::FourierSupport,
+        columns: usize, tolerance: f64, payload_limit: usize,
+    ) -> Result<Option<ContinuationSeed>, String> {
+        let identity = SnapshotIdentity::from_operator(full);
+        let space = support.identity();
+        let chosen: Vec<_> = self.entries.iter().enumerate().rev()
+            .filter(|(_, e)| e.space.as_ref() == Some(&space) && same_fiber(&e.identity, &identity))
+            .take(1).map(|(i,_)| i).collect();
+        if chosen.is_empty() { return Ok(None); }
+        let mut operator = super::galerkin::GalerkinOperator::new(full, support,
+            super::galerkin::GalerkinApplication::DirectFourier, payload_limit)?;
+        let mut seed = self.prepare_indices(&mut operator, SeedHistory::Latest, columns, tolerance, &chosen)?;
+        if let Some(seed) = &mut seed { seed.fields = operator.expand_fields(&seed.fields); }
+        Ok(seed)
+    }
+
+    pub(crate) fn reuse_projected<B: SpectralBackend>(
+        &self, full: &mut ThetaOperator<B>, support: &super::support::FourierSupport,
+        config: &crate::eigensolver::EigensolverConfig, budget: super::galerkin::GalerkinBudget,
+    ) -> Result<Option<(String, super::galerkin::GalerkinResult)>, String> {
+        let identity = SnapshotIdentity::from_operator(full);
+        let space = support.identity();
+        let entry = self.entries.iter().rev().find(|e| e.identity == identity && e.space.as_ref() == Some(&space)
+            && e.spectrum.eigenvalues.len() == config.n_bands);
+        let Some(entry) = entry else { return Ok(None); };
+        let result = super::galerkin::certify_coefficients(full, support, config,
+            entry.spectrum.eigenvalues.clone(), entry.spectrum.fields.clone(), budget, "exact_geometry_reuse")?;
+        Ok(Some((entry.id.clone(), result)))
+    }
+
+    fn prepare_indices<B: SpectralBackend, O: LinearOperator<B>>(
         &self,
-        target: &mut ThetaOperator<B>,
+        target: &mut O,
         history: SeedHistory,
         columns: usize,
         relative_rank_tolerance: f64,

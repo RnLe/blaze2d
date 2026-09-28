@@ -13,6 +13,8 @@ pub enum KReuse { #[default] Off, Identical, Unitary, TimeReversal }
 
 #[derive(Debug,Clone)]
 pub struct SymmetryOptions {
+    /// Stop retrying a rejected automatic arithmetic choice within a geometry.
+    pub automatic_policy: bool,
     pub k_reuse:KReuse,
     pub k_traversal:super::traversal::KTraversal,
     /// Additional physical-field payload retained to restore requested output
@@ -48,7 +50,7 @@ pub struct SymmetryOptions {
     pub max_orthogonality_defect:f64,
 }
 impl Default for SymmetryOptions {
-    fn default()->Self {Self {k_reuse:KReuse::Off,k_traversal:super::traversal::KTraversal::Given,max_traversal_field_bytes:64*1024*1024,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,coarse_start:None,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,max_sector_workspace_bytes:super::sectors::memory::DEFAULT_LIMIT_BYTES,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
+    fn default()->Self {Self {automatic_policy:false,k_reuse:KReuse::Off,k_traversal:super::traversal::KTraversal::Given,max_traversal_field_bytes:64*1024*1024,max_cache_bytes:64*1024*1024,plane_group:None,seed_transfer:super::seed::SeedTransfer::Copy,coarse_start:None,sectors:super::sectors::SectorPolicy::Off,sector_guard_budget:None,max_sector_workspace_bytes:super::sectors::memory::DEFAULT_LIMIT_BYTES,sector_storage:super::reduced::SectorStorage::FullGrid,sector_kernel:super::reduced::ReducedKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:super::fourier::Arithmetic::SpatialComplex,pt_operation:None,relative_rank_tolerance:1e-9,qualification_tolerance:1e-10,max_relative_residual:1e-5,max_zero_mode_absolute_residual:1e-7,max_orthogonality_defect:1e-8}}
 }
 #[derive(Debug,Clone,Serialize)]
 pub struct SolveAttempt {
@@ -73,6 +75,8 @@ pub struct ReuseReport {
     pub candidate_operation_count:usize,
     pub qualification_attempts:usize,
     pub qualification:Option<super::qualification::QualificationReport>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub support_transport:Option<super::support_qualification::SupportActionReport>,
     pub seed:Option<super::seed::SeedReport>,
     #[serde(skip_serializing_if="Option::is_none")]
     pub continuation:Option<super::continuation::BandContinuationReport>,

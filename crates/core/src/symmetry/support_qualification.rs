@@ -398,3 +398,50 @@ fn relative_defect<R: Real>(a: &[Complex<R>], b: &[Complex<R>]) -> f64 {
     // A common analytic zero column gives exactly zero, not NaN.
     (2.0 * error / scale.max(f64::MIN_POSITIVE)).sqrt()
 }
+
+/// Qualify a star transport between two explicit supports of one sampled
+/// material. Exact node/index bijections and material covariance establish the
+/// candidate; independent A/B probes and a target residual check remain required.
+pub(crate) fn qualify_transport<B: SpectralBackend + Clone>(
+    target: &mut ThetaOperator<B>, source_support: &FourierSupport, target_support: &FourierSupport,
+    operation: AffineOp, tolerance: f64, payload_limit: usize,
+) -> Result<(CoefficientAction, SupportActionReport), String> {
+    crate::profile_scope!("symmetry.support.transport_qualification");
+    let estimated = 512_u128 * target_support.grid().len() as u128 + 256 * target_support.len() as u128;
+    if estimated > payload_limit as u128 { return Err("support transport qualification exceeds its payload allowance".into()); }
+    validate_operator(target, target_support)?;
+    let mut report = SupportActionReport { operation_index: 0, sample_permutation_exact: false,
+        support_closed: false, metric_defect: operation.metric_defect(&target_support.lattice()),
+        material_defect: 0.0, tensor_defect: 0.0, operator_defect: 0.0, mass_defect: 0.0, probe_count: 0 };
+    if !report.metric_defect.is_finite() || report.metric_defect > tolerance { return Err("star operation breaks the Cartesian metric".into()); }
+    let nodes = sampled_node_permutation(operation, target_support.grid()).map_err(|e| e.to_string())?;
+    report.sample_permutation_exact = true;
+    let action = CoefficientAction::new(operation, source_support, target_support, target.polarization(), 8.0*f64::EPSILON)?;
+    report.support_closed = true;
+    material_covariance(target, target_support, operation, &nodes, &mut report)?;
+    if report.material_defect > tolerance || report.tensor_defect > tolerance { return Err("star operation breaks sampled scalar/tensor covariance".into()); }
+    let mut source = ThetaOperator::new(target.backend().clone(), target.dielectric().clone(), target.polarization(),
+        source_support.lattice().reciprocal().fractional_to_cartesian(source_support.k()));
+    let mut source = GalerkinOperator::new(&mut source, source_support, GalerkinApplication::DirectFourier, payload_limit)?;
+    let mut target = GalerkinOperator::new(target, target_support, GalerkinApplication::DirectFourier, payload_limit)?;
+    let mut x = source.alloc_field(); let mut ax = source.alloc_field();
+    let mut tx = target.alloc_field(); let mut tax = target.alloc_field(); let mut atx = target.alloc_field();
+    let complete = source_support.len() <= 64;
+    for seed in 0..if complete { source_support.len() } else { 4 } {
+        if complete { x.as_mut_slice().fill(cscalar::<B::Real>(0.0,0.0)); x.as_mut_slice()[seed] = cscalar::<B::Real>(1.0,0.0); }
+        else { for (i,z) in x.as_mut_slice().iter_mut().enumerate() {
+            let t = (i+1+seed*19) as f64; *z = cscalar::<B::Real>((t*1.61803398875).sin(),(t*0.754877666).cos());
+        } }
+        action.apply(x.as_slice(),tx.as_mut_slice());
+        source.apply(&x,&mut ax); action.apply(ax.as_slice(),tax.as_mut_slice()); target.apply(&tx,&mut atx);
+        report.operator_defect = report.operator_defect.max(relative_defect(tax.as_slice(),atx.as_slice()));
+        source.apply_mass(&x,&mut ax); action.apply(ax.as_slice(),tax.as_mut_slice()); target.apply_mass(&tx,&mut atx);
+        report.mass_defect = report.mass_defect.max(relative_defect(tax.as_slice(),atx.as_slice()));
+        report.probe_count += 1;
+        crate::profiler::count("symmetry.support.qualify.probes",1);
+    }
+    if report.operator_defect > tolerance || report.mass_defect > tolerance {
+        return Err(format!("star operator/mass covariance failed: {:e}/{:e}",report.operator_defect,report.mass_defect));
+    }
+    Ok((action,report))
+}

@@ -126,3 +126,5 @@ pub mod support;
 pub mod galerkin;
 pub mod support_qualification;
 pub mod support_sectors;
+
+pub(crate) mod support_reuse;

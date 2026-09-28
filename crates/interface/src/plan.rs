@@ -310,7 +310,10 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             if b.symmetry.sectors==SectorPolicy::Off {
                 let driver=blaze2d_core::drivers::support_bands::driver_payload_bytes(samples as usize,bands as usize,nk as usize).map_err(|e|invalid("bands.discretization",e))?;
                 let solve=blaze2d_core::symmetry::galerkin::estimated_payload_bytes_for_dimensions(samples as usize,coefficients as usize,&cfg,false).map_err(|e|invalid("bands.discretization",e))?;
-                reserved=reserved.min(driver as u128+solve as u128);
+                let cache = if b.symmetry.k_reuse != KReuse::Off { b.symmetry.max_cache_bytes as u128 } else { 0 };
+                let continuation = if b.symmetry.continuation != ContinuationPolicy::Off { b.symmetry.max_continuation_bytes as u128 } else { 0 };
+                let qualification = if b.symmetry.arithmetic == SymmetryArithmetic::PtReal { 256*samples as u128 } else { 0 };
+                reserved=reserved.min(driver as u128+solve as u128+cache+continuation+qualification);
             }
             // Retained physical outputs need both temporary complex fields and
             // the interleaved export copy. Report arrays include exact support
@@ -319,7 +322,12 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             let reports=nk as u128*((32+16*rounds as u128)*coefficients as u128
                 +96*bands as u128+256*(groups as u128).pow(2)+512*rounds as u128*groups as u128);
             let path=nk as u128*(32*bands as u128+128);
-            return u64::try_from(reserved+output+reports+path).map_err(|_|invalid("configuration","metric-support memory estimate overflows"));
+            let coarse = if let Some(c) = b.run_options(false).symmetry.coarse_start {
+                let rows = c.resolution[0].checked_mul(c.resolution[1]).ok_or_else(||invalid("bands.symmetry.coarse_start", "coarse grid size overflow"))?;
+                c.max_seed_field_bytes as u128 + blaze2d_core::symmetry::sectors::memory::worker_payload(rows,cfg.effective_block_size(),0)
+                    .map_err(|e| invalid("bands.symmetry.coarse_start",e))? as u128
+            } else { 0 };
+            return u64::try_from(reserved+output+reports+path+coarse).map_err(|_|invalid("configuration","metric-support memory estimate overflows"));
         }
     }
     let path_arrays = nk.checked_mul(bands.checked_mul(4).and_then(|n|n.checked_add(16))
@@ -340,7 +348,10 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
     } else {Some(0)};
     let symmetry_payload=if resolved.config.task==Task::Bands {
         let b=resolved.config.bands.as_ref().unwrap();
-        let options=b.run_options(false).symmetry;
+        let mut options=b.run_options(false).symmetry;
+        if b.symmetry.policy == SymmetryPolicy::Auto {
+            options.k_reuse = blaze2d_core::symmetry::reuse::KReuse::Identical;
+        }
         use blaze2d_core::symmetry::{sectors::memory, reduced::SectorStorage as Storage};
         let rows=usize::try_from(samples).map_err(|_|invalid("configuration","grid does not fit the target platform"))?;
         let error=|reason|invalid("bands.symmetry",reason);

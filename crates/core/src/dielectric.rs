@@ -19,6 +19,7 @@ use crate::{
     grid::Grid2D,
 };
 use serde::{Deserialize, Serialize};
+pub mod voronoi;
 
 /// Smoothing method for material interfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -30,6 +31,9 @@ pub enum SmoothingMethod {
     /// Uses exact filling fractions and interface normals for circles.
     #[default]
     Analytic,
+    /// Exact circle intersections with the sampling lattice's Voronoi cell.
+    /// Supports nonoverlapping disks and preserves the cell's point group.
+    Voronoi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +199,8 @@ impl Dielectric2D {
             SmoothingMethod::Analytic => {
                 build_smoothed_dielectric_analytic(geom, grid, &opts.smoothing)
             }
+            SmoothingMethod::Voronoi => voronoi::sample(geom, grid, &opts.smoothing)
+                .expect("invalid geometry for Voronoi smoothing"),
         };
 
         Self {

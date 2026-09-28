@@ -451,7 +451,7 @@ fn invalid_precision_budget_and_combinations_fail_before_solver_work() {
         .contains("payload")
     );
     let mut incompatible = options();
-    incompatible.symmetry.k_reuse = KReuse::Identical;
+    incompatible.symmetry.k_traversal = blaze2d_core::symmetry::traversal::KTraversal::Nearest;
     assert!(
         support_bands::run_with_k_streaming(
             CpuBackend::<f64>::new(),
@@ -465,4 +465,64 @@ fn invalid_precision_budget_and_combinations_fail_before_solver_work() {
         .contains("reuse")
     );
     assert_eq!(iteration_total(), before);
+}
+
+#[test]
+fn projected_pt_preserves_triangular_te_tm_pencils_and_real_storage() {
+    for pol in [Polarization::TE, Polarization::TM] {
+        let mut j = job(pol, false);
+        j.dielectric.smoothing.method = blaze2d_core::dielectric::SmoothingMethod::Voronoi;
+        let o = RunOptions { retain_eigenvectors: true, reuse_gamma: false,
+            symmetry: SymmetryOptions { arithmetic: Arithmetic::PtRealTe, ..Default::default() }, ..Default::default() };
+        support_bands::run_with_k_streaming(CpuBackend::<f64>::new(), &j, o, selected(), |point| {
+            let coordinates = point.symmetry.coordinates.as_ref().expect("qualified PT must execute");
+            let space = FourierSupport::metric_ball(j.grid, j.geom.lattice, point.k_point,
+                selected().angular_cutoff, Default::default()).unwrap();
+            assert_eq!(coordinates.bytes_per_column, space.len().div_ceil(2) * 16);
+            let mut full = operator(&j, point.k_point);
+            let reference = galerkin::solve_dense(&mut full, &space, &j.eigensolver,
+                GalerkinApplication::SpatialReference, Default::default()).unwrap();
+            let mut actual = point.omegas.clone(); actual.sort_by(f64::total_cmp);
+            for (a,b) in actual.iter().zip(&reference.eigenvalues) {
+                assert!((a - b.max(0.0).sqrt()).abs() < 2e-7, "pol={pol:?} k={:?} got={:?} expected={:?}", point.k_point, actual, reference.eigenvalues.iter().map(|v| v.max(0.0).sqrt()).collect::<Vec<_>>());
+            }
+        }).unwrap();
+    }
+}
+
+#[test]
+fn projected_pt_star_reuse_coarse_and_geometry_chains_match_dense_spectra() {
+    use blaze2d_core::symmetry::{affine::AffineOp, continuation::BandContinuation, coarse::CoarseStartOptions};
+    for pol in [Polarization::TE, Polarization::TM] {
+        let mut j = job(pol, false);
+        j.dielectric.smoothing.method = blaze2d_core::dielectric::SmoothingMethod::Voronoi;
+        let k = [0.17,0.09];
+        let rotation = AffineOp::new([[0,-1],[1,1]], [blaze2d_core::symmetry::affine::Rational::ZERO;2]).unwrap();
+        j.k_path = vec![[0.0;2], k, rotation.map_wavevector(k), [-k[0],-k[1]], [0.0;2]];
+        let o = RunOptions { reuse_gamma: false, retain_eigenvectors: true,
+            symmetry: SymmetryOptions { arithmetic: Arithmetic::PtRealTe, k_reuse: KReuse::TimeReversal,
+                plane_group: Some(PlaneGroup::P6m), max_cache_bytes: 1<<20,
+                coarse_start: Some(CoarseStartOptions { resolution: [9,9], max_seed_field_bytes: 1<<20 }),
+                ..Default::default() }, ..Default::default() };
+        let mut continuation = BandContinuation::new(1<<20);
+        let mut seeds = 0; let mut reuses = 0; let mut coarse = 0;
+        for (index,radius) in [0.18,0.20,0.22].into_iter().enumerate() {
+            continuation.job_index = index; j.geom.atoms[0].radius = radius;
+            support_bands::run_with_continuation(CpuBackend::<f64>::new(),&j,o.clone(),selected(),Some(&mut continuation),|point| {
+                assert!(point.converged);
+                seeds += usize::from(point.symmetry.continuation.as_ref().and_then(|r|r.seed.as_ref()).is_some());
+                reuses += usize::from(point.symmetry.source_index.is_some());
+                coarse += usize::from(point.symmetry.coarse_start.as_ref().is_some_and(|r|r.used_as_seed));
+                let space = FourierSupport::metric_ball(j.grid,j.geom.lattice,point.k_point,selected().angular_cutoff,Default::default()).unwrap();
+                let reference = galerkin::solve_dense(&mut operator(&j,point.k_point),&space,&j.eigensolver,
+                    GalerkinApplication::SpatialReference,Default::default()).unwrap();
+                let mut actual = point.omegas.clone(); actual.sort_by(f64::total_cmp);
+                for (a,b) in actual.iter().zip(&reference.eigenvalues) {
+                    assert!((a-b.max(0.0).sqrt()).abs() < 2e-7,"{pol:?} k={:?}",point.k_point);
+                }
+            }).unwrap();
+            assert!(continuation.cache.payload_bytes() <= 1<<20);
+        }
+        assert_eq!(coarse,1); assert_eq!(seeds,4); assert_eq!(reuses,9);
+    }
 }

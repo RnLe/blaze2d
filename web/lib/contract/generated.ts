@@ -110,7 +110,7 @@ export interface KPath {
 export interface Symmetry {
   arithmetic?: "spatial_complex" | "fourier_complex" | "pt_real";
   coarse_start?: CoarseStart | null;
-  continuation?: "off" | "previous_geometry";
+  continuation?: "off" | "first_point" | "previous_geometry";
   correction_projection_interval?: number;
   k_reuse?: "off" | "identical" | "unitary" | "time_reversal";
   k_traversal?: "given" | "nearest";
@@ -127,6 +127,7 @@ export interface Symmetry {
   max_sector_workspace_bytes?: number;
   max_traversal_field_bytes?: number;
   plane_group?: string | null;
+  policy?: "manual" | "auto";
   reconstruct_partners?: boolean;
   sector_guard_budget?: number | null;
   sector_kernel?: "full_grid" | "mirror_tm" | "mirror_tm_te";
@@ -149,7 +150,7 @@ export interface CoarseStart {
 export interface Dielectric {
   interface_tolerance?: number;
   mesh_size?: number;
-  smoothing?: "analytic" | "subgrid" | "none";
+  smoothing?: "analytic" | "subgrid" | "voronoi" | "none";
   source?: "geometry" | "external";
 }
 export interface Eigensolver {

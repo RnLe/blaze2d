@@ -108,10 +108,6 @@ pub struct SupportBandFailure {
 /// Validate policies independently of geometry and backend allocation. More
 /// combinations can be added only with their own support identity/qualification.
 pub fn validate_options(options: &RunOptions, selected: MetricBallOptions) -> Result<(), String> {
-    if options.symmetry.coarse_start.is_some() {
-        return Err("coarse initialization is not implemented for metric Fourier support".into());
-    }
-
     let s = &options.symmetry;
     if s.max_sector_workspace_bytes != crate::symmetry::sectors::memory::DEFAULT_LIMIT_BYTES {
         return Err("metric support uses its discretization payload budget; the rectangular-sector workspace budget is not applicable".into());
@@ -125,17 +121,8 @@ pub fn validate_options(options: &RunOptions, selected: MetricBallOptions) -> Re
             "metric support requires a positive finite angular cutoff and nonzero budgets".into(),
         );
     }
-    if s.k_reuse != KReuse::Off || s.k_traversal != KTraversal::Given || options.reuse_gamma {
-        return Err("metric support currently requires supplied-order solves with k and legacy Gamma reuse disabled".into());
-    }
-    if s.arithmetic == Arithmetic::PtRealTe || s.pt_operation.is_some() {
-        return Err(
-            "PT packing on metric support is not implemented; select complex arithmetic explicitly"
-                .into(),
-        );
-    }
-    if s.seed_transfer != SeedTransfer::Copy {
-        return Err("metric support currently accepts physical copy/prediction seeds; sector projection performs its own target-metric rank extraction".into());
+    if s.k_traversal != KTraversal::Given || options.reuse_gamma {
+        return Err("metric support requires supplied-order solves and explicit certified k reuse".into());
     }
     if !matches!(
         s.sectors,
@@ -148,9 +135,9 @@ pub fn validate_options(options: &RunOptions, selected: MetricBallOptions) -> Re
     if s.sectors != SectorPolicy::Off
         && (s.plane_group.is_none()
             || s.sector_storage != SectorStorage::Orbit
-            || s.arithmetic != Arithmetic::FourierComplex)
+            || !matches!(s.arithmetic, Arithmetic::FourierComplex | Arithmetic::PtRealTe))
     {
-        return Err("metric group sectors require a plane group, orbit storage and complex Fourier application".into());
+        return Err("metric group sectors require a plane group, orbit storage and Fourier application".into());
     }
     if s.sectors == SectorPolicy::Off
         && (s.sector_storage != SectorStorage::FullGrid
@@ -201,6 +188,14 @@ pub fn run_with_k_streaming<B: SpectralBackend + Clone>(
     job: &BandStructureJob,
     options: RunOptions,
     selected: MetricBallOptions,
+    on_k_point: impl FnMut(KPointResult),
+) -> Result<BandStructureResult, SupportBandFailure> {
+    run_with_continuation(backend, job, options, selected, None, on_k_point)
+}
+
+pub fn run_with_continuation<B: SpectralBackend + Clone>(
+    backend: B, job: &BandStructureJob, options: RunOptions, selected: MetricBallOptions,
+    mut continuation: Option<&mut crate::symmetry::continuation::BandContinuation>,
     mut on_k_point: impl FnMut(KPointResult),
 ) -> Result<BandStructureResult, SupportBandFailure> {
     crate::profile_scope!("run.support_bands");
@@ -234,7 +229,10 @@ pub fn run_with_k_streaming<B: SpectralBackend + Clone>(
             return Err("metric bands require a nonempty path and solve; per-iteration diagnostic history is unsupported".into());
         }
         let points = job.grid.nx.checked_mul(job.grid.ny).ok_or("embedding size overflow")?;
-        let bytes = driver_payload_bytes(points, job.eigensolver.n_bands, job.k_path.len())?;
+        let bytes = driver_payload_bytes(points, job.eigensolver.n_bands, job.k_path.len())?
+            .checked_add(if options.symmetry.k_reuse == KReuse::Off { 0 } else { options.symmetry.max_cache_bytes })
+            .and_then(|n| n.checked_add(continuation.as_ref().map_or(0, |s| s.cache.payload_limit())))
+            .ok_or("metric driver and cache payload overflow")?;
         if bytes >= selected.budget.max_estimated_payload_bytes {
             return Err("metric band driver state exceeds its numerical payload allowance".into());
         }
@@ -280,8 +278,25 @@ pub fn run_with_k_streaming<B: SpectralBackend + Clone>(
     let mut previous: Option<Vec<Field2D>> = None;
     let mut previous_omegas: Option<Vec<f64>> = None;
     let mut previous_values: Option<Vec<f64>> = None;
+    let mut cache = crate::symmetry::support_reuse::SupportSpectralCache::new(options.symmetry.max_cache_bytes);
+    let operations = match options.symmetry.k_reuse {
+        KReuse::Off => Vec::new(),
+        KReuse::Identical => vec![crate::symmetry::affine::AffineOp::IDENTITY],
+        mode => {
+            let mut operations = crate::symmetry::reuse::candidate_operations(&job.geom.lattice, options.symmetry.plane_group);
+            if mode == KReuse::TimeReversal {
+                let conjugated: Vec<_> = operations.iter().map(|op| op.with_conjugation(true)).collect();
+                operations.extend(conjugated);
+            }
+            operations
+        }
+    };
+    let geometry_parameters: Vec<_> = std::iter::once(job.geom.eps_bg).chain(job.geom.atoms.iter()
+        .flat_map(|a| [a.pos[0],a.pos[1],a.radius,a.eps_inside])).collect();
     for (index, &k) in job.k_path.iter().enumerate() {
-        let mut ledger = ReuseReport::default();
+        let mut ledger = ReuseReport { requested: options.symmetry.k_reuse, ..Default::default() };
+        let mut point_continuation = continuation.as_deref_mut().filter(|s| !s.first_point_only || index == 0);
+        if point_continuation.is_some() { ledger.continuation = Some(Default::default()); }
         let mut report = SupportPointReport {
             angular_cutoff: selected.angular_cutoff,
             support: None,
@@ -329,11 +344,52 @@ pub fn run_with_k_streaming<B: SpectralBackend + Clone>(
             job.pol,
             reciprocal.fractional_to_cartesian(k),
         );
-        let mut preconditioner =
-            build_preconditioner(&theta, &options, job.pol, previous_values.as_deref());
         let start = iteration_total();
-        let mut spectrum = None;
-        if options.symmetry.sectors != SectorPolicy::Off {
+        let mut spectrum = if operations.is_empty() { None } else {
+            cache.reuse(&mut theta,&support,&job.eigensolver,&operations,&options.symmetry,budget,&mut ledger)
+        };
+        if spectrum.is_none() {
+            if let Some(state) = point_continuation.as_deref_mut() {
+                match state.cache.reuse_projected(&mut theta,&support,&job.eigensolver,budget) {
+                    Ok(Some((source,result))) => { ledger.continuation.as_mut().unwrap().exact_source = Some(source); spectrum = Some(result); }
+                    Ok(None) => {}, Err(reason) => ledger.rejected.push(reason),
+                }
+            }
+        }
+        let geometry_seed = if spectrum.is_none() { point_continuation.as_deref_mut().and_then(|state| {
+            match state.cache.prepare_projected(&mut theta,&support,job.eigensolver.n_bands,
+                options.symmetry.relative_rank_tolerance,budget.max_estimated_payload_bytes) {
+                Ok(Some(seed)) => { ledger.continuation.as_mut().unwrap().seed = Some(seed.report.clone()); Some(seed) }
+                Ok(None) => None, Err(reason) => { ledger.rejected.push(reason); None }
+            }
+        }) } else { None };
+        let path_warm = warm;
+        let warm = geometry_seed.as_ref().map(|s|s.fields.as_slice()).or(warm);
+        let coarse_seed = if spectrum.is_none() && warm.is_none() && index == 0 {
+            options.symmetry.coarse_start.and_then(|settings| {
+                let (seed,mut r) = crate::symmetry::coarse::prepare_initializer(&mut theta,&job.geom,&job.dielectric,
+                    k,&job.eigensolver,settings,options.symmetry.relative_rank_tolerance);
+                let seed = seed.and_then(|s| match galerkin::prepare_physical_seed(&mut theta,&support,&s.fields,
+                    job.eigensolver.n_bands,options.symmetry.relative_rank_tolerance,budget.max_estimated_payload_bytes) {
+                    Ok(s) => { r.prepared = Some(s.report.clone()); Some(s) }
+                    Err(reason) => { r.rejection = Some(reason); r.used_as_seed = false; None }
+                });
+                ledger.coarse_start = Some(r);
+                seed
+            })
+        } else { None };
+        let warm = coarse_seed.as_ref().map(|s|s.fields.as_slice()).or(warm);
+        let rank_seed = if spectrum.is_none() && geometry_seed.is_none() && coarse_seed.is_none()
+            && options.symmetry.seed_transfer == SeedTransfer::RankAware {
+            warm.and_then(|fields| match galerkin::prepare_physical_seed(&mut theta,&support,fields,
+                job.eigensolver.n_bands,options.symmetry.relative_rank_tolerance,budget.max_estimated_payload_bytes) {
+                Ok(seed) => { ledger.seed = Some(seed.report.clone()); Some(seed) },
+                Err(reason) => { ledger.rejected.push(reason); None }
+            })
+        } else { None };
+        let warm = rank_seed.as_ref().map(|s|s.fields.as_slice()).or(warm);
+        let mut preconditioner = build_preconditioner(&theta, &options, job.pol, previous_values.as_deref());
+        if spectrum.is_none() && options.symmetry.sectors != SectorPolicy::Off {
             let sector_start = iteration_total();
             let sector = (|| -> Result<_, String> {
                 let group = options
@@ -426,6 +482,20 @@ pub fn run_with_k_streaming<B: SpectralBackend + Clone>(
                 rejection,
             });
         }
+        if spectrum.is_none() && options.symmetry.arithmetic == Arithmetic::PtRealTe {
+            let attempt_start = iteration_total();
+            let attempt = crate::symmetry::fourier::projected::solve(
+                &mut theta, &support, &job.eigensolver, warm, &options.symmetry,
+                preconditioner.as_mut().map(|p| &mut **p as &mut dyn OperatorPreconditioner<B>), budget,
+            );
+            let rejection = match attempt {
+                Ok((result, coordinates)) => { ledger.coordinates = Some(coordinates); spectrum = Some(result); None }
+                Err(reason) => { ledger.rejected.push(reason.clone()); Some(reason) }
+            };
+            ledger.solver_attempts.push(SolveAttempt { method: "metric_support_pt_real",
+                iterations: iteration_total().wrapping_sub(attempt_start), retained: spectrum.is_some(), rejection });
+        }
+        let mut initialization_failure = false;
         if spectrum.is_none() {
             let attempt_start = iteration_total();
             let application = if options.symmetry.arithmetic == Arithmetic::SpatialComplex {
@@ -456,19 +526,47 @@ pub fn run_with_k_streaming<B: SpectralBackend + Clone>(
                 }),
             });
             ledger.attempted_iterations = iteration_total().wrapping_sub(start);
-            spectrum = Some(attempt.map_err(|reason| {
-                fail(
-                    reason,
-                    &result,
-                    Some(index),
-                    ledger.clone(),
-                    Some(report.clone()),
-                )
-            })?);
+            spectrum = match attempt {
+                Ok(s) => Some(s),
+                Err(reason) if geometry_seed.is_some() || coarse_seed.is_some() || rank_seed.is_some() => {
+                    ledger.rejected.push(reason); initialization_failure = true; None
+                }
+                Err(reason) => return Err(fail(reason,&result,Some(index),ledger.clone(),Some(report.clone()))),
+            };
+        }
+        if initialization_failure || (spectrum.as_ref().is_some_and(|s| !s.report.accepted)
+            && (geometry_seed.is_some() || coarse_seed.is_some() || rank_seed.is_some())) {
+            let reason = "prepared initializer failed projected convergence/certification; retrying ordinary path seed";
+            if let Some(r) = &mut ledger.continuation { r.fallback = Some(reason.into()); }
+            ledger.rejected.push(reason.into());
+            for attempt in &mut ledger.solver_attempts { attempt.retained = false; }
+            ledger.coordinates = None; report.returned_labels = None;
+            let attempt_start = iteration_total();
+            let retry = galerkin::solve_iterative(&mut theta,&support,&job.eigensolver,path_warm,
+                preconditioner.as_mut().map(|p| &mut **p as &mut dyn OperatorPreconditioner<B>),
+                GalerkinApplication::DirectFourier,budget);
+            ledger.solver_attempts.push(SolveAttempt { method: "metric_support_initializer_fallback",
+                iterations: iteration_total().wrapping_sub(attempt_start), retained: retry.is_ok(),
+                rejection: retry.as_ref().err().cloned().or_else(||retry.as_ref().ok().and_then(|s|s.report.rejection.clone())) });
+            spectrum = Some(retry.map_err(|reason|fail(reason,&result,Some(index),ledger.clone(),Some(report.clone())))?);
         }
         let mut spectrum = spectrum.unwrap();
         ledger.attempted_iterations = iteration_total().wrapping_sub(start);
         ledger.retained_iterations = spectrum.report.iterations;
+        if let Some(state) = point_continuation.as_deref_mut() {
+            if spectrum.report.accepted {
+                match state.cache.insert_projected(&theta,&support,format!("{}:{index}",state.job_index),
+                    geometry_parameters.clone(),index,&spectrum) {
+                    Ok(insertion) => ledger.continuation.as_mut().unwrap().insertion = Some(insertion),
+                    Err(reason) => ledger.rejected.push(reason),
+                }
+            }
+            ledger.continuation.as_mut().unwrap().cache_payload_bytes = state.cache.payload_bytes();
+        }
+        if !operations.is_empty() && (options.symmetry.k_reuse != KReuse::Identical || job.k_path[index+1..].contains(&k)) {
+            cache.insert(index,&support,&spectrum);
+        }
+        ledger.cache_bytes = cache.bytes(); ledger.cache_entries = cache.len();
         report.returned_permutation = (0..spectrum.fields.len()).collect();
         let mut omegas: Vec<_> = spectrum
             .eigenvalues

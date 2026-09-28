@@ -6,6 +6,7 @@ use crate::{backend::{SpectralBackend,SpectralBuffer},field::{Field2D,Real,cscal
 use super::reuse::{CachedSpectrum,SymmetryOptions};
 
 pub(crate) mod sector;
+pub(crate) mod projected;
 
 #[derive(Debug,Clone,Copy,Default,PartialEq,Eq,Serialize)]
 #[serde(rename_all="snake_case")]

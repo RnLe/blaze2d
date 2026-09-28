@@ -229,7 +229,7 @@ impl<'a, B: SpectralBackend> GalerkinOperator<'a, B> {
         Ok(result)
     }
 
-    fn expand_fields(&mut self, coefficients: &[Field2D]) -> Vec<Field2D> {
+    pub(super) fn expand_fields(&mut self, coefficients: &[Field2D]) -> Vec<Field2D> {
         coefficients
             .iter()
             .map(|field| {
@@ -488,7 +488,7 @@ fn finite(z: C) -> bool {
     z.re.is_finite() && z.im.is_finite()
 }
 
-fn admit(
+pub(super) fn admit(
     support: &FourierSupport,
     config: &EigensolverConfig,
     dense: bool,
@@ -841,4 +841,31 @@ pub(super) fn dense_generalized<B: SpectralBackend, O: LinearOperator<B>>(
         coefficients.push(v);
     }
     Ok((eig.eigenvalues[..requested].to_vec(), coefficients))
+}
+
+/// Fresh target-pencil certificate after an independently qualified transport.
+pub(crate) fn certify_coefficients<B: SpectralBackend>(
+    full: &mut ThetaOperator<B>, support: &FourierSupport, config: &EigensolverConfig,
+    eigenvalues: Vec<f64>, coefficients: Vec<Field2D>, budget: GalerkinBudget, method: &'static str,
+) -> Result<GalerkinResult, String> {
+    let bytes = admit(support, config, false, budget)?;
+    let mut op = GalerkinOperator::new(full, support, GalerkinApplication::DirectFourier, budget.max_estimated_payload_bytes)?;
+    let mut r = report(&op, bytes, method);
+    r.solver_converged = true;
+    let result = finish_preserving_labels(&mut op, eigenvalues, coefficients, config, r);
+    if !result.report.accepted { return Err(result.report.rejection.unwrap_or_else(|| "transported projected spectrum failed certification".into())); }
+    Ok(result)
+}
+
+/// Prepare a physical initializer in the selected pencil's actual mass metric.
+pub(crate) fn prepare_physical_seed<B: SpectralBackend>(
+    full: &mut ThetaOperator<B>, support: &FourierSupport, fields: &[Field2D],
+    columns: usize, tolerance: f64, payload_limit: usize,
+) -> Result<super::seed::RankAwareSeed, String> {
+    let mut op = GalerkinOperator::new(full, support, GalerkinApplication::DirectFourier, payload_limit)?;
+    let coefficients = op.project_physical(fields, fields.len())?;
+    let mut seed = super::seed::rank_aware_seed(&mut op, &coefficients, tolerance).map_err(|e| e.to_string())?;
+    seed.fields.truncate(columns);
+    seed.fields = op.expand_fields(&seed.fields);
+    Ok(seed)
 }

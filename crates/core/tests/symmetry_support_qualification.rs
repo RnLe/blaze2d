@@ -1,6 +1,6 @@
 use blaze2d_backend_cpu::CpuBackend;
 use blaze2d_core::{
-    dielectric::{Dielectric2D, DielectricOptions},
+    dielectric::{Dielectric2D, DielectricOptions, SmoothingMethod},
     geometry::{BasisAtom, Geometry2D},
     grid::Grid2D,
     lattice::Lattice2D,
@@ -103,6 +103,35 @@ fn analytic_hex_material_remains_an_explicit_negative_control() {
                     .contains("sampled scalar material")
             );
             assert!(report.actions.iter().any(|a| a.material_defect > 1e-5));
+        }
+    }
+}
+
+#[test]
+fn voronoi_circle_averages_conserve_area_and_qualify_hexagonal_te_and_tm() {
+    let lattice = Lattice2D::hexagonal(1.0);
+    for n in [12, 13, 17] {
+        let grid = Grid2D::new(n, n, 1.0, 1.0);
+        let geometry = Geometry2D { lattice, eps_bg: 1.0, atoms: vec![BasisAtom {
+            pos: [0.0; 2], radius: 0.2, eps_inside: 8.9,
+        }] };
+        let mut options = DielectricOptions::default();
+        options.smoothing.method = SmoothingMethod::Voronoi;
+        let d = Dielectric2D::from_geometry(&geometry, grid, &options);
+        let fraction = std::f64::consts::PI * 0.2_f64.powi(2) / lattice.cell_area();
+        let average = d.eps().iter().sum::<f64>() / grid.len() as f64;
+        let inverse_average = d.inv_eps().iter().sum::<f64>() / grid.len() as f64;
+        assert!((average - (1.0 + 7.9 * fraction)).abs() < 1e-12, "n={n}, average={average}");
+        assert!((inverse_average - (1.0 + (1.0 / 8.9 - 1.0) * fraction)).abs() < 1e-13);
+        for k in [[0.0; 2], [2.0 / 3.0, 1.0 / 3.0], [1.0, 0.0]] {
+            let space = support(lattice, grid, k, 2.6);
+            for pol in [Polarization::TE, Polarization::TM] {
+                let group = PlaneGroup::P6m.group().little_group(k, 1e-12).unwrap();
+                let mut full = operator(d.clone(), lattice, k, pol);
+                let qualified = QualifiedSupportGroup::qualify(&mut full, &space, group, Default::default())
+                    .unwrap_or_else(|r| panic!("n={n}, k={k:?}, pol={pol:?}: {r:?}"));
+                assert!(qualified.report().actions.iter().all(|a| a.material_defect < 1e-11 && a.operator_defect < 1e-11));
+            }
         }
     }
 }

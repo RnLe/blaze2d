@@ -42,6 +42,7 @@ impl PlannedJob {
             interface_tolerance: d.interface_tolerance,
             method: match d.smoothing {
                 Smoothing::Analytic => SmoothingMethod::Analytic,
+                Smoothing::Voronoi => SmoothingMethod::Voronoi,
                 _ => SmoothingMethod::Subgrid,
             },
         } }
@@ -110,6 +111,7 @@ impl crate::Bands {
         blaze2d_core::drivers::bandstructure::RunOptions {
             reuse_gamma: false, disable_band_tracking: !self.tracking, retain_eigenvectors,
             symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
+                        automatic_policy: self.symmetry.policy == crate::SymmetryPolicy::Auto,
                         k_reuse: match self.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},
                         k_traversal:match self.symmetry.k_traversal {crate::KTraversal::Given=>blaze2d_core::symmetry::traversal::KTraversal::Given,crate::KTraversal::Nearest=>blaze2d_core::symmetry::traversal::KTraversal::Nearest},
                         max_traversal_field_bytes:self.symmetry.max_traversal_field_bytes,

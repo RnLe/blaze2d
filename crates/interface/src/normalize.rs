@@ -139,12 +139,35 @@ impl Config {
         if max_iterations == 0 { return Err(invalid("eigensolver.max_iterations", "must be greater than zero")); }
         if config.dielectric.mesh_size == 0 { return Err(invalid("dielectric.mesh_size", "must be greater than zero")); }
         positive(config.dielectric.interface_tolerance, "dielectric.interface_tolerance")?;
+        if config.dielectric.smoothing == Smoothing::Voronoi && config.dielectric.mesh_size > 1 {
+            use blaze2d_core::{geometry::{BasisAtom,Geometry2D}, lattice::Lattice2D, grid::Grid2D};
+            let lattice = Lattice2D::oblique(lattice_vectors[0],lattice_vectors[1]);
+            let scale = lattice.characteristic_length();
+            let geometry = Geometry2D { lattice, eps_bg:config.geometry.background_epsilon,
+                atoms:config.geometry.objects.iter().map(|o| BasisAtom {
+                    pos:[o.center[0],o.center[1]], radius:o.radius/scale, eps_inside:o.epsilon }).collect() };
+            blaze2d_core::dielectric::voronoi::validate_geometry(&geometry,
+                Grid2D::new(resolution[0],resolution[1],1.0,1.0))
+                .map_err(|reason|invalid("dielectric.smoothing",reason))?;
+        }
         let mut k_labels = vec![];
         let mut k_label_indices = vec![];
         let (solved_bands, fractional) = match config.task {
             Task::Bands => {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
+                if bands.symmetry.policy == SymmetryPolicy::Auto {
+                    let mut manual = bands.symmetry.clone();
+                    manual.policy = SymmetryPolicy::Manual;
+                    let defaults = Symmetry { max_cache_bytes: manual.max_cache_bytes,
+                        max_continuation_bytes: manual.max_continuation_bytes,
+                        max_sector_workspace_bytes: manual.max_sector_workspace_bytes,
+                        max_traversal_field_bytes: manual.max_traversal_field_bytes,
+                        plane_group: manual.plane_group.clone(), ..Default::default() };
+                    if manual != defaults {
+                        return Err(invalid("bands.symmetry.policy", "auto selects arithmetic, reuse and continuation; use manual for explicit mechanism choices"));
+                    }
+                }
                 if let Some(coarse)=&bands.symmetry.coarse_start {
                     if !bands.discretization.is_fft_rectangle() || config.dielectric.source==DielectricSource::External {
                         return Err(invalid("bands.symmetry.coarse_start","coarse initialization requires a geometry-sampled FFT rectangle"));
@@ -182,9 +205,6 @@ impl Config {
                     }
                 }
                 if let Some(selected)=bands.discretization.metric_options() {
-                    if bands.symmetry.continuation != ContinuationPolicy::Off {
-                        return Err(invalid("bands.symmetry.continuation", "metric support requires support-aware continuation"));
-                    }
                     if config.dielectric.source==DielectricSource::External {
                         return Err(invalid("dielectric.source","the public metric-support band workflow currently requires geometry-sampled material; external arrays remain available through the core Galerkin API"));
                     }

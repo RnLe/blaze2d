@@ -106,17 +106,21 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
                     absolute_residuals.extend(point.absolute_residuals.into_iter().take(n));
                     if let Some(v) = point.eigenvectors { fields.extend(v.into_iter().take(n).flat_map(|v| v.as_slice().to_vec())); }
                 };
-            let options=b.run_options(job.resolved.config.results.eigenvectors);
+            let (effective_symmetry, policy_decision) = crate::policy::resolve(job, backend_name);
+            let mut effective_bands = b.clone();
+            effective_bands.symmetry = effective_symmetry.clone();
+            let options=effective_bands.run_options(job.resolved.config.results.eigenvectors);
             let selected=b.discretization.metric_options();
-            let continuation = context.filter(|_| b.symmetry.continuation != crate::ContinuationPolicy::Off
+            let continuation = context.filter(|_| effective_symmetry.continuation != crate::ContinuationPolicy::Off
                 && b.symmetry.max_continuation_bytes > 0 && actual == Precision::F64)
                 .map(|c| {
                     c.continuation.cache.set_payload_limit(c.max_continuation_bytes.min(b.symmetry.max_continuation_bytes));
                     c.continuation.job_index = job.index;
+                    c.continuation.first_point_only = effective_symmetry.continuation == crate::ContinuationPolicy::FirstPoint;
                     &mut c.continuation
                 });
             let (result,failure)=if let Some(discretization)=selected {
-                match blaze2d_core::drivers::support_bands::run_with_k_streaming(backend,&job.bands_job(),options,discretization,&mut collect) {
+                match blaze2d_core::drivers::support_bands::run_with_continuation(backend,&job.bands_job(),options,discretization,continuation,&mut collect) {
                     Ok(result)=>(result,None),
                     Err(failure)=>(failure.partial_result.clone(),Some(failure)),
                 }
@@ -136,6 +140,10 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             out.metadata["iterations"] = json!(iterations);
             out.metadata["symmetry"] = json!({"requested":b.symmetry,"points":symmetry_reports,
                 "coverage":"unrestricted source spectrum; qualified finite-operator covariance and fresh transformed residuals"});
+            if let Some(decision) = policy_decision {
+                out.metadata["symmetry"]["automatic"] = json!(decision);
+                out.metadata["symmetry"]["resolved"] = json!(effective_symmetry);
+            }
             out.metadata["converged"] = json!(converged.iter().all(|c| *c));
             out.metadata["converged_per_point"] = json!(converged);
             out.metadata["labels"] = json!(job.resolved.k_labels.iter().zip(&job.resolved.k_label_indices).filter(|(_,i)|**i<nk).map(|(label,_)|label).collect::<Vec<_>>());

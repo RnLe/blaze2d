@@ -78,6 +78,7 @@ fn main() {
     let mut options = DielectricOptions::default();
     match material {
         "analytic" => {}
+        "voronoi" => options.smoothing.method = blaze2d_core::dielectric::SmoothingMethod::Voronoi,
         "raw" => options.smoothing.mesh_size = 1,
         _ => panic!("invalid material sampling"),
     }
@@ -133,7 +134,7 @@ fn main() {
             lattice,
             k,
             std::f64::consts::TAU * cutoff,
-            Default::default(),
+            blaze2d_core::symmetry::support::SupportBudget { max_coefficients: 32768, ..Default::default() },
         )
         .unwrap();
         let result = match method {
@@ -193,7 +194,7 @@ fn main() {
             lattice,
             k,
             std::f64::consts::TAU * cutoff,
-            Default::default(),
+            blaze2d_core::symmetry::support::SupportBudget { max_coefficients: 32768, ..Default::default() },
         )
         .unwrap();
         let d = Dielectric2D::from_geometry(&geom, grid, &options);

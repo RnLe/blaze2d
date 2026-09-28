@@ -20,16 +20,30 @@ def digest(path):
 
 def configuration(args, candidate):
     symmetry = {'off':'', 'identical':'k_reuse = "identical"',
-                'pt':'arithmetic = "pt_real"\nk_reuse = "time_reversal"'}[args.control]
+                'pt':'arithmetic = "pt_real"\nk_reuse = "time_reversal"',
+                'fourier':'arithmetic = "fourier_complex"'}[args.control]
     if candidate:
         if args.policy == 'continuation':
             symmetry = 'continuation = "previous_geometry"'
         elif args.policy == 'pt_continuation':
             symmetry = 'continuation = "previous_geometry"\narithmetic = "pt_real"\nk_reuse = "time_reversal"'
+        elif args.policy == 'pt_first_point':
+            symmetry = 'continuation = "first_point"\narithmetic = "pt_real"\nk_reuse = "time_reversal"'
         elif args.policy == 'pt':
             symmetry = 'arithmetic = "pt_real"\nk_reuse = "time_reversal"'
+        elif args.policy in ('pt_coarse', 'pt_combined', 'pt_groups'):
+            symmetry = 'arithmetic = "pt_real"\nk_reuse = "time_reversal"'
+            if args.policy == 'pt_combined':
+                symmetry += '\ncontinuation = "previous_geometry"'
+            if args.policy in ('pt_coarse', 'pt_combined'):
+                symmetry += f'\ncoarse_start = {{ resolution = [{args.size // 2},{args.size // 2}] }}'
+            if args.policy in ('pt_groups', 'pt_combined'):
+                symmetry += '\nsectors = "adaptive_group"\nplane_group = "p6m"\nsector_storage = "orbit"\nreconstruct_partners = true'
         elif args.policy == 'auto':
             symmetry = 'policy = "auto"'
+    discretization = '' if args.support_cutoff is None else f'\n[bands.discretization]\nkind = "metric_ball"\nangular_cutoff = {math.tau * args.support_cutoff}\nmax_coefficients = 32768'
+    radii = [.175, .215, .255] if args.heldout else [.18, .20, .22]
+    contrasts = [6.5, 13.0] if args.heldout else [8.9, 12.0]
     return f'''schema = "blaze2d/1"
 task = "bands"
 polarization = "{args.polarization}"
@@ -49,7 +63,9 @@ count = {args.bands}
 tracking = true
 path = {{ preset = "{args.lattice}", intervals_per_segment = {args.intervals} }}
 [bands.symmetry]
-{symmetry}
+{symmetry}{discretization}
+[dielectric]
+smoothing = "{args.smoothing}"
 [eigensolver]
 tolerance = 1e-14
 max_iterations = 600
@@ -58,11 +74,11 @@ eigenvectors = {str(args.fields).lower()}
 [[sweeps]]
 name = "contrast"
 target = "geometry.objects.rod.epsilon"
-values = [8.9, 12.0]
+values = {contrasts}
 [[sweeps]]
 name = "radius"
 target = "geometry.objects.rod.radius"
-values = [0.18, 0.20, 0.22]
+values = {radii}
 '''
 
 
@@ -130,9 +146,22 @@ def execute(args, host, variant, name):
         record['validation'] = dict(errors=[str(error)])
     data = output.read_bytes()
     record['output_sha256'] = hashlib.sha256(data).hexdigest()
-    output.with_suffix('.json.gz').write_bytes(gzip.compress(data, mtime=0))
+    document = json.loads(data)
+    objects = args.output / 'objects'
+    objects.mkdir(exist_ok=True)
+    for result in document.get('results', []):
+        arrays = result.pop('arrays')
+        encoded = json.dumps(arrays, separators=(',', ':'), allow_nan=False).encode()
+        sha = hashlib.sha256(encoded).hexdigest()
+        destination = objects / f'{sha}.json.gz'
+        if not destination.exists():
+            destination.write_bytes(gzip.compress(encoded, mtime=0))
+        result['arrays_object_sha256'] = sha
+    record['archive_format'] = 'arrays_object_sha256 references lossless JSON arrays in objects/'
+    output.with_suffix('.json.gz').write_bytes(gzip.compress(json.dumps(document, separators=(',', ':'), allow_nan=False).encode(), mtime=0))
     output.unlink()
-    (args.output / f'{name}-{variant}.measurement.json').write_text(json.dumps(record, indent=2) + '\n')
+    archived = dict(record, validation={k:v for k,v in record['validation'].items() if k != 'spectra'})
+    (args.output / f'{name}-{variant}.measurement.json').write_text(json.dumps(archived, indent=2) + '\n')
     return record
 
 
@@ -152,14 +181,17 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--lattice', choices=['square', 'triangular'], default='square')
     parser.add_argument('--polarization', choices=['TM', 'TE'], default='TM')
-    parser.add_argument('--policy', choices=['continuation', 'pt', 'pt_continuation', 'auto'], default='continuation')
-    parser.add_argument('--control', choices=['off', 'identical', 'pt'], default='off')
+    parser.add_argument('--policy', choices=['continuation', 'pt', 'pt_continuation', 'pt_first_point', 'pt_coarse', 'pt_combined', 'pt_groups', 'auto'], default='continuation')
+    parser.add_argument('--control', choices=['off', 'identical', 'pt', 'fourier'], default='off')
     parser.add_argument('--size', type=int, default=31)
     parser.add_argument('--bands', type=int, default=8)
     parser.add_argument('--intervals', type=int, default=3)
     parser.add_argument('--threads', type=int, default=1)
     parser.add_argument('--pairs', type=int, default=9)
     parser.add_argument('--fields', action='store_true')
+    parser.add_argument('--support-cutoff', type=float)
+    parser.add_argument('--smoothing', choices=['analytic', 'none', 'voronoi'], default='analytic')
+    parser.add_argument('--heldout', action='store_true')
     args = parser.parse_args()
     args.reference, args.candidate, args.output = args.reference.resolve(), args.candidate.resolve(), args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -167,8 +199,19 @@ def main():
         (args.output / f'{name}.toml').write_text(configuration(args, name == 'candidate'))
     manifest = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
     manifest['sha256'] = {str(p): digest(p) for p in [args.reference, args.candidate, Path(__file__), Path(__file__).with_name('quiet_host.py')]}
+    manifest['executables'] = {}
+    for label, binary in [('reference', args.reference), ('candidate', args.candidate)]:
+        provenance = json.loads(binary.with_suffix('.provenance.json').read_text())
+        if provenance['binary_sha256'] != digest(binary):
+            raise SystemExit(f'{label} executable differs from its frozen provenance')
+        manifest['executables'][label] = provenance
+        source_patch = binary.parent / 'source.patch'
+        if provenance.get('source_patch_sha256'):
+            if digest(source_patch) != provenance['source_patch_sha256']:
+                raise SystemExit(f'{label} source patch differs from its provenance')
+            (args.output / f'{label}-source.patch').write_bytes(source_patch.read_bytes())
     (args.output / 'harness.py').write_bytes(Path(__file__).read_bytes())
-    manifest['source_revision'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+    manifest['collector_source_revision'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     patch = subprocess.check_output(['git', 'diff', '--binary'])
     (args.output / 'source.patch').write_bytes(patch)
     manifest['source_patch_sha256'] = hashlib.sha256(patch).hexdigest()
@@ -196,6 +239,8 @@ def main():
                 delta = max(abs(x-y) for ga, gb in zip(a,b,strict=True) for ra,rb in zip(ga,gb,strict=True) for x,y in zip(ra,rb,strict=True))
                 block['max_frequency_difference'] = delta
                 valid = delta <= 2e-7
+            for variant in variants:
+                block[variant]['validation'].pop('spectra', None)
             block['valid'] = valid
             block['admitted'] = all(block[v]['host']['accepted'] for v in variants)
             blocks.append(block)

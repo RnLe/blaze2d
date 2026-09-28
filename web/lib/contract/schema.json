@@ -128,6 +128,7 @@
             "max_cache_bytes": 67108864,
             "max_continuation_bytes": 67108864,
             "max_traversal_field_bytes": 67108864,
+            "policy": "manual",
             "reconstruct_partners": false,
             "sector_kernel": "full_grid",
             "sector_storage": "full_grid",
@@ -322,6 +323,7 @@
       "type": "string",
       "enum": [
         "off",
+        "first_point",
         "previous_geometry"
       ]
     },
@@ -1472,6 +1474,7 @@
       "enum": [
         "analytic",
         "subgrid",
+        "voronoi",
         "none"
       ]
     },
@@ -1574,6 +1577,10 @@
             "null"
           ]
         },
+        "policy": {
+          "$ref": "#/$defs/SymmetryPolicy",
+          "default": "manual"
+        },
         "reconstruct_partners": {
           "type": "boolean",
           "default": false
@@ -1615,6 +1622,13 @@
         "spatial_complex",
         "fourier_complex",
         "pt_real"
+      ]
+    },
+    "SymmetryPolicy": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "auto"
       ]
     },
     "Task": {
