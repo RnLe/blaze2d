@@ -110,6 +110,7 @@ impl crate::Bands {
         use serde_json::json;
         blaze2d_core::drivers::bandstructure::RunOptions {
             reuse_gamma: false, disable_band_tracking: !self.tracking, retain_eigenvectors,
+            operator_diagnostics: self.operator_diagnostics,
             symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
                         automatic_policy: self.symmetry.policy == crate::SymmetryPolicy::Auto,
                         k_reuse: match self.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},

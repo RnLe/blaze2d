@@ -42,7 +42,11 @@ fn execute(cli: Cli) -> Result<bool, Box<dyn std::error::Error>> {
             }
             #[cfg(feature="profiling")]
             blaze2d_core::profiler::reset();
-            let mut study = blaze2d_runner::collect_with_progress(plan(&file)?, blaze2d_runner::Options {threads,
+            let resolved = {
+                blaze2d_core::profile_scope!("workflow.resolve");
+                plan(&file)?
+            };
+            let mut study = blaze2d_runner::collect_with_progress(resolved, blaze2d_runner::Options {threads,
                 error_policy: if error_policy=="stop" {blaze2d_runner::ErrorPolicy::Stop} else {blaze2d_runner::ErrorPolicy::Continue},
                 ..Default::default()}, |event| {
                     if progress {
@@ -53,6 +57,21 @@ fn execute(cli: Cli) -> Result<bool, Box<dyn std::error::Error>> {
                         }
                     }
                 })?;
+            study.statistics["runtime"]["progress"] = serde_json::json!(progress);
+            study.statistics["runtime"]["output"] = serde_json::json!(output.as_ref().map(|p| p.display().to_string()));
+            if !quiet {
+                let summary = blaze2d_interface::summary::format_results(study.results.iter().chain(study.errors.iter().filter_map(|e|e.partial_result.as_deref())));
+                if !summary.is_empty() { eprintln!("{summary}"); }
+            }
+            {
+                blaze2d_core::profile_scope!("output.serialize_write");
+                if let Some(path) = output { blaze2d_runner::export::write(&study,&path)?; }
+                else {
+                    let text = serde_json::to_string(&study)?;
+                    blaze2d_core::profiler::count("output.serialized_bytes", text.len());
+                    println!("{text}");
+                }
+            }
             if let Some(path) = profile_output {
                 std::fs::write(path, serde_json::to_vec_pretty(&serde_json::json!({
                     "timings":serde_json::from_str::<serde_json::Value>(&blaze2d_core::profiler::get_profile_json())?,
@@ -61,14 +80,6 @@ fn execute(cli: Cli) -> Result<bool, Box<dyn std::error::Error>> {
                     "timing_role":"instrumented explanatory profile; primary latency uses an unprofiled executable"
                 }))?)?;
             }
-            study.statistics["runtime"]["progress"] = serde_json::json!(progress);
-            study.statistics["runtime"]["output"] = serde_json::json!(output.as_ref().map(|p| p.display().to_string()));
-            if !quiet {
-                let summary = blaze2d_interface::summary::format_results(study.results.iter().chain(study.errors.iter().filter_map(|e|e.partial_result.as_deref())));
-                if !summary.is_empty() { eprintln!("{summary}"); }
-            }
-            if let Some(path) = output { blaze2d_runner::export::write(&study,&path)?; }
-            else { println!("{}",serde_json::to_string(&study)?); }
             return Ok(study.statistics["status"] == "completed");
         }
     }

@@ -177,9 +177,9 @@ pub struct SubspaceHistory {
     /// Number of bands being tracked.
     n_bands: usize,
     /// Eigenvectors from k_{n-1} (older).
-    prev_eigenvectors: Option<Vec<Field2D>>,
+    prev_eigenvectors: Option<std::sync::Arc<[Field2D]>>,
     /// Eigenvectors from k_n (current).
-    curr_eigenvectors: Option<Vec<Field2D>>,
+    curr_eigenvectors: Option<std::sync::Arc<[Field2D]>>,
     /// k-point at n-1.
     prev_k: Option<[f64; 2]>,
     /// k-point at n.
@@ -252,16 +252,17 @@ impl SubspaceHistory {
     /// * `k_point` - The k-point (fractional coordinates) for these eigenvectors
     /// * `eigenvectors` - The converged eigenvectors (should be B-orthonormal)
     pub fn update(&mut self, k_point: [f64; 2], eigenvectors: &[Field2D]) {
-        // Shift history window
+        let n = eigenvectors.len().min(self.n_bands);
+        self.update_shared(k_point, eigenvectors[..n].to_vec().into());
+    }
+
+    /// Share an immutable public block with path tracking and output staging.
+    pub fn update_shared(&mut self, k_point: [f64; 2], eigenvectors: std::sync::Arc<[Field2D]>) {
         self.prev_eigenvectors = self.curr_eigenvectors.take();
         self.prev_k = self.curr_k.take();
-
-        // Store new eigenvectors (clone them)
-        let n = eigenvectors.len().min(self.n_bands);
-        self.curr_eigenvectors = Some(eigenvectors.iter().take(n).cloned().collect());
+        self.curr_eigenvectors = Some(if eigenvectors.len() <= self.n_bands { eigenvectors }
+            else { eigenvectors[..self.n_bands].to_vec().into() });
         self.curr_k = Some(k_point);
-
-        // Clear cached rotation (will be recomputed on next predict)
         self.cached_rotation = None;
     }
 
@@ -288,7 +289,7 @@ impl SubspaceHistory {
                     curr.len()
                 );
                 PredictionResult {
-                    predicted_vectors: curr.clone(),
+                    predicted_vectors: curr.to_vec(),
                     method_used: PredictionMethod::Copy,
                     singular_value_min: 1.0,
                 }

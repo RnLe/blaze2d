@@ -34,7 +34,7 @@ pub struct CpuBackend<R: Real + FftNum = f64> {
     #[cfg(feature = "parallel")]
     parallel_pool: Option<Arc<ThreadPool>>,
     plan_cache: Arc<Mutex<FftPlanner<R>>>,
-    scratch_cache: Arc<Mutex<Vec<Complex<R>>>>,
+    workspace: Arc<Mutex<FftWorkspace<R>>>,
 }
 
 impl<R: Real + FftNum> Default for CpuBackend<R> {
@@ -53,8 +53,16 @@ impl<R: Real + FftNum> CpuBackend<R> {
             #[cfg(feature = "parallel")]
             parallel_pool: None,
             plan_cache: Arc::new(Mutex::new(FftPlanner::<R>::new())),
-            scratch_cache: Arc::new(Mutex::new(Vec::new())),
+            workspace: Arc::new(Mutex::new(FftWorkspace::default())),
         }
+    }
+
+    /// Share immutable plans with an independent worker. Ordinary clones share
+    /// a serial workspace; concurrent workers must use this constructor.
+    pub fn fork_worker(&self) -> Self {
+        let mut worker = self.clone();
+        worker.workspace = Arc::new(Mutex::new(FftWorkspace::default()));
+        worker
     }
 
     #[cfg(feature = "parallel")]
@@ -102,31 +110,9 @@ impl<R: Real + FftNum> CpuBackend<R> {
         let ny = grid.ny;
         assert!(nx > 0 && ny > 0, "grid must be non-zero length");
 
-        let (row_fft, col_fft) = {
-            let mut planner = self
-                .plan_cache
-                .lock()
-                .expect("fft plan cache mutex poisoned");
-            let row = match direction {
-                FftDirection::Forward => planner.plan_fft_forward(nx),
-                FftDirection::Inverse => planner.plan_fft_inverse(nx),
-            };
-            let col = match direction {
-                FftDirection::Forward => planner.plan_fft_forward(ny),
-                FftDirection::Inverse => planner.plan_fft_inverse(ny),
-            };
-            (row, col)
-        };
-
-        let required_len = ny;
-        let zero = Complex::<R>::new(R::zero(), R::zero());
-
-        let mut scratch_guard = self.scratch_cache.lock().unwrap();
-        if scratch_guard.len() < required_len {
-            scratch_guard.resize(required_len, zero);
-        }
-        let scratch = &mut *scratch_guard;
-
+        let mut workspace = self.workspace.lock().expect("FFT workspace poisoned");
+        workspace.prepare(&self.plan_cache, nx, ny);
+        let (row_fft, col_fft) = workspace.plans(direction);
         let data = buffer.as_mut_slice();
 
         #[cfg(feature = "parallel")]
@@ -138,11 +124,12 @@ impl<R: Real + FftNum> CpuBackend<R> {
         if use_parallel {
             #[cfg(feature = "parallel")]
             {
-                let mut transposed = vec![zero; data.len()];
+                let zero = Complex::<R>::new(R::zero(), R::zero());
+                workspace.transposed.resize(data.len(), zero);
                 execute_parallel_fft(
                     self.parallel_pool.as_deref(),
                     data,
-                    &mut transposed,
+                    &mut workspace.transposed,
                     nx,
                     ny,
                     row_fft.clone(),
@@ -150,8 +137,7 @@ impl<R: Real + FftNum> CpuBackend<R> {
                 );
             }
         } else {
-            process_rows_serial(data, nx, &row_fft);
-            process_columns_serial_with_scratch_buffer(data, nx, ny, &col_fft, scratch);
+            workspace.serial(data, nx, ny, &row_fft, &col_fft);
         }
 
         if matches!(direction, FftDirection::Inverse) {
@@ -198,23 +184,9 @@ impl<R: Real + FftNum> CpuBackend<R> {
             assert_eq!(g.ny, ny, "all buffers must have same ny");
         }
 
-        let (row_fft, col_fft) = {
-            let mut planner = self
-                .plan_cache
-                .lock()
-                .expect("fft plan cache mutex poisoned");
-            let row = match direction {
-                FftDirection::Forward => planner.plan_fft_forward(nx),
-                FftDirection::Inverse => planner.plan_fft_inverse(nx),
-            };
-            let col = match direction {
-                FftDirection::Forward => planner.plan_fft_forward(ny),
-                FftDirection::Inverse => planner.plan_fft_inverse(ny),
-            };
-            (row, col)
-        };
-
-        let zero = Complex::<R>::new(R::zero(), R::zero());
+        let mut workspace = self.workspace.lock().expect("FFT workspace poisoned");
+        workspace.prepare(&self.plan_cache, nx, ny);
+        let (row_fft, col_fft) = workspace.plans(direction);
 
         #[cfg(feature = "parallel")]
         let use_parallel =
@@ -235,17 +207,7 @@ impl<R: Real + FftNum> CpuBackend<R> {
             );
         } else {
             for buffer in buffers.iter_mut() {
-                process_rows_serial(buffer.as_mut_slice(), nx, &row_fft);
-            }
-            let mut scratch = vec![zero; ny];
-            for buffer in buffers.iter_mut() {
-                process_columns_serial_with_scratch_buffer(
-                    buffer.as_mut_slice(),
-                    nx,
-                    ny,
-                    &col_fft,
-                    &mut scratch,
-                );
+                workspace.serial(buffer.as_mut_slice(), nx, ny, &row_fft, &col_fft);
             }
         }
 
@@ -275,43 +237,75 @@ impl<R: Real + FftNum> CpuBackend<R> {
     }
 }
 
+#[derive(Clone, Copy)]
 enum FftDirection {
     Forward,
     Inverse,
 }
 
-fn process_rows_serial<R: FftNum>(data: &mut [Complex<R>], nx: usize, fft: &Arc<dyn Fft<R>>) {
-    for row in data.chunks_mut(nx) {
-        fft.process(row);
+struct FftWorkspace<R: Real + FftNum> {
+    shape: Option<(usize, usize)>,
+    plans: Vec<Arc<dyn Fft<R>>>,
+    column: Vec<Complex<R>>,
+    algorithm: Vec<Complex<R>>,
+    #[cfg(feature = "parallel")]
+    transposed: Vec<Complex<R>>,
+}
+
+impl<R: Real + FftNum> Default for FftWorkspace<R> {
+    fn default() -> Self {
+        Self { shape: None, plans: Vec::new(), column: Vec::new(), algorithm: Vec::new(),
+            #[cfg(feature = "parallel")] transposed: Vec::new() }
+    }
+}
+
+impl<R: Real + FftNum> FftWorkspace<R> {
+    fn prepare(&mut self, planner: &Mutex<FftPlanner<R>>, nx: usize, ny: usize) {
+        if self.shape == Some((nx,ny)) { return; }
+        blaze2d_core::profile_scope!("fft.planning");
+        let mut planner = planner.lock().expect("FFT planner poisoned");
+        self.plans = vec![planner.plan_fft_forward(nx), planner.plan_fft_forward(ny),
+            planner.plan_fft_inverse(nx), planner.plan_fft_inverse(ny)];
+        let required = self.plans.iter().map(|p|p.get_inplace_scratch_len()).max().unwrap_or(0);
+        let zero = Complex::new(R::zero(), R::zero());
+        self.algorithm.resize(required, zero);
+        self.column.resize(ny, zero);
+        self.shape = Some((nx,ny));
+        blaze2d_core::profiler::count("fft.plan_sets", 1);
+        blaze2d_core::profiler::count("fft.workspace.requested_bytes", (required+ny)*std::mem::size_of::<Complex<R>>());
+    }
+
+    fn plans(&self, direction: FftDirection) -> (Arc<dyn Fft<R>>, Arc<dyn Fft<R>>) {
+        let offset = match direction { FftDirection::Forward=>0, FftDirection::Inverse=>2 };
+        (self.plans[offset].clone(), self.plans[offset+1].clone())
+    }
+
+    fn serial(&mut self, data: &mut [Complex<R>], nx: usize, ny: usize,
+        row: &Arc<dyn Fft<R>>, col: &Arc<dyn Fft<R>>) {
+        // RustFFT accepts a contiguous batch of rows in one scratch-taking call.
+        row.process_with_scratch(data, &mut self.algorithm);
+        process_columns(data, nx, ny, col, &mut self.column, &mut self.algorithm);
+        blaze2d_core::profiler::count("fft.1d_transforms", nx+ny);
+        blaze2d_core::profiler::count("fft.1d_dispatches", 1+nx);
+        blaze2d_core::profiler::count("fft.column_copy_bytes", 2*data.len()*std::mem::size_of::<Complex<R>>());
     }
 }
 
 #[cfg(feature = "parallel")]
 fn process_rows_parallel<R: FftNum>(data: &mut [Complex<R>], nx: usize, fft: Arc<dyn Fft<R>>) {
-    data.par_chunks_mut(nx).for_each(|row| {
-        fft.process(row);
+    let zero = Complex::new(R::zero(), R::zero());
+    data.par_chunks_mut(nx).for_each_init(||vec![zero;fft.get_inplace_scratch_len()], |scratch,row| {
+        fft.process_with_scratch(row, scratch);
     });
 }
 
-fn process_columns_serial_with_scratch_buffer<R: FftNum>(
-    data: &mut [Complex<R>],
-    nx: usize,
-    ny: usize,
-    fft: &Arc<dyn Fft<R>>,
-    scratch: &mut [Complex<R>],
-) {
-    debug_assert!(scratch.len() >= ny);
-
-    let transpose_buf = &mut scratch[..ny];
-
+fn process_columns<R: FftNum>(data: &mut [Complex<R>], nx: usize, ny: usize,
+    fft: &Arc<dyn Fft<R>>, column: &mut [Complex<R>], algorithm: &mut [Complex<R>]) {
+    let column = &mut column[..ny];
     for ix in 0..nx {
-        for iy in 0..ny {
-            transpose_buf[iy] = data[iy * nx + ix];
-        }
-        fft.process(transpose_buf);
-        for iy in 0..ny {
-            data[iy * nx + ix] = transpose_buf[iy];
-        }
+        for iy in 0..ny { column[iy] = data[iy*nx+ix]; }
+        fft.process_with_scratch(column, algorithm);
+        for iy in 0..ny { data[iy*nx+ix] = column[iy]; }
     }
 }
 
@@ -360,32 +354,12 @@ fn batch_fft_2d_parallel<R: Real + FftNum>(
     pool: Option<&ThreadPool>,
 ) {
     let zero = Complex::<R>::new(R::zero(), R::zero());
+    let required = row_fft.get_inplace_scratch_len().max(col_fft.get_inplace_scratch_len());
     let mut job = || {
-        let total_rows = buffers.len() * ny;
-        let mut row_slices: Vec<&mut [Complex<R>]> = Vec::with_capacity(total_rows);
-
-        for buffer in buffers.iter_mut() {
-            for row in buffer.as_mut_slice().chunks_mut(nx) {
-                row_slices.push(row);
-            }
-        }
-
-        let row_fft_clone = row_fft.clone();
-        row_slices.par_iter_mut().for_each(|row| {
-            row_fft_clone.process(*row);
+        buffers.par_iter_mut().for_each_init(||(vec![zero;ny],vec![zero;required]), |(column,algorithm),buffer| {
+            row_fft.process_with_scratch(buffer.as_mut_slice(), algorithm);
+            process_columns(buffer.as_mut_slice(), nx, ny, &col_fft, column, algorithm);
         });
-
-        for buffer in buffers.iter_mut() {
-            let data = buffer.as_mut_slice();
-            let mut transposed = vec![zero; data.len()];
-            transpose_into(data, &mut transposed, nx, ny);
-
-            transposed.par_chunks_mut(ny).for_each(|row| {
-                col_fft.process(row);
-            });
-
-            transpose_into(&transposed, data, ny, nx);
-        }
     };
 
     if let Some(pool) = pool {
@@ -609,4 +583,41 @@ fn test_te_operator_eigenvalue() {
         rayleigh,
         expected
     );
+}
+
+#[test]
+fn private_workspaces_handle_prime_rectangular_batches_in_both_precisions() {
+    fn check<R: Real + FftNum>(tolerance: f64, backend: CpuBackend<R>) {
+        let worker=backend.fork_worker();
+        assert!(Arc::ptr_eq(&backend.plan_cache,&worker.plan_cache));
+        assert!(!Arc::ptr_eq(&backend.workspace,&worker.workspace));
+        for (nx,ny) in [(67,71),(8,5),(67,71)] {
+            let grid=Grid2D::new(nx,ny,1.,1.);
+            let mut x=Field2D::<R>::zeros(grid);
+            for j in 0..ny {for i in 0..nx {
+                let z=Complex64::from_polar(1.,std::f64::consts::TAU*(3.*i as f64/nx as f64+2.*j as f64/ny as f64));
+                x.as_mut_slice()[grid.idx(i,j)]=cscalar(z.re,z.im);
+            }}
+            let original=x.clone();
+            let mut batch=vec![x.clone(),x.clone()];
+            backend.forward_fft_2d(&mut x);
+            worker.batch_forward_fft_2d(&mut batch);
+            let peak=x.as_slice()[grid.idx(3,2)];
+            assert!((peak.re.to_accum()/grid.len() as f64-1.).abs()<tolerance);
+            for field in &batch {for (a,b) in field.as_slice().iter().zip(x.as_slice()) {
+                assert!((a.re.to_accum()-b.re.to_accum()).hypot(a.im.to_accum()-b.im.to_accum())<tolerance*grid.len() as f64);
+            }}
+            worker.batch_inverse_fft_2d(&mut batch);
+            for field in &batch {for (a,b) in field.as_slice().iter().zip(original.as_slice()) {
+                assert!((a.re.to_accum()-b.re.to_accum()).hypot(a.im.to_accum()-b.im.to_accum())<tolerance);
+            }}
+        }
+    }
+    check::<f64>(1e-11, CpuBackend::new());
+    check::<f32>(2e-6, CpuBackend::new());
+    #[cfg(feature="parallel")]
+    {
+        check::<f64>(1e-11, CpuBackend::new().with_parallel_fft(true).with_parallel_threads(2).with_parallel_threshold(1));
+        check::<f32>(2e-6, CpuBackend::new().with_parallel_fft(true).with_parallel_threads(2).with_parallel_threshold(1));
+    }
 }

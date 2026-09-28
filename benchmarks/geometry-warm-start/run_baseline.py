@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import statistics
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -79,6 +80,7 @@ def main():
             summary={'numerical_pass':all(b['valid'] for b in blocks),
                 'ratio':estimate([b['reference']['elapsed_seconds']/b['candidate']['elapsed_seconds'] for b in measured]) if measured else None,
                 'admitted_pairs':sum(b['admitted'] for b in measured),
+                'paired_median_ratio':statistics.median([b['reference']['elapsed_seconds']/b['candidate']['elapsed_seconds'] for b in measured]) if measured else None,
                 'scope':'exploratory ratio and resampling interval; three pairs do not establish precise timing'}
             (directory/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
             if args.profile_binary:

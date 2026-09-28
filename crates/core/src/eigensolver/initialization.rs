@@ -334,6 +334,8 @@ where
         return None;
     }
     let mut vector = operator.alloc_field();
+    crate::profiler::count("initialization.import_source_bytes", field.len()*std::mem::size_of::<Complex64>());
+    crate::profiler::count("initialization.import_destination_bytes", field.len()*std::mem::size_of::<Complex<B::Real>>());
     let dst = vector.as_mut_slice();
     for (d, &s) in dst.iter_mut().zip(field.as_slice().iter()) {
         *d = Complex::new(

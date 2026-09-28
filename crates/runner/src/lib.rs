@@ -23,6 +23,7 @@ pub fn collect(plan: Plan, options: Options) -> InterfaceResult<Study> {
 }
 
 pub fn collect_with_progress(plan: Plan, options: Options, mut progress: impl FnMut(&Event)) -> InterfaceResult<Study> {
+    let _timer = blaze2d_core::profiler::ScopeTimer::new("workflow.collect_makespan");
     let start_time = std::time::Instant::now();
     let mut study = Study {schema: blaze2d_interface::RUN_SCHEMA.into(), config: plan.config.clone(),
         results: vec![], errors: vec![], statistics: serde_json::json!({})};
@@ -117,6 +118,9 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                     let end = boundary(worker + 1);
                     let cache_limit = continuation_budget / effective.threads;
                     let mut context = ExecutionContext::new(cache_limit);
+                    // A serial workspace persists for the whole worker chain.
+                    let mut backend_f64 = CpuBackend::<f64>::new();
+                    let mut backend_f32 = CpuBackend::<f32>::new();
                     while !cancel.load(Ordering::Acquire) && !halt.load(Ordering::Acquire) {
                         let index = if chains {
                             if position == end { break; }
@@ -133,8 +137,8 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                             let job = plan.job(index).map_err(|diagnostic| JobFailure { job_index: index, diagnostic, partial_result: None })?;
                             let emit = |event| { if sender.send(event).is_err() { cancel.store(true, Ordering::Release); } };
                             match job.resolved.config.eigensolver.precision {
-                                Precision::F64 => execute_in_context(CpuBackend::<f64>::new(), "cpu", &job, &mut context, emit),
-                                Precision::F32 => execute_in_context(CpuBackend::<f32>::new(), "cpu", &job, &mut context, emit),
+                                Precision::F64 => execute_in_context(backend_f64.clone(), "cpu", &job, &mut context, emit),
+                                Precision::F32 => execute_in_context(backend_f32.clone(), "cpu", &job, &mut context, emit),
                             }
                         })).unwrap_or_else(|panic| {
                             let msg = panic.downcast_ref::<String>().map(String::as_str)
@@ -153,6 +157,9 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                             },
                             Err(error) => {
                                 context.clear();
+                                // A failed operator may have unwound through its workspace lock.
+                                backend_f64 = CpuBackend::<f64>::new();
+                                backend_f32 = CpuBackend::<f32>::new();
                                 failed.fetch_add(1, Ordering::Relaxed);
                                 if effective.error_policy == ErrorPolicy::Stop { halt.store(true, Ordering::Release); }
                                 Event::JobFailure { error: Box::new(error) }

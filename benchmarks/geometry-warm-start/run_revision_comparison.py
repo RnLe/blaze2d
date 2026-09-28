@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import statistics
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -60,6 +61,7 @@ def main():
         summary={'numerical_pass':all(b['valid'] for b in blocks),
             'ratio':estimate([b['reference']['elapsed_seconds']/b['candidate']['elapsed_seconds'] for b in pairs]) if pairs else None,
             'admitted_pairs':sum(b['admitted'] for b in pairs),
+                'paired_median_ratio':statistics.median([b['reference']['elapsed_seconds']/b['candidate']['elapsed_seconds'] for b in pairs]) if pairs else None,
             'scope':'qualitative full-workflow ratio at identical inputs and resources; no default promotion'}
         (out/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
 

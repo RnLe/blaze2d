@@ -265,6 +265,7 @@ impl EigensolverConfig {
 /// always sees f64.
 #[inline]
 fn buffer_to_f64_vec<B: SpectralBackend>(buf: &B::Buffer) -> Vec<Complex64> {
+    crate::field::record_public_export::<B::Real>(buf.len());
     buf.as_slice()
         .iter()
         .map(|c| Complex64::new(c.re.to_accum(), c.im.to_accum()))
@@ -2522,36 +2523,13 @@ where
     pub fn all_eigenvectors(&self) -> Vec<Field2D> {
         let grid = self.operator.grid();
 
-        // Collect (eigenvalue, eigenvector) pairs
-        let mut all_pairs: Vec<(f64, Field2D)> =
-            Vec::with_capacity(self.deflation.len() + self.x_block.len());
-
-        // Add locked (deflated) vectors
-        for (eigenvalue, vector) in self
-            .deflation
-            .eigenvalues()
-            .iter()
-            .zip(self.deflation.vectors().iter())
-        {
-            let field = Field2D::from_vec(grid, buffer_to_f64_vec::<B>(vector));
-            all_pairs.push((*eigenvalue, field));
-        }
-
-        // Add active vectors
-        for (eigenvalue, entry) in self.eigenvalues.iter().zip(self.x_block.iter()) {
-            let field = Field2D::from_vec(grid, buffer_to_f64_vec::<B>(&entry.vector));
-            all_pairs.push((*eigenvalue, field));
-        }
-
-        // Sort by eigenvalue
-        all_pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Take n_bands and extract eigenvectors
-        all_pairs
-            .into_iter()
-            .take(self.config.n_bands)
-            .map(|(_, vec)| vec)
-            .collect()
+        let mut pairs: Vec<(f64, &B::Buffer)> = self.deflation.eigenvalues().iter()
+            .zip(self.deflation.vectors()).map(|(&value, vector)|(value,vector))
+            .chain(self.eigenvalues.iter().zip(&self.x_block).map(|(&value,entry)|(value,&entry.vector)))
+            .collect();
+        pairs.sort_by(|a,b|a.0.total_cmp(&b.0));
+        pairs.into_iter().take(self.config.n_bands)
+            .map(|(_,vector)|Field2D::from_vec(grid, buffer_to_f64_vec::<B>(vector))).collect()
     }
 
     /// Create a RunConfig from the current solver state.

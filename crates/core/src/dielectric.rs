@@ -19,6 +19,7 @@ use crate::{
     grid::Grid2D,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 pub mod voronoi;
 
 /// Smoothing method for material interfaces.
@@ -93,11 +94,11 @@ impl SmoothingOptions {
 
 #[derive(Debug, Clone)]
 pub struct Dielectric2D {
-    eps_r: Vec<f64>,
-    inv_eps_r: Vec<f64>,
-    inv_eps_tensors: Option<Vec<[f64; 4]>>, // row-major [[xx, xy], [yx, yy]]
-    unsmoothed_eps: Option<Vec<f64>>,
-    unsmoothed_inv_eps: Option<Vec<f64>>,
+    eps_r: Arc<[f64]>,
+    inv_eps_r: Arc<[f64]>,
+    inv_eps_tensors: Option<Arc<[[f64; 4]]>>, // row-major [[xx, xy], [yx, yy]]
+    unsmoothed_eps: Option<Arc<[f64]>>,
+    unsmoothed_inv_eps: Option<Arc<[f64]>>,
     pub grid: Grid2D,
     /// Reciprocal lattice vectors b1, b2 for computing G-vectors.
     /// G = n1*b1 + n2*b2 for integer indices n1, n2.
@@ -136,9 +137,9 @@ impl Dielectric2D {
             .collect();
 
         Self {
-            eps_r,
+            eps_r: eps_r.into(),
             inv_eps_r,
-            inv_eps_tensors,
+            inv_eps_tensors: inv_eps_tensors.map(Into::into),
             unsmoothed_eps: None,
             unsmoothed_inv_eps: None,
             grid,
@@ -148,6 +149,7 @@ impl Dielectric2D {
     }
 
     pub fn from_geometry(geom: &Geometry2D, grid: Grid2D, opts: &DielectricOptions) -> Self {
+        crate::profile_scope!("material.sampling");
         assert!(
             grid.nx > 0 && grid.ny > 0,
             "grid dimensions must be non-zero"
@@ -168,7 +170,7 @@ impl Dielectric2D {
                 })
                 .collect();
             return Self {
-                eps_r: raw_eps,
+                eps_r: raw_eps.into(),
                 inv_eps_r,
                 inv_eps_tensors: None,
                 unsmoothed_eps: None,
@@ -204,11 +206,11 @@ impl Dielectric2D {
         };
 
         Self {
-            eps_r: smoothed_eps,
-            inv_eps_r: smoothed_inv,
-            inv_eps_tensors: Some(tensors),
-            unsmoothed_eps: Some(raw_eps),
-            unsmoothed_inv_eps: Some(raw_inv_eps),
+            eps_r: smoothed_eps.into(),
+            inv_eps_r: smoothed_inv.into(),
+            inv_eps_tensors: Some(tensors.into()),
+            unsmoothed_eps: Some(raw_eps.into()),
+            unsmoothed_inv_eps: Some(raw_inv_eps.into()),
             grid,
             reciprocal_b1,
             reciprocal_b2,

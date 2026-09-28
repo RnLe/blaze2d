@@ -23,9 +23,12 @@ pub struct Array {
 
 impl Array {
     pub fn real(shape: &[usize], dimensions: &[&str], data: impl IntoIterator<Item=f64>) -> Self {
+        let _timer = blaze2d_core::profiler::ScopeTimer::new("output.pack_arrays");
+        let data: Vec<f64> = data.into_iter().collect();
+        blaze2d_core::profiler::count("output.packed_bytes", data.len()*std::mem::size_of::<f64>());
         Self { dtype: DType::Float64, shape: shape.into(),
             dimensions: dimensions.iter().map(|s| s.to_string()).collect(),
-            order: "C".into(), data: data.into_iter().collect() }
+            order: "C".into(), data }
     }
     pub fn complex(shape: &[usize], dimensions: &[&str], data: impl IntoIterator<Item=Complex64>) -> Self {
         let mut array = Self::real(shape, dimensions, data.into_iter().flat_map(|c| [c.re, c.im]));

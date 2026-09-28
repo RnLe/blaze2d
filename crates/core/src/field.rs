@@ -97,14 +97,28 @@ pub type FieldReal = f64;
 /// A complex-valued field sampled on a uniform 2D grid. Generic over the
 /// storage precision `R`; defaults to `f64` so existing call sites continue
 /// to mean the same thing.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Field2D<R: Real = f64> {
     grid: Grid2D,
     data: Vec<Complex<R>>,
 }
 
+impl<R: Real> Clone for Field2D<R> {
+    fn clone(&self) -> Self {
+        let bytes = self.data.len() * std::mem::size_of::<Complex<R>>();
+        crate::profiler::count("field.allocations", 1);
+        crate::profiler::count("field.allocated_bytes", bytes);
+        crate::profiler::count("field.copied_bytes", bytes);
+        Self {grid:self.grid, data:self.data.clone()}
+    }
+}
+
 impl<R: Real> Field2D<R> {
     pub fn zeros(grid: Grid2D) -> Self {
+        let bytes = grid.len() * std::mem::size_of::<Complex<R>>();
+        crate::profiler::count("field.allocations", 1);
+        crate::profiler::count("field.allocated_bytes", bytes);
+        crate::profiler::count("field.zeroed_bytes", bytes);
         let zero = Complex::<R>::new(R::zero(), R::zero());
         Self {
             data: vec![zero; grid.len()],
@@ -154,6 +168,7 @@ impl<R: Real> Field2D<R> {
     /// Promote field data to `Vec<Complex<f64>>` for high-precision
     /// postprocessing (Python boundary, dense linear algebra, etc.).
     pub fn to_f64_vec(&self) -> Vec<Complex64> {
+        record_public_export::<R>(self.len());
         self.data
             .iter()
             .map(|c| Complex64::new(c.re.to_accum(), c.im.to_accum()))
@@ -209,4 +224,14 @@ pub fn to_accum<R: Real>(value: Complex<R>) -> Complex64 {
 #[inline]
 pub fn from_accum<R: Real>(value: Complex64) -> Complex<R> {
     Complex::new(R::from_accum(value.re), R::from_accum(value.im))
+}
+
+/// Explicit storage/export traffic, not hardware DRAM transactions. Source
+/// reads and destination writes are separate because f32 promotion doubles size.
+pub(crate) fn record_public_export<R: Real>(len: usize) {
+    crate::profiler::count("field.export_source_bytes", len*std::mem::size_of::<Complex<R>>());
+    crate::profiler::count("field.export_destination_bytes", len*std::mem::size_of::<Complex64>());
+    if std::mem::size_of::<R>() == 4 {
+        crate::profiler::count("field.promoted_elements", len);
+    }
 }

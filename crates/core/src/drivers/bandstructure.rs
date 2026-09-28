@@ -238,6 +238,8 @@ pub struct RunOptions {
     pub reuse_gamma: bool,
     /// Include fields in incremental results. Disabled to avoid extra copies.
     pub retain_eigenvectors: bool,
+    /// Run optional self-adjointness and condition-number probes during setup.
+    pub operator_diagnostics: bool,
 }
 
 impl Default for RunOptions {
@@ -253,6 +255,7 @@ impl Default for RunOptions {
             disable_band_tracking: false,  // Band tracking enabled by default
             reuse_gamma: true,             // Reuse first Γ for closing Γ (fast path)
             retain_eigenvectors: false,
+            operator_diagnostics: false,
         }
     }
 }
@@ -497,7 +500,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // Operator Diagnostics (one-time, before k-point loop)
     // ========================================================================
     // Use a non-Γ k-point for condition number estimates (Γ has κ → ∞ due to DC mode)
-    {
+    if options.operator_diagnostics || study.is_some() || job.eigensolver.record_diagnostics {
         // Find first non-Γ k-point for diagnostics
         let diag_k_idx = job.k_path.iter().position(|&k| !is_gamma_point(k));
         if let Some(idx) = diag_k_idx {
@@ -567,7 +570,7 @@ fn run_core<B: SpectralBackend + Clone>(
 
     // Storage for warm-start vectors from previous k-point (simple mode)
     let warm_start_limit = job.eigensolver.n_bands;
-    let mut warm_start_store: Vec<Field2D> = Vec::new();
+    let mut warm_start_store: std::sync::Arc<[Field2D]> = Vec::new().into();
 
     // Subspace prediction history (rotation-based warm-start)
     let mut subspace_history: Option<SubspaceHistory> = if options.use_subspace_prediction {
@@ -586,7 +589,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // Storage for band tracking: eigenvectors from previous k-point
     // Note: When starting at Γ with proper deflation, Γ eigenvectors are reliable
     // and can be used for warm-starting subsequent k-points.
-    let mut prev_eigenvectors: Option<Vec<Field2D>> = None;
+    let mut prev_eigenvectors: Option<std::sync::Arc<[Field2D]>> = None;
 
     // Storage for previous frequencies (ω) for degenerate block disambiguation
     // These are used by track_bands_with_frequencies to break ties when
@@ -745,7 +748,7 @@ fn run_core<B: SpectralBackend + Clone>(
             // Simple copy warm-start (original behavior)
             _predicted_vectors = None;
             warm_start_used = true;
-            Some(warm_start_store.as_slice())
+            Some(warm_start_store.as_ref())
         } else {
             _predicted_vectors = None;
             warm_start_used = false;
@@ -1143,26 +1146,16 @@ fn run_core<B: SpectralBackend + Clone>(
         }
 
         crate::profiler::start_timer("run.cache_update");
-        // Store eigenvectors for band tracking at next k-point
-        prev_eigenvectors = Some(eigenvectors.clone());
-
-        // Store frequencies (ω) for degenerate block disambiguation at next k-point
-        prev_omegas = Some(omegas.clone());
-
-        // Store eigenvalues (ω²) for band-window preconditioner shift at next k-point
-        // We store the raw eigenvalues (λ = ω²), not frequencies.
-        prev_eigenvalues = Some(final_evals.clone());
-
-        // Update subspace history or warm-start store for next k-point
+        let eigenvectors: std::sync::Arc<[Field2D]> = eigenvectors.into();
+        if !options.disable_band_tracking {
+            prev_eigenvectors = Some(eigenvectors.clone());
+            prev_omegas = Some(omegas.clone());
+        }
+        if options.use_band_window_shift { prev_eigenvalues = Some(final_evals.clone()); }
         if let Some(ref mut history) = subspace_history {
-            // Update subspace history with converged eigenvectors
-            history.update(k_frac, &eigenvectors);
+            history.update_shared(k_frac, eigenvectors.clone());
         } else {
-            // Simple copy for traditional warm-start
-            warm_start_store.clear();
-            for vec in eigenvectors.iter().take(warm_start_limit) {
-                warm_start_store.push(vec.clone());
-            }
+            warm_start_store = eigenvectors.clone();
         }
 
         crate::profiler::stop_timer("run.cache_update");
@@ -1171,7 +1164,7 @@ fn run_core<B: SpectralBackend + Clone>(
         if reuse_gamma && k_idx == 0 && is_gamma {
             first_gamma_omegas = Some(omegas.clone());
             first_gamma_quality = (k_converged, k_residuals.clone(), k_b_orthogonality_defect, k_absolute_residuals.clone());
-            first_gamma_fields = options.retain_eigenvectors.then(|| eigenvectors.clone());
+            first_gamma_fields = options.retain_eigenvectors.then(|| eigenvectors.to_vec());
         }
 
         if let Some(ref mut on_k_point) = on_k_point {
@@ -1188,7 +1181,7 @@ fn run_core<B: SpectralBackend + Clone>(
                 residuals: k_residuals,
                 absolute_residuals: k_absolute_residuals,
                 b_orthogonality_defect: k_b_orthogonality_defect,
-                eigenvectors: options.retain_eigenvectors.then(|| eigenvectors.clone()),
+                eigenvectors: options.retain_eigenvectors.then(|| eigenvectors.to_vec()),
                 is_gamma,
             });
         }

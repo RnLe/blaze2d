@@ -10,6 +10,7 @@ authors.workspace = true
 profiling = ["blaze2d-backend-cpu/profiling"]
 
 [dependencies]
+blaze2d-core = { path = "../core" }
 blaze2d-interface = { path = "../interface" }
 blaze2d-backend-cpu = { path = "../backend-cpu" }
 crossbeam-channel = "0.5"
@@ -19,5 +20,3 @@ npyz = { version = "0.8.4", features = ["complex"] }
 zip = { version = "4", default-features = false, features = ["deflate"] }
 num-complex.workspace = true
 
-[dev-dependencies]
-blaze2d-core = { path = "../core" }

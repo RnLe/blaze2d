@@ -272,6 +272,7 @@ where
 }
 
 fn buffer_to_f64_vec<B: SpectralBackend>(buffer: &B::Buffer) -> Vec<Complex64> {
+    crate::field::record_public_export::<B::Real>(buffer.len());
     buffer
         .as_slice()
         .iter()

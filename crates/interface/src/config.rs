@@ -148,6 +148,9 @@ impl Default for Resolution { fn default() -> Self { Self::Uniform(32) } }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Bands {
+    /// Optional setup probes; ordinary solves do not compute condition estimates.
+    #[serde(default, skip_serializing_if="is_false")]
+    pub operator_diagnostics: bool,
     #[serde(default = "band_count")]
     pub count: usize,
     #[serde(default)]
@@ -164,8 +167,9 @@ pub struct Bands {
     pub discretization: Discretization,
 }
 fn default_tracking() -> bool { true }
+fn is_false(value: &bool) -> bool { !*value }
 impl Default for Bands {
-    fn default() -> Self { Self { count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default(), accuracy: None, discretization: Discretization::default() } }
+    fn default() -> Self { Self { operator_diagnostics: false, count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default(), accuracy: None, discretization: Discretization::default() } }
 }
 
 /// Acceptance is separate from eigenvalue-change stopping. Every mode must
