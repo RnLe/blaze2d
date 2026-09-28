@@ -257,7 +257,7 @@ function SlabArt() {
   </div>;
 }
 
-const illustrations: Record<Exclude<ModuleId, 'symmetries'>, () => ReactNode> = {
+const illustrations: Partial<Record<Exclude<ModuleId, 'symmetries'>, () => ReactNode>> = {
   core: CoreArt, warm: WarmArt, evidence: BenchmarkArt, geometry: GeometryArt,
   solver: SolverArt, gradients: GradientArt, compatibility: CompatibilityArt,
   gpu: GpuArt, maxwell3d: ThreeDArt, slabs: SlabArt,
@@ -265,7 +265,9 @@ const illustrations: Record<Exclude<ModuleId, 'symmetries'>, () => ReactNode> = 
 
 export default function ModuleBanner({ module }: { module: ModuleId }) {
   if (module === 'symmetries') return <SymmetryPreview />;
+  const illustration = illustrations[module];
+  if (!illustration) return null;
   return <figure className="roadmap-banner" data-visual-for={module}>
-    {illustrations[module]()}
+    {illustration()}
   </figure>;
 }

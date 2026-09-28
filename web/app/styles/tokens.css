@@ -95,6 +95,10 @@
   --series-axis: #555555;
   --series-label: #a6a0af;
 
+  /* ---- Roadmap research stages ------------------------------------------ */
+  --stage-learning: #a98bf5;
+  --stage-families: #4cc3b2;
+
   /* ---- Typography -------------------------------------------------------- */
   /* next/font appends the fallback stack to the generated family name, so this
      must not repeat it. */

@@ -64,12 +64,54 @@ export const modules = {
     description: 'Use a reduced guided-mode basis for efficient slab band calculations.', status: 'Planned',
     motivation: 'Include vertical confinement and radiation when studying patterned films. A slab-specific method offers these observables without requiring a general 3D grid. Slab support in Blaze would also provide the physics needed to continue the thesis’s two-scale moiré research in photonic crystal slabs.',
   },
+  preconditioner: {
+    title: 'Learned preconditioner', anchor: 'learned-preconditioner',
+    description: 'Learn the corrections Blaze’s physics-based preconditioner misses.', status: 'Planned',
+    motivation: 'Preconditioning was Blaze’s most rewarding optimization. Learning works on the same lever, so a learned correction must lower the total time to the same validated eigenpairs, including training and inference.',
+  },
+  tuning: {
+    title: 'Self-tuning solves', anchor: 'self-tuning-solves',
+    description: 'Learn the best solver settings during a single band diagram.', status: 'Planned',
+    motivation: 'Tuning the preconditioner by hand took much work, and the best settings differ between crystals. A self-tuning run adapts to each crystal without a training set, provided exploration pays for itself within the run.',
+  },
+  initialization: {
+    title: 'Learned starting subspaces', anchor: 'learned-starting-subspaces',
+    description: 'Predict a close first subspace for new geometries.', status: 'Planned',
+    motivation: 'Cold starts dominate short band diagrams and broad geometry sweeps. A learned predictor has to beat Blaze’s classical reuse of nearby solutions, not only a cold start.',
+  },
+  surrogates: {
+    title: 'Design surrogates', anchor: 'design-surrogates',
+    description: 'Learn which configurations deserve a full solve.', status: 'Planned',
+    motivation: 'Surrogates reduce the number of full solves rather than the cost of each one, so their benefit is measured per study, separately from solver speed.',
+  },
+  reduced: {
+    title: 'Reduced Bloch solver', anchor: 'reduced-bloch-solver',
+    description: 'Solve a whole band diagram in one small shared basis.', status: 'Planned',
+    motivation: 'With few iterations left per k-point, the remaining cost is full-size work repeated across the family. Accepted k-points avoid it entirely, which no faster eigensolver can achieve.',
+  },
+  acceptance: {
+    title: 'Residual-checked bases', anchor: 'residual-checked-bases',
+    description: 'Accept reduced results only where residuals confirm them.', status: 'Planned',
+    motivation: 'Equal accuracy is the condition for every speed-up on this page. Cheap residuals make it hold for each accepted result, and adaptive enrichment decides where full solves are still needed.',
+  },
+  sweeps: {
+    title: 'Families across sweeps', anchor: 'families-across-sweeps',
+    description: 'Share one basis across material and geometry sweeps.', status: 'Planned',
+    motivation: 'Blaze’s thesis workflow solves thousands of related local Bloch problems, with eigenvectors and projected couplings. Sharing one basis across them targets the largest redundancy in such studies.',
+  },
+  simultaneous: {
+    title: 'Simultaneous iteration', anchor: 'simultaneous-iteration',
+    description: 'Iterate on many parameters at once in one shared space.', status: 'Planned',
+    motivation: 'Reduced bases share results; a simultaneous iteration would also share the work of finding them. It is the most ambitious step and builds on a validated reduced solver.',
+  },
 } satisfies Record<string, Module>;
 
 export type ModuleId = keyof typeof modules;
 
-export const stages: { number: 1 | 2 | 3; title: string; anchor: string; description: string; items: ModuleId[] }[] = [
-  { number: 1, title: 'Research foundation', anchor: 'stage-1-research-foundation', description: 'Establish a reliable research core.', items: ['core', 'symmetries', 'warm', 'evidence'] },
-  { number: 2, title: 'Generalize and optimize 2D', anchor: 'stage-2-generalize-and-optimize-2d', description: 'Fully generalize 2D geometry, improve solving, and support MPB workflows.', items: ['geometry', 'solver', 'gradients', 'compatibility'] },
-  { number: 3, title: 'GPU, 3D, and slabs', anchor: 'stage-3-gpu-3d-and-slabs', description: 'Add GPU execution and extend the physical models beyond 2D.', items: ['gpu', 'maxwell3d', 'slabs'] },
+export const stages: { id: '1' | '2' | '3' | 'M' | 'X'; title: string; anchor: string; description: string; items: ModuleId[]; landscape?: true }[] = [
+  { id: '1', title: 'Research foundation', anchor: 'stage-1-research-foundation', description: 'Establish a reliable research core.', items: ['core', 'symmetries', 'warm', 'evidence'] },
+  { id: '2', title: 'Generalize and optimize 2D', anchor: 'stage-2-generalize-and-optimize-2d', description: 'Fully generalize 2D geometry, improve solving, and support MPB workflows.', items: ['geometry', 'solver', 'gradients', 'compatibility'] },
+  { id: '3', title: 'GPU, 3D, and slabs', anchor: 'stage-3-gpu-3d-and-slabs', description: 'Add GPU execution and extend the physical models beyond 2D.', items: ['gpu', 'maxwell3d', 'slabs'] },
+  { id: 'M', title: 'Machine learning', anchor: 'stage-m-machine-learning', description: 'Use recent advances in machine learning to accelerate solving, with every result verified.', items: ['preconditioner', 'tuning', 'initialization', 'surrogates'], landscape: true },
+  { id: 'X', title: 'Solution families', anchor: 'stage-x-solution-families', description: 'Push Blaze beyond the conventional solver loop into solving whole families at once.', items: ['reduced', 'acceptance', 'sweeps', 'simultaneous'], landscape: true },
 ];

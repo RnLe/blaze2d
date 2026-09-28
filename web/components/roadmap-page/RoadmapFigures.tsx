@@ -22,9 +22,9 @@ export function Motivation({ module, children }: { module: ModuleId; children?: 
 export function DevelopmentSequence() {
   return <>
     <nav aria-label="Development stages" className="roadmap-stages">
-      {stages.map(stage => <section className="roadmap-stage-card" data-stage={stage.number} key={stage.number}>
+      {stages.map(stage => <section className={`roadmap-stage-card${stage.landscape ? ' is-landscape' : ''}`} data-stage={stage.id} key={stage.id}>
         <a className="roadmap-stage-heading" href={`#${stage.anchor}`}>
-          <span className="roadmap-stage-label">Stage {stage.number}<ArrowDownRight size={18} aria-hidden="true" /></span>
+          <span className="roadmap-stage-label">Stage {stage.id}<ArrowDownRight size={18} aria-hidden="true" /></span>
           <h1>{stage.title}</h1>
           <span className="roadmap-stage-description">{stage.description}</span>
         </a>

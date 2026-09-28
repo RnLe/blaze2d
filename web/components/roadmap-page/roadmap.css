@@ -4,6 +4,8 @@
 .roadmap-page [data-stage="1"] { --stage-color: var(--brand-blue); }
 .roadmap-page [data-stage="2"] { --stage-color: var(--series-primary); }
 .roadmap-page [data-stage="3"] { --stage-color: var(--brand-orange); }
+.roadmap-page [data-stage="M"] { --stage-color: var(--stage-learning); }
+.roadmap-page [data-stage="X"] { --stage-color: var(--stage-families); }
 .roadmap-status { display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.85rem; color: var(--text-secondary); font-size: 0.94rem; }
 .roadmap-status > span { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--success); }
 .article .roadmap-item-status { display: inline-block; padding: 0.12rem 0.6rem; border: 1px solid color-mix(in srgb, currentColor 35%, var(--border-default)); background: var(--surface-base); border-radius: var(--radius-pill); white-space: nowrap; font-size: 0.94rem; font-weight: 700; line-height: 1.6; }
@@ -30,6 +32,20 @@
 .article .roadmap-stage-heading:hover { background: var(--surface-hover); }
 .roadmap-stage-card a:focus-visible { outline: 2px solid var(--text-heading); outline-offset: -3px; }
 
+/* Research stages span the full row with their modules side by side. */
+.roadmap-stage-card.is-landscape { grid-column: 1 / -1; grid-row: auto; grid-template-rows: auto 1fr; margin-top: 1rem; container: roadmap-stage / inline-size; }
+.article .is-landscape .roadmap-stage-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 1rem; padding: 0 1.1rem 1.25rem; }
+.is-landscape .roadmap-stage-label { flex: 0 0 calc(100% + 2.2rem); margin: 0 -1.1rem 0.75rem; padding: 0 1.1rem; background: var(--stage-color); color: var(--surface-base); font-weight: 600; line-height: 1.6; }
+.is-landscape .roadmap-stage-label > svg { width: 1.2em; height: 1.2em; }
+.is-landscape .roadmap-stage-description { margin-top: 0; }
+.is-landscape .roadmap-stage-items { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); grid-auto-rows: auto; }
+.article .is-landscape .roadmap-stage-item + .roadmap-stage-item { border-left: 1px solid var(--border-default); }
+.is-landscape .roadmap-item-heading { align-items: baseline; }
+@container roadmap-stage (max-width: 62rem) {
+  .is-landscape .roadmap-stage-items { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .article .is-landscape .roadmap-stage-item:nth-child(odd) { border-left: 0; }
+}
+
 .roadmap-stage-section { margin-top: 3.5rem; padding-top: 1.9rem; border-top: 2px solid var(--stage-color); }
 .article .roadmap-stage-section > h1 { font-size: 2.3rem; margin: 0 0 1rem; line-height: 1.25; }
 .roadmap-module { margin-top: 2.4rem; padding-top: 1.35rem; border-top: 1px solid var(--border-subtle); }
@@ -38,6 +54,7 @@
 .roadmap-module-heading > .roadmap-item-status { flex-shrink: 0; margin-left: auto; }
 .article .roadmap-module > p { margin: 0.65rem 0; }
 .roadmap-motivation { padding: 0.85rem 1.05rem; border: 1px solid color-mix(in srgb, var(--stage-color) 42%, var(--border-default)); border-left: 3px solid var(--stage-color); border-radius: 0 0 var(--radius-md) var(--radius-md); background: color-mix(in srgb, var(--stage-color) 8%, var(--surface-base)); }
+.roadmap-module > :not(.roadmap-banner) + .roadmap-motivation { margin-top: 1rem; border-radius: var(--radius-md); }
 .article .roadmap-motivation-label { display: block; color: color-mix(in srgb, var(--stage-color) 60%, var(--text-heading)); font-size: 0.94rem; font-weight: 650; }
 .article .roadmap-motivation p { margin: 0.25rem 0 0; font-size: 1.05rem; line-height: 1.65; }
 .article .roadmap-invitation { margin: 2.5rem auto 0; }
@@ -126,6 +143,11 @@
   .roadmap-stages { grid-template-columns: 1fr; grid-template-rows: none; gap: 1rem; }
   .roadmap-stage-card { grid-template-rows: auto 1fr; grid-row: auto; }
   .roadmap-stage-items { grid-auto-rows: auto; }
+  .roadmap-stage-card.is-landscape { margin-top: 0; }
+  .article .is-landscape .roadmap-stage-heading { display: block; }
+  .is-landscape .roadmap-stage-description { margin-top: 0.7rem; }
+  .is-landscape .roadmap-stage-items { grid-auto-flow: row; grid-template-columns: minmax(0, 1fr); }
+  .article .is-landscape .roadmap-stage-item + .roadmap-stage-item { border-left: 0; }
   .roadmap-art-flow { gap: 0.35rem; grid-template-columns: minmax(0, 1fr) 1rem minmax(0, 1fr) 1rem minmax(0, 1fr); }
   .roadmap-solver-art { grid-template-columns: minmax(0, 0.8fr) 1rem minmax(0, 0.8fr) 1rem minmax(0, 1.5fr); }
   .roadmap-banner { padding: 0.7rem 0.65rem; }

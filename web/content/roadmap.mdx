@@ -4,7 +4,7 @@ nav:
   order: 0
 layout: wide
 title: Optimization & Roadmap
-description: "A staged roadmap for Blaze: a research foundation, broader and faster 2D calculations, then GPU execution, 3D crystals, and slabs."
+description: "A staged roadmap for Blaze: a research foundation, broader and faster 2D calculations, then GPU execution, 3D crystals, and slabs, with research stages on machine learning and solution families."
 ---
 
 import { Citation, References, Reference } from '@/components/article/Citation'
@@ -30,6 +30,10 @@ research priorities.
 **MPB remains Blaze's strongest reference and principal validation target.**
 Adopting and optimizing MPB's capabilities is a natural direction,
 while retaining Blaze's emphasis on sweeps and operator data.<Citation id={1} />
+
+Two research stages look further ahead. **Stage M** applies machine learning inside
+the solver, and **Stage X** solves whole families of problems at once instead of one
+eigenproblem at a time.
 
 </div>
 
@@ -248,6 +252,235 @@ the method's basis and perturbative radiation approximations.
 </section>
 </section>
 
+<section className="narrow roadmap-stage-section" data-stage="M">
+
+# Stage M: Machine learning
+
+Learn the parts of solving that numerical design leaves open, not Maxwell's
+equations themselves. Networks can solve differential equations directly, by
+penalizing the equation's residual<Citation id={9} /> or by minimizing an
+energy.<Citation id={10} /> For a single accurate solve, however, a systematic
+comparison found that physics-informed networks did not beat finite elements in
+solution time or accuracy.<Citation id={11} /> In Blaze, learned components propose;
+fresh residual and orthogonality checks decide. Gains count only at equal accuracy
+against the tuned solver, with data, training and inference included, since weak
+baselines have made many reported speed-ups look larger than they are.<Citation id={12} />
+Modules are ordered by expected leverage.
+
+<section className="roadmap-module" data-module="preconditioner">
+<div className="roadmap-module-heading">
+
+## Learned preconditioner
+
+<ModuleStatusTag module="preconditioner" />
+</div>
+
+In LOBPCG, the preconditioner turns each residual into a search direction, and a
+small Rayleigh–Ritz step combines the best ones.<Citation id={13} /> Learning can
+improve that action while keeping it linear and positive definite, so the
+algorithm's structure is preserved. The first step corrects Blaze's existing Fourier
+preconditioner with learned positive spectral weights, computed once per k-point
+and applied through the same FFT kernels. UNO-CG modifies Fourier neural operators
+so that such constraints hold by construction, which guarantees conjugate-gradient
+convergence.<Citation id={14} /> Rescaling the preconditioner alone changes nothing,
+because LOBPCG's search space stays the same: learning must change relative weights
+or add directions. TE, with the material inside the operator, leaves more room than
+TM, whose Fourier-diagonal operator can already be inverted exactly.
+
+Next, a small correction space can capture the error components the preconditioner
+leaves behind, as learned DeepONet bases<Citation id={15} /> and neural spectral
+preconditioners do.<Citation id={16} /> The training objective matters: replacing only
+the loss with a condition-number measure cut conjugate-gradient iterations from 116
+to 33 in a 2026 study.<Citation id={17} /> Fully neural preconditioners come last.
+Graph networks that predict factorizations,<Citation id={18} /><Citation id={19} />
+graph neural preconditioners inside flexible Krylov methods,<Citation id={20} />
+hybrids of neural operators and relaxation,<Citation id={21} /> and multilevel deep
+Maxwell solvers<Citation id={22} /> show the range, but none is a drop-in component
+for LOBPCG.
+
+<Motivation module="preconditioner" />
+</section>
+
+<section className="roadmap-module" data-module="tuning">
+<div className="roadmap-module-heading">
+
+## Self-tuning solves
+
+<ModuleStatusTag module="tuning" />
+</div>
+
+A band diagram is already a sequence of closely related eigenproblems. Blaze's
+preconditioner can blend a geometric shift with a band-window shift taken from the
+previous k-point's eigenvalues. An online learner can choose such settings from the
+measured cost of recent k-points, with no training set and no large network.
+Learning to Relax sets solver parameters across a sequence of linear systems this
+way,<Citation id={23} /> and PCGBandit speeds up a single transient simulation with
+online-learned preconditioner choices.<Citation id={24} /> Before building the learner,
+run every admissible setting from identical starting states to measure how much the
+choice can gain at all. The first cold start cannot benefit, and short diagrams may
+not repay the exploration.
+
+<Motivation module="tuning" />
+</section>
+
+<section className="roadmap-module" data-module="initialization">
+<div className="roadmap-module-heading">
+
+## Learned starting subspaces
+
+<ModuleStatusTag module="initialization" />
+</div>
+
+A configuration far from any solved neighbor still starts cold. A network can
+predict the low-band subspace of a new geometry or material, which LOBPCG then
+corrects. NeuralSound pairs such a network with an LOBPCG refinement for vibration
+modes,<Citation id={25} /> and locally subspace-informed neural operators learn whole
+subspaces rather than individual basis functions.<Citation id={26} /> Training should
+reward subspace agreement and small Maxwell residuals, not raw eigenvector entries,
+whose phases are arbitrary and whose labels swap at degeneracies. For a few geometry
+parameters, a small network predicting reduced-basis coefficients may suffice. For
+general dielectric maps, Fourier neural operators fit; once trained, they evaluated
+up to three orders of magnitude faster than classical solvers on their
+benchmarks.<Citation id={27} />
+
+<Motivation module="initialization" />
+</section>
+
+<section className="roadmap-module" data-module="surrogates">
+<div className="roadmap-module-heading">
+
+## Design surrogates
+
+<ModuleStatusTag module="surrogates" />
+</div>
+
+Parameter studies and inverse design need many related Bloch problems, often
+including projected operators rather than band frequencies alone. A surrogate
+trained on Blaze's outputs can estimate these across geometry and registry space,
+propose promising candidates and choose where to sample next; Blaze then solves and
+verifies each candidate. Physics-informed neural operators add the governing
+equations to training,<Citation id={28} /> and pretrained foundation models transfer
+to new PDEs with little fine-tuning data.<Citation id={29} /> Inverse maps are rarely
+unique, since different geometries can produce nearly the same spectrum. Surrogates
+should therefore propose several candidates or be paired with a forward
+model.<Citation id={30} /> Interpolation, Gaussian processes and classical reduced
+bases are the first baselines. Stage 2's gradients complement this with exact local
+sensitivities.
+
+<Motivation module="surrogates" />
+</section>
+</section>
+
+<section className="narrow roadmap-stage-section" data-stage="X">
+
+# Stage X: Solution families
+
+Warm-started LOBPCG converges in a few iterations at most k-points, so the remaining
+cost lies less inside each solve than across them. A band diagram or a parameter
+sweep is a family of closely related eigenproblems: solve a few anchors accurately,
+compress their eigenvectors into a shared basis, and solve much smaller projected
+problems everywhere else. Eigenvector continuation learns such a subspace from
+snapshots,<Citation id={31} /> and a recent review places it among reduced-basis
+methods.<Citation id={32} /> The concept is established; the research question is an
+efficient, validated realization for Blaze's operators, symmetry layout and outputs.
+Modules are ordered by expected leverage.
+
+<section className="roadmap-module" data-module="reduced">
+<div className="roadmap-module-heading">
+
+## Reduced Bloch solver
+
+<ModuleStatusTag module="reduced" />
+</div>
+
+For a fixed crystal, Blaze's Maxwell operator depends exactly quadratically on the
+wavevector, because each shifted derivative $\nabla + i\mathbf{k}$ is linear in
+$\mathbf{k}$. In 2D, six fixed operators therefore describe every k-point. **This is
+an exact identity of the discretized operator, not a Taylor approximation.**
+Projecting these operators once onto a basis compressed from a few anchor solves
+leaves a small dense eigenproblem per k-point, with no FFTs for its eigenvalues.
+Reduced Bloch mode expansion demonstrates the principle for periodic media, including
+2D photonic TE and TM bands,<Citation id={33} /> after earlier reduced-basis band
+calculations.<Citation id={34} /> The Shirley method does the same for plane-wave
+electronic structure.<Citation id={35} /><Citation id={36} /> The basis holds the
+periodic parts of the Bloch fields, and the reused object is a subspace rather than a
+list of labeled modes: a smooth global labeling of Bloch eigenvectors can be
+topologically obstructed.<Citation id={37} />
+
+<Motivation module="reduced" />
+</section>
+
+<section className="roadmap-module" data-module="acceptance">
+<div className="roadmap-module-heading">
+
+## Residual-checked bases
+
+<ModuleStatusTag module="acceptance" />
+</div>
+
+Exact operator structure does not make reduced eigenpairs exact: all error comes
+from the basis. Because the operator splits into a few precomputed pieces, the full
+residual of a reduced prediction can be evaluated from small coefficient vectors,
+without rebuilding the field. Accepted k-points stay reduced. The others go to
+LOBPCG, started from the reduced prediction, and their new directions enrich the
+basis; overlapping local bases take over when one basis grows too large. Simultaneous
+reduced bases for several eigenvalues, with residual estimators, greedy sampling and
+changing multiplicities, provide the theory.<Citation id={38} /> A 2026 study of
+photonic waveguide modes shows why the check matters: once boundaries moved,
+accurate-looking eigenvalues and fields still had substantial residuals.<Citation id={39} />
+A small residual proves closeness to some eigenvalue, not that it belongs to the
+intended band, so cluster tracking, buffer modes and occasional full solves remain
+necessary.
+
+<Motivation module="acceptance" />
+</section>
+
+<section className="roadmap-module" data-module="sweeps">
+<div className="roadmap-module-heading">
+
+## Families across sweeps
+
+<ModuleStatusTag module="sweeps" />
+</div>
+
+Parameter sweeps extend the idea beyond k. With fixed interfaces and changing
+material values, a few coefficient masks may again separate the operator, provided
+Blaze's interface-smoothed coefficients depend on them simply. For moving radii or
+interfaces, a change that touches only a few grid cells updates the projected
+matrices exactly from those cells, at a cost that grows with the changed cells
+rather than the full grid. Reduced bases for Maxwell eigenproblems on
+parameter-dependent domains<Citation id={40} /> and a September 2026 study of
+hyper-reduced and exact local operator updates for waveguide mode
+solvers<Citation id={41} /> explore these routes. Moving sharp features can require
+many basis vectors even for a single parameter.<Citation id={42} /> Local bases,
+interpolation between subspaces on the Grassmann manifold<Citation id={43} /> and
+registration of moving features before compression<Citation id={44} /> address this.
+Unlike configuration warm starts, which still run a full solve per configuration,
+the goal is to replace most solves.
+
+<Motivation module="sweeps" />
+</section>
+
+<section className="roadmap-module" data-module="simultaneous">
+<div className="roadmap-module-heading">
+
+## Simultaneous iteration
+
+<ModuleStatusTag module="simultaneous" />
+</div>
+
+Solving everything at once does not mean one huge block eigenproblem, which would
+add no useful coupling. It means a shared search space: instead of fully converging
+each new anchor, compress the residual blocks of many parameters together, add their
+dominant directions to the common basis, and repeat. The Tensor-Krylov method runs
+residual Arnoldi iterations for a whole grid of parameters at once, exploiting
+low-rank structure across them.<Citation id={45} /> Extending this from one extreme
+eigenvalue to clustered, generalized Maxwell eigenblocks is open research.
+
+<Motivation module="simultaneous" />
+</section>
+</section>
+
 <p className="narrow roadmap-invitation">Ideas and contributions are warmly welcome, whether a useful test case, a numerical method, or a clearer explanation. <a href="https://github.com/RnLe/blaze2d">Join the project on GitHub.</a></p>
 
 <References>
@@ -274,6 +507,117 @@ the method's basis and perturbative radiation approximations.
   </Reference>
   <Reference id={8}>
     S. Zanotti, M. Minkov, D. Nigro, D. Gerace, S. Fan and L. C. Andreani, "Legume: A free implementation of the guided-mode expansion method for photonic crystal slabs," <em>Computer Physics Communications</em> 304, 109286 (2024). [<a href="https://doi.org/10.1016/j.cpc.2024.109286" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={9}>
+    M. Raissi, P. Perdikaris and G. E. Karniadakis, "Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations," <em>Journal of Computational Physics</em> 378, 686–707 (2019). [<a href="https://doi.org/10.1016/j.jcp.2018.10.045" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={10}>
+    W. E and B. Yu, "The Deep Ritz Method: A Deep Learning-Based Numerical Algorithm for Solving Variational Problems," <em>Communications in Mathematics and Statistics</em> 6, 1–12 (2018). [<a href="https://doi.org/10.1007/s40304-018-0127-z" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={11}>
+    T. G. Grossmann, U. J. Komorowska, J. Latz and C.-B. Schönlieb, "Can physics-informed neural networks beat the finite element method?," <em>IMA Journal of Applied Mathematics</em> 89, 143–174 (2024). [<a href="https://doi.org/10.1093/imamat/hxae011" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={12}>
+    N. McGreivy and A. Hakim, "Weak baselines and reporting biases lead to overoptimism in machine learning for fluid-related partial differential equations," <em>Nature Machine Intelligence</em> 6, 1256–1269 (2024). [<a href="https://doi.org/10.1038/s42256-024-00897-5" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={13}>
+    A. V. Knyazev, "Toward the Optimal Preconditioned Eigensolver: Locally Optimal Block Preconditioned Conjugate Gradient Method," <em>SIAM Journal on Scientific Computing</em> 23, 517–541 (2001). [<a href="https://doi.org/10.1137/S1064827500366124" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={14}>
+    J. Herb and F. Fritzen, "Accelerating Conjugate Gradient Solvers for Homogenization Problems With Unitary Neural Operators," <em>International Journal for Numerical Methods in Engineering</em> 127, e70277 (2026). [<a href="https://doi.org/10.1002/nme.70277" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={15}>
+    A. Kopaničáková and G. E. Karniadakis, "DeepONet Based Preconditioning Strategies for Solving Parametric Linear Systems of Equations," <em>SIAM Journal on Scientific Computing</em> 47, C151–C181 (2025). [<a href="https://doi.org/10.1137/24M162861X" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={16}>
+    A. Benanti, X. Han and H. Qin, "NeuraLSP: A Neural Spectral Preconditioner for Accelerating PDE Solvers," <em>arXiv</em>:2601.20174v3, preprint (2026). [<a href="https://arxiv.org/abs/2601.20174v3" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={17}>
+    C. Osborne, M. Guo, C. Owens and W. Matusik, "A Neural Hierarchical-Matrix Preconditioner for Real-Time GPU Solves," <em>SIGGRAPH Asia 2026 Posters</em>, <em>arXiv</em>:2605.13343v3 (2026). [<a href="https://arxiv.org/abs/2605.13343v3" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={18}>
+    P. Häusner, O. Öktem and J. Sjölund, "Neural incomplete factorization: learning preconditioners for the conjugate gradient method," <em>Transactions on Machine Learning Research</em> (2024). [<a href="https://arxiv.org/abs/2305.16368" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={19}>
+    Y. Li, P. Y. Chen, T. Du and W. Matusik, "Learning Preconditioner for Conjugate Gradient PDE Solvers," <em>International Conference on Machine Learning (ICML)</em> (2023). [<a href="https://arxiv.org/abs/2305.16432" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={20}>
+    J. Chen, "Graph Neural Preconditioners for Iterative Solutions of Sparse Linear Systems," <em>International Conference on Learning Representations (ICLR)</em> (2025). [<a href="https://arxiv.org/abs/2406.00809" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={21}>
+    E. Zhang, A. Kahana, A. Kopaničáková, E. Turkel, R. Ranade, J. Pathak and G. E. Karniadakis, "Blending neural operators and relaxation methods in PDE numerical solvers," <em>Nature Machine Intelligence</em> 6, 1303–1313 (2024). [<a href="https://doi.org/10.1038/s42256-024-00910-x" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={22}>
+    C. Mao and J. A. Fan, "Accurate and scalable deep Maxwell solvers," <em>Proceedings of the National Academy of Sciences</em> 123, e2530330123 (2026). [<a href="https://doi.org/10.1073/pnas.2530330123" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={23}>
+    M. Khodak, E. Chow, M.-F. Balcan and A. Talwalkar, "Learning to Relax: Setting Solver Parameters Across a Sequence of Linear System Instances," <em>International Conference on Learning Representations (ICLR)</em> (2024). [<a href="https://arxiv.org/abs/2310.02246" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={24}>
+    M. Khodak, M. K. Jung, B. Wynne, E. Chow and E. Kolemen, "One-shot acceleration of transient PDE solvers via online-learned preconditioners," <em>Computer Physics Communications</em> 327, 110304 (2026). [<a href="https://doi.org/10.1016/j.cpc.2026.110304" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={25}>
+    X. Jin, S. Li, G. Wang and D. Manocha, "NeuralSound: Learning-based Modal Sound Synthesis with Acoustic Transfer," <em>ACM Transactions on Graphics</em> 41, 1–15 (2022). [<a href="https://doi.org/10.1145/3528223.3530184" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={26}>
+    A. Rudikov, V. Fanaskov, S. Stepanov, B. Shan, E. Muravleva, Y. Efendiev and I. Oseledets, "Locally Subspace-Informed Neural Operators for Efficient Multiscale PDE Solving," <em>arXiv</em>:2505.16030v2, preprint (2026). [<a href="https://arxiv.org/abs/2505.16030v2" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={27}>
+    Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart and A. Anandkumar, "Fourier Neural Operator for Parametric Partial Differential Equations," <em>International Conference on Learning Representations (ICLR)</em> (2021). [<a href="https://arxiv.org/abs/2010.08895" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={28}>
+    Z. Li, H. Zheng, N. Kovachki, D. Jin, H. Chen, B. Liu, K. Azizzadenesheli and A. Anandkumar, "Physics-Informed Neural Operator for Learning Partial Differential Equations," <em>ACM/IMS Journal of Data Science</em> 1, 1–27 (2024). [<a href="https://doi.org/10.1145/3648506" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={29}>
+    M. Herde, B. Raonić, T. Rohner, R. Käppeli, R. Molinaro, E. de Bézenac and S. Mishra, "Poseidon: Efficient Foundation Models for PDEs," <em>Advances in Neural Information Processing Systems</em> 37 (2024). [<a href="https://arxiv.org/abs/2405.19101" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={30}>
+    D. Liu, Y. Tan, E. Khoram and Z. Yu, "Training Deep Neural Networks for the Inverse Design of Nanophotonic Structures," <em>ACS Photonics</em> 5, 1365–1369 (2018). [<a href="https://doi.org/10.1021/acsphotonics.7b01377" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={31}>
+    D. Frame, R. He, I. Ipsen, D. Lee, D. Lee and E. Rrapaj, "Eigenvector Continuation with Subspace Learning," <em>Physical Review Letters</em> 121, 032501 (2018). [<a href="https://doi.org/10.1103/PhysRevLett.121.032501" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={32}>
+    T. Duguet, A. Ekström, R. J. Furnstahl, S. König and D. Lee, "Colloquium: Eigenvector continuation and projection-based emulators," <em>Reviews of Modern Physics</em> 96, 031002 (2024). [<a href="https://doi.org/10.1103/RevModPhys.96.031002" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={33}>
+    M. I. Hussein, "Reduced Bloch mode expansion for periodic media band structure calculations," <em>Proceedings of the Royal Society A</em> 465, 2825–2848 (2009). [<a href="https://doi.org/10.1098/rspa.2008.0471" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={34}>
+    G. S. H. Pau, "Reduced-basis method for band structure calculations," <em>Physical Review E</em> 76, 046704 (2007). [<a href="https://doi.org/10.1103/PhysRevE.76.046704" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={35}>
+    D. Prendergast and S. G. Louie, "Bloch-state-based interpolation: An efficient generalization of the Shirley approach to interpolating electronic structure," <em>Physical Review B</em> 80, 235126 (2009). [<a href="https://doi.org/10.1103/PhysRevB.80.235126" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={36}>
+    M. Hutchinson and D. Prendergast, "The Shirley reduced basis: a reduced order model for plane-wave DFT," <em>arXiv</em>:1402.7366, preprint (2014). [<a href="https://arxiv.org/abs/1402.7366" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={37}>
+    C. Brouder, G. Panati, M. Calandra, C. Mourougane and N. Marzari, "Exponential Localization of Wannier Functions in Insulators," <em>Physical Review Letters</em> 98, 046402 (2007). [<a href="https://doi.org/10.1103/PhysRevLett.98.046402" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={38}>
+    T. Horger, B. Wohlmuth and T. Dickopf, "Simultaneous reduced basis approximation of parameterized elliptic eigenvalue problems," <em>ESAIM: Mathematical Modelling and Numerical Analysis</em> 51, 443–465 (2017). [<a href="https://doi.org/10.1051/m2an/2016025" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={39}>
+    D. Rodríguez-Guillén and L. Velázquez-Ibarra, "Adaptive eigenvector continuation for full-vector photonic waveguide mode emulation," <em>Journal of the Optical Society of America B</em> 43, 2273 (2026). [<a href="https://doi.org/10.1364/JOSAB.610881" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={40}>
+    M. Kappesser, A. Ziegler and S. Schöps, "Reduced Basis Approximation for Maxwell's Eigenvalue Problem and Parameter-Dependent Domains," <em>IEEE Transactions on Magnetics</em> 60, 1–7 (2024). [<a href="https://doi.org/10.1109/TMAG.2024.3358540" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={41}>
+    D. Rodríguez-Guillén and L. Velázquez-Ibarra, "Physics-aware hyper-reduction for full-vector photonic waveguide mode solvers," <em>arXiv</em>:2609.20948, preprint (2026). [<a href="https://arxiv.org/abs/2609.20948" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={42}>
+    M. Ohlberger and S. Rave, "Reduced Basis Methods: Success, Limitations and Future Challenges," <em>Proceedings of the Conference Algoritmy</em>, 1–12 (2016). [<a href="https://arxiv.org/abs/1511.02021" target="_blank" rel="noopener noreferrer">arXiv</a>]
+  </Reference>
+  <Reference id={43}>
+    D. Amsallem and C. Farhat, "Interpolation Method for Adapting Reduced-Order Models and Application to Aeroelasticity," <em>AIAA Journal</em> 46, 1803–1813 (2008). [<a href="https://doi.org/10.2514/1.35374" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={44}>
+    T. Taddei, "A Registration Method for Model Order Reduction: Data Compression and Geometry Reduction," <em>SIAM Journal on Scientific Computing</em> 42, A997–A1027 (2020). [<a href="https://doi.org/10.1137/19M1271270" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={45}>
+    K. Ruymbeek, K. Meerbergen and W. Michiels, "Tensor-Krylov method for computing eigenvalues of parameter-dependent matrices," <em>Journal of Computational and Applied Mathematics</em> 408, 113869 (2022). [<a href="https://doi.org/10.1016/j.cam.2021.113869" target="_blank" rel="noopener noreferrer">DOI</a>]
   </Reference>
 </References>
 
