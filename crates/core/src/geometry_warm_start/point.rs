@@ -95,6 +95,7 @@ pub struct PointReport {
     pub compression: Option<super::innovation::CompressionReport>,
     pub compression_failure: Option<String>,
     pub preparation_actions_reused: usize,
+    pub preparation_skipped: Option<&'static str>,
     pub cold_root: bool,
     pub solved_guards: usize,
     pub guard_attempts: Vec<GuardAttempt>,
@@ -224,6 +225,7 @@ pub fn solve<B: SpectralBackend + Clone>(
         compression: None,
         compression_failure: None,
         preparation_actions_reused: 0,
+        preparation_skipped: None,
         cold_root: donor.is_none() && !path_available,
         solved_guards: 0,
         guard_attempts: Vec::new(),
@@ -268,7 +270,18 @@ pub fn solve<B: SpectralBackend + Clone>(
     let mut actions = None;
     let mut source_actions = false;
     let mut preparation_actions = false;
+    let identical_pencil = donor.as_ref().is_some_and(|s| {
+        s.material.eps() == theta.dielectric().eps()
+            && s.material.inv_eps() == theta.dielectric().inv_eps()
+            && s.material.inv_eps_tensors() == theta.dielectric().inv_eps_tensors()
+            && s.requested_bands + s.guard_count >= cfg.n_bands
+    });
+    if identical_pencil && !matches!(options.method, Method::Cold | Method::Copy) {
+        report.preparation_skipped = Some("identical discrete pencil; copy the certified source window");
+        crate::profiler::count("geometry.identical_predictor_skips", 1);
+    }
     if donor.is_some()
+        && !identical_pencil
         && matches!(
             options.method,
             Method::Metric | Method::Secant | Method::History | Method::Residual
@@ -320,7 +333,7 @@ pub fn solve<B: SpectralBackend + Clone>(
     }
     if let Some(source) = donor
         .as_ref()
-        .filter(|_| options.method == Method::Response)
+        .filter(|_| options.method == Method::Response && !identical_pencil)
     {
         let config = crate::symmetry::response::ResponseConfig {
             max_inner_iterations: options.response_iterations,
@@ -383,13 +396,7 @@ pub fn solve<B: SpectralBackend + Clone>(
     }
     // An identical discrete pencil retains the source's lowest-window coverage.
     // A changed material cannot obtain coverage merely by passing a residual test.
-    let identical = !adaptive
-        && donor.as_ref().is_some_and(|s| {
-            s.material.eps() == theta.dielectric().eps()
-                && s.material.inv_eps() == theta.dielectric().inv_eps()
-                && s.material.inv_eps_tensors() == theta.dielectric().inv_eps_tensors()
-                && s.requested_bands + s.guard_count >= cfg.n_bands
-        });
+    let identical = !adaptive && identical_pencil;
     let (result, pairs, separated) = loop {
         let lookahead =
             usize::from(adaptive && config.n_bands + guards < key.shape[0] * key.shape[1]);

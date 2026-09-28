@@ -157,6 +157,17 @@ impl Plan {
             coordinates[axis] = remainder % self.axis_lengths[axis];
             remainder /= self.axis_lengths[axis];
         }
+        if self.config.bands.as_ref().and_then(|b|b.warm_start.as_ref())
+            .is_some_and(|w|w.parameter_order==GeometryParameterOrder::Serpentine) {
+            // Reflect successive geometry rows while keeping incompatible axes
+            // outside each chain. The result is still a canonical scientific ID.
+            let mut prefix=0usize;
+            for &axis in order.iter().filter(|&&i|geometry_axis(i)) {
+                let digit=coordinates[axis];
+                if prefix%2==1 {coordinates[axis]=self.axis_lengths[axis]-1-digit;}
+                prefix=prefix*self.axis_lengths[axis]+digit;
+            }
+        }
         coordinates.into_iter().zip(&self.axis_lengths).fold(0, |n, (i, length)| n * length + i)
             * self.summary.registry_points + registry
     }

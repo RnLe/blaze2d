@@ -82,7 +82,7 @@ values = {radii}
 '''
 
 
-def inspect(study, expected_jobs=6):
+def inspect(study, expected_jobs=6, accuracy=None):
     errors = []
     work = dict(iterations=0, seeded_points=0, exact_geometry_hits=0,
                 reused_points=0, continuation_fallbacks=0, max_cache_bytes=0,
@@ -98,7 +98,8 @@ def inspect(study, expected_jobs=6):
         if not metadata['converged']:
             errors.append(f"job {result['job_index']}: not converged")
         certificate = metadata['certification']
-        if not math.isfinite(certificate['b_orthogonality_defect']) or certificate['b_orthogonality_defect'] > 1e-8:
+        relative_limit, absolute_limit, gram_limit = accuracy or (1e-5, 1e-7, 1e-8)
+        if not math.isfinite(certificate['b_orthogonality_defect']) or certificate['b_orthogonality_defect'] > gram_limit:
             errors.append('mass orthogonality')
         frequencies = arrays['frequencies']['data']
         width = arrays['frequencies']['shape'][1]
@@ -109,7 +110,8 @@ def inspect(study, expected_jobs=6):
             if analytic and (math.tau*frequency)**2 > 1e-7:
                 errors.append('analytic kernel eigenvalue')
             value, limit = (absolute, 1e-7) if analytic else (relative, 1e-5)
-            if not all(map(math.isfinite, [frequency, relative, absolute])) or value > limit:
+            residual_pass = (relative <= relative_limit or absolute <= absolute_limit) if accuracy else value <= limit
+            if not all(map(math.isfinite, [frequency, relative, absolute])) or not residual_pass:
                 errors.append('fresh residual')
                 break
         rows, bands = arrays['frequencies']['shape']
@@ -157,7 +159,7 @@ def execute(args, host, variant, name):
                   host=assess(before, after, limit=2.0, windows_limit=4.0),
                   resources=json.loads(next(line for line in reversed(rss.read_text().splitlines()) if line.startswith('{'))))
     try:
-        record['validation'] = inspect(json.loads(output.read_text()), expected_jobs=getattr(args,'expected_jobs',6))
+        record['validation'] = inspect(json.loads(output.read_text()), expected_jobs=getattr(args,'expected_jobs',6), accuracy=getattr(args,'accuracy',None))
     except (ValueError, KeyError, TypeError) as error:
         record['validation'] = dict(errors=[str(error)])
     data = output.read_bytes()

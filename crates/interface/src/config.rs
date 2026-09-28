@@ -450,6 +450,7 @@ pub struct Results { #[serde(default)] pub eigenvectors: bool }
 #[serde(default, deny_unknown_fields)]
 pub struct GeometryWarmStart {
     pub method: GeometryMethod,
+    pub parameter_order: GeometryParameterOrder,
     pub scope: GeometryScope,
     pub anchors: Vec<[f64; 2]>,
     pub donor_selection: GeometryDonorSelection,
@@ -467,12 +468,15 @@ pub struct GeometryWarmStart {
     pub response_tolerance: f64,
 }
 impl Default for GeometryWarmStart {
-    fn default() -> Self { Self { method: GeometryMethod::Copy, scope: GeometryScope::Gamma,
+    fn default() -> Self { Self { method: GeometryMethod::Copy, parameter_order: GeometryParameterOrder::Grouped, scope: GeometryScope::Gamma,
         anchors:vec![],donor_selection:GeometryDonorSelection::SameK,guards: 2,max_guards:None,history: 2,innovation_columns:0,innovation_relative_tolerance:1e-3, max_predictor_columns: 0, max_preparation_bytes: 64*1024*1024, max_cache_bytes: 64*1024*1024, retain_tm_actions: false, response_iterations: 2, response_tolerance: 0.25 } }
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
 pub enum GeometryMethod { Cold, Copy, Metric, Secant, History, Residual, Response }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum GeometryParameterOrder { Grouped, Serpentine }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
 pub enum GeometryScope { Gamma, Anchors, Path }

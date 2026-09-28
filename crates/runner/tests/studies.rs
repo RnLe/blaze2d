@@ -60,10 +60,22 @@ fn runtime_failure_has_distinct_terminal_status() {
 
 #[test]
 fn cancel_does_not_report_completion() {
-    let stream = start(Plan::new(study(),Platform::Native).unwrap(), Options {threads:1,queue_capacity:1,..Default::default()}).unwrap();
-    stream.cancel();
+    let mut config=study();
+    config.grid.resolution=Resolution::Uniform(9);
+    config.eigensolver.tolerance=Some(1e-14);
+    config.bands.as_mut().unwrap().count=4;
+    config.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {scope:GeometryScope::Path,..Default::default()});
+    let stream = start(Plan::new(config,Platform::Native).unwrap(), Options {threads:1,queue_capacity:1,..Default::default()}).unwrap();
     let mut terminal = None;
-    while let Some(e) = stream.next_event() { if let Event::Terminal {status,..} = e { terminal = Some(status); } }
+    let mut admitted=false;
+    while let Some(e) = stream.next_event() {
+        if let Event::Result {result} = &e {
+            admitted |= result.metadata["geometry_warm_start"]["points"][0]["insertion"]["stored"]==true;
+            stream.cancel();
+        }
+        if let Event::Terminal {status,..} = e { terminal = Some(status); }
+    }
+    assert!(admitted,"cancellation did not exercise a resident native donor");
     assert_eq!(terminal,Some(RunStatus::Cancelled));
 }
 
@@ -213,8 +225,9 @@ fn native_geometry_history_preserves_public_paths_guards_and_resume_roots() {
                 compressed_seeds+=point["prediction"]["innovation_columns"].as_u64().unwrap_or(0);
                 if (point["prediction"].is_object() && point["prediction"]["fallback"].is_null()) || point["response"].is_object() {advanced+=1;}
                 if threads==2 && !point["source"].is_null() {
-                    assert!(point[if method==GeometryMethod::Response {"preparation_actions_reused"} else {"tm_actions_reused"}].as_u64().unwrap()>0);
+                    assert!(point[if method==GeometryMethod::Response && point["preparation_skipped"].is_null() {"preparation_actions_reused"} else {"tm_actions_reused"}].as_u64().unwrap()>0);
                 }
+                if !point["preparation_skipped"].is_null() {assert_eq!(point["initial_acceptance"],true);}
                 assert_eq!(point["certified_guards"],2,"{point}");
                 assert!(point["insertion"]["payload_bytes"].as_u64().unwrap()<=256*1024/threads as u64);
             }

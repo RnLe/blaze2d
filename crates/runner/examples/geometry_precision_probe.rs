@@ -9,6 +9,7 @@ use serde_json::json;
 
 fn main() {
     let n: usize = std::env::args().nth(1).map_or(24, |s| s.parse().unwrap());
+    let tolerance: f64 = std::env::args().nth(2).map_or(1e-6, |s| s.parse().unwrap());
     let accuracy = BandAccuracy {max_relative_residual:5e-4,max_absolute_residual:2e-3,max_orthogonality_defect:2e-5};
     let mut records=Vec::new();
     let mut passed=true;
@@ -25,9 +26,9 @@ fn main() {
             values:Some(vec![json!(0.191),json!(0.193),json!(0.195)]),linspace:None}];
         let reference=collect(Plan::new(c.clone(),Platform::Native).unwrap(),Options {threads:1,..Default::default()}).unwrap();
         assert!(reference.errors.is_empty(),"f64 reference failed: {:?}",reference.errors);
-        c.eigensolver.precision=Precision::F32;c.eigensolver.tolerance=Some(1e-9);
+        c.eigensolver.precision=Precision::F32;c.eigensolver.tolerance=Some(tolerance);
         c.bands.as_mut().unwrap().accuracy=Some(accuracy.clone());
-        for method in [None,Some(GeometryMethod::Copy),Some(GeometryMethod::Secant),Some(GeometryMethod::History),Some(GeometryMethod::Residual),Some(GeometryMethod::Response)] {
+        for method in [None,Some(GeometryMethod::Copy),Some(GeometryMethod::Metric),Some(GeometryMethod::Secant),Some(GeometryMethod::History),Some(GeometryMethod::Residual),Some(GeometryMethod::Response)] {
             c.bands.as_mut().unwrap().warm_start=method.map(|method| GeometryWarmStart {
                 method, scope:GeometryScope::Path,guards:2,innovation_columns:if method==GeometryMethod::History {4}else{0},
                 ..Default::default()});
@@ -35,7 +36,7 @@ fn main() {
             let study=collect(plan.clone(),Options {threads:1,error_policy:blaze2d_runner::ErrorPolicy::Continue,..Default::default()}).unwrap();
             let mut audits=Vec::new();
             let mut valid=study.errors.is_empty();
-            for result in &study.results {
+            for result in study.results.iter().chain(study.errors.iter().filter_map(|e|e.partial_result.as_deref())) {
                 let job=plan.job(result.job_index).unwrap();let core=job.bands_job();
                 let material=Dielectric2D::from_geometry(&core.geom,core.grid,&core.dielectric);
                 let reference=&reference.results[result.job_index];
@@ -70,6 +71,6 @@ fn main() {
       }
     }
     println!("{}",json!({"scope":"f32 storage audited by fresh f64 operator actions; accuracy only, not timing",
-        "resolution":n,"accuracy":accuracy,"pass":passed,"records":records}));
+        "resolution":n,"stopping_tolerance":tolerance,"accuracy":accuracy,"pass":passed,"records":records}));
     if !passed {std::process::exit(1);}
 }

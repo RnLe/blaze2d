@@ -242,3 +242,23 @@ fn coupled_band_grid_and_block_axes_are_validated_as_complete_jobs() {
     let plan = Plan::new(config, Platform::Native).unwrap();
     for i in 0..4 { assert!(plan.job(i).is_ok()); }
 }
+#[test]
+fn serpentine_geometry_order_preserves_canonical_ids_and_compatibility_groups() {
+    use blaze2d_interface::*;
+    use serde_json::json;
+    let mut config=Config::default();
+    config.sweeps=vec![
+        Sweep {name:"radius".into(),target:"geometry.objects.rod.radius".into(),values:Some(vec![json!(0.18),json!(0.19),json!(0.20)]),linspace:None},
+        Sweep {name:"polarization".into(),target:"polarization".into(),values:Some(vec![json!("TM"),json!("TE")]),linspace:None},
+        Sweep {name:"epsilon".into(),target:"geometry.objects.rod.epsilon".into(),values:Some(vec![json!(8.9),json!(12.)]),linspace:None},
+    ];
+    config.bands.as_mut().unwrap().warm_start=Some(GeometryWarmStart {parameter_order:GeometryParameterOrder::Serpentine,..Default::default()});
+    let plan=Plan::new(config,Platform::Native).unwrap();
+    let order:Vec<_>=(0..plan.summary.jobs).map(|i|plan.continuation_job_index(i)).collect();
+    assert_eq!(order,vec![0,1,5,4,8,9,2,3,7,6,10,11]);
+    for chunk in order.chunks(6) {
+        let pol=plan.job(chunk[0]).unwrap().resolved.config.polarization;
+        for &id in chunk {let job=plan.job(id).unwrap();assert_eq!(job.index,id);assert_eq!(job.resolved.config.polarization,pol);}
+    }
+}
+

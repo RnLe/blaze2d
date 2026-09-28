@@ -153,6 +153,7 @@ pub fn start(plan: Plan, mut options: Options) -> InterfaceResult<RunStream> {
                                     "queue_capacity":effective.queue_capacity, "error_policy":effective.error_policy,
                                     "parallelism":if chains {"geometry_chains"} else {"independent_configurations"},
                                     "chain":chains.then_some(worker), "continuation_payload_limit":cache_limit,
+                                    "parameter_order":plan.config.bands.as_ref().and_then(|b|b.warm_start.as_ref()).map(|w|w.parameter_order),
                                     "total_continuation_payload_limit":continuation_budget, "nested_threads":false});
                                 Event::Result { result: Box::new(result) }
                             },
