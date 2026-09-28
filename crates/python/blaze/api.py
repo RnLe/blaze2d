@@ -97,3 +97,21 @@ def stream(config, *, threads=0, error_policy="stop", queue_capacity=0,
                        "error": event["error"]}
     finally:
         events.cancel()
+
+
+def execution_summary(result: Result | StudyResult) -> str:
+    """Return the shared execution report; never change or print the result.
+
+    Study reports group equal summaries, including available failed-job output.
+    Detailed decisions remain in each result's metadata.execution and symmetry.
+    """
+    from collections import Counter
+    records = result.get("results")
+    if records is None:
+        return result.get("metadata", {}).get("execution", {}).get("text", "Execution summary unavailable")
+    records = [*records, *(e["partial_result"] for e in result.get("errors", []) if e.get("partial_result"))]
+    counts = Counter(r.get("metadata", {}).get("execution", {}).get("text", "Execution summary unavailable") for r in records)
+    lines = [f"{n} job(s): {text}" for text, n in sorted(counts.items())[:8]]
+    if len(counts) > 8:
+        lines.append(f"{len(counts) - 8} further execution summaries in result metadata.")
+    return "\n".join(lines)

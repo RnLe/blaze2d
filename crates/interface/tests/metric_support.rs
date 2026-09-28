@@ -150,6 +150,9 @@ fn failed_solve_exports_rectangular_partial_result_and_all_work() {
         .map(|a| a["iterations"].as_u64().unwrap())
         .sum();
     assert_eq!(ledger["attempted_iterations"], sum);
+    assert_eq!(out.metadata["execution"]["attempted_iterations"], sum);
+    assert_eq!(out.metadata["execution"]["completed_points"], 0);
+    assert_eq!(out.metadata["execution"]["returned_points"], 1);
     assert!(sum > ledger["retained_iterations"].as_u64().unwrap());
 }
 
@@ -158,8 +161,6 @@ fn incompatible_requests_and_clipped_supports_are_rejected_at_configuration() {
     let original = config();
     for change in [
         "precision",
-        "reuse",
-        "pt",
         "storage",
         "traversal",
         "external",
@@ -169,8 +170,6 @@ fn incompatible_requests_and_clipped_supports_are_rejected_at_configuration() {
         let mut c = original.clone();
         match change {
             "precision" => c.eigensolver.precision = Precision::F32,
-            "reuse" => c.bands.as_mut().unwrap().symmetry.k_reuse = KReuse::Identical,
-            "pt" => c.bands.as_mut().unwrap().symmetry.arithmetic = SymmetryArithmetic::PtReal,
             "storage" => {
                 c.bands.as_mut().unwrap().symmetry.sector_storage = SectorStorage::FullGrid
             }
@@ -191,6 +190,12 @@ fn incompatible_requests_and_clipped_supports_are_rejected_at_configuration() {
             "{change} must not be silently ignored"
         );
     }
+    // These mechanisms now compose on the selected metric support. Their
+    // executed combination is checked against dense spectra in the core suite.
+    let mut supported = original.clone();
+    supported.bands.as_mut().unwrap().symmetry.k_reuse = KReuse::Identical;
+    supported.bands.as_mut().unwrap().symmetry.arithmetic = SymmetryArithmetic::PtReal;
+    assert!(Plan::new(supported, Platform::Native).is_ok());
     let mut c = original;
     c.bands.as_mut().unwrap().count = 100;
     assert!(Plan::new(c, Platform::Native).is_err());

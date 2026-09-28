@@ -6,12 +6,12 @@ use crate::{
 use serde::Serialize;
 use std::collections::HashSet;
 
-pub const MODEL_VERSION: &str = "public-sweep-v2";
+pub const MODEL_VERSION: &str = "public-sweep-v3";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Decision {
     pub model_version: &'static str,
-    pub evidence: [&'static str; 2],
+    pub evidence: [&'static str; 3],
     pub backend: String,
     pub arithmetic: SymmetryArithmetic,
     pub k_reuse: KReuse,
@@ -48,12 +48,19 @@ pub fn resolve(job: &PlannedJob, backend: &str) -> (Symmetry, Option<Decision>) 
         && nx == ny
         && (31..=65).contains(&nx)
         && (8..=16).contains(&bands.count);
-    if native_envelope {
+    // At the ordinary 1e-6 stopping tolerance the first PT attempt consistently
+    // failed the physical certificate, adding a discarded solve per geometry.
+    let calibrated_stopping = job.resolved.config.eigensolver.tolerance.is_some_and(|t| t <= 1e-13);
+    if native_envelope && calibrated_stopping {
         selected.arithmetic = SymmetryArithmetic::PtReal;
         reasons.push("PT arithmetic is selected within the calibrated native f64 lattice/size/band/support envelope");
     } else {
         selected.arithmetic = SymmetryArithmetic::SpatialComplex;
-        reasons.push("the backend, precision, support or problem size is outside the measured PT policy envelope");
+        reasons.push(if !calibrated_stopping {
+            "PT is not selected at stopping tolerances above 1e-13: default-tolerance sweeps paid for rejected PT solves without retaining PT output"
+        } else {
+            "the backend, precision, support or problem size is outside the measured PT policy envelope"
+        });
     }
     let mut seen = HashSet::new();
     let duplicates = job
@@ -72,7 +79,7 @@ pub fn resolve(job: &PlannedJob, backend: &str) -> (Symmetry, Option<Decision>) 
     reasons.push("full-path continuation did not improve matched sweeps; first-point continuation also regressed and can trigger costly PT fallback");
     reasons.push("sector/coarse/continuation combinations regressed in the matched triangular sweeps; precision changes remain explicit experiments");
     let decision = Decision {
-        model_version: MODEL_VERSION, evidence: ["benchmarks/symmetry/public-sweep-auto-v1", "benchmarks/symmetry/public-sweep-metric-v2"], backend: backend.into(), arithmetic: selected.arithmetic,
+        model_version: MODEL_VERSION, evidence: ["benchmarks/symmetry/public-sweep-auto-v1", "benchmarks/symmetry/public-sweep-metric-v2", "benchmarks/symmetry/production-policy-v2"], backend: backend.into(), arithmetic: selected.arithmetic,
         k_reuse: selected.k_reuse, continuation: selected.continuation, reasons,
         qualification: "each executed symmetry action and representation still requires the driver's finite-operator and fresh residual checks",
     };

@@ -52,6 +52,7 @@ export function ResultsView({ state }: { state: ExecutionState }) {
         {Object.keys(sweep).length > 0 && ` · ${Object.entries(sweep).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(', ')}`}
         {parentMetadata.registry_index != null && ` · registry ${parentMetadata.registry_index}: ${JSON.stringify(parentMetadata.registry)}`}
       </p>
+      {typeof object(metadata.execution).text === 'string' && <p className={object(metadata.accuracy).accepted === false ? 'wb-warning' : 'wb-muted'}>{String(object(metadata.execution).text)}</p>}
       {arrays.frequencies && arrays.distances && <BandPlot key={`${run.header.id}:${result.job_index}`} data={{ frequencies: arrays.frequencies.data, bands: arrays.frequencies.shape[1], distances: arrays.distances.data, labels, labelIndices,
         polarization: String(object(parentMetadata.config).polarization ?? sweep.polarization ?? run.header.config.polarization ?? 'TM') }} />}
       <details open={result.task === 'operators'}><summary>Arrays and dimensions</summary><ArrayInspector key={`${run.header.id}:${result.job_index}:${sampleIndex}`} arrays={arrays} /></details>

@@ -226,6 +226,8 @@ pub struct SingleSolveResult {
     /// band, computed AFTER a final dense Rayleigh–Ritz rotation from fresh
     /// A/B applications — never the solver's stale/zeroed iteration residuals.
     pub final_residuals: Vec<f64>,
+    /// Fresh absolute residuals ‖Au − λBu‖ / ‖u‖ of the same returned fields.
+    pub absolute_residuals: Vec<f64>,
     /// B-orthogonality defect max |⟨uᵢ|B|uⱼ⟩ − δᵢⱼ| of the returned block.
     pub b_orthogonality_defect: f64,
 }
@@ -342,6 +344,7 @@ where
         converged: result.converged,
         elapsed_seconds: elapsed,
         final_residuals: cert.residuals,
+        absolute_residuals: cert.absolute_residuals,
         b_orthogonality_defect: cert.b_orthogonality_defect,
     }
 }
@@ -422,6 +425,7 @@ where
         converged: result.converged,
         elapsed_seconds: elapsed,
         final_residuals: cert.residuals,
+        absolute_residuals: cert.absolute_residuals,
         b_orthogonality_defect: cert.b_orthogonality_defect,
     }
 }
@@ -494,6 +498,7 @@ where
         converged: diag_result.result.converged,
         elapsed_seconds: elapsed,
         final_residuals: cert.residuals,
+        absolute_residuals: cert.absolute_residuals,
         b_orthogonality_defect: cert.b_orthogonality_defect,
     };
 
@@ -562,6 +567,7 @@ where
         converged: result.converged,
         elapsed_seconds: elapsed,
         final_residuals: cert.residuals,
+        absolute_residuals: cert.absolute_residuals,
         b_orthogonality_defect: cert.b_orthogonality_defect,
     }
 }
@@ -608,6 +614,7 @@ where
         converged: diag_result.result.converged,
         elapsed_seconds: elapsed,
         final_residuals: cert.residuals,
+        absolute_residuals: cert.absolute_residuals,
         b_orthogonality_defect: cert.b_orthogonality_defect,
     };
 

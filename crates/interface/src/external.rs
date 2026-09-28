@@ -48,6 +48,7 @@ pub fn execute_sampled<B: SpectralBackend>(backend: B, backend_name: &str, job: 
     out.arrays.insert("frequencies".into(),Array::real(&[1,n],&["k_point","band"],result.eigenvalues.iter().map(|v|v.max(0.0).sqrt()/std::f64::consts::TAU)));
     out.arrays.insert("eigenvalues".into(),Array::real(&[1,n],&["k_point","band"],result.eigenvalues));
     out.arrays.insert("residuals".into(),Array::real(&[1,n],&["k_point","band"],result.final_residuals));
+    out.arrays.insert("absolute_residuals".into(),Array::real(&[1,n],&["k_point","band"],result.absolute_residuals));
     out.arrays.insert("k_points".into(),Array::real(&[1,2],&["k_point","direction"],job.resolved.k_points_fractional[0]));
     out.arrays.insert("k_points_cartesian".into(),Array::real(&[1,2],&["k_point","direction"],job.resolved.k_points_cartesian[0]));
     out.arrays.insert("distances".into(),Array::real(&[1],&["k_point"],[0.0]));
@@ -60,11 +61,22 @@ pub fn execute_sampled<B: SpectralBackend>(backend: B, backend_name: &str, job: 
     out.metadata["converged"] = json!(result.converged);
     out.metadata["converged_per_point"] = json!([result.converged]);
     out.metadata["elapsed_seconds"] = json!(result.elapsed_seconds);
-    out.metadata["certification"] = json!({"source":"fresh_rayleigh_ritz","b_orthogonality_defect":result.b_orthogonality_defect});
+    out.metadata["certification"] = json!({"source":"fresh_operator_application",
+        "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
+        "absolute_residual_convention":"norm(Au-lambda*Bu)/norm(u)",
+        "absolute_residual_unit":"inverse_reference_length_squared",
+        "max_residual":out.arrays["residuals"].data.iter().copied().fold(0.0_f64,f64::max),
+        "max_absolute_residual":out.arrays["absolute_residuals"].data.iter().copied().fold(0.0_f64,f64::max),
+        "b_orthogonality_defect":result.b_orthogonality_defect,
+        "b_orthogonality_per_point":[result.b_orthogonality_defect]});
     out.metadata["band_indices"] = json!((0..n).collect::<Vec<_>>());
     out.metadata["gauge"] = json!("independent_sorted_eigenvalues");
-    out.metadata["quantities"] = json!({"requested":["frequencies"],"computed":["frequencies","eigenvalues","eigenvectors","residuals"],
+    out.metadata["quantities"] = json!({"requested":["frequencies"],"computed":["frequencies","eigenvalues","eigenvectors","residuals","absolute_residuals"],
         "retained":out.arrays.keys().collect::<Vec<_>>(),"unavailable":{}});
     out.validate_arrays()?;
+    if let Some(diagnostic) = crate::accuracy::assess(&mut out, job.resolved.config.bands.as_ref().and_then(|b|b.accuracy.as_ref())) {
+        return Err(diagnostic);
+    }
+    crate::summary::record(&mut out);
     Ok(out)
 }

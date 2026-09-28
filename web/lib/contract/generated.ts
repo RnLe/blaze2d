@@ -71,6 +71,10 @@ export interface Config {
   task: Task;
 }
 export interface Bands {
+  /**
+   * Optional acceptance gate on the final physical eigenpairs.
+   */
+  accuracy?: BandAccuracy | null;
   count?: number;
   /**
    * Selecting a metric ball changes the finite numerical pencil.
@@ -98,6 +102,19 @@ export interface Bands {
   path?: KPath;
   symmetry?: Symmetry;
   tracking?: boolean;
+}
+/**
+ * Acceptance is separate from eigenvalue-change stopping. Every mode must
+ * meet either residual bound, and the whole block must be B-orthonormal.
+ * The absolute branch remains meaningful for zero and near-zero Gamma modes.
+ */
+export interface BandAccuracy {
+  /**
+   * In inverse reference-length squared units, not normalized frequency.
+   */
+  max_absolute_residual?: number;
+  max_orthogonality_defect?: number;
+  max_relative_residual?: number;
 }
 export interface KPath {
   basis?: "reciprocal_fractional" | "cartesian_angular";

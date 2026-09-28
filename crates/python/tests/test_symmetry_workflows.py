@@ -48,6 +48,8 @@ def certified(result):
     nonzero = np.abs(result['frequencies']) >= 1e-8
     assert np.all(result['residuals'][nonzero] < 1e-5)
     assert np.all(result['absolute_residuals'][~nonzero] < 1e-7)
+    assert blaze.execution_summary(result) == result["metadata"]["execution"]["text"]
+    assert result["metadata"]["execution"]["attempted_iterations"] == sum(result["metadata"]["iterations"])
     points = result['metadata']['symmetry']['points']
     for i, point in enumerate(points):
         iterations = sum(a['iterations'] for a in point['solver_attempts'])

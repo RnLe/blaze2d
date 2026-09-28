@@ -21,7 +21,9 @@ impl ExecutionContext {
 pub fn execute_in_context<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
     context: &mut ExecutionContext, on_event: impl FnMut(Event)) -> Result<ResultRecord, JobFailure>
 {
-    execute_impl(backend, backend_name, job, None, None, Some(context), on_event)
+    let result = execute_impl(backend, backend_name, job, None, None, Some(&mut *context), on_event);
+    if result.is_err() { context.clear(); }
+    result
 }
 
 pub fn execute<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job: &PlannedJob,
@@ -176,6 +178,8 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
                 out.metadata["elapsed_seconds"]=json!(start.elapsed_secs());
                 out.metadata["failed_point"]=json!({"k_index":failure.k_index,"reason":failure.reason,
                     "symmetry":failure.symmetry,"discretization":failure.discretization});
+                crate::accuracy::assess(&mut out, b.accuracy.as_ref());
+                crate::summary::record(&mut out);
                 return Err(JobFailure {job_index:job.index,diagnostic:Diagnostic::new("metric_support","bands.discretization",failure.reason),partial_result:Some(Box::new(out))});
             }
         }
@@ -220,7 +224,16 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
         return Err(JobFailure { job_index: job.index, diagnostic: Diagnostic::new("residual_gate", "operators.fail_on_residual", message), partial_result: Some(Box::new(out)) });
     }
     if let Err(diagnostic) = out.validate_arrays() {
+        out.metadata["accuracy"] = json!({"status":"invalid_output", "accepted":false});
+        crate::summary::record(&mut out);
         return Err(JobFailure { job_index: job.index, diagnostic, partial_result: Some(Box::new(out)) });
+    }
+    if let Some(bands) = &job.resolved.config.bands {
+        let diagnostic = crate::accuracy::assess(&mut out, bands.accuracy.as_ref());
+        crate::summary::record(&mut out);
+        if let Some(diagnostic) = diagnostic {
+            return Err(JobFailure { job_index: job.index, diagnostic, partial_result: Some(Box::new(out)) });
+        }
     }
     Ok(out)
 }

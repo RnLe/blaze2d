@@ -156,13 +156,35 @@ pub struct Bands {
     pub tracking: bool,
     #[serde(default)]
     pub symmetry: Symmetry,
+    /// Optional acceptance gate on the final physical eigenpairs.
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub accuracy: Option<BandAccuracy>,
     /// Selecting a metric ball changes the finite numerical pencil.
     #[serde(default, skip_serializing_if="Discretization::is_fft_rectangle")]
     pub discretization: Discretization,
 }
 fn default_tracking() -> bool { true }
 impl Default for Bands {
-    fn default() -> Self { Self { count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default(), discretization: Discretization::default() } }
+    fn default() -> Self { Self { count: band_count(), path: KPath::default(), tracking: true, symmetry: Symmetry::default(), accuracy: None, discretization: Discretization::default() } }
+}
+
+/// Acceptance is separate from eigenvalue-change stopping. Every mode must
+/// meet either residual bound, and the whole block must be B-orthonormal.
+/// The absolute branch remains meaningful for zero and near-zero Gamma modes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct BandAccuracy {
+    pub max_relative_residual: f64,
+    /// In inverse reference-length squared units, not normalized frequency.
+    pub max_absolute_residual: f64,
+    pub max_orthogonality_defect: f64,
+}
+
+impl Default for BandAccuracy {
+    fn default() -> Self {
+        Self { max_relative_residual: 1e-5, max_absolute_residual: 1e-7,
+            max_orthogonality_defect: 1e-8 }
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

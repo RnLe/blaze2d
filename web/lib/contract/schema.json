@@ -67,6 +67,29 @@
         "data"
       ]
     },
+    "BandAccuracy": {
+      "description": "Acceptance is separate from eigenvalue-change stopping. Every mode must\nmeet either residual bound, and the whole block must be B-orthonormal.\nThe absolute branch remains meaningful for zero and near-zero Gamma modes.",
+      "type": "object",
+      "properties": {
+        "max_absolute_residual": {
+          "description": "In inverse reference-length squared units, not normalized frequency.",
+          "type": "number",
+          "format": "double",
+          "default": 1e-7
+        },
+        "max_orthogonality_defect": {
+          "type": "number",
+          "format": "double",
+          "default": 1e-8
+        },
+        "max_relative_residual": {
+          "type": "number",
+          "format": "double",
+          "default": 0.00001
+        }
+      },
+      "additionalProperties": false
+    },
     "BandPoint": {
       "type": "object",
       "properties": {
@@ -100,6 +123,17 @@
     "Bands": {
       "type": "object",
       "properties": {
+        "accuracy": {
+          "description": "Optional acceptance gate on the final physical eigenpairs.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BandAccuracy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "count": {
           "type": "integer",
           "format": "uint",

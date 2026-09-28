@@ -156,6 +156,14 @@ impl Config {
             Task::Bands => {
                 if config.operators.is_some() { return Err(invalid("operators", "not valid for task = bands")); }
                 let bands = config.bands.get_or_insert_with(Bands::default);
+                if let Some(accuracy) = &bands.accuracy {
+                    positive(accuracy.max_relative_residual, "bands.accuracy.max_relative_residual")?;
+                    positive(accuracy.max_absolute_residual, "bands.accuracy.max_absolute_residual")?;
+                    positive(accuracy.max_orthogonality_defect, "bands.accuracy.max_orthogonality_defect")?;
+                }
+                if config.dielectric.source == DielectricSource::External && bands.symmetry != Symmetry::default() {
+                    return Err(invalid("bands.symmetry", "external sampled-point execution supports the default spatial solve and accuracy policy; symmetry options are not implemented for this entry point"));
+                }
                 if bands.symmetry.policy == SymmetryPolicy::Auto {
                     let mut manual = bands.symmetry.clone();
                     manual.policy = SymmetryPolicy::Manual;

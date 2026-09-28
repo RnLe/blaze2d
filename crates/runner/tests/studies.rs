@@ -148,6 +148,12 @@ fn automatic_policy_uses_qualified_pt_and_stops_retrying_broken_material() {
         let job = Plan::new(c, Platform::Native).unwrap().job(0).unwrap();
         execute(blaze2d_backend_cpu::CpuBackend::<f64>::new(), "cpu", &job, |_|{}).unwrap()
     };
+    let mut loose = config.clone();
+    loose.eigensolver.tolerance = Some(1e-6);
+    let loose_job = Plan::new(loose, Platform::Native).unwrap().job(0).unwrap();
+    let (selected, decision) = blaze2d_interface::policy::resolve(&loose_job, "cpu");
+    assert_eq!(selected.arithmetic, SymmetryArithmetic::SpatialComplex);
+    assert!(decision.unwrap().reasons.iter().any(|r|r.contains("stopping tolerances")));
     let qualified = solve(config.clone());
     assert_eq!(qualified.metadata["symmetry"]["automatic"]["arithmetic"], "pt_real");
     assert!(!qualified.metadata["symmetry"]["points"][0]["coordinates"].is_null());

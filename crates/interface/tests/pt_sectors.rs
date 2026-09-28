@@ -76,6 +76,9 @@ fn public_pt_sectors_preserve_output_contract_and_report_each_representation() {
             let control = run(control);
             let out = run(c);
             certified(&out);
+            let coordinates = out.metadata["execution"]["coordinate_blocks"].as_object().unwrap();
+            assert!(coordinates["pt_real_te"].as_u64().unwrap() > 0);
+            if group == "p4" { assert_eq!(coordinates["fourier_complex"], 4); }
             assert_eq!(out.arrays["eigenvectors"].shape, [3, 6, 13, 13]);
             assert_eq!(out.arrays["eigenvectors"].dtype, DType::Complex128);
             // Tracking may choose a different basis/order inside a degenerate

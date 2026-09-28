@@ -5,7 +5,7 @@ import sys
 from contextlib import nullcontext
 from . import _native
 from .config import Config
-from .api import run
+from .api import run, execution_summary
 from .io import save, _encode
 
 
@@ -17,6 +17,7 @@ def main(argv=None):
     run_parser.add_argument("file")
     run_parser.add_argument("-o", "--output", help="JSON, NDJSON, or NPZ destination")
     run_parser.add_argument("--progress", action="store_true", help="Show completed jobs on stderr (requires blaze2d[progress])")
+    run_parser.add_argument("--quiet", action="store_true", help="Suppress the final execution summary on stderr")
     run_parser.add_argument("--threads", type=int, default=0)
     run_parser.add_argument("--error-policy", choices=("stop", "continue"), default="stop")
     config_parser = commands.add_parser("config", help="Inspect the configuration contract")
@@ -41,6 +42,10 @@ def main(argv=None):
         with display as progress:
             study = run(Config.from_file(args.file), threads=args.threads, error_policy=args.error_policy, progress=progress)
         study['statistics']['runtime']['output'] = str(args.output) if args.output else None
+        if not args.quiet:
+            summary = execution_summary(study)
+            if summary:
+                print(summary, file=sys.stderr)
         if args.output:
             save(study, args.output)
         else:

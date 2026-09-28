@@ -2,13 +2,14 @@
 from ._native import (CalculationError, ConfigurationError,
                       build_info, capabilities, __version__)
 from .config import Config
-from .api import solve, run, stream
+from .api import solve, run, stream, execution_summary
 from .io import save, load, write_ndjson, read_ndjson
 from .plot import plot
+from .modes import align_modes
 from .progress import TerminalProgress
 from .research import OperatorDataExtractor
 from .checkpoint import run_checkpointed, load_checkpoint
 
 __all__ = ["TerminalProgress", "Config", "solve", "run", "stream", "save", "load", "write_ndjson",
-           "read_ndjson", "plot", "build_info", "capabilities", "OperatorDataExtractor",
+           "read_ndjson", "plot", "execution_summary", "align_modes", "build_info", "capabilities", "OperatorDataExtractor",
            "CalculationError", "ConfigurationError", "run_checkpointed", "load_checkpoint", "__version__"]

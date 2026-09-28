@@ -12,6 +12,8 @@ enum Command {
     Run {
         file: PathBuf,
         #[arg(long)] progress: bool,
+        /// Suppress the final execution summary on stderr.
+        #[arg(long)] quiet: bool,
         #[arg(short, long)] output: Option<PathBuf>,
         #[arg(long, default_value_t=0)] threads: usize,
         #[arg(long, default_value="stop", value_parser=["stop","continue"])] error_policy: String,
@@ -34,7 +36,7 @@ fn execute(cli: Cli) -> Result<bool, Box<dyn std::error::Error>> {
         Command::Config {command:ConfigCommand::Describe} => println!("{}",serde_json::to_string_pretty(&blaze2d_interface::schema())?),
         Command::Config {command:ConfigCommand::Validate {file}} => println!("{}",serde_json::to_string_pretty(&plan(&file)?.summary)?),
         Command::Config {command:ConfigCommand::Normalize {file}} => print!("{}",plan(&file)?.config.to_toml()?),
-        Command::Run {file,output,threads,error_policy,progress,profile_output} => {
+        Command::Run {file,output,threads,error_policy,progress,quiet,profile_output} => {
             if profile_output.is_some() && !cfg!(feature="profiling") {
                 return Err("--profile-output requires a build with the profiling feature".into());
             }
@@ -61,6 +63,10 @@ fn execute(cli: Cli) -> Result<bool, Box<dyn std::error::Error>> {
             }
             study.statistics["runtime"]["progress"] = serde_json::json!(progress);
             study.statistics["runtime"]["output"] = serde_json::json!(output.as_ref().map(|p| p.display().to_string()));
+            if !quiet {
+                let summary = blaze2d_interface::summary::format_results(study.results.iter().chain(study.errors.iter().filter_map(|e|e.partial_result.as_deref())));
+                if !summary.is_empty() { eprintln!("{summary}"); }
+            }
             if let Some(path) = output { blaze2d_runner::export::write(&study,&path)?; }
             else { println!("{}",serde_json::to_string(&study)?); }
             return Ok(study.statistics["status"] == "completed");
