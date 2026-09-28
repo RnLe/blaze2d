@@ -77,6 +77,9 @@ jobs:
         run: |
           pnpm build
           pnpm exec tsc --noEmit
+      - name: Check portable continuation and complete work accounting
+        if: matrix.base == ''
+        run: node ../benchmarks/symmetry/wasm_continuation_check.mjs public/wasm-blaze wasm-continuation.json
       - name: Run deployment smoke checks
         if: inputs.mode == 'smoke'
         run: pnpm test:smoke

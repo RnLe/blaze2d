@@ -69,5 +69,15 @@ export const examples = [
     "accent": "#86bdf5",
     "source": "schema = \"blaze2d/1\"\ntask = \"operators\"\npolarization = \"TE\"\n\n[geometry]\nbackground_epsilon = 12.0\nlattice = { type = \"square\" }\n\n[[geometry.objects]]\nname = \"hole\"\nkind = \"circle\"\nradius = 0.2\nepsilon = 1.0\n\n[grid]\nresolution = [24, 32]\n\n[operators]\nband_lo = 2\nretained_bands = 2\nremote_bands = 3\nk_point = { value = [0.25, 0.0], basis = \"reciprocal_fractional\" }\nquantities = [\"velocity\", \"mass_tensor\", \"r_derivatives\"]\nregistry = { object = \"hole\", points = [[0.0, 0.0], [0.25, 0.25]], fd_step = 0.001 }\nk_stencil = { points_per_axis = 3, half_width = 0.02 }\n\n[[sweeps]]\nname = \"radius\"\ntarget = \"geometry.objects.hole.radius\"\nvalues = [0.18, 0.22]\n",
     "python": "from pathlib import Path\nimport blaze\n\nconfig = blaze.Config.from_file(Path(__file__).with_suffix(\".toml\"))\nstudy = blaze.run(config)\nfor result in study[\"results\"]:\n    print(result[\"job_index\"], result[\"metadata\"][\"sweep_parameters\"])\n"
+  },
+  {
+    "slug": "certified-symmetry",
+    "title": "Certified symmetry",
+    "description": "Automatic native symmetry with explicit final accuracy acceptance.",
+    "category": "Bands",
+    "image": "/examples/certified-symmetry.svg",
+    "accent": "#59b6ff",
+    "source": "schema = \"blaze2d/1\"\ntask = \"bands\"\npolarization = \"TM\"\n\n[geometry]\nbackground_epsilon = 1.0\nlattice = { type = \"square\", a = 1.0 }\n\n[[geometry.objects]]\nname = \"rod\"\nkind = \"circle\"\ncenter = [0.0, 0.0]\nradius = 0.2\nepsilon = 8.9\n\n[grid]\nresolution = 32\n\n[bands]\ncount = 8\npath = { preset = \"square\", intervals_per_segment = 3 }\n\n[bands.symmetry]\npolicy = \"auto\"\n\n[bands.accuracy]\nmax_relative_residual = 1e-5\nmax_absolute_residual = 1e-7\nmax_orthogonality_defect = 1e-8\n\n[eigensolver]\nprecision = \"f64\"\ntolerance = 1e-14\nmax_iterations = 600\n",
+    "python": "from pathlib import Path\nimport blaze\n\nconfig = blaze.Config.from_file(Path(__file__).with_suffix(\".toml\"))\nresult = blaze.solve(config)\nprint(blaze.execution_summary(result))\nprint(result[\"frequencies\"])\n"
   }
 ] as const;

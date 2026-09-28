@@ -1,0 +1,34 @@
+schema = "blaze2d/1"
+task = "bands"
+polarization = "TM"
+
+[geometry]
+background_epsilon = 1.0
+lattice = { type = "square", a = 1.0 }
+
+[[geometry.objects]]
+name = "rod"
+kind = "circle"
+center = [0.0, 0.0]
+radius = 0.2
+epsilon = 8.9
+
+[grid]
+resolution = 32
+
+[bands]
+count = 8
+path = { preset = "square", intervals_per_segment = 3 }
+
+[bands.symmetry]
+policy = "auto"
+
+[bands.accuracy]
+max_relative_residual = 1e-5
+max_absolute_residual = 1e-7
+max_orthogonality_defect = 1e-8
+
+[eigensolver]
+precision = "f64"
+tolerance = 1e-14
+max_iterations = 600

@@ -127,7 +127,16 @@ def main():
                     block[variant]['acceptance']=accuracy(study)
                     block[variant]['tight_comparison']=compare(study,tight) if tight_ok else None
                     completed_and_partial=[*study['results'],*(e['partial_result'] for e in study['errors'] if e.get('partial_result'))]
-                    block[variant]['complete_attempted_iterations']=sum(r['metadata'].get('execution',{}).get('attempted_iterations',0) for r in completed_and_partial)
+                    total=0
+                    for result in completed_and_partial:
+                        m=result['metadata']; ledgers=list(m.get('symmetry',{}).get('points',[]))
+                        failure=m.get('failed_point') or {}
+                        if failure.get('symmetry'):
+                            position=failure.get('k_index')
+                            if position is not None and position<len(ledgers): ledgers[position]=failure['symmetry']
+                            else: ledgers.append(failure['symmetry'])
+                        total+=sum(p['attempted_iterations'] for p in ledgers)
+                    block[variant]['complete_attempted_iterations']=total
                     block[variant]['validation'].pop('spectra',None)
                 left,right=(arrays(directory,label,v) for v in ['reference','candidate'])
                 block['completed_arrays_identical']=len(left['results'])==len(right['results'])==6 and all(a['arrays']==b['arrays'] for a,b in zip(left['results'],right['results'],strict=True))

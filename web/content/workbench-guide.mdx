@@ -48,8 +48,12 @@ configuration used for that run. The live band's horizontal axis uses the comple
 planned path, so arriving points do not rescale it.
 
 The eigensolver stopping tolerance measures relative eigenvalue changes.
-Operator results also contain fresh residuals and an orthogonality defect.
-Use an explicit residual acceptance threshold when the study requires one.
+Band and operator results also contain fresh residuals and an orthogonality
+defect. `[bands.accuracy]` enforces an explicit final band acceptance policy;
+`operators.fail_on_residual` is the operator threshold. Results separately show
+stopping convergence and accuracy acceptance. The execution summary identifies
+the requested symmetry policy, methods actually retained, reused points and
+fallback reasons. Expand provenance for the complete numerical ledger.
 
 The browser preflights a `512 MiB` execution budget. History uses a bounded local
 cache; export important results before leaving. Use Python for larger studies,

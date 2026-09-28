@@ -61,7 +61,7 @@ pub fn execute_sampled<B: SpectralBackend>(backend: B, backend_name: &str, job: 
     out.metadata["converged"] = json!(result.converged);
     out.metadata["converged_per_point"] = json!([result.converged]);
     out.metadata["elapsed_seconds"] = json!(result.elapsed_seconds);
-    out.metadata["certification"] = json!({"source":"fresh_operator_application",
+    out.metadata["certification"] = json!({"source":"fresh_rayleigh_ritz",
         "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
         "absolute_residual_convention":"norm(Au-lambda*Bu)/norm(u)",
         "absolute_residual_unit":"inverse_reference_length_squared",

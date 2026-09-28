@@ -35,7 +35,33 @@ print(frequencies.shape)
 print(result["metadata"]["build"])
 ```
 
-Results are ordinary dictionaries containing named NumPy arrays and scientific metadata. Frequencies use the common reference length recorded in that metadata. Arrays use C ordering; complex outputs have dtype `complex128`. Eigenvectors are retained only when requested. The solver stopping flag reports eigenvalue stabilization; operator results also include freshly evaluated residuals and orthogonality information.
+Results are ordinary dictionaries containing named NumPy arrays and scientific metadata. Frequencies use the common reference length recorded in that metadata. Arrays use C ordering; complex outputs have dtype `complex128`. Eigenvectors are retained only when requested. The solver stopping flag reports eigenvalue stabilization; band and operator results also include freshly evaluated residuals and orthogonality information.
+
+## Symmetry and accuracy
+
+Symmetry remains explicit. In a complete configuration, use `[bands.symmetry]`
+with `policy = "auto"` for the measured native f64 path. PT selection currently
+covers square/triangular equal grids 31–65, 8–16 bands and stopping tolerance at
+most `1e-13`; runtime qualification and fallback still apply. Default-tolerance
+PT attempts did not pay off, so auto preserves complex arithmetic there.
+
+Add `[bands.accuracy]` to require final convergence, a relative residual at most
+`1e-5` OR an absolute residual at most `1e-7` for every mode, and B-orthogonality
+at most `1e-8`. These limits are configurable. The absolute criterion handles
+zero/near-zero Gamma modes. It certifies the selected finite pencil, not
+continuum accuracy. No stopping tolerance is silently changed.
+
+`print(blaze.execution_summary(result))` shows actual methods, reuse, fallback
+and acceptance separately from requested settings. The CLI reports this on
+stderr by default (`--quiet` suppresses it); Python library calls remain quiet.
+For a complete example see `examples/calculations/certified-symmetry.toml`.
+
+`blaze.align_modes` optionally returns a separate reference-aligned visualization
+frame using unitary rotations within complete degenerate clusters. Supply a
+common physical grid/coordinate convention, an upper guard band, and positive
+mass weights for TM. It preserves the original result and does not transfer its
+certificates to the rotated fields. The [API guide](https://rnle.github.io/blaze2d/configuration)
+describes the exact interface and the recommended, advanced and experimental options.
 
 ## Run a TOML study
 

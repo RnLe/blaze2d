@@ -47,7 +47,7 @@ export function ResultsView({ state }: { state: ExecutionState }) {
         {!!result.samples?.length && <IndexControl label="Stencil sample" value={result.samples.indexOf(sample!)} count={result.samples.length} onChange={setSample} />}
       </div>
       <p className="wb-muted">Job {result.job_index}{sample && ` · k = ${JSON.stringify(object(sample.metadata).k_point ?? object(sample.metadata).k_cartesian ?? '')}`}</p>
-      <p className={metadata.converged === true ? 'wb-certified' : 'wb-warning'}>{metadata.converged === true ? 'Eigenvalue stopping criterion met' : 'Iteration limit reached before convergence'}
+      <p className={metadata.converged === true ? 'wb-certified' : 'wb-warning'}>{metadata.converged === true ? 'Eigenvalue stopping criterion met' : 'Stopping criterion not met'}
         {typeof certification.max_residual === 'number' && ` · maximum residual ${(certification.max_residual as number).toExponential(3)}`}
         {Object.keys(sweep).length > 0 && ` · ${Object.entries(sweep).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(', ')}`}
         {parentMetadata.registry_index != null && ` · registry ${parentMetadata.registry_index}: ${JSON.stringify(parentMetadata.registry)}`}

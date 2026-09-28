@@ -15,6 +15,7 @@ base.dielectric.smoothing = 'voronoi';
 base.eigensolver.precision = 'f64'; base.eigensolver.tolerance = 1e-14; base.eigensolver.max_iterations = 600;
 base.bands.path = {points:[[0,0],[.17,.09],[-.17,-.09],[0,0]],basis:'reciprocal_fractional'};
 base.bands.discretization = {kind:'metric_ball',angular_cutoff:2*Math.PI*3.1};
+base.bands.accuracy = {};
 base.results.eigenvectors = true;
 base.sweeps = [{name:'radius',target:`geometry.objects.${base.geometry.objects[0].name}.radius`,values:[.18,.22]}];
 const issues = [], records = [];
@@ -36,6 +37,8 @@ for (const polarization of ['TM','TE']) {
   for (let job=0;job<2;job++) {
     const a=candidate[job],b=reference[job];
     check(a.metadata.converged,`${polarization}/${job}: convergence`);
+    check(a.metadata.accuracy.accepted,`${polarization}/${job}: final accuracy`);
+    check(a.metadata.execution.attempted_iterations===a.metadata.iterations.reduce((x,y)=>x+y,0),`${polarization}/${job}: execution accounting`);
     check(a.arrays.eigenvectors.data instanceof Float64Array,`${polarization}: typed fields`);
     check(a.arrays.eigenvectors.shape.join()===[4,5,17,17].join(),`${polarization}: physical field shape`);
     for (let row=0;row<4;row++) {

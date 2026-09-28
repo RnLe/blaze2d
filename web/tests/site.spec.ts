@@ -35,7 +35,7 @@ test('article search, generated heading links, and mobile navigation', { tag: '@
   await menu.getByRole('link', { name: 'Examples', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'A starting point for your next calculation' })).toBeVisible();
   await expect(menu).not.toBeVisible();
-  await expect(page.locator('.wb-example-card img')).toHaveCount(7);
+  await expect(page.locator('.wb-example-card img')).toHaveCount(8);
 });
 
 test('Cartesian object edits preserve fractional coordinates for an oblique non-unit cell', async ({ page }) => {

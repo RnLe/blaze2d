@@ -303,8 +303,9 @@ qualification still governs every selected optimization. Automatic mode does
 not change the material, Fourier support or precision. The manual policy remains
 the default and permits explicit experiments.
 
-The `public-sweep-v2` policy is calibrated on native f64 square/triangular grids
-with equal dimensions 31–65 and 8–16 bands. For triangular metric balls its
+The `public-sweep-v3` policy is calibrated on native f64 square/triangular grids
+with equal dimensions 31–65 and 8–16 bands, at stopping tolerance at most
+`1e-13`. For triangular metric balls its
 cutoff satisfies $0.40 \le R/N \le 0.46$, with $R$ measured in units of
 $2\pi/a$. Within that envelope it attempts PT and caches repeated requested
 k points. Outside it, the original complex solve remains available. A failed
@@ -312,6 +313,14 @@ PT attempt disables further automatic PT retries for that geometry. Calibration
 used centered circular rods; numerical qualification is still required for
 other motifs. These size bounds are an empirical policy, not a theorem about
 performance.
+
+Ordinary-tolerance qualification found that `1e-6` PT attempts consistently
+failed the strict physical certificate and incurred a second solve. V3 therefore
+uses complex arithmetic at looser stopping tolerances. Close frequencies alone
+did not establish accurate fields. The optional `[bands.accuracy]` contract
+now checks every final output, including the ordinary fallback: convergence,
+absolute-or-relative residuals and B-orthogonality. See [API & TOML](/configuration)
+for its limits, Gamma behavior and execution summaries.
 
 The current public controls do not justify automatic geometry continuation:
 unconditional full-path seeds regressed slightly, and first-point seeds could
@@ -331,6 +340,15 @@ configuration contract. To use the measured native policy in an otherwise comple
 ```toml
 [bands.symmetry]
 policy = "auto"
+
+[bands.accuracy]
+max_relative_residual = 1e-5
+max_absolute_residual = 1e-7
+max_orthogonality_defect = 1e-8
+
+[eigensolver]
+tolerance = 1e-14
+max_iterations = 600
 ```
 
 The following blocks instead illustrate an explicit PT experiment:

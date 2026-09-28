@@ -29,3 +29,7 @@ with tempfile.TemporaryDirectory(prefix='blaze-wheel-') as directory:
     check = 'import blaze,json; info=blaze.build_info(); print(json.dumps(info)); assert info["source_revision"] == ' + repr(args.revision)
     subprocess.run([str(python), '-c', check], check=True, cwd=temporary, env=environment)
     subprocess.run([str(python), '-m', 'pytest', 'crates/python/tests', '-q'], check=True, cwd=temporary, env=environment)
+    continuation = temporary / 'python_continuation_check.py'
+    shutil.copy2(root / 'benchmarks/symmetry/python_continuation_check.py', continuation)
+    subprocess.run([str(python), str(continuation), str(temporary / 'continuation.json')],
+                   check=True, cwd=temporary, env=environment)

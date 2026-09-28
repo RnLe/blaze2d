@@ -1,0 +1,556 @@
+{
+  "scope": "ordinary tolerance 1e-6, 200 iterations, six unique geometries, four workers; finite-pencil field acceptance fails in these default-setting cases",
+  "policy_change": "v3 skips PT above stopping tolerance 1e-13",
+  "versions": {
+    "v2": [
+      {
+        "condition": "square-TE-31-ring",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.8936536027435112,
+          "interval": [
+            0.8650518260022361,
+            0.9199811141478559
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 0.8936536027435112,
+          "interval": [
+            0.8650518260022361,
+            0.9199811141478559
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 1.7049160550008935e-07,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TE-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.8324656804823468,
+          "interval": [
+            0.769342279532529,
+            0.9357357373920657
+          ],
+          "pairs": 5
+        },
+        "all_pairs": {
+          "ratio": 0.8262795254330224,
+          "interval": [
+            0.7739317621794515,
+            0.9117193303475907
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 8.428968787388413e-07,
+          "field_overlap": 0.9999996827525477
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TE-32-displaced",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 1.0029680472343543,
+          "interval": [
+            0.9944757925960785,
+            1.0115820788760403
+          ],
+          "pairs": 5
+        },
+        "all_pairs": {
+          "ratio": 1.0049023739904415,
+          "interval": [
+            0.9966168020781586,
+            1.013127949509567
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 7.518417679541756e-07,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TE-64",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.8953841996213459,
+          "interval": [
+            0.8843515290002008,
+            0.9085041629090808
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 0.8953841996213459,
+          "interval": [
+            0.8843515290002008,
+            0.9085041629090808
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 1.6546559244989822e-06,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TM-31-ring",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.8743735060478844,
+          "interval": [
+            0.8475733728620606,
+            0.9043535276883437
+          ],
+          "pairs": 3
+        },
+        "all_pairs": {
+          "ratio": 0.8921858984870658,
+          "interval": [
+            0.8698930969326124,
+            0.9175737281050363
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 4.234499506594602e-08,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TM-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.8413159389131927,
+          "interval": [
+            0.8167734172356259,
+            0.8648399071167701
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 0.8413159389131927,
+          "interval": [
+            0.8167734172356259,
+            0.8648399071167701
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 5.074401887572577e-08,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "triangular-TE-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.866912832989149,
+          "interval": [
+            0.8455050508832785,
+            0.8878391383973575
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 0.866912832989149,
+          "interval": [
+            0.8455050508832785,
+            0.8878391383973575
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 9.66676320990345e-07,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "triangular-TE-33-metric",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.867408357529156,
+          "interval": [
+            0.8612018900969379,
+            0.8723127444138159
+          ],
+          "pairs": 5
+        },
+        "all_pairs": {
+          "ratio": 0.8778068110906995,
+          "interval": [
+            0.8633829519679241,
+            0.8998334635054496
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": null,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "triangular-TM-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.8495882844555015,
+          "interval": [
+            0.8324324697524964,
+            0.8682813109714764
+          ],
+          "pairs": 5
+        },
+        "all_pairs": {
+          "ratio": 0.8313723539008562,
+          "interval": [
+            0.7943240479572938,
+            0.8613055660431671
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 9.089528363315225e-08,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      }
+    ],
+    "v3": [
+      {
+        "condition": "square-TE-31-ring",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 1.0023541346706453,
+          "interval": [
+            0.9764161105077169,
+            1.028981189965113
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 1.0023541346706453,
+          "interval": [
+            0.9764161105077169,
+            1.028981189965113
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 1.7049160550008935e-07,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TE-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 1.019513849409803,
+          "interval": [
+            1.000244749173744,
+            1.0384668164592086
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 1.019513849409803,
+          "interval": [
+            1.000244749173744,
+            1.0384668164592086
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 8.428968787388413e-07,
+          "field_overlap": 0.9999996827525477
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TE-32-displaced",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 1.0051905896693485,
+          "interval": [
+            0.9857468668320334,
+            1.0318586670379928
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 1.0051905896693485,
+          "interval": [
+            0.9857468668320334,
+            1.0318586670379928
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 7.518417679541756e-07,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TE-64",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 1.0023546501078942,
+          "interval": [
+            0.9888623553506156,
+            1.019052478046522
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 1.0023546501078942,
+          "interval": [
+            0.9888623553506156,
+            1.019052478046522
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 1.6546559244989822e-06,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TM-31-ring",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 1.0073928134555548,
+          "interval": [
+            0.992472619218932,
+            1.0239964699293425
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 1.0073928134555548,
+          "interval": [
+            0.992472619218932,
+            1.0239964699293425
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 4.234499506594602e-08,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "square-TM-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.9969714252579974,
+          "interval": [
+            0.9691896543225212,
+            1.0255495592095962
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 0.9969714252579974,
+          "interval": [
+            0.9691896543225212,
+            1.0255495592095962
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 5.074401887572577e-08,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "triangular-TE-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 1.0061225670321214,
+          "interval": [
+            0.9941436929734565,
+            1.019305360600307
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 1.0061225670321214,
+          "interval": [
+            0.9941436929734565,
+            1.019305360600307
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 9.66676320990345e-07,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "triangular-TE-33-metric",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.9736485507231449,
+          "interval": [
+            0.9567263933079664,
+            0.9929536515809095
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 0.9736485507231449,
+          "interval": [
+            0.9567263933079664,
+            0.9929536515809095
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": null,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      },
+      {
+        "condition": "triangular-TM-32",
+        "tight_reference_accepted": true,
+        "tight_reference_errors": [],
+        "admitted": {
+          "ratio": 0.9809342267328389,
+          "interval": [
+            0.9613645865571847,
+            0.9990377812085227
+          ],
+          "pairs": 6
+        },
+        "all_pairs": {
+          "ratio": 0.9809342267328389,
+          "interval": [
+            0.9613645865571847,
+            0.9990377812085227
+          ],
+          "pairs": 6
+        },
+        "acceptance": {
+          "reference": false,
+          "candidate": false
+        },
+        "diagnostics": {
+          "frequency_difference": 9.089528363315225e-08,
+          "field_overlap": null
+        },
+        "timing_role": "diagnostic; not an accuracy-qualified acceleration claim"
+      }
+    ]
+  },
+  "limitations": [
+    "No field comparison was made when fields were not requested; original v2 overlap=1 entries are placeholders except square-TE-32.",
+    "Early execution summaries of the failed metric condition double-counted an already-emitted failed point; read the underlying final point ledger once.",
+    "All complete rectangular v3 comparisons return exactly the manual arrays and iteration counts.",
+    "No continuum accuracy, hardware bandwidth or energy claim."
+  ]
+}

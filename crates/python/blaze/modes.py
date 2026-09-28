@@ -87,9 +87,13 @@ def align_modes(result, reference_fields, reference_frequencies, *, bands: Seque
         x, y = x/nx, y/ny
         if max(np.max(abs(gram-np.eye(len(group)))),np.max(abs(y.conj().T@y-np.eye(len(group))))) > orthogonality_tolerance:
             raise ValueError('Modes are not orthogonal with equal source norms in the supplied metric')
-        left, singular, right = np.linalg.svd(x.conj().T@y)
+        # Principal angles use orthonormal frames even when the accepted Gram
+        # defects are small but nonzero. Procrustes still rotates original modes.
+        qx, qy = np.linalg.qr(x, mode='reduced')[0], np.linalg.qr(y, mode='reduced')[0]
+        singular = np.minimum(1., np.linalg.svd(qx.conj().T@qy, compute_uv=False))
         if singular.min() < minimum_overlap:
             raise ValueError('Reference and source subspaces do not meet minimum_overlap')
+        left, _, right = np.linalg.svd(x.conj().T@y)
         rotation = (left@right).T
         output_indices = [indices.index(int(i)) for i in source_indices]
         transform[np.ix_(output_indices,output_indices)] = rotation

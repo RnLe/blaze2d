@@ -40,5 +40,11 @@
     "title": "Registry and k-stencil",
     "description": "Radius sweeps, periodic translations, and transported stencil references.",
     "category": "Operators"
+  },
+  {
+    "slug": "certified-symmetry",
+    "title": "Certified symmetry",
+    "description": "Automatic native symmetry with explicit final accuracy acceptance.",
+    "category": "Bands"
   }
 ]

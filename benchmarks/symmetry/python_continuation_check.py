@@ -34,6 +34,7 @@ kind = "metric_ball"
 angular_cutoff = {2*np.pi*3.1}
 [bands.symmetry]
 arithmetic = "fourier_complex"
+[bands.accuracy]
 [eigensolver]
 precision = "f64"
 tolerance = 1e-14
@@ -65,6 +66,8 @@ coarse_start = { resolution = [9,9], max_seed_field_bytes = 1048576 }''')
         assert a['eigenvectors'].dtype == np.complex128 and np.isfinite(a['eigenvectors']).all()
         assert actual['metadata']['runner']['parallelism'] == 'geometry_chains'
         assert actual['metadata']['converged']
+        assert actual['metadata']['accuracy']['accepted']
+        assert actual['metadata']['execution']['attempted_iterations'] == sum(actual['metadata']['iterations'])
         for point in actual['metadata']['symmetry']['points']:
             assert point['continuation']['cache_payload_bytes'] <= 1048576//2
             assert point['attempted_iterations'] == sum(a['iterations'] for a in point['solver_attempts'])
@@ -74,8 +77,9 @@ coarse_start = { resolution = [9,9], max_seed_field_bytes = 1048576 }''')
     assert difference < 2e-7 and (seeds,reuses,coarse) == (2,6,2)
     records.append(dict(polarization=polarization,max_frequency_difference=difference,seeded_points=seeds,reused_points=reuses,coarse_starts=coarse))
 module = Path(blaze.__file__).resolve()
-assert '/site-packages/' in str(module), module
-native = next(module.parent.glob('_native*.so'))
+assert 'site-packages' in module.parts, module
+from blaze import _native
+native = Path(_native.__file__).resolve()
 result = dict(package=str(module),native_sha256=hashlib.sha256(native.read_bytes()).hexdigest(),records=records)
 Path(sys.argv[1]).write_text(json.dumps(result,indent=2)+'\n')
 print(json.dumps(result))

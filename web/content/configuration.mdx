@@ -65,6 +65,29 @@ Without that gate, a completed calculation may still contain inaccurate remote e
 Band results report fresh residuals and B-orthogonality without rotating the tracked fields.
 Operator results include the existing final Rayleigh-Ritz refinement.
 
+For an explicit band acceptance contract, add:
+
+```toml
+[bands.accuracy]
+max_relative_residual = 1e-5
+max_absolute_residual = 1e-7
+max_orthogonality_defect = 1e-8
+```
+
+Every returned mode must pass the relative **or** absolute residual limit, the
+whole block must pass B-orthogonality, and every requested point must meet the
+stopping criterion. The absolute branch remains meaningful at zero or near-zero
+Gamma modes. Limits must be finite and positive; omitted limits take the values
+above. Omitting the entire section preserves the previous reporting-only behavior.
+The gate covers ordinary solves, reuse, final fallbacks, metric support and
+external sampled inputs. It never silently tightens the stopping tolerance.
+Rejected ordinary jobs preserve their computed arrays in `partial_result` and
+follow the runner's error policy. An empty or invalid certificate cannot pass.
+
+This is a backward-error check on the selected finite pencil. Metric-support
+acceptance uses its projected pencil; material/grid convergence, continuum
+accuracy and complete low-band coverage remain separate questions.
+
 `absolute_residuals` contains $\|Au-\lambda Bu\|/\|u\|$. Use it near Gamma,
 where a small denominator can make normalized residuals misleading. Both arrays
 follow the returned band order; their conventions and units are recorded in metadata.
@@ -79,7 +102,38 @@ follow the returned band order; their conventions and units are recorded in meta
 A band path is a preset, vertices with `intervals_per_segment`, or already sampled
 points. These forms cannot be combined. A path with $S$ segments and $N$ intervals
 per segment has $SN+1$ samples. Distances use the reciprocal Cartesian metric.
-Labels retain their exact sample indices, and a closing Gamma point is recomputed.
+Labels retain their exact sample indices. The manual default recomputes a closing
+Gamma point; certified identical-point reuse can eliminate that solve.
+
+## Symmetry and execution reports
+
+<ExampleSource slug="certified-symmetry" language="toml" />
+
+The recommended native f64 path is explicit `policy = "auto"` with a suitably
+tight stopping tolerance and an accuracy gate. `public-sweep-v3` considers PT
+on equal square/triangular grids 31–65 with 8–16 bands and stopping tolerance
+at most `1e-13`. The ordinary `1e-6` tolerance uses the complex path: measured PT
+attempts failed certification and added work there. Repeated-point reuse still
+requires its own certificate. Triangular metric support additionally requires
+the measured cutoff range described in [Symmetries](/symmetries).
+
+Auto never changes material sampling, Fourier support or precision. Native PT
+profitability is not assumed in the browser. Requested and resolved settings,
+retained methods, coordinate blocks, reused points, all attempted iterations
+and fallback reasons appear in `metadata.execution`. The concise `text` field
+also appears in the Workbench and on CLI stderr; `--quiet` suppresses the CLI
+summary. Standard output remains machine-readable JSON. Python prints nothing
+automatically; use `print(blaze.execution_summary(result_or_study))`.
+
+| Maturity | Options and intended use |
+|---|---|
+| Recommended within the measured envelope | Native f64 `auto`, final accuracy acceptance, ordinary complex fallback |
+| Advanced, explicitly qualified | Manual PT/Fourier choices, k-star transport, sectors, partner reconstruction, bounded geometry continuation and coarse starts |
+| Explicit discretization choice | Metric Fourier support and Voronoi material averages; compare to the same pencil before claiming acceleration |
+| Experimental Rust APIs | Geometry-response prediction, precision changes, shared iteration engine and specialized scheduling; no general speed recommendation |
+
+Some advanced combinations cost more than the ordinary solve. The
+[replacement notes](/symmetry-changelog) retain those negative results.
 
 ## Parameter studies
 
@@ -144,6 +198,7 @@ Overlap extraction needs a reference source; stencil neighbors use internal refe
 - `blaze.run(config, threads=4)` returns results, errors, and run statistics.
 - `blaze.stream(config)` yields completed records incrementally.
 - `blaze.build_info()` and `.capabilities()` report the installed backend.
+- `blaze.execution_summary(result_or_study)` reports requested and actual execution.
 
 Simple band calculations also accept scalar convenience arguments to `blaze.solve`.
 Numerical lists do not implicitly create sweeps. Plotting and terminal output are optional extras.
@@ -162,11 +217,31 @@ NumPy `complex128`, including when solver storage uses `f32`. Metadata records
 storage and accumulation precision, coordinates, convergence, provenance, and shapes.
 Raw eigenvectors from different gauges should be compared through subspace invariants.
 
+For mode visualization, `blaze.align_modes(result, reference_fields,
+reference_frequencies, bands=[0, 1, 2], weights=epsilon)` returns separate
+`fields`, a unitary `transform` and cluster diagnostics. Supply one reference
+k point on the same physical cell/grid and in the same coordinate convention;
+frequencies use Blaze's units. `bands` contains source indices, even when path
+tracking has reordered them. TE defaults to Euclidean weights; TM requires
+positive physical mass/quadrature weights. Both spectra must contain a separated
+upper guard band beyond each selected complete cluster. The helper rejects
+split clusters, incompatible spans and nonorthogonal frames. It preserves
+pointwise summed cluster intensity and leaves the solve gauge and certificates
+unchanged. Its returned visualization frame needs fresh certification before
+numerical reuse; a nearly degenerate rotation is not automatically a set of
+exact eigenpairs.
+`eigenvalue_atol` and `eigenvalue_rtol` bound each cluster's squared-frequency
+spread in both spectra. An independently computed reference may need an explicit
+larger tolerance for numerical splitting; the helper never infers that permission
+from a similar-looking image.
+
 `blaze.OperatorDataExtractor` retains native reference-field, external dielectric,
 and checkpoint workflows. Its methods take the shared configuration. External
 fields use a complete solved-band block; reference overlaps select the retained window.
 External dielectric input declares `dielectric.source = "external"`, an empty
 object list, and one sampled band point. These inputs are unavailable in the browser.
+This sampled-point entry point supports the ordinary spatial solve and final
+accuracy acceptance; nondefault symmetry options are rejected explicitly.
 
 ## Command line and export
 

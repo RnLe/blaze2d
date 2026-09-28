@@ -37,8 +37,8 @@ for (const polarization of ['tm', 'te']) {
     const served = await page.request.get(`${base}/wasm-blaze/build.json`);
     expect(served.ok()).toBe(true);
     expect((await served.json()).source_revision).toBe(built.source_revision);
-    const cold = readFileSync(`tests/fixtures/symmetry-cold-${polarization}.toml`, 'utf8');
-    const coarse = readFileSync(`tests/fixtures/symmetry-coarse-${polarization}.toml`, 'utf8');
+    const cold = readFileSync(`tests/fixtures/symmetry-cold-${polarization}.toml`, 'utf8')+'\n[bands.accuracy]\n';
+    const coarse = readFileSync(`tests/fixtures/symmetry-coarse-${polarization}.toml`, 'utf8')+'\n[bands.accuracy]\n';
     await open(page); await apply(page, cold); await run(page);
     const reference = JSON.parse((await exported(page, 'json')).toString()).results[0];
     await apply(page, coarse); await run(page);
@@ -47,6 +47,9 @@ for (const polarization of ['tm', 'te']) {
     expect(result.arrays.eigenvectors.dtype).toBe('complex128');
     expect(result.arrays.eigenvectors.data.every(Number.isFinite)).toBe(true);
     expect(result.metadata.converged).toBe(true);
+    expect(result.metadata.accuracy.accepted).toBe(true);
+    expect(result.metadata.execution.coarse_seeded_points).toBe(1);
+    await expect(page.locator('.wb-results')).toContainText('accuracy accepted');
     expect(result.metadata.certification.b_orthogonality_defect).toBeLessThan(1e-8);
     result.arrays.frequencies.data.forEach((frequency: number, i: number) => {
       expect(Math.abs(frequency-reference.arrays.frequencies.data[i])).toBeLessThan(1e-6);
@@ -103,6 +106,8 @@ test('bands export complete arrays and preserve a historical snapshot', { tag: '
   const first = JSON.parse((await exported(page, 'json')).toString());
   expect(first.results[0].arrays.frequencies.shape).toEqual([7, 8]);
   expect(first.results[0].arrays.k_points.data.slice(-2)).toEqual([0, 0]);
+  expect(first.results[0].metadata.execution.accuracy).toBe('not_requested');
+  await expect(page.locator('.wb-results')).toContainText(first.results[0].metadata.execution.text);
   const npz = unzipSync(await exported(page, 'npz'));
   const headerLength = new DataView(npz['manifest.npy'].buffer).getUint16(8, true);
   const manifest = JSON.parse(strFromU8(npz['manifest.npy'].subarray(10 + headerLength)));
@@ -117,6 +122,13 @@ test('bands export complete arrays and preserve a historical snapshot', { tag: '
   await page.locator('.wb-history-open').first().click();
   await expect(page.getByRole('tab', { name: 'Results', exact: true })).toHaveAttribute('aria-selected', 'true');
   expect(JSON.parse((await exported(page, 'json')).toString()).results[0].arrays.frequencies.data).toEqual(first.results[0].arrays.frequencies.data);
+  await apply(page, bands+'\n[bands.accuracy]\nmax_relative_residual=1e-30\nmax_absolute_residual=1e-30\n');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('.wb-results')).toContainText('failed · 0 completed · 1 failed');
+  await expect(page.locator('.wb-results')).toContainText('accuracy rejected');
+  const rejected = JSON.parse((await exported(page, 'json')).toString()).errors[0];
+  expect(rejected.diagnostic.code).toBe('accuracy_gate');
+  expect(rejected.partial_result.arrays.frequencies).toEqual(first.results[0].arrays.frequencies);
 });
 
 test('cancel terminates a solve and permits an immediate replacement', async ({ page }) => {

@@ -131,6 +131,54 @@ also decrease along the refinement sequence; this does not establish a continuum
 error bound. All initial failures and unsuccessful over-tight stopping
 experiments remain in the record.
 
+## Production interface hardening
+
+The public interface now has an optional final `[bands.accuracy]` gate and a
+concise execution summary. The summary separates requested mechanisms, retained
+solves, reused points, declined optimizations and accuracy acceptance. The gate
+checks convergence, an absolute-or-relative residual bound for every mode and
+B-orthogonality, including ordinary fallbacks. Omission preserves the earlier
+numerical defaults. The [API guide](/configuration) includes a complete example
+and recommended, advanced and experimental option labels.
+
+A targeted nine-condition qualification at the ordinary `1e-6` stopping
+tolerance exposed a profitability gap in automatic policy v2. No condition
+retained PT output. In the symmetric rectangular studies, a rejected PT attempt
+added about 14–18% more iterations before returning the ordinary result. The
+loose metric-support study failed both paths' existing acceptance checks.
+Close frequencies did not establish sufficiently accurate eigenvectors.
+
+`public-sweep-v3` therefore skips PT above stopping tolerance `1e-13`. A separate
+control collection retains one warmup and six admitted randomized pairs for
+each of the same nine conditions. All eight completed rectangular studies have
+bit-for-bit identical manual/automatic arrays and iteration counts, with time
+ratios 0.981–1.020, within the declared 5% practical band. The metric condition
+still rejects both paths with equal failed work. These results remove a default
+regression; they do not claim default-tolerance acceleration or improved field
+accuracy. The tight-tolerance speedups above retain their original scope.
+The [ordinary-setting record](/data/symmetry-production-policy.json) includes
+both policy versions and their limitations.
+
+The optional Python `align_modes` helper creates a separate reference-aligned
+visualization basis within complete degenerate clusters. It requires a common
+physical coordinate convention, positive mass weights for TM, compatible spans
+and an upper guard band. Original fields, ordering and certificates are preserved.
+Approximate degeneracy does not confer a fresh eigenpair certificate on a rotated
+visualization frame.
+
+Release checks now include the existing final Python/WASM continuation cases
+and complete worker profiling. A focused pull-request gate reuses the numerical,
+fallback, cache, field and cancellation tests. Native Linux and Windows checks
+have been executed locally. The complete hosted wheel matrix has not been run
+for this local branch; macOS remains explicitly unvalidated because no runner
+is available. No package or site publication is implied by local validation.
+
+The focused checks also corrected a stale configuration test that still rejected
+newly supported metric PT/reuse, and a summary-only double count of a failed
+metric point whose partial fields had already been emitted. The underlying
+solver-attempt ledger remained correct. Archived early summaries are preserved;
+the current report counts each final point ledger once.
+
 ## Earlier mechanism measurements and their scope
 
 The replacement measurements use frozen executables and inputs, randomized

@@ -28,6 +28,7 @@ def test_reference_alignment_preserves_metric_and_pointwise_cluster_intensity():
     x=(aligned['fields']*np.sqrt(weights)).reshape(4,-1)
     np.testing.assert_allclose(x.conj()@x.T,np.eye(4),atol=1e-14)
     assert max(c['eigenvalue_commutator_norm'] for c in aligned['clusters']) < 1e-14
+    assert all(0 <= x <= 1 for c in aligned['clusters'] for x in c['principal_overlaps'])
 
 
 @pytest.mark.parametrize('failure',['partial','guard','split','metric','span','norms'])
