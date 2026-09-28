@@ -1,0 +1,306 @@
+---
+nav:
+  group: Theory
+  order: 1
+title: Symmetries
+description: Exact crystal actions, qualified Bloch reuse, sector coverage, and real or reduced coordinates in Blaze's finite Maxwell problems.
+---
+
+import { Citation, References, Reference } from '@/components/article/Citation'
+
+# Symmetries
+
+A symmetry can save an entire solve, reduce the work within a solve, or reduce
+stored data. These are different mechanisms. Blaze checks each against the
+**material and the finite Maxwell problem actually being solved**. A lattice
+label alone does not authorize a reduction.
+
+The implementation covers exact affine operations for all 17 plane groups,
+equivalent-wavevector reuse, ordinary and projective sectors, qualified PT real
+coordinates, and selected reduced kernels. Each mechanism has an unrestricted
+control and explicit eligibility checks. Some combinations remain unsupported;
+some correct reductions cost more than they save. The
+[replacement notes](/symmetry-changelog) record those limits and the measurements.
+
+## The Maxwell pencil is the contract
+
+After separating the Bloch phase, Blaze solves a finite generalized eigenproblem
+
+$$
+A_{\mathbf{k}}u=\lambda B u,
+\qquad \lambda=(\omega/c)^2.
+$$
+
+For TM, $u$ represents the periodic part of $E_z$, $A_{\mathbf{k}}$ is the
+Bloch Laplacian and $B$ is the sampled dielectric weight. For TE, $u$ represents
+$H_z$, $B=I$, and the operator contains the sampled inverse dielectric tensor
+between Bloch derivatives. Smoothing can produce such a tensor even when the
+physical dielectric is scalar. Reported normalized frequencies also include
+Blaze's length and $2\pi$ conventions.
+
+Let $T_g$ map coefficients at $\mathbf{k}$ to coefficients at $\mathbf{k}'$.
+A usable unitary symmetry must preserve both forms of the pencil:
+
+$$
+T_g^\dagger A_{\mathbf{k}'}T_g=A_{\mathbf{k}},
+\qquad
+T_g^\dagger B_{\mathbf{k}'}T_g=B_{\mathbf{k}}.
+$$
+
+For an antiunitary action, the corresponding covariance identities also
+include complex conjugation.
+
+Blaze checks the lattice metric, scalar material, inverse tensor, sample mapping,
+retained Fourier support and operator action. A point permutation on a periodic
+array is insufficient: wrapping a Fourier index can change its derivative,
+especially at an even grid's Nyquist boundary. Qualification is specific to the
+grid, material, wavevector and representation.
+Affine closure and lattice carries are exact. Material/operator covariance and
+field accuracy are numerical checks with explicit tolerances and rejection
+reasons.
+
+## Coordinates, translations and field signs
+
+Write the direct lattice vectors as the columns of $L$ and use fractional
+coordinates $\boldsymbol\xi$ and $\boldsymbol\kappa$:
+
+$$
+\mathbf{x}=L\boldsymbol\xi,
+\qquad
+\mathbf{k}=2\pi L^{-T}\boldsymbol\kappa.
+$$
+
+An affine operation is $g=(W,\boldsymbol\tau)$, acting as
+$\boldsymbol\xi\mapsto W\boldsymbol\xi+\boldsymbol\tau$.
+$W$ is an integer lattice automorphism; translations and origin shifts use exact
+rational arithmetic. Its Cartesian action is $R=LWL^{-1}$. A point symmetry
+satisfies $W^T L^T L W=L^T L$. This distinction between fractional and Cartesian
+coordinates matters on oblique and hexagonal cells.<Citation id={1} />
+
+Composition retains the integer lattice translation left by the chosen
+representatives:
+
+$$
+\boldsymbol\tau_g+W_g\boldsymbol\tau_h
+=\boldsymbol\tau_{gh}+\boldsymbol\ell(g,h).
+$$
+
+The carry $\boldsymbol\ell$ contributes a Bloch phase; discarding it changes the
+representation. For a unitary operation, let $\mathbf{m}_g$ fold the transformed
+wavevector into the chosen reciprocal cell. A Fourier coefficient transforms as
+
+$$
+\begin{aligned}
+\boldsymbol\kappa'&=W^{-T}\boldsymbol\kappa-\mathbf{m}_g,\\
+\mathbf{n}'&=W^{-T}\mathbf{n}+\mathbf{m}_g,\\
+c'_{\mathbf{n}'}&=
+e^{-2\pi i[W^{-T}(\mathbf{n}+\boldsymbol\kappa)]\cdot\boldsymbol\tau}
+\,D(R)c_{\mathbf{n}}.
+\end{aligned}
+$$
+
+For in-plane operations, $D(R)=1$ for TM's polar $E_z$, while
+$D(R)=\det R$ for TE's axial $H_z$. Thus a physical reflection label for TE
+differs from the label obtained by treating $H_z$ as an ordinary scalar.
+Antiunitary actions additionally conjugate the coefficients and reverse the
+wavevector before folding. The physical time-reversal sign is also retained:
+$E_z$ is even and $H_z$ is odd under time reversal.
+
+The exact group catalogue includes centered settings in primitive coordinates.
+It does not imply that every group acts on every rectangular FFT support. In
+particular, a valid hexagonal rotation need not preserve a rectangular set of
+Fourier modes. Unsupported actions are rejected rather than aliased into place.
+
+| Conventional setting | Plane groups in the catalogue |
+|---|---|
+| General / oblique | `p1`, `p2` |
+| Primitive rectangular | `pm`, `pg`, `pmm`, `pmg`, `pgg` |
+| Centered rectangular | `cm`, `cmm` |
+| Square | `p4`, `p4m`, `p4g` |
+| Hexagonal | `p3`, `p3m1`, `p31m`, `p6`, `p6m` |
+
+These are conventional settings, not an inference from the lattice alone. A
+motif on a square or hexagonal lattice can retain only a smaller group.
+
+## Reuse between wavevectors
+
+The **star** of a wavevector contains points related by qualified crystal
+operations. Blaze can solve one representative and reconstruct the requested
+fields at the others. Identical requests have an even simpler reuse path.
+For real reciprocal materials, qualified time reversal can provide additional
+equivalences, but only orbits not already covered by unitary operations count as
+extra savings.
+
+Reuse preserves requested point order, weights, complex fields and numerical
+certificates. An optional traversal changes execution order to improve
+continuation, then restores the user's order. These gains have different causes:
+star reuse eliminates solves; traversal attempts to make the remaining solves
+easier. A sparse path with no equivalent points cannot obtain the former gain.
+
+Cache entries carry the operator, support and representation identity. Only
+matching finite operators qualify for exact reuse. Fields from nearby, different
+problems may instead become
+**seeds**, after rank extraction and Ritz preparation in the new problem's mass
+metric. Several nonzero projected columns can still span only one direction.
+
+## Sectors and complete band coverage
+
+The **little group** preserves a fixed wavevector modulo reciprocal translations.
+Its representations split the mode space into invariant sectors. Matrix units
+can select individual rows of a multidimensional representation:
+
+$$
+P_{ab}^{(\alpha)}
+=\frac{d_\alpha}{|G_{\mathbf{k}}|}
+\sum_{g\in G_{\mathbf{k}}}
+D_{ab}^{(\alpha)}(g)^*T_g.
+$$
+
+This is the algebraic basis for solving symmetry subproblems and reconstructing
+their partners.<Citation id={2} /> At boundary wavevectors, fractional
+translations can produce a projective multiplication law,
+
+$$
+T_gT_h=e^{-2\pi i\boldsymbol\kappa\cdot\boldsymbol\ell(g,h)}T_{gh}.
+$$
+
+Blaze matches the representation to that factor system. Glide sectors cannot
+in general be assigned the ordinary reflection labels valid at $\Gamma$.
+Complex characters remain complex where required.
+
+Splitting the space does not determine how many of the lowest bands lie in each
+sector. Blaze retains conservative reference prefixes and offers adaptive
+occupancy with explicit guards and cutoff-cluster checks. Partner reconstruction
+preserves physical multiplicity; equal frequencies are not deduplicated into
+one mode. The scalar zero-frequency kernel at $\Gamma$ has one owner.
+
+Returned modes receive fresh residual and mass-orthogonality checks in the
+original finite pencil. Comparing degenerate modes uses their subspace, since
+individual basis vectors may rotate within a cluster. A small residual alone
+does not establish that the requested lowest bands are complete.
+The eigensolver's stopping tolerance and these independent certificate
+thresholds have different normalizations; a configured `1e-14` tolerance is not
+a claim that every reported physical residual is below `1e-14`.
+
+For fixed active sector widths $m_s$ and $N$ spatial coefficients, the main
+algebraic opportunities are
+
+$$
+\begin{aligned}
+\text{Gram work:}\quad
+N\left(\sum_s m_s\right)^2&\;\longrightarrow\;N\sum_s m_s^2,\\
+\text{dense Ritz work:}\quad
+\left(\sum_s m_s\right)^3&\;\longrightarrow\;\sum_s m_s^3.
+\end{aligned}
+$$
+
+These are cost scalings, not measured speedup factors. Full-grid FFT work remains
+roughly linear in the total number of columns. Sector guards, extra iterations,
+projection and initialization can increase that total. Blaze therefore measures
+the Gram/Ritz kernels, the shared iteration engine and the complete independent
+sector control separately. A faster block operation can sit inside a slower
+solver architecture.
+
+## PT real arithmetic
+
+When inversion and time reversal combine into a qualified antiunitary symmetry
+$J$ with $J^2=I$, the fixed subspace $Ju=u$ admits real coordinates. For the
+supported inversion gauge, these are real **Fourier** coordinates. An origin
+shift changes the gauge; it does not authorize deleting imaginary parts from a
+spatial field. A global field phase can be absorbed in the real gauge of this
+isolated scalar problem without changing its spectrum. Translated antiunitaries
+can instead square to $-I$, which does
+not permit this packing.
+
+Blaze keeps f64 scalar precision while replacing eligible complex vector,
+Gram and Ritz operations with real ones. Separate TM and tensor-TE kernels act
+directly on that representation. MPB also provides a real-Fourier inversion
+symmetry build; that is useful context, not a prediction of Blaze's
+speedup.<Citation id={3} />
+
+Eligible persistent vectors need roughly half the scalar storage, with padding
+and other allocations still present. Process RSS is measured separately. A
+sector can compose with PT only if its projector preserves the qualified real
+subspace. Complex rotational sectors retain complex coordinates where needed.
+Blaze still exports the physical complex field.
+
+## Storage reduction and reduced operator work
+
+An orbit basis $S$ stores independent coefficients and reconstructs the full
+field. The corresponding reduced pencil is
+
+$$
+A_r=S^\dagger A S,\qquad B_r=S^\dagger B S.
+$$
+
+If each application expands to the full grid, this saves persistent storage but
+still performs full-grid FFT work. Blaze reports that mode separately from its
+genuine reduced TM and TE mirror kernels. Those kernels reduce transform work
+only for the supported mirror, grid and material combinations; reconstructed
+actions are checked against the full operator.
+
+The optional **reciprocal-metric support** selects a different Galerkin pencil.
+A metric ball can be closed under rotations that fail on a rectangle. Its sector
+control is the unrestricted problem on the same support. A passing projected
+residual does not prove convergence to the rectangular problem or the continuum;
+resolution and material-sampling convergence remain separate checks.
+
+The public metric-support workflow currently requires f64 complex arithmetic,
+geometry-sampled material and supplied path order. PT, star reuse and coarse
+starts on that support are rejected combinations. Choosing raw material sampling
+also changes the discretization: it cannot silently repair a smoother that
+breaks the desired tensor covariance.
+
+## Continuation and the later research tracks
+
+The implementation also includes snapshot enrichment across geometries,
+projected geometry-response solves, symmetry selection rules for those responses,
+coarse-grid initialization, precision experiments, bounded sector workers and
+parameter-chain scheduling. These have Rust research APIs and executable
+experiments; they are not all high-level browser policies.
+
+Their cost includes preparation and failed work. Response solves can create a
+better initial field while increasing total operator work. Coarse starts solve
+and lift a smaller problem, then extract rank in the fine mass metric. The public
+coarse policy initializes only the first executed point and preserves the fine
+operator and preconditioner. Precision experiments must pass fresh f64 physical
+certificates. Parallel chains can lose continuation information and cache hits.
+
+Each mechanism is compared against its own fixed control. Measured gains from
+separate experiments are not multiplied. PT with reuse and PT with sectors have
+explicit interaction experiments; several correct sector combinations regress.
+
+## Configuring an experiment
+
+The [Workbench](/workbench), native command and Python interface share the public
+configuration contract. These blocks illustrate an optional PT experiment for
+an otherwise complete, compatible calculation:
+
+```toml
+[eigensolver]
+precision = "f64"
+tolerance = 1e-14
+max_iterations = 500
+
+[bands.symmetry]
+arithmetic = "pt_real"
+k_reuse = "off"
+k_traversal = "given"
+```
+
+Begin with a matching `spatial_complex` control. To test sectors, select a
+qualified plane group and sector policy separately. To test a coarse start, add
+an explicit coarse resolution and seed-field budget. Keep the fine grid,
+material, bands, tolerances and output contract fixed. Configuration validation
+and runtime qualification are both part of eligibility.
+
+The [replacement notes and benchmark record](/symmetry-changelog) explain the
+current positive results, regressions, timing exclusions and implementation
+boundaries. No reported FFT element count or modeled payload is a measurement
+of physical DRAM bandwidth or energy.
+
+<References>
+  <Reference id={1}>H. Wondratschek, <a href="https://www.iucr.org/what-we-do/education/pamphlets/matrices-mappings-and-crystallographic-symmetry">Matrices, mappings and crystallographic symmetry</a>, IUCr teaching pamphlet.</Reference>
+  <Reference id={2}>J. Fang, X. Gao and A. Zhou, <a href="https://arxiv.org/abs/1207.1854v2">A Symmetry-based Decomposition Approach to Eigenvalue Problems: Formulation, Discretization, and Implementation</a> (2012). A general decomposition reference; its discretizations and measured applications differ from Blaze.</Reference>
+  <Reference id={3}>MIT Photonic Bands, <a href="https://mpb.readthedocs.io/en/latest/Installation/">Installation documentation</a>, inversion-symmetry configuration.</Reference>
+</References>

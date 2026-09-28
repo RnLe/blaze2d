@@ -1,0 +1,167 @@
+---
+nav:
+  group: Project
+  order: 1
+title: Symmetry replacement notes
+description: What changed in Blaze's symmetry solver, what validation corrected, and where the measured reductions help or regress.
+---
+
+# Symmetry replacement notes
+
+Blaze's symmetry redesign replaces group-name heuristics and independent
+full-grid sector experiments with exact affine actions and qualification of the
+finite Maxwell pencil. This page records the replacement, including unsuccessful
+optimizations. The [Symmetries theory page](/symmetries) develops the mathematics;
+the [Roadmap](/roadmap#symmetries) places the module in the wider project.
+
+## Starting point
+
+The pinned starting revision is `f4730cc4f119c6680c568bb5e998f86c3b0b19ad`.
+The older projector implementation had already been removed from production.
+Its archived code combined array reflections, parity projectors and independent
+sector solves. Projected vectors still occupied the full FFT grid, while each
+sector duplicated initialization, guards and workspaces. The surviving band
+driver used continuation and a closing-Γ shortcut, without general qualified
+k-star reuse.
+
+The problem was therefore broader than adding more group labels. A valid
+continuum operation may fail on a sampled material, smoothed tensor or finite
+Fourier support. A valid projector may save storage without reducing FFT work.
+Several smaller solves can cost more than one unrestricted solve.
+
+## What changed
+
+| Area | Replacement |
+|---|---|
+| Coordinates | Explicit direct/reciprocal conventions; the hexagonal K corner is `(2/3, 1/3)` for Blaze's 60-degree direct basis |
+| Crystal actions | Integer lattice automorphisms, rational translations and origins, exact closure and lattice carries for all 17 plane groups |
+| Bloch fields | Reciprocal folding and translation phases; axial TE reflection signs; explicit unitary and antiunitary actions |
+| Eligibility | Separate metric, material/tensor, grid, support and operator qualification |
+| Reuse | Identical-request reuse, qualified unitary/time-reversal stars, optional traversal and restored output order |
+| Seeds | Lossless identity-aware caches; rank extraction and Ritz preparation in the target mass metric |
+| Band coverage | Conservative references, adaptive sector occupancy and guards, cluster checks, complete partners and one Γ-kernel owner |
+| PT | Qualified real Fourier coordinates in f64, with real vector/Gram/Ritz and direct TM/TE kernels |
+| Reduced work | Orbit storage distinguished from genuine reduced mirror kernels and their transform dimensions |
+| Galerkin support | Explicit reciprocal-metric support with its own unrestricted control, convergence and coverage checks |
+| Research tracks | Geometry enrichment/response, response selection rules, coarse starts, precision, owned workers, bounded sweep scheduling and portable/WASM execution |
+
+These are implementation changes and required failure controls. The table does
+not assert that every listed mistake occurred in the pinned baseline.
+The K correction changes the physical path, so it receives a corrected baseline
+and is never counted as an optimization speedup.
+
+## Results and their scope
+
+The replacement measurements use frozen executables and inputs, randomized
+paired runs, independent Linux raw and Windows QPC clocks, and numerical checks
+on every execution. Profiles run separately. The desktop analysis retains whole
+pairs using host-load measurements alone, requires at least 12 of 20 measured
+pairs, and shows the unfiltered result as a sensitivity check. A numerical
+failure cannot be removed by the timing filter.
+The times cover each benchmark's declared internal solver or interface boundary;
+separate process windows provide clock and load checks. Browser loading time is
+outside these comparisons.
+
+The ratios below are **reference time / candidate time**. Values above one mean
+a faster candidate. They describe specific experiments on an i9-13900K desktop
+under WSL2, not a general performance guarantee. The
+[machine-readable benchmark record](/data/symmetry-benchmarks.json) carries the
+comparison identities, intervals, both timing estimates, memory measurements
+and excluded results.
+All 263 declared comparisons are addressed: 214 have usable timing estimates,
+13 fail accuracy or requested-path checks, nine retain excluded timing, and
+27 are diagnostic-only profiled comparisons. One of the failed comparisons is
+also instrumented; none of the instrumented runs supplies a primary speed claim.
+
+| Fixed workload and change | Time ratio | What explains or limits it |
+|---|---:|---|
+| 65², 24-band TE path: complex → PT, strict tolerance | 1.80× | Iterations 312 → 309; median RSS 83.6 → 38.9 MiB. Most of the gain comes from cheaper representation and algebra |
+| Eight equivalent points, 31² TE: unrestricted → PT plus star reuse | 7.74× | Seven solves are reconstructed; isolated gains do not multiply |
+| Eight equivalent points, 31² TM: unrestricted → PT plus star reuse | 4.24× | The same solve elimination has a different payoff for TM |
+| Γ, 65², 24-band TE: unrestricted → PT plus sectors | 0.82× | About 23% more time despite lower RSS; PT alone reaches 1.81× on this workload |
+| 65², 16-band TM mirror sweep: response → symmetry-selected response | 1.46× | Skipping forbidden response blocks helps at this scale |
+| 31², 8-band TM radius sweep: copied seed → response predictor | 0.66× | Outer iterations 89 → 101, plus 768 inner response iterations |
+| Γ, 65², 16-band TM: cold → public coarse initializer | 1.13× | Fine iterations 17 → 11; coarse work brings the total to 28; processed FFT elements fall by about 10% |
+| 31², 8-band TE at generic k: f64 → f32 seed and f64 finish | 1.10–1.12× | Two seed budgets pass the final accuracy checks; this is not a pure-f32 result |
+| 65², 16-band TM repeated parameter jobs: given order → routed order | 2.39× | Solves 10 → 5 and iterations 391 → 144, with the same cache capacity and requested output |
+| 31², 8-band TE square sectors: one owned worker → four | 2.19× | Median RSS 11.8 → 29.4 MiB; this controls scheduling, not sectors versus unrestricted solving |
+
+The full matrix also contains regressions and inconclusive differences.
+Projective sectors help some larger glide cases, while several hexagonal TM
+cases regress. Most tested public TE coarse starts are slower, including a
+small PT case that takes about 52% more time. Pure f32 can produce close
+frequencies while failing residual or orthogonality requirements; those cases
+have no accepted speed claim. Dispatch and memory-admission refactors have
+separate controls and show no material runtime regression in these tests.
+Some f64 source controls also fail their fresh residual gate; successful
+candidates in those comparisons establish a convergence difference, not a
+timing gain. Accurate output obtained through fallback is not credited as a
+successful execution of an explicitly requested optimization.
+
+These findings support selective, explicitly qualified options. They do not
+justify enabling every reduction together. An iteration on a coarse grid is
+not equal in cost to one on a fine grid. RSS measures resident process memory;
+FFT element counts and modeled payloads do not measure DRAM bandwidth or energy.
+
+The corrected support-convergence study also reproduces exactly. All 184
+uninstrumented conditions pass their projected solver checks, but only 33 meet
+the separate approximation target against the full rectangle, and all 33 are
+TM. Smaller support changes the finite pencil; it is not automatically an
+accurate replacement or a symmetry speedup.
+
+## Corrections retained in the record
+
+**Degenerate subspaces.** The first metric-support comparison guarded clusters
+only in the reference spectrum. In 41 records it cut a candidate cluster. The
+corrected comparison closes the prefix in both spectra. Original records and
+their replacements remain identifiable.
+
+**Invalid memory experiment.** An initial workspace-admission comparison used
+identical baseline and candidate executables. That experiment is invalid.
+Separately isolated builds with distinct verified hashes replace it; its
+original measurements are preserved as an erratum.
+
+**PT-sector leakage.** A warm TE return amplified roundoff beyond the existing
+leakage limit. Final sector projection before coordinate Ritz refinement fixes
+the path and records the correction. The acceptance tolerance was unchanged.
+On the portable backend, a failed PT continuation can fall back to certified
+spatial arithmetic, with discarded work included in the total.
+
+**Profiling semantics.** Nested inclusive times cannot be added into a cost
+breakdown. The profiler now distinguishes inclusive/exclusive timing and work
+counters. Frozen trial-matrix tests and the actual shared iteration engine are
+separate experiments. Instrumented timings do not become unprofiled speed claims.
+
+**Contended benchmarks and clocks.** Earlier measurements overlapped other
+workloads and are provisional. During remeasurement, the WSL adjusted timer was
+found to run about 1.1 times the agreeing Linux raw and Windows QPC clocks. The
+new evidence keeps raw samples, independent clock witnesses and a separate
+normalization. Timing exclusions preserve correctness evidence and remain
+visible; a contaminated or numerically failed experiment is not reported as a
+win.
+
+## Supported boundaries
+
+The rectangular f64 workflow supports qualified reuse, traversal, seeds,
+ordinary/projective sectors, partner reconstruction, Fourier/PT coordinates,
+selected orbit/reduced-mirror paths and an optional first-point coarse start.
+Composition still depends on the material, finite support and representation.
+An unsupported real sector keeps complex coordinates where the workflow permits
+it; invalid configuration combinations produce an error.
+
+The public reciprocal-metric support currently requires f64 complex arithmetic,
+geometry sampling and supplied path order. PT, star reuse and coarse starts on
+that separate pencil are not implemented combinations. Cell-corner spatial
+sampling is supported; unsupported cell-centered action plans are rejected.
+No GPU backend or general magnetic corepresentation implementation is claimed.
+
+Later research mechanisms have Rust APIs and frozen experiments. Their presence
+does not imply automatic high-level scheduling in the browser or Python.
+Native/portable tests, actual WASM execution, Python/CLI checks and three-browser
+checks cover the shared public workflows. Legacy parent/candidate comparisons
+also check full numerical outputs. Independent physical audits distinguish
+missing material-preview information from an actually verified field.
+
+The implementation and experiment ledger is maintained in
+`benchmarks/symmetry/implementation-status.md`; the repository's Markdown
+replacement record is `benchmarks/symmetry/replacement-changelog.md`.

@@ -39,8 +39,8 @@ while retaining Blaze's emphasis on sweeps and operator data.<Citation id={1} />
 
 # Stage 1: Research foundation
 
-Establish a reliable research core.
-Symmetries and configuration warm starts are the next solver features.
+Establish a reliable research core. Exact symmetry workflows and their reference
+controls are implemented; geometry continuation remains an experimental policy.
 
 <section className="roadmap-module" data-module="core">
 <div className="roadmap-module-heading">
@@ -66,10 +66,12 @@ provide the baseline for further work.
 <ModuleStatusTag module="symmetries" />
 </div>
 
-Start with rotations and reflections that preserve the sampled crystal.
-Equivalent wavevectors can then share a solve. Symmetry sectors and real-valued
-representations offer further reductions where the material and discretization
-allow them.
+Exact affine actions qualify the sampled material, tensor and finite Maxwell
+pencil before reuse or reduction. Blaze implements equivalent-wavevector reuse,
+ordinary/projective sectors, qualified PT real coordinates and selected reduced
+kernels. Read the [Symmetries theory](/symmetries) and
+[replacement notes with benchmarks](/symmetry-changelog) for the supported
+combinations, measured gains and retained regressions.
 
 <ModuleBanner module="symmetries" />
 <Motivation module="symmetries" />
@@ -83,12 +85,13 @@ allow them.
 <ModuleStatusTag module="warm" />
 </div>
 
-Independent geometry jobs currently start afresh in Blaze. MPB's standard run also
-resets fields, although explicit reuse is possible.<Citation id={2} /> Blaze already
-reuses fields along k-paths and accepts native warm-start inputs. The planned step
-is automatic reuse between configurations: correct the old subspace for the new
-material and check its residual. Published methods for tracking Maxwell modes as
-geometry changes provide a starting point.<Citation id={3} />
+Blaze now has Rust research APIs for snapshot enrichment, geometry-response
+predictors, coarse starts and bounded parameter-chain scheduling. They prepare
+seeds in the target mass metric and check the resulting fields. A general
+high-level automatic policy remains experimental: extra predictor work or lost
+cache hits can outweigh fewer final iterations. MPB's standard run resets fields,
+although explicit reuse is possible.<Citation id={2} /> Published methods for
+tracking Maxwell modes as geometry changes provide related context.<Citation id={3} />
 
 <ModuleBanner module="warm" />
 <Motivation module="warm">Warm starts already matter within a single crystal's k-space workflow; published Bloch-Maxwell work demonstrates substantial iteration reductions.<Citation id={4} /> Extending reuse to nearby geometries offers significant speed-up potential, to be measured at equal accuracy across a full sweep.</Motivation>

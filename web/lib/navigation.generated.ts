@@ -42,6 +42,18 @@ export const navigation: NavigationItem[] = [
     "order": 1
   },
   {
+    "route": "/symmetries",
+    "title": "Symmetries",
+    "group": "Theory",
+    "order": 1
+  },
+  {
+    "route": "/symmetry-changelog",
+    "title": "Symmetry replacement notes",
+    "group": "Project",
+    "order": 1
+  },
+  {
     "route": "/thesis",
     "title": "Master’s Thesis",
     "group": "Research",

@@ -16,12 +16,12 @@ export const modules = {
   },
   symmetries: {
     title: 'Symmetries', anchor: 'symmetries',
-    description: 'Reuse equivalent wavevectors and reduce modes.', status: 'In Development',
+    description: 'Qualified reuse, sectors and real or reduced coordinates.', status: 'Done',
     motivation: 'Avoid solving equivalent problems and reduce eligible mode spaces. Using the crystal’s symmetry can save computation before adding new hardware or dimensions.',
   },
   warm: {
     title: 'Configuration warm starts', anchor: 'configuration-warm-starts',
-    description: 'Reuse a solution when the geometry changes.', status: 'Planned',
+    description: 'Measure geometry predictors and bounded continuation policies.', status: 'In Development',
     motivation: '',
   },
   evidence: {
