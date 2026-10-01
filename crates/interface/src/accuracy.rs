@@ -21,11 +21,12 @@ pub fn assess(result: &mut ResultRecord, policy: Option<&BandAccuracy>) -> Optio
         }
     };
     if result.metadata["converged"] != true {
-        fail(
-            None,
-            None,
-            "eigenvalue-change stopping did not converge at every requested point",
-        );
+        let reason = if result.metadata["stopping_criterion"] == "relative_residual" {
+            "residual stopping did not converge at every requested point"
+        } else {
+            "eigenvalue-change stopping did not converge at every requested point"
+        };
+        fail(None, None, reason);
     }
     let frequencies = result.arrays.get("frequencies");
     let relative = result.arrays.get("residuals");

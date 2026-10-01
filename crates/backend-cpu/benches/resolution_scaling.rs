@@ -58,6 +58,7 @@ fn create_job(resolution: usize, polarization: Polarization) -> BandStructureJob
             block_size: 0, // Auto
             record_diagnostics: false,
             k_index: None,
+            ..Default::default()
         },
         dielectric: DielectricOptions::default(),
     }

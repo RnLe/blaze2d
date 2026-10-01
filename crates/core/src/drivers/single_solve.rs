@@ -62,7 +62,7 @@ use serde::{Deserialize, Serialize};
 use crate::backend::SpectralBackend;
 use crate::diagnostics::{ConvergenceRun, ConvergenceStudy};
 use crate::eigensolver::{
-    DiagnosticResult, Eigensolver, EigensolverConfig, EigensolverResult, ProgressInfo,
+    DiagnosticResult, Eigensolver, EigensolverConfig, EigensolverResult, HistoryRule, ProgressInfo, StoppingRule,
 };
 use crate::field::Field2D;
 use crate::operators::LinearOperator;
@@ -114,6 +114,18 @@ pub struct SingleSolveJob {
     /// Optional label for this solve (used in diagnostics).
     #[serde(skip)]
     pub label: Option<String>,
+    /// Stopping rule; `tolerance` applies to eigenvalue changes, `residual_tolerance` to residuals.
+    #[serde(default)]
+    pub stopping: StoppingRule,
+    #[serde(default = "default_residual_tolerance")]
+    pub residual_tolerance: f64,
+    /// Search directions retained between iterations.
+    #[serde(default)]
+    pub history: HistoryRule,
+}
+
+fn default_residual_tolerance() -> f64 {
+    1e-7
 }
 
 fn default_power_iterations() -> usize {
@@ -131,6 +143,9 @@ impl Default for SingleSolveJob {
             estimate_condition_number: false,
             power_iterations: 15,
             label: None,
+            stopping: StoppingRule::EigenvalueChange,
+            residual_tolerance: default_residual_tolerance(),
+            history: HistoryRule::Ritz,
         }
     }
 }
@@ -195,6 +210,10 @@ impl SingleSolveJob {
             block_size: self.block_size,
             record_diagnostics: self.record_diagnostics,
             k_index: None,
+            stopping: self.stopping,
+            residual_tol: self.residual_tolerance,
+            history: self.history,
+            trace: false,
         }
     }
 }

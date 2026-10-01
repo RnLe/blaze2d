@@ -495,6 +495,7 @@ fn test_eigensolver_spd_diagonal_convergence() {
         block_size: 0, // Auto
         record_diagnostics: false,
         k_index: None,
+        ..Default::default()
     };
 
     let mut solver = Eigensolver::new(&mut operator, config, None, None);
@@ -547,6 +548,7 @@ fn test_eigensolver_spd_diagonal_convergence_with_diagnostics() {
         block_size: 0,
         record_diagnostics: true,
         k_index: None,
+        ..Default::default()
     };
 
     let mut solver = Eigensolver::new(&mut operator, config, None, None);
@@ -619,6 +621,7 @@ fn test_eigensolver_spd_high_condition_number() {
         block_size: 0,
         record_diagnostics: false,
         k_index: None,
+        ..Default::default()
     };
 
     let mut solver = Eigensolver::new(&mut operator, config, None, None);

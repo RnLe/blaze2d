@@ -58,6 +58,7 @@ use crate::backend::SpectralBackend;
 
 pub mod fft_preconditioner;
 pub mod fourier_diagonal;
+pub mod spec;
 pub mod transverse_projection;
 
 // Re-export commonly used types
@@ -79,6 +80,7 @@ pub use fourier_diagonal::{
     compute_shift_quality_score,
 };
 pub use transverse_projection::TransverseProjectionPreconditioner;
+pub use spec::{PreconditionerInfo, PreconditionerKind, PreconditionerSpec, ShiftRule};
 
 // ============================================================================
 // Core Preconditioner Trait

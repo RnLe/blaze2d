@@ -10,7 +10,6 @@ use super::bandstructure::{
 use crate::{
     backend::SpectralBackend,
     band_tracking::track_bands_with_frequencies,
-    diagnostics::PreconditionerType,
     dielectric::Dielectric2D,
     eigensolver::{SubspaceHistory, iteration_total},
     field::Field2D,
@@ -155,9 +154,7 @@ pub fn validate_options(options: &RunOptions, selected: MetricBallOptions) -> Re
     {
         return Err("metric support uses its own serial coefficient workspace and full embedding FFT kernel".into());
     }
-    if options.precond_type == PreconditionerType::Multigrid {
-        return Err("multigrid preconditioning is not implemented".into());
-    }
+    options.preconditioner.validate(None)?;
     Ok(())
 }
 
@@ -295,6 +292,8 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
     let geometry_parameters: Vec<_> = std::iter::once(job.geom.eps_bg).chain(job.geom.atoms.iter()
         .flat_map(|a| [a.pos[0],a.pos[1],a.radius,a.eps_inside])).collect();
     for (index, &k) in job.k_path.iter().enumerate() {
+        let point_start = crate::timing::Timer::start();
+        let work_start = crate::work::snapshot();
         let mut ledger = ReuseReport { requested: options.symmetry.k_reuse, ..Default::default() };
         let mut point_continuation = continuation.as_deref_mut().filter(|s| !s.first_point_only || index == 0);
         if point_continuation.is_some() { ledger.continuation = Some(Default::default()); }
@@ -357,6 +356,7 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
                 }
             }
         }
+        let reused = spectrum.is_some();
         let geometry_seed = if spectrum.is_none() { point_continuation.as_deref_mut().and_then(|state| {
             match state.cache.prepare_projected(&mut theta,&support,job.eigensolver.n_bands,
                 options.symmetry.relative_rank_tolerance,budget.max_estimated_payload_bytes) {
@@ -393,7 +393,7 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
             })
         } else { None };
         let warm = rank_seed.as_ref().map(|s|s.fields.as_slice()).or(warm);
-        let mut preconditioner = build_preconditioner(&theta, &options, job.pol, previous_values.as_deref());
+        let (mut preconditioner, precond_info) = theta.build_preconditioner(&options.preconditioner, previous_values.as_deref());
         if spectrum.is_none() && options.symmetry.sectors != SectorPolicy::Off {
             let sector_start = iteration_total();
             let sector = (|| -> Result<_, String> {
@@ -653,6 +653,9 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
             b_orthogonality_defect: certificate.b_orthogonality_defect,
             eigenvectors: options.retain_eigenvectors.then(|| spectrum.fields.clone()),
             is_gamma: spectrum.report.analytic_kernel,
+            elapsed_seconds: point_start.elapsed_secs(),
+            work: crate::work::snapshot().since(work_start),
+            preconditioner: (!reused).then_some(precond_info),
         });
         if !spectrum.report.accepted {
             return Err(fail(
@@ -686,35 +689,3 @@ fn reorder<T>(values: &mut Vec<T>, permutation: &[usize]) {
     }));
 }
 
-fn build_preconditioner<'a, B: SpectralBackend + 'a>(
-    theta: &ThetaOperator<B>,
-    options: &RunOptions,
-    pol: Polarization,
-    previous: Option<&[f64]>,
-) -> Option<Box<dyn OperatorPreconditioner<B> + 'a>> {
-    let previous = previous.filter(|_| options.use_band_window_shift);
-    match options.precond_type.resolve_for_polarization(pol) {
-        PreconditionerType::None => None,
-        PreconditionerType::FourierDiagonalKernelCompensated => Some(match previous {
-            Some(v) => Box::new(theta.build_homogeneous_preconditioner_band_window(
-                v,
-                Some(options.band_window_blend),
-                Some(options.band_window_scale),
-            )),
-            None => Box::new(theta.build_homogeneous_preconditioner_adaptive()),
-        }),
-        PreconditionerType::TransverseProjection => Some(match previous {
-            Some(v) => Box::new(
-                theta.build_transverse_projection_preconditioner_band_window(
-                    v,
-                    Some(options.band_window_blend),
-                    Some(options.band_window_scale),
-                ),
-            ),
-            None => Box::new(theta.build_transverse_projection_preconditioner_adaptive()),
-        }),
-        PreconditionerType::Auto | PreconditionerType::Multigrid => {
-            unreachable!("validated and resolved preconditioner")
-        }
-    }
-}

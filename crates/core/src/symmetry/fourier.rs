@@ -242,11 +242,13 @@ impl<B:SpectralBackend+Clone> OperatorPreconditioner<CoordinateBackend> for Four
             }
         }
         if self.direct_fourier {
+            crate::profile_scope!("preconditioner.pt_fourier");
             self.conversion.unpack_fourier(v.as_slice(),&mut self.scratch);
             if self.inner.apply_fourier(&self.conversion.backend,&mut self.scratch) {
                 self.conversion.pack_fourier(&self.scratch,v.as_mut_slice(),1.0,true);return;
             }
         }
+        crate::profile_scope!("preconditioner.pt_spatial_fallback");
         self.conversion.spatial(v.as_slice(),&mut self.scratch);self.inner.apply(&self.conversion.backend,&mut self.scratch);self.conversion.fourier(&mut self.scratch,v.as_mut_slice(),true);
     }
 }
@@ -282,7 +284,7 @@ pub(crate) fn solve_prepared<B:SpectralBackend+Clone>(operator:&mut ThetaOperato
     });
     let direct_tm=matches!(arithmetic,Arithmetic::PtRealTm|Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors) && operator.polarization()==crate::polarization::Polarization::TM;
     let direct_te=matches!(arithmetic,Arithmetic::PtRealTe|Arithmetic::PtRealReferenceVectors) && operator.polarization()==crate::polarization::Polarization::TE;
-    let mut preconditioner=preconditioner.map(|p|FourierPreconditioner{inner:p,conversion:conversion.clone(),scratch:operator.alloc_field(),direct_diagonal:direct_tm||direct_te,direct_fourier:direct_te});
+    let mut preconditioner=preconditioner.map(|p|FourierPreconditioner{inner:p,conversion:conversion.clone(),scratch:operator.alloc_field(),direct_diagonal:direct_tm||direct_te,direct_fourier:direct_tm||direct_te});
     let input=operator.alloc_field();let output=operator.alloc_field();
     let mut op=FourierOperator{full:operator,backend:backend.clone(),conversion:conversion.clone(),input,output,direct_tm,direct_te,sector,correction_rounds:0,projected_rounds:0};
     let (mut eigenvalues,mut coordinates,iterations,converged)=if complete {

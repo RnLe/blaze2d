@@ -10,7 +10,19 @@ use blaze2d_core::{
     operator_data::OperatorDataConfig,
     polarization::Polarization as CorePolarization,
 };
+use blaze2d_core::preconditioners::{PreconditionerKind, PreconditionerSpec, ShiftRule};
 use crate::{PlannedJob, Polarization, Quantity, Smoothing, KCoordinates, fractional_to_cartesian};
+
+pub(crate) fn preconditioner_spec(p: &crate::Preconditioner) -> PreconditionerSpec {
+    PreconditionerSpec {
+        kind: match p.kind { crate::PreconditionerKind::Auto => PreconditionerKind::Auto, crate::PreconditionerKind::None => PreconditionerKind::None,
+            crate::PreconditionerKind::Diagonal => PreconditionerKind::Diagonal, crate::PreconditionerKind::Transverse => PreconditionerKind::Transverse },
+        shift: match p.shift { crate::PreconditionerShift::Legacy => ShiftRule::Legacy, crate::PreconditionerShift::BandWindow => ShiftRule::BandWindow,
+            crate::PreconditionerShift::Fixed => ShiftRule::Fixed },
+        shift_fraction: p.shift_fraction, shift_value: p.shift_value,
+        band_window_blend: p.band_window_blend, band_window_scale: p.band_window_scale, tm_mass_fraction: p.tm_mass_fraction,
+    }
+}
 
 impl PlannedJob {
     pub fn grid(&self) -> Grid2D {
@@ -49,14 +61,34 @@ impl PlannedJob {
     }
 
     pub fn eigensolver(&self) -> EigensolverConfig {
+        use blaze2d_core::eigensolver::{HistoryRule, StoppingRule};
         let e = &self.resolved.config.eigensolver;
         EigensolverConfig {
             n_bands: self.resolved.solved_bands,
             max_iter: e.max_iterations.unwrap(),
             tol: e.tolerance.unwrap(),
             block_size: e.block_size,
+            stopping: match e.stopping { crate::Stopping::EigenvalueChange => StoppingRule::EigenvalueChange, crate::Stopping::Residual => StoppingRule::Residual },
+            residual_tol: e.residual_tolerance.unwrap_or(if e.precision == crate::Precision::F64 { 1e-7 } else { 1e-5 }),
+            history: match e.history { crate::History::Ritz => HistoryRule::Ritz, crate::History::Conjugate => HistoryRule::Conjugate, crate::History::None => HistoryRule::None },
             ..Default::default()
         }
+    }
+
+    pub fn preconditioner(&self) -> PreconditionerSpec {
+        preconditioner_spec(&self.resolved.config.eigensolver.preconditioner)
+    }
+
+    /// Driver options for a band job, as the executor resolves them before solving.
+    #[doc(hidden)]
+    pub fn run_options(&self, backend_name: &str) -> Option<blaze2d_core::drivers::bandstructure::RunOptions> {
+        let b = self.resolved.config.bands.as_ref()?;
+        let (effective_symmetry, _) = crate::policy::resolve(self, backend_name);
+        let mut effective = b.clone();
+        effective.symmetry = effective_symmetry;
+        let mut options = effective.run_options(self.resolved.config.results.eigenvectors);
+        options.preconditioner = self.preconditioner();
+        Some(options)
     }
 
     pub fn polarization(&self) -> CorePolarization {

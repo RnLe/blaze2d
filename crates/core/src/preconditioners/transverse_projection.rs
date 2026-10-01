@@ -16,13 +16,13 @@
 //! 3. IFFT both components to real space
 //! 4. **Multiply by ε(r)** (not ε⁻¹!) - this inverts the 1/ε in the operator
 //! 5. FFT both components back to k-space
-//! 6. **Invert second curl**: ĥ = -i(k+G)·Ŷ / |k+G|² (scalar)
+//! 6. **Invert second curl**: ĥ = i(k+G)·Ŷ / |k+G|² (scalar)
 //! 7. IFFT to get final result
 //!
 //! # Hermiticity
 //!
-//! The preconditioner is Hermitian (self-adjoint), which is essential for
-//! conjugate-gradient convergence.
+//! The result D Σ_c k_c (F ε F⁻¹) k_c D, with D = 1/(|k+G|²+σ), is Hermitian
+//! positive semidefinite like the operator it approximates.
 
 use num_complex::Complex;
 
@@ -226,7 +226,7 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
 
                 let div = Complex::new(<B::Real as num_traits::Zero>::zero(), kx) * g_x
                     + Complex::new(<B::Real as num_traits::Zero>::zero(), ky) * g_y;
-                output_fourier[idx] = -div * inv_k_sq;
+                output_fourier[idx] = div * inv_k_sq;
             }
         }
 

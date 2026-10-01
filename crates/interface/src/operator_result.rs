@@ -98,8 +98,12 @@ pub fn operator_sample(job: &PlannedJob, sample_index: usize, result: OperatorDa
         "k_point": d.k0, "k_basis": "cartesian_angular", "registry": d.registry,
         "solved_band_indices": (0..n).collect::<Vec<_>>(), "retained_band_indices": retained,
         "remote_band_indices": remote, "iterations": d.n_iterations, "converged": d.converged,
-        "stopping_criterion": "relative_eigenvalue_change",
+        "stopping_criterion": match job.resolved.config.eigensolver.stopping {
+            crate::Stopping::EigenvalueChange => "relative_eigenvalue_change",
+            crate::Stopping::Residual => "relative_residual",
+        },
         "eigenvalue_tolerance": job.resolved.config.eigensolver.tolerance,
+        "residual_tolerance": job.resolved.config.eigensolver.residual_tolerance,
         "certification": {"source": "fresh_rayleigh_ritz", "max_residual":max_residual,
             "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
             "absolute_residual_convention":"norm(Au-lambda*Bu)/norm(u)",

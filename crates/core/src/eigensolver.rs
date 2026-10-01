@@ -176,6 +176,51 @@ pub struct EigensolverConfig {
     /// Optional k-point index for logging (set by bandstructure code).
     #[serde(skip)]
     pub k_index: Option<usize>,
+    /// Stopping rule; `Residual` uses the fresh-certificate relative residual.
+    pub stopping: StoppingRule,
+    /// Relative residual target for [`StoppingRule::Residual`].
+    pub residual_tol: f64,
+    /// Search directions retained between iterations.
+    pub history: HistoryRule,
+    /// Record per-iteration residuals and Ritz values in the result.
+    pub trace: bool,
+}
+
+/// How the eigensolver decides that the requested bands have converged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoppingRule {
+    /// Relative Ritz value change below `tol`.
+    #[default]
+    EigenvalueChange,
+    /// ‖Ax−λBx‖/(‖Ax‖+|λ|‖Bx‖) below `residual_tol` for every requested band.
+    Residual,
+}
+
+/// The third block of the LOBPCG search subspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryRule {
+    /// The next block of Ritz vectors (block-Davidson-like).
+    #[default]
+    Ritz,
+    /// Knyazev's implicit conjugate directions: the P and W components of the new Ritz vectors.
+    Conjugate,
+    /// No history block (preconditioned steepest descent).
+    None,
+}
+
+/// One recorded iteration of a traced solve.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IterationTrace {
+    /// Relative residuals of the requested positions before this iteration's update.
+    pub residuals: Vec<f64>,
+    /// Ritz values of the requested positions before this iteration's update.
+    pub eigenvalues: Vec<f64>,
+    /// Columns that received preconditioned corrections.
+    pub active: usize,
+    /// Rank of the orthonormalized search subspace (0 on the converging check).
+    pub rank: usize,
 }
 
 /// Slack to add to block size beyond n_bands for better convergence.
@@ -202,6 +247,10 @@ impl Default for EigensolverConfig {
             block_size: 0,
             record_diagnostics: false,
             k_index: None,
+            stopping: StoppingRule::EigenvalueChange,
+            residual_tol: 1e-7,
+            history: HistoryRule::Ritz,
+            trace: false,
         }
     }
 }
@@ -421,6 +470,22 @@ impl ConvergenceInfo {
 
         self.all_converged = self.n_converged >= self.band_states.len();
     }
+
+    /// Update convergence info from fresh relative residuals (residual stopping rule).
+    pub fn update_with_residuals(&mut self, relative_residuals: &[f64], tol: f64) {
+        self.max_residual = 0.0;
+        for (i, &res) in relative_residuals.iter().enumerate().take(self.band_states.len()) {
+            self.relative_residuals[i] = res;
+            if res <= tol {
+                self.band_states[i] = BandState::Converged;
+            } else {
+                self.band_states[i] = BandState::Active;
+                self.max_residual = self.max_residual.max(res);
+            }
+        }
+        self.n_converged = self.band_states.iter().filter(|&&s| s != BandState::Active).count();
+        self.all_converged = self.n_converged >= self.band_states.len();
+    }
 }
 
 /// Result of the eigensolver.
@@ -434,6 +499,8 @@ pub struct EigensolverResult {
     pub convergence: ConvergenceInfo,
     /// Whether the solver converged within max_iter.
     pub converged: bool,
+    /// Per-iteration record when [`EigensolverConfig::trace`] is set.
+    pub trace: Vec<IterationTrace>,
 }
 
 /// Extended result including convergence diagnostics for analysis.
@@ -492,6 +559,12 @@ where
     /// For soft-locked bands, we skip residual/preconditioning and set P=W=0.
     /// This is numerically more stable than hard locking (deflation).
     soft_locked: Vec<bool>,
+    /// Residual-mode unlock count per position (bounded to avoid lock/unlock cycles).
+    unlocks: Vec<u8>,
+    /// Block position of each W vector; `None` keeps the leading-W layout of Ritz history.
+    w_positions: Option<Vec<usize>>,
+    /// Per-iteration record when tracing.
+    trace: Vec<IterationTrace>,
     /// Current iteration count.
     iteration: usize,
     /// Whether the solver has been initialized.
@@ -527,6 +600,9 @@ where
             eigenvalues: Vec::new(),
             previous_eigenvalues: Vec::new(),
             soft_locked: Vec::new(),
+            unlocks: Vec::new(),
+            w_positions: None,
+            trace: Vec::new(),
             iteration: 0,
             initialized: false,
         }
@@ -638,6 +714,7 @@ where
 
         // Initialize soft_locked to all false (no bands converged yet)
         self.soft_locked = vec![false; self.x_block.len()];
+        self.unlocks = vec![0; self.x_block.len()];
 
         // Compute initial Rayleigh quotients as eigenvalue estimates
         self.eigenvalues = self
@@ -754,9 +831,10 @@ where
 
         let mut residuals: Vec<B::Buffer> = Vec::with_capacity(n);
 
+        let residual_mode = self.config.stopping == StoppingRule::Residual;
         for (i, entry) in self.x_block.iter().enumerate() {
             // Skip expensive computation for soft-locked bands
-            if i < self.soft_locked.len() && self.soft_locked[i] {
+            if !residual_mode && i < self.soft_locked.len() && self.soft_locked[i] {
                 // Return zero residual for soft-locked bands (won't be used)
                 let mut zero = entry.vector.clone();
                 backend.scale(Complex64::ZERO, &mut zero);
@@ -854,6 +932,74 @@ where
         self.previous_eigenvalues = self.eigenvalues.clone();
     }
 
+    /// Relative residuals η = ‖r‖/(‖Ax‖+|λ|‖Bx‖) of every block position,
+    /// matching the fresh certificate. `residuals` must be undeflated.
+    fn relative_residual_norms(&self, residuals: &[B::Buffer]) -> Vec<f64> {
+        let backend = self.operator.backend();
+        let placeholders = self.config.stopping != StoppingRule::Residual;
+        self.x_block.iter().zip(residuals).zip(&self.eigenvalues).enumerate().map(|(i, ((entry, r), &lambda))| {
+            let r_norm = if placeholders && self.soft_locked.get(i).copied().unwrap_or(false) {
+                let mut fresh = entry.applied.clone();
+                backend.axpy(Complex64::new(-lambda, 0.0), &entry.mass, &mut fresh);
+                backend.dot(&fresh, &fresh).re.max(0.0).sqrt()
+            } else {
+                backend.dot(r, r).re.max(0.0).sqrt()
+            };
+            let ax = backend.dot(&entry.applied, &entry.applied).re.max(0.0).sqrt();
+            let bx = backend.dot(&entry.mass, &entry.mass).re.max(0.0).sqrt();
+            let denom = ax + lambda.abs() * bx;
+            if denom > 1e-300 { r_norm / denom } else { r_norm }
+        }).collect()
+    }
+
+    /// Requested positions in the active block (the deflated Γ mode counts as one band).
+    fn required_positions(&self) -> usize {
+        self.config.n_bands.saturating_sub(self.deflation.len().min(self.config.n_bands)).min(self.x_block.len())
+    }
+
+    /// Residual-rule convergence and soft locking. Positions lock at η ≤ τ/2 and
+    /// unlock when a fresh η exceeds τ; after two unlocks a position stays active.
+    fn residual_convergence(&mut self, iter: usize, eta: &[f64], convergence: &mut ConvergenceInfo) -> bool {
+        crate::profile_scope!("eigensolver.convergence");
+        let tol = self.config.residual_tol;
+        convergence.update_with_residuals(eta, tol);
+        if iter == 0 {
+            return false;
+        }
+        let required = self.required_positions().min(eta.len());
+        if eta[..required].iter().all(|&e| e <= tol) {
+            return true;
+        }
+        for i in 0..self.soft_locked.len().min(eta.len()) {
+            if self.soft_locked[i] && eta[i] > tol && self.unlocks[i] < 2 {
+                self.soft_locked[i] = false;
+                self.unlocks[i] += 1;
+            }
+        }
+        let candidates: Vec<usize> = (0..eta.len().min(self.soft_locked.len()))
+            .filter(|&i| !self.soft_locked[i] && self.unlocks[i] < 2 && eta[i] <= 0.5 * tol)
+            .collect();
+        self.soft_lock_bands(&candidates);
+        false
+    }
+
+    fn record_trace(&mut self, eta: &[f64], active: usize, rank: usize) {
+        if !self.config.trace {
+            return;
+        }
+        let required = self.required_positions();
+        self.trace.push(IterationTrace {
+            residuals: eta.iter().take(required).copied().collect(),
+            eigenvalues: self.eigenvalues.iter().take(required).copied().collect(),
+            active,
+            rank,
+        });
+    }
+
+    fn take_trace(&mut self) -> Vec<IterationTrace> {
+        std::mem::take(&mut self.trace)
+    }
+
     // ========================================================================
     // Preconditioning
     // ========================================================================
@@ -885,6 +1031,7 @@ where
         // 2. Apply preconditioner in batch to leverage optimized backends
         if !p_block.is_empty() {
             if let Some(ref mut precond) = self.preconditioner {
+                crate::profile_scope!("preconditioner.apply");
                 crate::profiler::count("preconditioner.columns", p_block.len());
                 precond.batch_apply(backend, &mut p_block);
             }
@@ -1118,7 +1265,16 @@ where
         }
 
         // Add W_k vectors ONLY for active (non-soft-locked) bands
-        if has_w {
+        let mut w_size = w_size;
+        if let (true, Some(positions)) = (has_w, self.w_positions.as_ref()) {
+            w_size = 0;
+            for (w, &position) in self.w_block.iter().zip(positions) {
+                if !self.soft_locked.get(position).copied().unwrap_or(true) {
+                    subspace.push(w.clone());
+                    w_size += 1;
+                }
+            }
+        } else if has_w {
             let mut w_idx = 0;
             for &is_locked in self.soft_locked.iter().take(m) {
                 if !is_locked && w_idx < self.w_block.len() {
@@ -1210,7 +1366,10 @@ where
 
         // Apply SVQB to B-orthonormalize
         crate::profiler::start_timer("svqb");
-        let config = SvqbConfig::default();
+        let config = SvqbConfig {
+            keep_transform: self.config.history == HistoryRule::Conjugate,
+            ..SvqbConfig::default()
+        };
         let mut result = svqb_orthonormalize(
             self.operator.backend(),
             &mut q_block,
@@ -1701,6 +1860,90 @@ where
         }
     }
 
+    /// Update the history block after the Rayleigh–Ritz step.
+    fn update_history(
+        &mut self,
+        q_block: &[B::Buffer],
+        dense_result: &DenseEigenResult,
+        pw_basis: Vec<B::Buffer>,
+        svqb_result: &SvqbResult,
+        x_size: usize,
+    ) {
+        crate::profile_scope!("eigensolver.history");
+        match self.config.history {
+            HistoryRule::Ritz => self.update_history_directions(q_block, dense_result),
+            HistoryRule::None => {
+                self.w_block.clear();
+                self.w_positions = None;
+            }
+            HistoryRule::Conjugate => self.update_conjugate_directions(dense_result, pw_basis, svqb_result, x_size),
+        }
+    }
+
+    /// Knyazev's implicit conjugate directions: W_j = [P, W]·C_PW[:, j], where
+    /// C = T·Y maps the unnormalized search columns to the new Ritz vector j.
+    fn update_conjugate_directions(
+        &mut self,
+        dense_result: &DenseEigenResult,
+        pw_basis: Vec<B::Buffer>,
+        svqb_result: &SvqbResult,
+        x_size: usize,
+    ) {
+        let r = dense_result.dim;
+        let m = self.config.effective_block_size().min(r);
+        let (Some(t), false) = (svqb_result.transform.as_ref(), pw_basis.is_empty() || m == 0) else {
+            self.w_block.clear();
+            self.w_positions = None;
+            return;
+        };
+        let p = svqb_result.input_count;
+        let n_pw = pw_basis.len();
+        debug_assert_eq!(x_size + n_pw, p);
+        let positions: Vec<usize> = (0..m)
+            .filter(|&j| !self.soft_locked.get(j).copied().unwrap_or(false))
+            .collect();
+        let mut coeffs = vec![Complex64::ZERO; n_pw * positions.len()];
+        for (c, &j) in positions.iter().enumerate() {
+            let y = dense_result.eigenvector(j);
+            for row in 0..n_pw {
+                let i = x_size + row;
+                coeffs[row + n_pw * c] = (0..r).map(|k| t[i + p * k] * y[k]).sum();
+            }
+        }
+        self.w_block = self.combine(&pw_basis, &coeffs, positions.len());
+        self.w_positions = Some(positions);
+    }
+
+    /// Column-major combination `out_j = Σ_i basis_i·coeffs[i + r·j]` at accumulation precision.
+    fn combine(&self, basis: &[B::Buffer], coeffs: &[Complex64], count: usize) -> Vec<B::Buffer> {
+        let r = basis.len();
+        if r == 0 || count == 0 {
+            return Vec::new();
+        }
+        #[cfg(feature = "native-linalg")]
+        if !self.operator.backend().prefer_backend_linear_combinations() {
+            let n = basis[0].as_slice().len();
+            let q_mat = Mat::<faer::c64>::from_fn(n, r, |row, col| {
+                let c = basis[col].as_slice()[row];
+                faer::c64::new(c.re.to_accum(), c.im.to_accum())
+            });
+            let c_mat = Mat::<faer::c64>::from_fn(r, count, |row, col| {
+                let c = coeffs[row + r * col];
+                faer::c64::new(c.re, c.im)
+            });
+            let product = &q_mat * &c_mat;
+            return (0..count).map(|j| {
+                let mut out = self.operator.alloc_field();
+                for (row, dst) in out.as_mut_slice().iter_mut().enumerate() {
+                    let c = product.get(row, j);
+                    *dst = cscalar(c.re, c.im);
+                }
+                out
+            }).collect();
+        }
+        self.operator.backend().linear_combinations(basis, coeffs, count)
+    }
+
     // ========================================================================
     // Main Solve Loop
     // ========================================================================
@@ -1762,13 +2005,15 @@ where
         let mut convergence = ConvergenceInfo::new(n_bands);
         let start_time = Timer::start();
         let bloch = self.operator.bloch();
+        let residual_mode = self.config.stopping == StoppingRule::Residual;
+        let mut residual_converged = false;
 
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
             record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
-            crate::profiler::count("search_P.columns", self.w_block.len());
+            crate::profiler::count("search_W.columns", self.w_block.len());
 
             // Track the number of active bands (may shrink due to locking)
             let n_active = self.x_block.len();
@@ -1780,14 +2025,25 @@ where
             // ================================================================
             // Step 1: Compute residuals R_k = A*X_k - B*X_k * Λ_k
             // ================================================================
-            let mut residuals = self.compute_residuals();
+            let mut residuals = {
+                crate::profile_scope!("eigensolver.residuals");
+                self.compute_residuals()
+            };
+            let eta = if residual_mode || self.config.trace {
+                self.relative_residual_norms(&residuals)
+            } else {
+                Vec::new()
+            };
 
             // ================================================================
             // Step 2: Apply deflation to residuals R_k ← P_Y R_k
             // This removes components along locked eigenvectors.
             // ================================================================
-            self.apply_deflation(&mut residuals);
-            self.apply_soft_deflation(&mut residuals);
+            {
+                crate::profile_scope!("eigensolver.deflation");
+                self.apply_deflation(&mut residuals);
+                self.apply_soft_deflation(&mut residuals);
+            }
 
             // ================================================================
             // Step 3: Compute B-norms of deflated residuals (LAZY)
@@ -1796,8 +2052,10 @@ where
             // we only compute them when needed for logging/diagnostics.
             // This saves n_active mass applications on ~90% of iterations.
             // ================================================================
-            let needs_residual_norms = should_log_iteration(iter);
-            let (residual_b_norms, relative_residuals) = if needs_residual_norms {
+            let needs_residual_norms = should_log_iteration(iter) && !residual_mode;
+            let (residual_b_norms, relative_residuals) = if residual_mode {
+                (vec![0.0; n_active], eta.clone())
+            } else if needs_residual_norms {
                 let norms = self.compute_residual_b_norms(&residuals);
                 let rel = self.compute_relative_residuals(&norms);
                 (norms, rel)
@@ -1813,11 +2071,17 @@ where
             // ================================================================
             let n_check = n_active.min(relative_residuals.len());
 
+            if residual_mode && self.residual_convergence(iter, &eta, &mut convergence) {
+                residual_converged = true;
+                self.record_trace(&eta, 0, 0);
+                break;
+            }
+
             // Only check convergence starting from iteration 2
             // iter 0: initial eigenvalues from Rayleigh quotients
             // iter 1: first Ritz update - store these as baseline
             // iter 2+: compare to previous iteration
-            if iter >= 2 {
+            if !residual_mode && iter >= 2 {
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 convergence.update_with_eigenvalue_changes(
                     &relative_residuals[..n_check],
@@ -1831,7 +2095,7 @@ where
             // Also count bands that converge based on eigenvalue change criterion
             let n_soft_locked = self.soft_locked_count();
             let total_converged = self.converged_band_count(&convergence.band_states);
-            if total_converged >= n_bands_requested {
+            if !residual_mode && total_converged >= n_bands_requested {
                 // All requested bands have converged
                 let elapsed = start_time.elapsed_secs();
                 let max_ev_change = convergence.max_eigenvalue_change;
@@ -1860,12 +2124,14 @@ where
                     n_soft_locked
                 );
 
+                self.record_trace(&eta, 0, 0);
                 return EigensolverResult {
                     eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
                         .to_vec(),
                     iterations: iter + 1,
                     convergence,
                     converged: true,
+                    trace: self.take_trace(),
                 };
             }
 
@@ -1875,7 +2141,7 @@ where
             // Uses eigenvalue-based convergence criterion
             // Only try locking from iteration 2 onward (need eigenvalue history)
             // ================================================================
-            if iter >= 2 {
+            if !residual_mode && iter >= 2 {
                 // Recompute eigenvalue changes for soft locking decision
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
@@ -1919,6 +2185,7 @@ where
                                 time_per_iter * 1000.0,
                                 n_soft_locked_now
                             );
+                            self.record_trace(&eta, 0, 0);
                             return EigensolverResult {
                                 eigenvalues: all_eigenvalues
                                     [..n_bands_requested.min(all_eigenvalues.len())]
@@ -1926,6 +2193,7 @@ where
                                 iterations: iter + 1,
                                 convergence,
                                 converged: true,
+                                trace: self.take_trace(),
                             };
                         }
                     }
@@ -1942,14 +2210,27 @@ where
             // Step 7: Apply deflation to P
             // P_k ← P_Y P_k (preconditioner may have reintroduced components along Y)
             // ================================================================
-            self.apply_deflation(&mut p_block);
-            self.apply_soft_deflation(&mut p_block);
+            {
+                crate::profile_scope!("eigensolver.deflation");
+                self.apply_deflation(&mut p_block);
+                self.apply_soft_deflation(&mut p_block);
+            }
+            let n_corrections = p_block.len();
 
             // ================================================================
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
             // Also collects precomputed B*X to avoid recomputing in SVQB
             // ================================================================
-            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
+            let (subspace, bx_precomputed, block_sizes) = {
+                crate::profile_scope!("eigensolver.collect_subspace");
+                self.collect_subspace_with_mass(&p_block)
+            };
+            crate::profiler::count("search_P.columns", block_sizes.1);
+            let pw_basis = if self.config.history == HistoryRule::Conjugate {
+                subspace[block_sizes.0..].to_vec()
+            } else {
+                Vec::new()
+            };
 
             // ================================================================
             // Step 9: B-orthonormalize to get Q_k with Q_k^* B Q_k = I
@@ -1964,6 +2245,7 @@ where
                 );
             let subspace_rank = svqb_result.output_rank;
             record_subspace_rank(&svqb_result);
+            self.record_trace(&eta, n_corrections, subspace_rank);
 
             // ================================================================
             // DIAGNOSTIC: Subspace condition number warning (every iteration)
@@ -2067,7 +2349,7 @@ where
             // ================================================================
             // Step 13: Compute new history directions W_{k+1} = Q_k * Y_2
             // ================================================================
-            self.update_history_directions(&q_block, &dense_result);
+            self.update_history(&q_block, &dense_result, pw_basis, &svqb_result, block_sizes.0);
 
             // ================================================================
             // Debug logging at selected iterations
@@ -2209,7 +2491,7 @@ where
 
         // Determine if we actually converged (count both hard and soft locked)
         let total_converged = self.converged_band_count(&[]);
-        let converged = total_converged >= n_bands_requested;
+        let converged = if residual_mode { residual_converged } else { total_converged >= n_bands_requested };
 
         // Convert Bloch wavevector to fractional k-point for logging
         let k_frac = [bloch[0] / (2.0 * PI), bloch[1] / (2.0 * PI)];
@@ -2257,6 +2539,7 @@ where
             iterations: self.iteration + 1,
             convergence,
             converged,
+            trace: self.take_trace(),
         }
     }
 
@@ -2295,13 +2578,15 @@ where
         let _bloch = self.operator.bloch();
 
         let mut prev_trace: Option<f64> = None;
+        let residual_mode = self.config.stopping == StoppingRule::Residual;
+        let mut residual_converged = false;
 
         // Main LOBPCG iteration loop
         for iter in 0..self.config.max_iter {
             self.iteration = iter;
             record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
-            crate::profiler::count("search_P.columns", self.w_block.len());
+            crate::profiler::count("search_W.columns", self.w_block.len());
 
             let n_active = self.x_block.len();
             if n_active == 0 {
@@ -2310,17 +2595,28 @@ where
 
             // Compute residuals R_k = A*X_k - B*X_k * Λ_k
             let mut residuals = self.compute_residuals();
+            let eta = if residual_mode || self.config.trace {
+                self.relative_residual_norms(&residuals)
+            } else {
+                Vec::new()
+            };
             self.apply_deflation(&mut residuals);
             self.apply_soft_deflation(&mut residuals);
 
             // Compute B-norms of deflated residuals
-            let residual_b_norms = self.compute_residual_b_norms(&residuals);
-            let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
+            let relative_residuals = if residual_mode {
+                eta.clone()
+            } else {
+                let residual_b_norms = self.compute_residual_b_norms(&residuals);
+                self.compute_relative_residuals(&residual_b_norms)
+            };
 
             let n_check = n_active.min(relative_residuals.len());
 
             // Check convergence based on eigenvalue changes (starting from iter 2)
-            if iter >= 2 {
+            if residual_mode {
+                residual_converged = self.residual_convergence(iter, &eta, &mut convergence);
+            } else if iter >= 2 {
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 convergence.update_with_eigenvalue_changes(
                     &relative_residuals[..n_check],
@@ -2341,7 +2637,13 @@ where
             });
 
             // Emit progress callback
-            let total_converged = self.converged_band_count(&convergence.band_states);
+            let total_converged = if residual_mode {
+                let required = self.required_positions();
+                let met = convergence.band_states.iter().take(required).filter(|&&s| s != BandState::Active).count();
+                if residual_converged { n_bands_requested } else { self.deflation.len().min(n_bands_requested) + met }
+            } else {
+                self.converged_band_count(&convergence.band_states)
+            };
             let progress = ProgressInfo {
                 iteration: iter,
                 max_iterations: self.config.max_iter,
@@ -2358,18 +2660,20 @@ where
             prev_trace = Some(current_trace);
 
             // Check for overall convergence (all requested bands)
-            if total_converged >= n_bands_requested {
+            if (residual_mode && residual_converged) || (!residual_mode && total_converged >= n_bands_requested) {
+                self.record_trace(&eta, 0, 0);
                 return EigensolverResult {
                     eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
                         .to_vec(),
                     iterations: iter + 1,
                     convergence,
                     converged: true,
+                    trace: self.take_trace(),
                 };
             }
 
             // Soft-lock converged bands (from iter 2 onward)
-            if iter >= 2 {
+            if !residual_mode && iter >= 2 {
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
                     &relative_eigenvalue_changes[..n_check.min(relative_eigenvalue_changes.len())],
@@ -2387,7 +2691,14 @@ where
             self.apply_soft_deflation(&mut p_block);
 
             // Build search subspace Z_k = [X_k, P_k, W_k] with precomputed B*X
+            let n_corrections = p_block.len();
             let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
+            crate::profiler::count("search_P.columns", block_sizes.1);
+            let pw_basis = if self.config.history == HistoryRule::Conjugate {
+                subspace[block_sizes.0..].to_vec()
+            } else {
+                Vec::new()
+            };
 
             // B-orthonormalize using SVQB (reuses precomputed B*X)
             let (q_block, bq_block, svqb_result) = self
@@ -2398,6 +2709,7 @@ where
                 );
             let subspace_rank = svqb_result.output_rank;
             record_subspace_rank(&svqb_result);
+            self.record_trace(&eta, n_corrections, subspace_rank);
 
             if subspace_rank == 0 {
                 break;
@@ -2415,18 +2727,19 @@ where
             // A*X computed via GEMM using precomputed A*Q (no fresh applies!)
             self.store_previous_eigenvalues();
             self.update_ritz_vectors(&q_block, &bq_block, &aq_block, &dense_result);
-            self.update_history_directions(&q_block, &dense_result);
+            self.update_history(&q_block, &dense_result, pw_basis, &svqb_result, block_sizes.0);
         }
 
         // End of loop: either max iterations reached or all bands soft-locked
         let all_eigenvalues = self.collect_all_eigenvalues();
-        let converged = self.converged_band_count(&[]) >= n_bands_requested;
+        let converged = if residual_mode { residual_converged } else { self.converged_band_count(&[]) >= n_bands_requested };
 
         EigensolverResult {
             eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
             iterations: self.iteration + 1,
             convergence,
             converged,
+            trace: self.take_trace(),
         }
     }
 
@@ -2650,6 +2963,8 @@ where
         let run_config = self.create_run_config(label);
         let mut recorder = ConvergenceRecorder::new(run_config);
         recorder.start();
+        let residual_mode = self.config.stopping == StoppingRule::Residual;
+        let mut residual_converged = false;
 
         // Threshold for warning about poor subspace conditioning
         const CONDITION_WARN_THRESHOLD: f64 = 1e10;
@@ -2660,7 +2975,7 @@ where
             self.iteration = iter;
             record_iteration();
             crate::profiler::count("active_X.columns", self.x_block.len());
-            crate::profiler::count("search_P.columns", self.w_block.len());
+            crate::profiler::count("search_W.columns", self.w_block.len());
 
             // Track the number of active bands (may shrink due to locking)
             let n_active = self.x_block.len();
@@ -2673,6 +2988,11 @@ where
             // Step 1: Compute residuals R_k = A*X_k - B*X_k * Λ_k
             // ================================================================
             let mut residuals = self.compute_residuals();
+            let eta = if residual_mode || self.config.trace {
+                self.relative_residual_norms(&residuals)
+            } else {
+                Vec::new()
+            };
 
             // ================================================================
             // Step 2: Apply deflation to residuals R_k ← P_Y R_k
@@ -2687,7 +3007,11 @@ where
             // projecting out the locked subspace
             // ================================================================
             let residual_b_norms = self.compute_residual_b_norms(&residuals);
-            let relative_residuals = self.compute_relative_residuals(&residual_b_norms);
+            let relative_residuals = if residual_mode {
+                eta.clone()
+            } else {
+                self.compute_relative_residuals(&residual_b_norms)
+            };
 
             // ================================================================
             // Step 4: Check convergence based on eigenvalue changes
@@ -2700,7 +3024,9 @@ where
             // iter 0: initial eigenvalues from Rayleigh quotients
             // iter 1: first Ritz update - store these as baseline
             // iter 2+: compare to previous iteration
-            if iter >= 2 {
+            if residual_mode {
+                residual_converged = self.residual_convergence(iter, &eta, &mut convergence);
+            } else if iter >= 2 {
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 convergence.update_with_eigenvalue_changes(
                     &relative_residuals[..n_check],
@@ -2711,7 +3037,11 @@ where
 
             // Check for overall convergence
             let n_soft_locked = self.soft_locked_count();
-            let total_converged = self.converged_band_count(&convergence.band_states);
+            let total_converged = if residual_mode {
+                if residual_converged { n_bands_requested } else { 0 }
+            } else {
+                self.converged_band_count(&convergence.band_states)
+            };
 
             // Prepare subspace info for recording (will be filled in after SVQB)
             let subspace_dim_input = self.subspace_dimension();
@@ -2746,12 +3076,14 @@ where
                     n_soft_locked
                 );
 
+                self.record_trace(&eta, 0, 0);
                 let result = EigensolverResult {
                     eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())]
                         .to_vec(),
                     iterations: iter + 1,
                     convergence,
                     converged: true,
+                    trace: self.take_trace(),
                 };
 
                 let diagnostics = recorder.finalize_with_result(iter + 1, true);
@@ -2766,7 +3098,7 @@ where
             // Uses eigenvalue-based convergence criterion
             // Only try locking from iteration 2 onward (need eigenvalue history)
             // ================================================================
-            if iter >= 2 {
+            if !residual_mode && iter >= 2 {
                 // Recompute eigenvalue changes for soft-locking decision
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 let locking_result = check_for_locking(
@@ -2804,7 +3136,14 @@ where
             // Step 8: Build search subspace Z_k = [X_k, P_k, W_k]
             // Also collects precomputed B*X to avoid recomputing in SVQB
             // ================================================================
+            let n_corrections = p_block.len();
             let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
+            crate::profiler::count("search_P.columns", block_sizes.1);
+            let pw_basis = if self.config.history == HistoryRule::Conjugate {
+                subspace[block_sizes.0..].to_vec()
+            } else {
+                Vec::new()
+            };
 
             // ================================================================
             // Step 9: B-orthonormalize to get Q_k
@@ -2817,6 +3156,7 @@ where
                     block_sizes,
                 );
             let subspace_rank = svqb_result.output_rank;
+            self.record_trace(&eta, n_corrections, subspace_rank);
 
             // Check subspace conditioning (detect potential near-linear dependence)
             let condition_number = svqb_result.condition_number();
@@ -2929,7 +3269,7 @@ where
             // ================================================================
             // Step 13: Update history directions W_{k+1}
             // ================================================================
-            self.update_history_directions(&q_block, &dense_result);
+            self.update_history(&q_block, &dense_result, pw_basis, &svqb_result, block_sizes.0);
 
             // Debug logging at selected iterations
             if should_log_iteration(iter) {
@@ -2996,7 +3336,7 @@ where
         let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
         let total_converged = self.converged_band_count(&[]);
-        let converged = total_converged >= n_bands_requested;
+        let converged = if residual_mode { residual_converged } else { total_converged >= n_bands_requested };
 
         if converged {
             info!(
@@ -3031,6 +3371,7 @@ where
             iterations: self.iteration + 1,
             convergence,
             converged,
+            trace: self.take_trace(),
         };
 
         let diagnostics = recorder.finalize_with_result(self.iteration + 1, converged);

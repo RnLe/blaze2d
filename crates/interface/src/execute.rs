@@ -95,7 +95,13 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             let mut fields = Vec::new();
             let mut symmetry_reports = Vec::new();
             let mut discretization_reports = Vec::new();
+            let mut point_seconds = Vec::new();
+            let mut point_work = Vec::new();
+            let mut point_preconditioners = Vec::new();
             let mut collect = |point: bandstructure::KPointResult| {
+                    point_seconds.push(point.elapsed_seconds);
+                    point_work.push(point.work);
+                    point_preconditioners.push(point.preconditioner);
                     on_event(Event::Progress { job_index: job.index, sample_index: point.k_index,
                         completed: point.k_index + 1, total: nk, iterations: point.iterations, converged: point.converged,
                         band_point:Some(crate::BandPoint {frequencies:point.omegas.iter().map(|w|w/std::f64::consts::TAU).collect(),
@@ -111,7 +117,8 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             let (effective_symmetry, policy_decision) = crate::policy::resolve(job, backend_name);
             let mut effective_bands = b.clone();
             effective_bands.symmetry = effective_symmetry.clone();
-            let options=effective_bands.run_options(job.resolved.config.results.eigenvectors);
+            let mut options=effective_bands.run_options(job.resolved.config.results.eigenvectors);
+            options.preconditioner=job.preconditioner();
             let selected=b.discretization.metric_options();
             let continuation = context.filter(|_| effective_symmetry.continuation != crate::ContinuationPolicy::Off
                 && b.symmetry.max_continuation_bytes > 0 && actual == Precision::F64)
@@ -151,7 +158,19 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             out.metadata["labels"] = json!(job.resolved.k_labels.iter().zip(&job.resolved.k_label_indices).filter(|(_,i)|**i<nk).map(|(label,_)|label).collect::<Vec<_>>());
             out.metadata["label_indices"] = json!(job.resolved.k_label_indices.iter().filter(|&&i|i<nk).collect::<Vec<_>>());
             out.metadata["band_indices"] = json!((0..n).collect::<Vec<_>>());
-            out.metadata["stopping_criterion"] = json!("relative_eigenvalue_change");
+            let e = &job.resolved.config.eigensolver;
+            out.metadata["stopping_criterion"] = json!(match e.stopping {
+                crate::Stopping::EigenvalueChange => "relative_eigenvalue_change",
+                crate::Stopping::Residual => "relative_residual",
+            });
+            let mut total_work = blaze2d_core::work::Work::default();
+            for w in &point_work { total_work.add(*w); }
+            out.metadata["point_seconds"] = json!(point_seconds);
+            out.metadata["work"] = json!(total_work);
+            out.metadata["point_work"] = json!(point_work);
+            out.metadata["eigensolver"] = json!({"stopping": e.stopping, "tolerance": e.tolerance, "residual_tolerance": e.residual_tolerance,
+                "history": e.history, "block_size": job.eigensolver().effective_block_size()});
+            out.metadata["preconditioner"] = json!({"requested": e.preconditioner, "points": point_preconditioners});
             out.metadata["certification"] = json!({"source":"fresh_operator_application",
                 "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",
                 "absolute_residual_convention":"norm(Au-lambda*Bu)/norm(u)",

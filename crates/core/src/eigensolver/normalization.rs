@@ -175,6 +175,9 @@ pub struct SvqbResult {
     /// For batch mode, all drops are in W (third component).
     /// None if not tracked (legacy code paths).
     pub block_drops: Option<(usize, usize, usize)>,
+    /// Column-major p×rank map from the input columns (before their unit
+    /// B-normalization) to the output basis, when requested.
+    pub transform: Option<Vec<Complex64>>,
 }
 
 impl SvqbResult {
@@ -244,11 +247,13 @@ pub struct SvqbConfig {
     /// Relative tolerance for singular value truncation.
     /// Singular values with σ_i / σ_max < drop_tol are dropped.
     pub drop_tol: f64,
+    /// Return the input-to-output coefficient map in [`SvqbResult::transform`].
+    pub keep_transform: bool,
 }
 
 impl Default for SvqbConfig {
     fn default() -> Self {
-        Self { drop_tol: 1e-12 }
+        Self { drop_tol: 1e-12, keep_transform: false }
     }
 }
 
@@ -296,6 +301,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             singular_values: vec![],
             kept_indices: vec![],
             block_drops: None,
+            transform: None,
         };
     }
 
@@ -303,9 +309,9 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     // This keeps the Gram spectrum focused on linear independence rather than
     // raw vector magnitudes, so tiny but essential residual directions are
     // not discarded purely because their norms are small.
-    for (vector, mass_vector) in vectors.iter_mut().zip(mass_vectors.iter_mut()) {
-        normalize_to_unit_b_norm_with_tol(backend, vector, mass_vector, 1e-30);
-    }
+    let input_norms: Vec<f64> = vectors.iter_mut().zip(mass_vectors.iter_mut())
+        .map(|(vector, mass_vector)| normalize_to_unit_b_norm_with_tol(backend, vector, mass_vector, 1e-30))
+        .collect();
 
     // Step 1: Form the Gram matrix G = X^H B X
     // G is Hermitian, so we only compute upper triangle and mirror
@@ -429,6 +435,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             singular_values,
             kept_indices: vec![],
             block_drops: None,
+            transform: None,
         };
     }
 
@@ -550,6 +557,19 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     #[cfg(feature = "profiling")]
     crate::profiler::stop_timer("svqb::gemm");
 
+    let transform = config.keep_transform.then(|| {
+        let mut t = vec![Complex64::ZERO; p * rank];
+        for j in 0..rank {
+            let col = kept_indices[j];
+            let scale = 1.0 / eigenvalues[col].max(1e-30).sqrt();
+            for i in 0..p {
+                let unit = if input_norms[i] > 0.0 { 1.0 / input_norms[i] } else { 0.0 };
+                t[i + p * j] = eigenvectors[i * p + col] * (scale * unit);
+            }
+        }
+        t
+    });
+
     SvqbResult {
         output_rank: rank,
         input_count: p,
@@ -557,6 +577,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
         singular_values,
         kept_indices,
         block_drops: None,
+        transform,
     }
 }
 

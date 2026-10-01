@@ -172,9 +172,31 @@ export interface Dielectric {
 }
 export interface Eigensolver {
   block_size?: number;
+  /**
+   * Third LOBPCG search block: next Ritz vectors, conjugate directions, or none.
+   */
+  history?: "ritz" | "conjugate" | "none";
   max_iterations?: number | null;
   precision?: "f64" | "f32";
+  preconditioner?: Preconditioner;
+  residual_tolerance?: number | null;
+  /**
+   * Stopping rule: relative eigenvalue change (`tolerance`) or relative residual (`residual_tolerance`).
+   */
+  stopping?: "eigenvalue_change" | "residual";
   tolerance?: number | null;
+}
+/**
+ * Experimental preconditioner settings; defaults reproduce the built-in choice.
+ */
+export interface Preconditioner {
+  band_window_blend?: number;
+  band_window_scale?: number;
+  kind?: "auto" | "none" | "diagonal" | "transverse";
+  shift?: "legacy" | "band_window" | "fixed";
+  shift_fraction?: number;
+  shift_value?: number;
+  tm_mass_fraction?: number;
 }
 export interface Geometry {
   background_epsilon?: number;

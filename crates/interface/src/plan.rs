@@ -111,7 +111,11 @@ pub fn set_parameter(config: &mut Config, target: &str, mut value: Value) -> Int
     let allowed = matches!(target, "polarization" | "geometry.background_epsilon" | "geometry.lattice.a" |
         "geometry.lattice.b" | "geometry.lattice.angle_deg" | "grid.resolution" | "bands.count" |
         "operators.band_lo" | "operators.retained_bands" | "operators.remote_bands" | "operators.k_point.value" |
-        "eigensolver.tolerance" | "eigensolver.max_iterations" | "eigensolver.block_size");
+        "eigensolver.tolerance" | "eigensolver.max_iterations" | "eigensolver.block_size" |
+        "eigensolver.stopping" | "eigensolver.residual_tolerance" | "eigensolver.history" |
+        "eigensolver.preconditioner.kind" | "eigensolver.preconditioner.shift" | "eigensolver.preconditioner.shift_fraction" |
+        "eigensolver.preconditioner.shift_value" | "eigensolver.preconditioner.band_window_blend" |
+        "eigensolver.preconditioner.band_window_scale" | "eigensolver.preconditioner.tm_mass_fraction");
     if parts.len() == 4 && parts[0] == "geometry" && parts[1] == "objects" && matches!(parts[3], "radius" | "epsilon" | "center") {
         let index = config.geometry.objects.iter().position(|o| o.name == parts[2])
             .ok_or_else(|| invalid(target, "unknown object name"))?;

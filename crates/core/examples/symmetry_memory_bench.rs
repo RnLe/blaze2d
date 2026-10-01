@@ -45,7 +45,7 @@ fn main() {
     };
     let job = BandStructureJob {
         geom, grid: Grid2D::new(n,n,1.0,1.0), pol, k_path: path,
-        eigensolver: EigensolverConfig { n_bands: bands, max_iter: 500, tol: tolerance, block_size: 0, record_diagnostics: false, k_index: None },
+        eigensolver: EigensolverConfig { n_bands: bands, max_iter: 500, tol: tolerance, block_size: 0, record_diagnostics: false, k_index: None, ..Default::default() },
         dielectric: DielectricOptions::default(),
     };
     let mode = args.get(5).map(String::as_str).unwrap_or("off");

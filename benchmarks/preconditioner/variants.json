@@ -1,0 +1,26 @@
+{
+  "frozen-legacy": {
+    "description": "Current defaults: manual symmetry, eigenvalue-change tolerance 1e-6, max_iterations 200",
+    "binary": "frozen"
+  },
+  "frozen-pt-tight": {
+    "description": "Frozen binary with PT-real arithmetic forced and a tight eigenvalue-change stop",
+    "binary": "frozen",
+    "bands": {"symmetry": {"arithmetic": "pt_real", "k_reuse": "identical"}},
+    "eigensolver": {"tolerance": 1e-13, "max_iterations": 600}
+  },
+  "baseline": {
+    "description": "PT-real arithmetic with residual stopping at 1e-7 and Ritz history; new binary only",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {"symmetry": {"arithmetic": "pt_real", "k_reuse": "identical"}},
+    "eigensolver": {"stopping": "residual", "residual_tolerance": 1e-7, "max_iterations": 600, "history": "ritz"}
+  },
+  "complex-baseline": {
+    "description": "Baseline with spatial complex arithmetic; new binary only",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {"symmetry": {"arithmetic": "spatial_complex", "k_reuse": "identical"}},
+    "eigensolver": {"stopping": "residual", "residual_tolerance": 1e-7, "max_iterations": 600, "history": "ritz"}
+  }
+}

@@ -87,6 +87,7 @@ pub mod lattice;
 pub mod metrics;
 pub mod polarization;
 pub mod profiler;
+pub mod work;
 pub mod reference;
 pub mod symmetry;
 pub mod timing;

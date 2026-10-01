@@ -137,6 +137,15 @@ impl Config {
         positive(tolerance, "eigensolver.tolerance")?;
         let max_iterations = *config.eigensolver.max_iterations.get_or_insert(if is_operator { 300 } else { 200 });
         if max_iterations == 0 { return Err(invalid("eigensolver.max_iterations", "must be greater than zero")); }
+        let residual_tolerance = *config.eigensolver.residual_tolerance
+            .get_or_insert(if config.eigensolver.precision == Precision::F64 { 1e-7 } else { 1e-5 });
+        positive(residual_tolerance, "eigensolver.residual_tolerance")?;
+        if config.eigensolver.stopping == crate::Stopping::Residual && config.eigensolver.precision != Precision::F64 && residual_tolerance < 1e-5 {
+            return Err(invalid("eigensolver.residual_tolerance", "f32 storage cannot reach residuals below 1e-5"));
+        }
+        let polarization = match config.polarization { crate::Polarization::TE => blaze2d_core::polarization::Polarization::TE, crate::Polarization::TM => blaze2d_core::polarization::Polarization::TM };
+        crate::lower::preconditioner_spec(&config.eigensolver.preconditioner).validate(Some(polarization))
+            .map_err(|message| invalid("eigensolver.preconditioner", message))?;
         if config.dielectric.mesh_size == 0 { return Err(invalid("dielectric.mesh_size", "must be greater than zero")); }
         positive(config.dielectric.interface_tolerance, "dielectric.interface_tolerance")?;
         if config.dielectric.smoothing == Smoothing::Voronoi && config.dielectric.mesh_size > 1 {
@@ -242,6 +251,9 @@ impl Config {
                 (bands.count, path.points)
             }
             Task::Operators => {
+                if config.eigensolver.preconditioner != crate::Preconditioner::default() {
+                    return Err(invalid("eigensolver.preconditioner", "preconditioner settings apply to band calculations only"));
+                }
                 if config.bands.is_some() { return Err(invalid("bands", "not valid for task = operators")); }
                 let op = config.operators.as_ref().ok_or_else(|| invalid("operators", "required for task = operators"))?;
                 validate_operators(op, config.polarization, &names)?;

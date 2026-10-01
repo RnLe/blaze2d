@@ -301,7 +301,18 @@
           "$ref": "#/$defs/Eigensolver",
           "default": {
             "block_size": 0,
-            "precision": "f64"
+            "history": "ritz",
+            "precision": "f64",
+            "preconditioner": {
+              "band_window_blend": 0.5,
+              "band_window_scale": 0.5,
+              "kind": "auto",
+              "shift": "legacy",
+              "shift_fraction": 0.5,
+              "shift_value": 0,
+              "tm_mass_fraction": 0.01
+            },
+            "stopping": "eigenvalue_change"
           }
         },
         "geometry": {
@@ -515,6 +526,10 @@
           "default": 0,
           "minimum": 0
         },
+        "history": {
+          "$ref": "#/$defs/History",
+          "default": "ritz"
+        },
         "max_iterations": {
           "type": [
             "integer",
@@ -526,6 +541,29 @@
         "precision": {
           "$ref": "#/$defs/Precision",
           "default": "f64"
+        },
+        "preconditioner": {
+          "$ref": "#/$defs/Preconditioner",
+          "default": {
+            "band_window_blend": 0.5,
+            "band_window_scale": 0.5,
+            "kind": "auto",
+            "shift": "legacy",
+            "shift_fraction": 0.5,
+            "shift_value": 0,
+            "tm_mass_fraction": 0.01
+          }
+        },
+        "residual_tolerance": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "stopping": {
+          "$ref": "#/$defs/Stopping",
+          "default": "eigenvalue_change"
         },
         "tolerance": {
           "type": [
@@ -736,6 +774,15 @@
         }
       },
       "additionalProperties": false
+    },
+    "History": {
+      "description": "Third LOBPCG search block: next Ritz vectors, conjugate directions, or none.",
+      "type": "string",
+      "enum": [
+        "ritz",
+        "conjugate",
+        "none"
+      ]
     },
     "JobFailure": {
       "type": "object",
@@ -1221,6 +1268,63 @@
         "f32"
       ]
     },
+    "Preconditioner": {
+      "description": "Experimental preconditioner settings; defaults reproduce the built-in choice.",
+      "type": "object",
+      "properties": {
+        "band_window_blend": {
+          "type": "number",
+          "format": "double",
+          "default": 0.5
+        },
+        "band_window_scale": {
+          "type": "number",
+          "format": "double",
+          "default": 0.5
+        },
+        "kind": {
+          "$ref": "#/$defs/PreconditionerKind",
+          "default": "auto"
+        },
+        "shift": {
+          "$ref": "#/$defs/PreconditionerShift",
+          "default": "legacy"
+        },
+        "shift_fraction": {
+          "type": "number",
+          "format": "double",
+          "default": 0.5
+        },
+        "shift_value": {
+          "type": "number",
+          "format": "double",
+          "default": 0
+        },
+        "tm_mass_fraction": {
+          "type": "number",
+          "format": "double",
+          "default": 0.01
+        }
+      },
+      "additionalProperties": false
+    },
+    "PreconditionerKind": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "none",
+        "diagonal",
+        "transverse"
+      ]
+    },
+    "PreconditionerShift": {
+      "type": "string",
+      "enum": [
+        "legacy",
+        "band_window",
+        "fixed"
+      ]
+    },
     "Quantity": {
       "type": "string",
       "enum": [
@@ -1510,6 +1614,14 @@
         "subgrid",
         "voronoi",
         "none"
+      ]
+    },
+    "Stopping": {
+      "description": "Stopping rule: relative eigenvalue change (`tolerance`) or relative residual (`residual_tolerance`).",
+      "type": "string",
+      "enum": [
+        "eigenvalue_change",
+        "residual"
       ]
     },
     "Sweep": {

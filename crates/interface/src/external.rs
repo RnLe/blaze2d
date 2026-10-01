@@ -41,10 +41,16 @@ pub fn execute_sampled<B: SpectralBackend>(backend: B, backend_name: &str, job: 
     let reciprocal = job.geometry().lattice.reciprocal();
     let dielectric = Dielectric2D::from_sampled_epsilon(job.grid(),reciprocal.b1,reciprocal.b2,epsilon.clone(),tensors.clone());
     let e = job.eigensolver();
-    let settings = SingleSolveJob {n_bands:n,tolerance:e.tol,max_iterations:e.max_iter,block_size:e.block_size,..Default::default()};
+    let settings = SingleSolveJob {n_bands:n,tolerance:e.tol,max_iterations:e.max_iter,block_size:e.block_size,
+        stopping:e.stopping,residual_tolerance:e.residual_tol,history:e.history,..Default::default()};
     let mut theta = ThetaOperator::new(backend,dielectric,job.polarization(),job.resolved.k_points_cartesian[0]);
-    let mut preconditioner = theta.build_homogeneous_preconditioner_adaptive();
-    let result = single_solve::solve(&mut theta,Some(&mut preconditioner),&settings);
+    // The sampled path has always used the Fourier diagonal for both polarizations.
+    let mut spec = job.preconditioner();
+    if spec.kind == blaze2d_core::preconditioners::PreconditionerKind::Auto { spec.kind = blaze2d_core::preconditioners::PreconditionerKind::Diagonal; }
+    let (mut preconditioner, preconditioner_info) = theta.build_preconditioner(&spec, None);
+    out.metadata["preconditioner"] = json!({"requested": job.resolved.config.eigensolver.preconditioner, "points": [preconditioner_info]});
+    let result = single_solve::solve(&mut theta,
+        preconditioner.as_mut().map(|p| &mut **p as &mut dyn blaze2d_core::preconditioners::OperatorPreconditioner<B>),&settings);
     out.arrays.insert("frequencies".into(),Array::real(&[1,n],&["k_point","band"],result.eigenvalues.iter().map(|v|v.max(0.0).sqrt()/std::f64::consts::TAU)));
     out.arrays.insert("eigenvalues".into(),Array::real(&[1,n],&["k_point","band"],result.eigenvalues));
     out.arrays.insert("residuals".into(),Array::real(&[1,n],&["k_point","band"],result.final_residuals));

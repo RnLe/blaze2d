@@ -113,13 +113,10 @@ fn main() {
         ..Default::default()
     };
     physical["run_options"] = json!({
-        "preconditioner": options.precond_type,
-        "resolved_preconditioner": options.precond_type.resolve_for_polarization(pol),
+        "preconditioner": options.preconditioner,
+        "resolved_preconditioner": options.preconditioner.resolve_kind(pol),
         "use_subspace_prediction": options.use_subspace_prediction,
         "use_extrapolation": options.use_extrapolation,
-        "use_band_window_shift": options.use_band_window_shift,
-        "band_window_blend": options.band_window_blend,
-        "band_window_scale": options.band_window_scale,
     });
     let mut points = Vec::new();
     let start = std::time::Instant::now();

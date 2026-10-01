@@ -50,7 +50,7 @@ use log::{debug, info, warn};
 use crate::{
     backend::SpectralBackend,
     band_tracking::{apply_permutation, track_bands_with_frequencies},
-    diagnostics::{ConvergenceStudy, PreconditionerType},
+    diagnostics::ConvergenceStudy,
     dielectric::{Dielectric2D, DielectricOptions},
     eigensolver::{Eigensolver, EigensolverConfig, SubspaceHistory},
     field::Field2D,
@@ -164,6 +164,12 @@ pub struct KPointResult {
     pub eigenvectors: Option<Vec<Field2D>>,
     /// Whether this point is at Γ and uses the DC-mode deflation path.
     pub is_gamma: bool,
+    /// Wall time spent on this point, including rejected attempts and certification.
+    pub elapsed_seconds: f64,
+    /// Numerical work spent on this point.
+    pub work: crate::work::Work,
+    /// The preconditioner used at this point, absent for reused points.
+    pub preconditioner: Option<crate::preconditioners::PreconditionerInfo>,
 }
 
 // ============================================================================
@@ -178,8 +184,10 @@ pub struct KPointResult {
 pub struct RunOptions {
     /// Independently requested, qualified symmetry policies. Defaults to off.
     pub symmetry: SymmetryOptions,
-    /// Preconditioner type (None, FourierDiagonalKernelCompensated, TransverseProjection).
-    pub precond_type: PreconditionerType,
+    /// Preconditioner kind and shift rule, built per k-point.
+    pub preconditioner: crate::preconditioners::PreconditionerSpec,
+    /// Run the one-off operator and preconditioner power-iteration diagnostics.
+    pub operator_diagnostics: bool,
     /// Enable subspace prediction for accelerated warm-start.
     ///
     /// When enabled, uses complex eigenvector overlaps and polar decomposition to
@@ -195,29 +203,6 @@ pub struct RunOptions {
     ///
     /// This is automatically disabled at k-path corners and near degeneracies.
     pub use_extrapolation: bool,
-    /// Enable band-window-based preconditioner shift.
-    ///
-    /// When enabled, uses eigenvalues from the previous k-point to compute a
-    /// band-window-informed shift σ² for the preconditioner. This can improve
-    /// convergence by tuning the preconditioner to the actual spectral range
-    /// of the bands being computed.
-    ///
-    /// The shift is computed as:
-    ///   σ² = β · σ²_adaptive + (1-β) · c · λ_median
-    /// where λ_median is the median eigenvalue from the previous k-point,
-    /// c is a band-scale factor (default 0.5), and β is the blend factor (default 0.5).
-    ///
-    /// For the first k-point (no previous eigenvalues), falls back to adaptive shift.
-    pub use_band_window_shift: bool,
-    /// Blend factor β for band-window shift (0.0 = pure band-window, 1.0 = pure adaptive).
-    ///
-    /// Only used when `use_band_window_shift` is enabled.
-    pub band_window_blend: f64,
-    /// Scale factor c for band-window eigenvalue contribution.
-    ///
-    /// The band-window shift component is c × λ_median. Default is 0.5.
-    /// Only used when `use_band_window_shift` is enabled.
-    pub band_window_scale: f64,
     /// Disable band tracking after eigensolver convergence.
     ///
     /// When enabled, skips the polar decomposition + Hungarian algorithm band
@@ -244,12 +229,10 @@ impl Default for RunOptions {
     fn default() -> Self {
         Self {
             symmetry: SymmetryOptions::default(),
-            precond_type: PreconditionerType::default(),
+            preconditioner: crate::preconditioners::PreconditionerSpec::default(),
+            operator_diagnostics: false,
             use_subspace_prediction: true, // Stage 1: rotation-based warm-start
             use_extrapolation: true,       // Stage 2: linear extrapolation
-            use_band_window_shift: false,  // Disabled by default (experimental)
-            band_window_blend: 0.5,        // Equal mix of adaptive and band-window
-            band_window_scale: 0.5,        // Conservative scaling of median eigenvalue
             disable_band_tracking: false,  // Band tracking enabled by default
             reuse_gamma: true,             // Reuse first Γ for closing Γ (fast path)
             retain_eigenvectors: false,
@@ -263,9 +246,9 @@ impl RunOptions {
         Self::default()
     }
 
-    /// Set the preconditioner type.
-    pub fn with_preconditioner(mut self, precond_type: PreconditionerType) -> Self {
-        self.precond_type = precond_type;
+    /// Set the preconditioner specification.
+    pub fn with_preconditioner(mut self, spec: crate::preconditioners::PreconditionerSpec) -> Self {
+        self.preconditioner = spec;
         self
     }
 
@@ -284,38 +267,6 @@ impl RunOptions {
     /// Automatically disabled at corners and near degeneracies.
     pub fn with_extrapolation(mut self, enabled: bool) -> Self {
         self.use_extrapolation = enabled;
-        self
-    }
-
-    /// Enable band-window-based preconditioner shift (experimental).
-    ///
-    /// When enabled, uses eigenvalues from the previous k-point to tune the
-    /// preconditioner shift to the spectral range of the bands being computed.
-    pub fn with_band_window_shift(mut self, enabled: bool) -> Self {
-        self.use_band_window_shift = enabled;
-        self
-    }
-
-    /// Set the blend factor for band-window shift.
-    ///
-    /// The blend factor β controls how much weight is given to the adaptive shift
-    /// versus the band-window shift: σ² = β·σ²_adaptive + (1-β)·σ²_band_window.
-    ///
-    /// - β = 0.0: Pure band-window shift (uses eigenvalue median)
-    /// - β = 1.0: Pure adaptive shift (uses smin²)
-    /// - β = 0.5 (default): Equal blend
-    pub fn with_band_window_blend(mut self, blend: f64) -> Self {
-        self.band_window_blend = blend.clamp(0.0, 1.0);
-        self
-    }
-
-    /// Set the scale factor for band-window eigenvalue contribution.
-    ///
-    /// The band-window shift component is c × λ_median, where c is this scale factor.
-    /// Lower values (e.g., 0.25) are more conservative, higher values (e.g., 1.0)
-    /// give more weight to the eigenvalue spectrum.
-    pub fn with_band_window_scale(mut self, scale: f64) -> Self {
-        self.band_window_scale = scale.max(0.0);
         self
     }
 
@@ -453,7 +404,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // ========================================================================
 
     // Resolve Auto preconditioner type based on polarization
-    let precond_type = options.precond_type.resolve_for_polarization(job.pol);
+    let precond_kind = options.preconditioner.resolve_kind(job.pol);
 
     // Compute reciprocal lattice for proper k-space coordinate conversion.
     // This is essential for non-orthogonal lattices (hexagonal, oblique) where
@@ -486,7 +437,7 @@ fn run_core<B: SpectralBackend + Clone>(
 
     info!(
         "[bandstructure] dielectric: ε=[{:.3}, {:.3}] contrast={:.1}x precond={:?}",
-        eps_min, eps_max, eps_contrast, precond_type,
+        eps_min, eps_max, eps_contrast, precond_kind,
     );
 
     if options.disable_band_tracking {
@@ -497,7 +448,7 @@ fn run_core<B: SpectralBackend + Clone>(
     // Operator Diagnostics (one-time, before k-point loop)
     // ========================================================================
     // Use a non-Γ k-point for condition number estimates (Γ has κ → ∞ due to DC mode)
-    {
+    if options.operator_diagnostics {
         // Find first non-Γ k-point for diagnostics
         let diag_k_idx = job.k_path.iter().position(|&k| !is_gamma_point(k));
         if let Some(idx) = diag_k_idx {
@@ -510,24 +461,8 @@ fn run_core<B: SpectralBackend + Clone>(
             crate::profile_scope!("run.operator_diagnostics");
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
-            // Build preconditioner for diagnostics (always using adaptive shift)
-            let mut preconditioner_opt: Option<
-                Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
-            > = match precond_type {
-                PreconditionerType::Auto => {
-                    unreachable!("Auto should be resolved before this point")
-                }
-                PreconditionerType::None => None,
-                PreconditionerType::FourierDiagonalKernelCompensated => {
-                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                }
-                PreconditionerType::TransverseProjection => Some(Box::new(
-                    theta.build_transverse_projection_preconditioner_adaptive(),
-                )),
-                PreconditionerType::Multigrid => {
-                    unimplemented!("Multigrid preconditioner not yet implemented")
-                }
-            };
+            // Build preconditioner for diagnostics (always using the legacy shift rule)
+            let (mut preconditioner_opt, _) = theta.build_preconditioner(&options.preconditioner, None);
 
             const POWER_ITERATIONS: usize = 15;
 
@@ -598,10 +533,10 @@ fn run_core<B: SpectralBackend + Clone>(
     let mut prev_eigenvalues: Option<Vec<f64>> = None;
 
     // Log if band-window shift is enabled
-    if options.use_band_window_shift {
+    if options.preconditioner.shift == crate::preconditioners::ShiftRule::BandWindow {
         info!(
             "[bandstructure] Band-window shift enabled (blend={:.2}, scale={:.2})",
-            options.band_window_blend, options.band_window_scale
+            options.preconditioner.band_window_blend, options.preconditioner.band_window_scale
         );
     }
 
@@ -656,6 +591,8 @@ fn run_core<B: SpectralBackend + Clone>(
 
     crate::profiler::stop_timer("run.setup");
     for (k_idx, &k_frac) in job.k_path.iter().enumerate() {
+        let point_start = crate::timing::Timer::start();
+        let work_start = crate::work::snapshot();
         let mut point_continuation = continuation.as_deref_mut()
             .filter(|state| !state.first_point_only || k_idx == 0);
         crate::profile_scope!("run.k_point");
@@ -699,6 +636,9 @@ fn run_core<B: SpectralBackend + Clone>(
                         b_orthogonality_defect: first_gamma_quality.2,
                         eigenvectors: first_gamma_fields.clone(),
                         is_gamma: true,
+                        elapsed_seconds: point_start.elapsed_secs(),
+                        work: crate::work::snapshot().since(work_start),
+                        preconditioner: None,
                     });
                 }
                 bands.push(gamma_omegas.clone());
@@ -810,51 +750,11 @@ fn run_core<B: SpectralBackend + Clone>(
         let warm_slice=coarse_seed.as_ref().or(rank_seed.as_ref()).map(|s|s.fields.as_slice()).or(warm_slice);
         let warm_start_used=(warm_start_used || coarse_seed.is_some() || geometry_seed.is_some()) && warm_slice.is_some_and(|s|!s.is_empty());
 
-        // Build preconditioner for this operator
-        // Use band-window shift if enabled AND we have previous eigenvalues,
-        // otherwise fall back to adaptive shift.
-        let use_band_window = options.use_band_window_shift && prev_eigenvalues.is_some();
+        // Build preconditioner for this operator. The band-window shift uses the
+        // previous k-point's eigenvalues and falls back to the legacy shift.
         crate::profiler::start_timer("run.preconditioner_setup");
-        let mut preconditioner_opt: Option<
-            Box<dyn crate::preconditioners::OperatorPreconditioner<B>>,
-        > = match precond_type {
-            PreconditionerType::Auto => unreachable!("Auto should be resolved before this point"),
-            PreconditionerType::None => None,
-            PreconditionerType::FourierDiagonalKernelCompensated => {
-                if use_band_window {
-                    // Use eigenvalues from previous k-point to tune the preconditioner
-                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                    Some(Box::new(
-                        theta.build_homogeneous_preconditioner_band_window(
-                            eigenvalues,
-                            Some(options.band_window_blend),
-                            Some(options.band_window_scale),
-                        ),
-                    ))
-                } else {
-                    Some(Box::new(theta.build_homogeneous_preconditioner_adaptive()))
-                }
-            }
-            PreconditionerType::TransverseProjection => {
-                if use_band_window {
-                    let eigenvalues = prev_eigenvalues.as_ref().unwrap();
-                    Some(Box::new(
-                        theta.build_transverse_projection_preconditioner_band_window(
-                            eigenvalues,
-                            Some(options.band_window_blend),
-                            Some(options.band_window_scale),
-                        ),
-                    ))
-                } else {
-                    Some(Box::new(
-                        theta.build_transverse_projection_preconditioner_adaptive(),
-                    ))
-                }
-            }
-            PreconditionerType::Multigrid => {
-                unimplemented!("Multigrid preconditioner not yet implemented")
-            }
-        };
+        let (mut preconditioner_opt, precond_info) =
+            theta.build_preconditioner(&options.preconditioner, prev_eigenvalues.as_deref());
 
         crate::profiler::stop_timer("run.preconditioner_setup");
 
@@ -959,7 +859,7 @@ fn run_core<B: SpectralBackend + Clone>(
             run_data.config.k_point = Some(k_frac);
             run_data.config.bloch = Some(bloch);
             run_data.config.polarization = Some(format!("{:?}", job.pol));
-            run_data.config.preconditioner_type = options.precond_type;
+            run_data.config.preconditioner_type = options.preconditioner.diagnostics_type(job.pol);
             run_data.config.warm_start_enabled = warm_start_used;
             study.add_run(run_data);
         } else {
@@ -1190,6 +1090,9 @@ fn run_core<B: SpectralBackend + Clone>(
                 b_orthogonality_defect: k_b_orthogonality_defect,
                 eigenvectors: options.retain_eigenvectors.then(|| eigenvectors.clone()),
                 is_gamma,
+                elapsed_seconds: point_start.elapsed_secs(),
+                work: crate::work::snapshot().since(work_start),
+                preconditioner: reused.is_none().then_some(precond_info),
             });
         }
 

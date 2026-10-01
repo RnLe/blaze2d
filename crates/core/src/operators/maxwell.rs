@@ -395,6 +395,59 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         )
     }
 
+    /// Build the preconditioner selected by `spec`. `previous` holds the last
+    /// k-point's eigenvalues for the band-window shift; without them the
+    /// legacy shift is used.
+    pub fn build_preconditioner<'a>(
+        &self,
+        spec: &crate::preconditioners::PreconditionerSpec,
+        previous: Option<&[f64]>,
+    ) -> (
+        Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B> + 'a>>,
+        crate::preconditioners::PreconditionerInfo,
+    )
+    where
+        B: 'a,
+    {
+        use crate::preconditioners::{PreconditionerInfo, PreconditionerKind, ShiftRule};
+        let kind = spec.resolve_kind(self.polarization);
+        let s_min = self.spectral_stats().s_min;
+        let legacy = spec.shift_fraction * s_min;
+        let shift = match (spec.shift, previous) {
+            (ShiftRule::Fixed, _) => spec.shift_value,
+            (ShiftRule::BandWindow, Some(eigenvalues)) => match crate::preconditioners::BandWindow::from_eigenvalues(eigenvalues) {
+                Some(window) => {
+                    let beta = spec.band_window_blend.clamp(0.0, 1.0);
+                    beta * legacy + (1.0 - beta) * window.compute_shift(spec.band_window_scale)
+                }
+                None => legacy,
+            },
+            _ => legacy,
+        };
+        let preconditioner: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B> + 'a>> = match kind {
+            PreconditionerKind::Auto => unreachable!("resolved above"),
+            PreconditionerKind::None => None,
+            PreconditionerKind::Diagonal => Some(Box::new(self.build_fourier_diagonal(shift, spec.tm_mass_fraction))),
+            PreconditionerKind::Transverse => Some(Box::new(self.build_transverse_projection_preconditioner_with_shift(shift))),
+        };
+        (preconditioner, PreconditionerInfo { kind, shift, s_min })
+    }
+
+    fn build_fourier_diagonal(&self, shift: f64, tm_mass_fraction: f64) -> FourierDiagonalPreconditioner {
+        let near_zero_mask = self.is_gamma().then_some(self.k_plus_g_was_clamped.as_slice());
+        let (eps_eff, mass_floor) = match self.polarization {
+            Polarization::TM => {
+                let eps_eff = self.effective_tm_epsilon();
+                let floor = if eps_eff.is_finite() && eps_eff > 0.0 { eps_eff * tm_mass_fraction } else { 0.0 };
+                (eps_eff, floor)
+            }
+            Polarization::TE => (self.effective_te_epsilon(), 0.0),
+        };
+        FourierDiagonalPreconditioner::new(build_inverse_diagonal(
+            &self.k_plus_g_sq_precond, shift, eps_eff, mass_floor, near_zero_mask,
+        ))
+    }
+
     /// Estimate the condition number κ = λ_max / λ_min of the operator A.
     pub fn estimate_condition_number(&mut self, n_iters: usize) -> (f64, f64, f64) {
         let mut v = self.alloc_field();

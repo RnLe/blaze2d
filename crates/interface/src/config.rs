@@ -406,6 +406,61 @@ pub struct Eigensolver {
     pub max_iterations: Option<usize>,
     #[serde(default)]
     pub block_size: usize,
+    #[serde(default)]
+    pub stopping: Stopping,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub residual_tolerance: Option<f64>,
+    #[serde(default)]
+    pub history: History,
+    #[serde(default)]
+    pub preconditioner: Preconditioner,
+}
+
+/// Stopping rule: relative eigenvalue change (`tolerance`) or relative residual (`residual_tolerance`).
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Stopping { #[default] EigenvalueChange, Residual }
+
+/// Third LOBPCG search block: next Ritz vectors, conjugate directions, or none.
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum History { #[default] Ritz, Conjugate, None }
+
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreconditionerKind { #[default] Auto, None, Diagonal, Transverse }
+
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreconditionerShift { #[default] Legacy, BandWindow, Fixed }
+
+/// Experimental preconditioner settings; defaults reproduce the built-in choice.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Preconditioner {
+    #[serde(default)]
+    pub kind: PreconditionerKind,
+    #[serde(default)]
+    pub shift: PreconditionerShift,
+    #[serde(default = "shift_fraction")]
+    pub shift_fraction: f64,
+    #[serde(default)]
+    pub shift_value: f64,
+    #[serde(default = "half")]
+    pub band_window_blend: f64,
+    #[serde(default = "half")]
+    pub band_window_scale: f64,
+    #[serde(default = "tm_mass_fraction")]
+    pub tm_mass_fraction: f64,
+}
+fn shift_fraction() -> f64 { blaze2d_core::preconditioners::SHIFT_SMIN_FRACTION }
+fn half() -> f64 { 0.5 }
+fn tm_mass_fraction() -> f64 { blaze2d_core::operators::TM_PRECONDITIONER_MASS_FRACTION }
+impl Default for Preconditioner {
+    fn default() -> Self {
+        Self { kind: PreconditionerKind::Auto, shift: PreconditionerShift::Legacy, shift_fraction: shift_fraction(),
+            shift_value: 0.0, band_window_blend: half(), band_window_scale: half(), tm_mass_fraction: tm_mass_fraction() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

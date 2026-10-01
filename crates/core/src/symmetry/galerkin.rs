@@ -399,7 +399,7 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for GalerkinPreconditioner<'_
         crate::profile_scope!("symmetry.galerkin.preconditioner");
         if self.application == GalerkinApplication::DirectFourier {
             if let Some(diagonal) = self.inner.fourier_diagonal() {
-                crate::profiler::count("preconditioner.columns", 1);
+                crate::profiler::count("symmetry.galerkin.diagonal_columns", 1);
                 for (value, &i) in vector
                     .as_mut_slice()
                     .iter_mut()

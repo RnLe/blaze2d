@@ -62,6 +62,7 @@ pub fn stop_timer(name: &'static str) {
 }
 #[inline]
 pub fn count(name: &'static str, amount: usize) {
+    crate::work::record(name, amount);
     #[cfg(feature="profiling")]
     LOCAL.with(|w| {
         let mut w=w.borrow_mut(); *w.counters.entry(name).or_default()+=amount as u64;
