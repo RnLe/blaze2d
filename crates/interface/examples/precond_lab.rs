@@ -128,7 +128,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 write_reply(&mut out, &reply, &[])?;
             }
             "set_spec" => {
-                session.spec = serde_json::from_value(request["spec"].clone())?;
+                let mut spec = request["spec"].clone();
+                // As in the TOML interface, the legacy and band-window rules default to 0.5.
+                if matches!(spec["shift"].as_str(), Some("legacy" | "band_window")) && spec.get("shift_fraction").is_none() {
+                    spec["shift_fraction"] = json!(blaze2d_core::preconditioners::SHIFT_SMIN_FRACTION);
+                }
+                session.spec = serde_json::from_value(spec)?;
                 session.previous = serde_json::from_value(request["previous"].clone()).ok();
                 let mut reply = session.rebuild();
                 reply["ok"] = json!(true);

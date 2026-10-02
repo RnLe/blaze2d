@@ -241,7 +241,7 @@ impl Default for RunOptions {
 }
 
 impl RunOptions {
-    /// Create default run options (fourier-diagonal preconditioner with adaptive shift).
+    /// Create default run options (the default `PreconditionerSpec`).
     pub fn new() -> Self {
         Self::default()
     }
@@ -291,7 +291,7 @@ impl RunOptions {
 /// over all k-points in the job's k_path, solving the eigenvalue problem at
 /// each point to obtain the photonic band frequencies.
 ///
-/// Uses default options: fourier-diagonal preconditioner with adaptive k-dependent shift.
+/// Uses default options, including the default `PreconditionerSpec`.
 ///
 /// # Arguments
 ///
@@ -461,7 +461,7 @@ fn run_core<B: SpectralBackend + Clone>(
             crate::profile_scope!("run.operator_diagnostics");
             let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, bloch);
 
-            // Build preconditioner for diagnostics (always using the legacy shift rule)
+            // Build the job's preconditioner for diagnostics (no band-window history here)
             let (mut preconditioner_opt, _) = theta.build_preconditioner(&options.preconditioner, None);
 
             const POWER_ITERATIONS: usize = 15;

@@ -256,49 +256,61 @@ def timing_comparison(study: Study) -> Content:
     return out
 
 
+WORK_METRICS = (('iterations', 'Iterations'), ('a_columns', 'Operator columns'), ('fft_vectors', 'FFT vectors'),
+                ('gemm_terms', 'GEMM terms'))
+
+
+def work_value(record: dict, metric: str) -> float | None:
+    if metric == 'iterations':
+        return record['iterations_total'] or None
+    return ((record.get('optional') or {}).get('work') or {}).get(metric) or None
+
+
 def work_comparison(study: Study) -> Content:
-    """Iteration ratios of every later variant against the study's first variant."""
+    """Work ratios of every later variant against the study's first variant.
+
+    FFT vectors are the cost proxy (iterations alone mislead when the block or the
+    history changes the work per iteration); the table adds the other counters.
+    """
     out = Content()
     reference, others = study.variants[0], study.variants[1:]
     by_case: dict[str, dict[str, dict]] = {}
     for record in study.records:
         if record['validation']['completed'] and record['iterations_total']:
             by_case.setdefault(record['case_id'], {})[record['variant']] = record
-    for other in others:
-        groups: dict[tuple, dict[str, tuple[list, list]]] = {}
-        for case_id, runs in by_case.items():
-            if reference in runs and other in runs:
-                groups.setdefault(group_key(runs[reference]['params']), {})[case_id] = (
-                    [runs[reference]['iterations_total']], [runs[other]['iterations_total']])
-        bars = []
-        for (p, n), data in sorted(groups.items()):
-            stats = ratio_statistics(data, resamples=2000)
-            bars.append(dict(label=f'{p} N={n}', bars=[bar(other, stats['geometric_mean'], stats['ci95_geometric'])]))
-        if bars:
-            out.charts.append(chart('ratio_bars', f'{study.name}-{other}-work', f'{other} vs {reference}: iterations',
-                                    f'iterations({reference}) / iterations({other}) per case; geometric mean per '
-                                    'group with case-bootstrap 95% interval', y_label='iteration ratio', groups=bars))
-    resolutions = sorted({r['params']['resolution'] for runs in by_case.values() for r in runs.values()})
-
-    def iterations_at(variant: str, n: int) -> float | None:
-        return median([runs[variant]['iterations_total'] for runs in by_case.values()
-                       if variant in runs and runs[variant]['params']['resolution'] == n])
-    out.charts.append(chart('bars', f'{study.name}-iterations', f'{study.name}: iterations per diagram',
-                            'median total iterations per diagram at each resolution', y_label='iterations',
-                            categories=[f'N={n}' for n in resolutions],
-                            series=[dict(label=v, values=[iterations_at(v, n) for n in resolutions])
-                                    for v in study.variants]))
+    proxy = 'fft_vectors' if any(work_value(r, 'fft_vectors') for runs in by_case.values() for r in runs.values()) else 'iterations'
+    groups: dict[tuple, list] = {}
     rows = []
-    for runs in sorted(by_case.values(), key=lambda runs: next(iter(runs.values()))['label']):
-        row = dict(label=next(iter(runs.values()))['label'])
-        row.update({f'it_{v}': runs[v]['iterations_total'] if v in runs else None for v in study.variants})
-        row.update({f'ratio_{v}': runs[reference]['iterations_total'] / runs[v]['iterations_total']
-                    if reference in runs and v in runs else None for v in others})
-        rows.append(row)
-    out.tables.append(table(f'{study.name}-work', f'{study.name}: per-case iterations',
-                            [column('label', 'Case')] + [column(f'it_{v}', v, 'int') for v in study.variants]
-                            + [column(f'ratio_{v}', f'{reference}/{v}', 'float3') for v in others], rows,
-                            'iteration counts are deterministic and independent of host load'))
+    for other in others:
+        per_group: dict[tuple, dict[str, tuple[list, list]]] = {}
+        for case_id, runs in by_case.items():
+            if reference in runs and other in runs and work_value(runs[other], proxy):
+                per_group.setdefault(group_key(runs[reference]['params']), {})[case_id] = (
+                    [work_value(runs[reference], proxy)], [work_value(runs[other], proxy)])
+        for key, data in sorted(per_group.items()):
+            stats = ratio_statistics(data, resamples=1000)
+            groups.setdefault(key, []).append(bar(other, stats['geometric_mean'], stats['ci95_geometric']))
+        for polarization in ('TE', 'TM'):
+            row = dict(variant=other, polarization=polarization)
+            for metric, _ in WORK_METRICS:
+                ratios = [work_value(runs[reference], metric) / work_value(runs[other], metric) for runs in by_case.values()
+                          if reference in runs and other in runs and runs[reference]['params']['polarization'] == polarization
+                          and work_value(runs[reference], metric) and work_value(runs[other], metric)]
+                row[metric] = geometric(ratios) if ratios else None
+            row['failed'] = sum(1 for r in study.records if r['variant'] == other and not r['validation']['completed']
+                                and r['params']['polarization'] == polarization)
+            rows.append(row)
+    if groups:
+        label = 'FFT vectors' if proxy == 'fft_vectors' else 'iterations'
+        out.charts.append(chart('ratio_bars', f'{study.name}-work', f'{study.name}: work against {reference}',
+                                f'{label}({reference}) / {label}(variant) per case, geometric mean per group with '
+                                'case-bootstrap 95% interval; above 1 means less work', y_label='work ratio',
+                                groups=[dict(label=f'{p} N={n}', bars=bars) for (p, n), bars in sorted(groups.items())]))
+    out.tables.append(table(f'{study.name}-ratios', f'{study.name}: work ratios against {reference}',
+                            [column('variant', 'Variant'), column('polarization', 'Pol.')]
+                            + [column(metric, label, 'float3') for metric, label in WORK_METRICS]
+                            + [column('failed', 'Failed', 'int')], rows,
+                            'geometric means of reference / variant over cases; counts are deterministic'))
     return out
 
 
@@ -462,6 +474,35 @@ def pt_gate_section(studies: list[Study]) -> Content:
             column('passed', 'Gate')], rows,
             'fresh residuals on nonzero modes, real-subspace leakage and relative frequency gap to the complex solve'))
     return out
+
+
+ADOPTED = ('c3', 'tensor-cont-0')
+
+
+def adopted_tiles(studies: list[Study], content: Content) -> None:
+    """Total FFT-vector reduction of the adopted default against the pinned baseline."""
+    for study in reversed(studies):
+        name = next((v for v in ADOPTED if v in study.variants), None)
+        if study.kind != 'work' or 'baseline' not in study.variants or not name:
+            continue
+        by_case: dict[str, dict[str, dict]] = {}
+        for r in study.records:
+            if r['validation']['completed']:
+                by_case.setdefault(r['case_id'], {})[r['variant']] = r
+        tiles = []
+        for polarization in ('TE', 'TM'):
+            pairs = [(work_value(c['baseline'], 'fft_vectors'), work_value(c[name], 'fft_vectors')) for c in by_case.values()
+                     if 'baseline' in c and name in c and c['baseline']['params']['polarization'] == polarization]
+            pairs = [(a, b) for a, b in pairs if a and b]
+            if pairs:
+                worst = min(a / b for a, b in pairs)
+                tiles.append(tile(f'{polarization}: fewer FFTs with the new default', sum(a for a, _ in pairs) / sum(b for _, b in pairs),
+                                  'x', tone='good', note=f'{len(pairs)} cases of {study.name}; worst case {worst:.3f}x'))
+        content.tiles[:0] = tiles
+        return
+
+
+EXTENSIONS['tuning'] = adopted_tiles
 
 
 def comparison_page(name: str, studies: list[Study]) -> dict[str, Any]:

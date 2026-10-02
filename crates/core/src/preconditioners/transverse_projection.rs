@@ -14,7 +14,8 @@
 //! 1. FFT residual r → r̂
 //! 2. **Invert first curl**: X̂ = -i(k+G) r̂ / |k+G|² (2-component vector)
 //! 3. IFFT both components to real space
-//! 4. **Multiply by ε(r)** (not ε⁻¹!) - this inverts the 1/ε in the operator
+//! 4. **Multiply by ε(r)** (not ε⁻¹!) - this inverts the 1/ε in the operator; with
+//!    a tensor weight, by the inverse of the smoothed ε⁻¹ tensor instead
 //! 5. FFT both components back to k-space
 //! 6. **Invert second curl**: ĥ = i(k+G)·Ŷ / |k+G|² (scalar)
 //! 7. IFFT to get final result
@@ -58,6 +59,8 @@ pub struct TransverseProjectionPreconditioner<B: SpectralBackend> {
     near_zero_mask: Vec<bool>,
     /// Dielectric function ε(r)
     eps: Vec<f64>,
+    /// Per-pixel weight E = (ε⁻¹ tensor)⁻¹, row-major [xx, xy, yx, yy]; replaces ε when set.
+    tensor_weights: Option<Vec<[f64; 4]>>,
     /// Regularization shift σ²
     #[allow(dead_code)]
     shift: f64,
@@ -119,10 +122,26 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             inverse_k_sq,
             near_zero_mask,
             eps,
+            tensor_weights: None,
             shift,
             grad_x,
             grad_y,
         }
+    }
+
+    /// Weight the gradient by the inverse of the smoothed ε⁻¹ tensors the operator
+    /// uses instead of the scalar ε. Singular tensors keep the scalar weight.
+    pub fn with_tensor_weight(mut self, inverse_eps: &[[f64; 4]]) -> Self {
+        assert_eq!(inverse_eps.len(), self.eps.len());
+        self.tensor_weights = Some(inverse_eps.iter().zip(&self.eps).map(|(t, &eps)| {
+            let det = t[0] * t[3] - t[1] * t[2];
+            if det.is_finite() && det.abs() > 1e-300 {
+                [t[3] / det, -t[1] / det, -t[2] / det, t[0] / det]
+            } else {
+                [eps, 0.0, 0.0, eps]
+            }
+        }).collect());
+        self
     }
 
     /// Update the regularization shift σ² in-place.
@@ -196,14 +215,23 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
         backend.inverse_fft_2d(&mut self.grad_x);
         backend.inverse_fft_2d(&mut self.grad_y);
 
-        // Step 4: Multiply by ε(r) in real space
+        // Step 4: Multiply by ε(r), or by the tensor weight, in real space
         {
             let grad_x_data = self.grad_x.as_mut_slice();
             let grad_y_data = self.grad_y.as_mut_slice();
-            for idx in 0..self.grid.len() {
-                let eps_val = <B::Real as Real>::from_accum(self.eps[idx]);
-                grad_x_data[idx] *= eps_val;
-                grad_y_data[idx] *= eps_val;
+            if let Some(weights) = &self.tensor_weights {
+                for (idx, w) in weights.iter().enumerate() {
+                    let (gx, gy) = (grad_x_data[idx], grad_y_data[idx]);
+                    let w = w.map(<B::Real as Real>::from_accum);
+                    grad_x_data[idx] = gx * w[0] + gy * w[1];
+                    grad_y_data[idx] = gx * w[2] + gy * w[3];
+                }
+            } else {
+                for idx in 0..self.grid.len() {
+                    let eps_val = <B::Real as Real>::from_accum(self.eps[idx]);
+                    grad_x_data[idx] *= eps_val;
+                    grad_y_data[idx] *= eps_val;
+                }
             }
         }
 

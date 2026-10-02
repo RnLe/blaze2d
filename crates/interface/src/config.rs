@@ -493,9 +493,15 @@ pub enum PreconditionerKind { #[default] Auto, None, Diagonal, Transverse }
 
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PreconditionerShift { #[default] Legacy, BandWindow, Fixed }
+pub enum PreconditionerShift { Legacy, BandWindow, Fixed, #[default] Continuous }
 
-/// Experimental preconditioner settings; defaults reproduce the built-in choice.
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransverseWeight { Scalar, #[default] Tensor }
+
+/// Experimental preconditioner settings. `shift = "legacy"` with
+/// `transverse_weight = "scalar"` reproduces the preconditioner before `continuous`
+/// became the default.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Preconditioner {
@@ -503,8 +509,9 @@ pub struct Preconditioner {
     pub kind: PreconditionerKind,
     #[serde(default)]
     pub shift: PreconditionerShift,
-    #[serde(default = "shift_fraction")]
-    pub shift_fraction: f64,
+    /// Unset: 0.5 for the legacy and band-window rules, 0 for the continuous rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shift_fraction: Option<f64>,
     #[serde(default)]
     pub shift_value: f64,
     #[serde(default = "half")]
@@ -513,14 +520,23 @@ pub struct Preconditioner {
     pub band_window_scale: f64,
     #[serde(default = "tm_mass_fraction")]
     pub tm_mass_fraction: f64,
+    /// Gradient weight of the transverse projection: scalar ε or the inverse ε⁻¹ tensor.
+    #[serde(default)]
+    pub transverse_weight: TransverseWeight,
+    /// Lowest plane waves in an additive coarse correction (whole shells); 0 is off.
+    #[serde(default)]
+    pub coarse_modes: usize,
+    /// Shift of the coarse operator A + σB, in eigenvalue units.
+    #[serde(default)]
+    pub coarse_shift: f64,
 }
-fn shift_fraction() -> f64 { blaze2d_core::preconditioners::SHIFT_SMIN_FRACTION }
 fn half() -> f64 { 0.5 }
 fn tm_mass_fraction() -> f64 { blaze2d_core::operators::TM_PRECONDITIONER_MASS_FRACTION }
 impl Default for Preconditioner {
     fn default() -> Self {
-        Self { kind: PreconditionerKind::Auto, shift: PreconditionerShift::Legacy, shift_fraction: shift_fraction(),
-            shift_value: 0.0, band_window_blend: half(), band_window_scale: half(), tm_mass_fraction: tm_mass_fraction() }
+        Self { kind: PreconditionerKind::Auto, shift: PreconditionerShift::Continuous, shift_fraction: None,
+            shift_value: 0.0, band_window_blend: half(), band_window_scale: half(), tm_mass_fraction: tm_mass_fraction(),
+            transverse_weight: TransverseWeight::Tensor, coarse_modes: 0, coarse_shift: 0.0 }
     }
 }
 

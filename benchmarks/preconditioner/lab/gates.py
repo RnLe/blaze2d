@@ -63,6 +63,7 @@ def main() -> int:
     parser.add_argument('--limit', type=int)
     parser.add_argument('--results', type=Path, default=runlib.RESULTS)
     args = parser.parse_args()
+    # The baseline variant pins the legacy preconditioner, the reference of every gate.
     variant = cases.load_variants()['baseline']
     selected = cases.select(args.subset, match=args.match, limit=args.limit)
     root = args.results / args.study

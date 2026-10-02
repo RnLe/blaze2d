@@ -294,11 +294,13 @@
             "preconditioner": {
               "band_window_blend": 0.5,
               "band_window_scale": 0.5,
+              "coarse_modes": 0,
+              "coarse_shift": 0,
               "kind": "auto",
-              "shift": "legacy",
-              "shift_fraction": 0.5,
+              "shift": "continuous",
               "shift_value": 0,
-              "tm_mass_fraction": 0.01
+              "tm_mass_fraction": 0.01,
+              "transverse_weight": "tensor"
             },
             "stopping": "auto"
           }
@@ -535,11 +537,13 @@
           "default": {
             "band_window_blend": 0.5,
             "band_window_scale": 0.5,
+            "coarse_modes": 0,
+            "coarse_shift": 0,
             "kind": "auto",
-            "shift": "legacy",
-            "shift_fraction": 0.5,
+            "shift": "continuous",
             "shift_value": 0,
-            "tm_mass_fraction": 0.01
+            "tm_mass_fraction": 0.01,
+            "transverse_weight": "tensor"
           }
         },
         "residual_tolerance": {
@@ -1257,7 +1261,7 @@
       ]
     },
     "Preconditioner": {
-      "description": "Experimental preconditioner settings; defaults reproduce the built-in choice.",
+      "description": "Experimental preconditioner settings. `shift = \"legacy\"` with\n`transverse_weight = \"scalar\"` reproduces the preconditioner before `continuous`\nbecame the default.",
       "type": "object",
       "properties": {
         "band_window_blend": {
@@ -1270,18 +1274,34 @@
           "format": "double",
           "default": 0.5
         },
+        "coarse_modes": {
+          "description": "Lowest plane waves in an additive coarse correction (whole shells); 0 is off.",
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "coarse_shift": {
+          "description": "Shift of the coarse operator A + σB, in eigenvalue units.",
+          "type": "number",
+          "format": "double",
+          "default": 0
+        },
         "kind": {
           "$ref": "#/$defs/PreconditionerKind",
           "default": "auto"
         },
         "shift": {
           "$ref": "#/$defs/PreconditionerShift",
-          "default": "legacy"
+          "default": "continuous"
         },
         "shift_fraction": {
-          "type": "number",
-          "format": "double",
-          "default": 0.5
+          "description": "Unset: 0.5 for the legacy and band-window rules, 0 for the continuous rule.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         },
         "shift_value": {
           "type": "number",
@@ -1292,6 +1312,11 @@
           "type": "number",
           "format": "double",
           "default": 0.01
+        },
+        "transverse_weight": {
+          "description": "Gradient weight of the transverse projection: scalar ε or the inverse ε⁻¹ tensor.",
+          "$ref": "#/$defs/TransverseWeight",
+          "default": "tensor"
         }
       },
       "additionalProperties": false
@@ -1310,7 +1335,8 @@
       "enum": [
         "legacy",
         "band_window",
-        "fixed"
+        "fixed",
+        "continuous"
       ]
     },
     "Quantity": {
@@ -1778,6 +1804,13 @@
       "enum": [
         "bands",
         "operators"
+      ]
+    },
+    "TransverseWeight": {
+      "type": "string",
+      "enum": [
+        "scalar",
+        "tensor"
       ]
     },
     "ValidationReport": {

@@ -20,79 +20,7 @@
   "baseline": {
     "description": "PT-real arithmetic with residual stopping at 1e-7 and Ritz history; new binary only",
     "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
-    "bands": {
-      "symmetry": {
-        "arithmetic": "pt_real",
-        "k_reuse": "identical"
-      }
-    },
-    "eigensolver": {
-      "stopping": "residual",
-      "residual_tolerance": 1e-07,
-      "max_iterations": 600,
-      "history": "ritz"
-    }
-  },
-  "complex-baseline": {
-    "description": "Baseline with spatial complex arithmetic; new binary only",
-    "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
-    "bands": {
-      "symmetry": {
-        "arithmetic": "spatial_complex",
-        "k_reuse": "identical"
-      }
-    },
-    "eigensolver": {
-      "stopping": "residual",
-      "residual_tolerance": 1e-07,
-      "max_iterations": 600,
-      "history": "ritz"
-    }
-  },
-  "default": {
-    "description": "Built-in defaults of the current binary (residual stopping and automatic PT on native f64)",
-    "binary": "current"
-  },
-  "hist-conjugate": {
-    "description": "Baseline with Knyazev conjugate history directions",
-    "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
-    "bands": {
-      "symmetry": {
-        "arithmetic": "pt_real",
-        "k_reuse": "identical"
-      }
-    },
-    "eigensolver": {
-      "stopping": "residual",
-      "residual_tolerance": 1e-07,
-      "max_iterations": 600,
-      "history": "conjugate"
-    }
-  },
-  "hist-none": {
-    "description": "Baseline without a history block (preconditioned steepest descent)",
-    "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
-    "bands": {
-      "symmetry": {
-        "arithmetic": "pt_real",
-        "k_reuse": "identical"
-      }
-    },
-    "eigensolver": {
-      "stopping": "residual",
-      "residual_tolerance": 1e-07,
-      "max_iterations": 600,
-      "history": "none"
-    }
-  },
-  "slack6": {
-    "description": "Baseline with six extra block vectors (block 18 for 12 bands)",
-    "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
     "bands": {
       "symmetry": {
         "arithmetic": "pt_real",
@@ -104,13 +32,43 @@
       "residual_tolerance": 1e-07,
       "max_iterations": 600,
       "history": "ritz",
-      "block_size": 18
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
     }
   },
-  "slack6-conjugate": {
-    "description": "Six extra block vectors and conjugate history",
+  "complex-baseline": {
+    "description": "Baseline with spatial complex arithmetic; new binary only",
     "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "spatial_complex",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "default": {
+    "description": "Built-in defaults of the current binary (residual stopping and automatic PT on native f64)",
+    "binary": "current"
+  },
+  "hist-conjugate": {
+    "description": "Baseline with Knyazev conjugate history directions",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
     "bands": {
       "symmetry": {
         "arithmetic": "pt_real",
@@ -122,13 +80,17 @@
       "residual_tolerance": 1e-07,
       "max_iterations": 600,
       "history": "conjugate",
-      "block_size": 18
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
     }
   },
-  "slack6-none": {
-    "description": "Six extra block vectors and no history block",
+  "hist-none": {
+    "description": "Baseline without a history block (preconditioned steepest descent)",
     "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
     "bands": {
       "symmetry": {
         "arithmetic": "pt_real",
@@ -140,13 +102,86 @@
       "residual_tolerance": 1e-07,
       "max_iterations": 600,
       "history": "none",
-      "block_size": 18
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "slack6": {
+    "description": "Baseline with six extra block vectors (block 18 for 12 bands)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "block_size": 18,
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "slack6-conjugate": {
+    "description": "Six extra block vectors and conjugate history",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "conjugate",
+      "block_size": 18,
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "slack6-none": {
+    "description": "Six extra block vectors and no history block",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "none",
+      "block_size": 18,
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
     }
   },
   "baseline-tight": {
     "description": "PT-real arithmetic with residual stopping at 1e-8 (lower edge of the automatic PT window)",
     "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
     "bands": {
       "symmetry": {
         "arithmetic": "pt_real",
@@ -157,13 +192,18 @@
       "stopping": "residual",
       "residual_tolerance": 1e-08,
       "max_iterations": 600,
-      "history": "ritz"
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
     }
   },
   "complex-tight": {
     "description": "Spatial complex arithmetic with residual stopping at 1e-8 (lower edge of the automatic PT window)",
     "binary": "current",
-    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "requires": "eigensolver.preconditioner.transverse_weight (binaries after 56617e9d; earlier ones reject the key)",
     "bands": {
       "symmetry": {
         "arithmetic": "spatial_complex",
@@ -174,7 +214,303 @@
       "stopping": "residual",
       "residual_tolerance": 1e-08,
       "max_iterations": 600,
-      "history": "ritz"
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "cont-0": {
+    "description": "Baseline with the Gamma-continuous shift rule at alpha 0",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "cont-0.1": {
+    "description": "Gamma-continuous shift, alpha 0.1",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.1,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "cont-0.5": {
+    "description": "Gamma-continuous shift, alpha 0.5",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "cont-1": {
+    "description": "Gamma-continuous shift, alpha 1",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 1.0,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "legacy-0.1": {
+    "description": "Legacy shift rule with alpha 0.1",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.1,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "tensor-cont-0": {
+    "description": "Tensor-weighted transverse projection, continuous shift at alpha 0",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor"
+      }
+    }
+  },
+  "coarse14-cont-0": {
+    "description": "Two-level plane-wave correction (14 modes), continuous shift at alpha 0",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "coarse_modes": 14,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "coarse28-cont-0": {
+    "description": "Two-level plane-wave correction (28 modes), continuous shift at alpha 0",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "coarse_modes": 28,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "coarse56-cont-0": {
+    "description": "Two-level plane-wave correction (56 modes), continuous shift at alpha 0",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "coarse_modes": 56,
+        "transverse_weight": "scalar"
+      }
+    }
+  },
+  "coarse28-legacy": {
+    "description": "Two-level plane-wave correction (28 modes), legacy shift",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "coarse_modes": 28,
+        "transverse_weight": "scalar",
+        "shift": "legacy",
+        "shift_fraction": 0.5
+      }
+    }
+  },
+  "coarse28-tensor-cont-0": {
+    "description": "Two-level correction (28 modes), tensor projection, continuous shift at alpha 0",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "coarse_modes": 28,
+        "transverse_weight": "tensor"
+      }
+    }
+  },
+  "c3": {
+    "description": "Baseline settings with the new default preconditioner (continuous shift at 0, tensor projection)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous and transverse_weight",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor"
+      }
+    }
+  },
+  "complex-c3": {
+    "description": "The c3 settings with spatial complex arithmetic",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner shift = continuous and transverse_weight",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "spatial_complex",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor"
+      }
     }
   }
 }

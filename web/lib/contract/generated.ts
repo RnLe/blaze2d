@@ -194,16 +194,33 @@ export interface Eigensolver {
   tolerance?: number | null;
 }
 /**
- * Experimental preconditioner settings; defaults reproduce the built-in choice.
+ * Experimental preconditioner settings. `shift = "legacy"` with
+ * `transverse_weight = "scalar"` reproduces the preconditioner before `continuous`
+ * became the default.
  */
 export interface Preconditioner {
   band_window_blend?: number;
   band_window_scale?: number;
+  /**
+   * Lowest plane waves in an additive coarse correction (whole shells); 0 is off.
+   */
+  coarse_modes?: number;
+  /**
+   * Shift of the coarse operator A + σB, in eigenvalue units.
+   */
+  coarse_shift?: number;
   kind?: "auto" | "none" | "diagonal" | "transverse";
-  shift?: "legacy" | "band_window" | "fixed";
-  shift_fraction?: number;
+  shift?: "legacy" | "band_window" | "fixed" | "continuous";
+  /**
+   * Unset: 0.5 for the legacy and band-window rules, 0 for the continuous rule.
+   */
+  shift_fraction?: number | null;
   shift_value?: number;
   tm_mass_fraction?: number;
+  /**
+   * Gradient weight of the transverse projection: scalar ε or the inverse ε⁻¹ tensor.
+   */
+  transverse_weight?: "scalar" | "tensor";
 }
 export interface Geometry {
   background_epsilon?: number;

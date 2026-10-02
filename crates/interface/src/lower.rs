@@ -18,9 +18,16 @@ pub(crate) fn preconditioner_spec(p: &crate::Preconditioner) -> PreconditionerSp
         kind: match p.kind { crate::PreconditionerKind::Auto => PreconditionerKind::Auto, crate::PreconditionerKind::None => PreconditionerKind::None,
             crate::PreconditionerKind::Diagonal => PreconditionerKind::Diagonal, crate::PreconditionerKind::Transverse => PreconditionerKind::Transverse },
         shift: match p.shift { crate::PreconditionerShift::Legacy => ShiftRule::Legacy, crate::PreconditionerShift::BandWindow => ShiftRule::BandWindow,
-            crate::PreconditionerShift::Fixed => ShiftRule::Fixed },
-        shift_fraction: p.shift_fraction, shift_value: p.shift_value,
+            crate::PreconditionerShift::Fixed => ShiftRule::Fixed, crate::PreconditionerShift::Continuous => ShiftRule::Continuous },
+        shift_fraction: p.shift_fraction.unwrap_or(match p.shift {
+            crate::PreconditionerShift::Continuous => 0.0,
+            _ => blaze2d_core::preconditioners::SHIFT_SMIN_FRACTION,
+        }),
+        shift_value: p.shift_value,
         band_window_blend: p.band_window_blend, band_window_scale: p.band_window_scale, tm_mass_fraction: p.tm_mass_fraction,
+        transverse_weight: match p.transverse_weight { crate::TransverseWeight::Scalar => blaze2d_core::preconditioners::TransverseWeight::Scalar,
+            crate::TransverseWeight::Tensor => blaze2d_core::preconditioners::TransverseWeight::Tensor },
+        coarse_modes: p.coarse_modes, coarse_shift: p.coarse_shift,
     }
 }
 

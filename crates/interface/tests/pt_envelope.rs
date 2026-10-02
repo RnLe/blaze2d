@@ -183,3 +183,84 @@ fn automatic_reuse_respects_the_metric_support_payload_allowance() {
     assert_eq!(reuse, KReuse::Off);
     assert!(reasons.contains("payload allowance"), "{reasons}");
 }
+
+#[test]
+fn two_level_continuous_preconditioning_keeps_pt_exact() {
+    let settings = "[eigensolver.preconditioner]\nshift = \"continuous\"\nshift_fraction = 0.0\ncoarse_modes = 28\n";
+    for lattice in ["square", "triangular"] {
+        for polarization in ["TE", "TM"] {
+            let run = |extra: &str| {
+                let job = Plan::new(bands(lattice, polarization, 16, &format!("{settings}{extra}")), Platform::Native).unwrap().job(0).unwrap();
+                execute(CpuBackend::<f64>::new(), "cpu", &job, |_| {}).unwrap()
+            };
+            let pt = run("");
+            let complex = run("[bands.symmetry]\npolicy = \"manual\"\narithmetic = \"spatial_complex\"\nk_reuse = \"identical\"\n");
+            let case = format!("{lattice} {polarization}");
+            assert_eq!(pt.metadata["converged"], true, "{case}");
+            assert_eq!(pt.metadata["symmetry"]["resolved"]["arithmetic"], "pt_real", "{case}");
+            for point in pt.metadata["symmetry"]["points"].as_array().unwrap() {
+                assert!(point["solver_attempts"].as_array().unwrap().iter().all(|a| a["retained"] == true), "{case}");
+                if point["source_index"].is_null() {
+                    let leakage = point["coordinates"]["maximum_real_subspace_leakage"].as_f64().unwrap();
+                    assert!(leakage <= 1e-10, "{case}: leakage {leakage:e}");
+                }
+            }
+            assert!(pt.metadata["preconditioner"]["points"][1]["coarse_modes"].as_u64().unwrap() >= 28, "{case}");
+            // Tracking follows eigenvector overlaps and may order crossings differently.
+            let bands = pt.arrays["frequencies"].shape[1];
+            let sorted = |data: &[f64]| data.chunks(bands).map(|k| {
+                let mut k = k.to_vec(); k.sort_by(f64::total_cmp); k
+            }).collect::<Vec<_>>();
+            for (a, b) in sorted(&pt.arrays["frequencies"].data).iter().flatten().zip(sorted(&complex.arrays["frequencies"].data).iter().flatten()) {
+                assert!((a - b).abs() <= 1e-9 * a.abs().max(1e-3), "{case}: {a} vs {b}");
+            }
+        }
+    }
+}
+
+#[test]
+fn coarse_correction_stays_bounded_next_to_gamma() {
+    // Off Γ the G = 0 plane wave is unmasked with |k+G|² = |k|²; the TM coarse term must
+    // keep the smoother's mass floor there or it amplifies that mode by 1/|k|².
+    let source = |precision: &str| format!(r#"
+schema = "blaze2d/1"
+task = "bands"
+polarization = "TM"
+[geometry]
+background_epsilon = 1.0
+lattice = {{ type = "square", a = 1.0 }}
+[[geometry.objects]]
+name = "rod"
+kind = "circle"
+center = [0.0, 0.0]
+radius = 0.2
+epsilon = 8.9
+[grid]
+resolution = 24
+[bands]
+count = 8
+path = {{ points = [[0.0, 0.0], [1e-4, 0.0], [1e-3, 0.0], [3e-3, 0.0]] }}
+[eigensolver]
+precision = "{precision}"
+max_iterations = 400
+[eigensolver.preconditioner]
+coarse_modes = 24
+"#);
+    let run = |precision: &str| {
+        let job = Plan::new(Config::from_toml(&source(precision)).unwrap(), Platform::Native).unwrap().job(0).unwrap();
+        if precision == "f32" {
+            execute(CpuBackend::<f32>::new(), "cpu", &job, |_| {}).unwrap()
+        } else {
+            execute(CpuBackend::<f64>::new(), "cpu", &job, |_| {}).unwrap()
+        }
+    };
+    let f64_result = run("f64");
+    assert_eq!(f64_result.metadata["converged"], true);
+    assert!(f64_result.metadata["preconditioner"]["points"][2]["coarse_modes"].as_u64().unwrap() >= 24);
+    let f32_result = run("f32");
+    let bands = f64_result.arrays["frequencies"].shape[1];
+    let sorted = |data: &[f64]| data.chunks(bands).map(|k| { let mut k = k.to_vec(); k.sort_by(f64::total_cmp); k }).collect::<Vec<_>>();
+    for (a, b) in sorted(&f64_result.arrays["frequencies"].data).iter().flatten().zip(sorted(&f32_result.arrays["frequencies"].data).iter().flatten()) {
+        assert!((a - b).abs() <= 1e-3, "f32 {b} vs f64 {a}");
+    }
+}

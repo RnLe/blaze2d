@@ -150,12 +150,14 @@ impl SpectralStats {
         let s_median = if nonzero_values.is_empty() {
             1.0
         } else {
-            nonzero_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let mid = nonzero_values.len() / 2;
-            if nonzero_values.len() % 2 == 0 {
-                (nonzero_values[mid - 1] + nonzero_values[mid]) / 2.0
+            // Selection instead of a full sort: O(N) per k-point, same value.
+            let len = nonzero_values.len();
+            let mid = len / 2;
+            let (lower, &mut upper, _) = nonzero_values.select_nth_unstable_by(mid, f64::total_cmp);
+            if len % 2 == 0 {
+                (lower.iter().copied().fold(f64::NEG_INFINITY, f64::max) + upper) / 2.0
             } else {
-                nonzero_values[mid]
+                upper
             }
         };
 

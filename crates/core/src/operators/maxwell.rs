@@ -409,12 +409,15 @@ impl<B: SpectralBackend> ThetaOperator<B> {
     where
         B: 'a,
     {
-        use crate::preconditioners::{PreconditionerInfo, PreconditionerKind, ShiftRule};
+        use crate::preconditioners::{
+            OperatorPreconditioner, PlaneWaveCorrection, PreconditionerInfo, PreconditionerKind, ShiftRule, TransverseWeight,
+        };
         let kind = spec.resolve_kind(self.polarization);
         let s_min = self.spectral_stats().s_min;
         let legacy = spec.shift_fraction * s_min;
         let shift = match (spec.shift, previous) {
             (ShiftRule::Fixed, _) => spec.shift_value,
+            (ShiftRule::Continuous, _) => spec.shift_fraction * self.k_plus_g_sq_min_raw,
             (ShiftRule::BandWindow, Some(eigenvalues)) => match crate::preconditioners::BandWindow::from_eigenvalues(eigenvalues) {
                 Some(window) => {
                     let beta = spec.band_window_blend.clamp(0.0, 1.0);
@@ -424,16 +427,125 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             },
             _ => legacy,
         };
-        let preconditioner: Option<Box<dyn crate::preconditioners::OperatorPreconditioner<B> + 'a>> = match kind {
+        let q_units = spec.shift == ShiftRule::Continuous;
+        let smoother: Option<Box<dyn OperatorPreconditioner<B> + 'a>> = match kind {
             PreconditionerKind::Auto => unreachable!("resolved above"),
             PreconditionerKind::None => None,
-            PreconditionerKind::Diagonal => Some(Box::new(self.build_fourier_diagonal(shift, spec.tm_mass_fraction))),
-            PreconditionerKind::Transverse => Some(Box::new(self.build_transverse_projection_preconditioner_with_shift(shift))),
+            PreconditionerKind::Diagonal => Some(Box::new(self.build_fourier_diagonal(shift, q_units, spec.tm_mass_fraction))),
+            PreconditionerKind::Transverse => {
+                let projection = self.build_transverse_projection_preconditioner_with_shift(shift);
+                Some(Box::new(match (spec.transverse_weight, self.dielectric.inv_eps_tensors()) {
+                    (TransverseWeight::Tensor, Some(tensors)) => projection.with_tensor_weight(tensors),
+                    _ => projection,
+                }))
+            }
         };
-        (preconditioner, PreconditionerInfo { kind, shift, s_min })
+        let mut coarse_modes = 0;
+        let preconditioner = match smoother {
+            Some(smoother) if spec.coarse_modes > 0 => {
+                // The TM diagonal approximates ε_eff·(A + m)⁻¹ with the mass floor m; the
+                // coarse term matches it, so a homogeneous medium sees the smoother's symbol
+                // and no near-Γ mode escapes the floor. TE smoothers approximate A⁻¹.
+                let (mass, scale) = match self.polarization {
+                    Polarization::TM => {
+                        let eps_eff = self.effective_tm_epsilon();
+                        if eps_eff.is_finite() && eps_eff > 0.0 { (spec.tm_mass_fraction * eps_eff, eps_eff) } else { (0.0, 1.0) }
+                    }
+                    Polarization::TE => (0.0, 1.0),
+                };
+                let (indices, galerkin) = self.plane_wave_galerkin(spec.coarse_modes, spec.coarse_shift, mass);
+                match PlaneWaveCorrection::new(smoother, indices, galerkin, scale) {
+                    Ok(correction) => {
+                        coarse_modes = correction.modes();
+                        Some(Box::new(correction) as Box<dyn OperatorPreconditioner<B> + 'a>)
+                    }
+                    Err((smoother, reason)) => {
+                        log::warn!("preconditioner: coarse correction disabled: {reason}");
+                        crate::profiler::count("preconditioner.coarse_rejected", 1);
+                        Some(smoother)
+                    }
+                }
+            }
+            smoother => smoother,
+        };
+        (preconditioner, PreconditionerInfo { kind, shift, s_min, coarse_modes })
     }
 
-    fn build_fourier_diagonal(&self, shift: f64, tm_mass_fraction: f64) -> FourierDiagonalPreconditioner {
+    /// Coarse plane waves and their Galerkin matrix Zᴴ (A + σ B + m) Z, row-major,
+    /// with a diagonal floor `mass` in |k+G|² units.
+    ///
+    /// Z holds the `modes` smallest raw |k+G| outside the kernel mask, completed to
+    /// whole shells. Entries come from Fourier coefficients of the material on the
+    /// grid, so they equal the restriction of the discrete operator exactly:
+    /// TE (k+G_i)ᵀ η̂(G_i − G_j) (k+G_j) + (σ + m) δ_ij,
+    /// TM (|k+G_i|² + m) δ_ij + σ ε̂(G_i − G_j).
+    pub fn plane_wave_galerkin(&self, modes: usize, shift: f64, mass: f64) -> (Vec<usize>, Vec<num_complex::Complex64>) {
+        use num_complex::Complex64;
+        let (nx, ny) = (self.grid.nx, self.grid.ny);
+        let n = self.grid.len();
+        let mut order: Vec<usize> = (0..n).filter(|&i| !self.k_plus_g_was_clamped[i]).collect();
+        order.sort_by(|&a, &b| self.k_plus_g_sq[a].total_cmp(&self.k_plus_g_sq[b]).then(a.cmp(&b)));
+        let requested = modes.min(order.len());
+        if requested == 0 {
+            return (Vec::new(), Vec::new());
+        }
+        let edge = self.k_plus_g_sq[order[requested - 1]];
+        let m = order.iter().take_while(|&&i| self.k_plus_g_sq[i] <= edge * (1.0 + 1e-9) + 1e-12).count();
+        let indices = order[..m].to_vec();
+        let transform = |values: &mut dyn Iterator<Item = f64>| -> Vec<Complex64> {
+            let mut buffer = self.backend.alloc_field(self.grid);
+            for (z, v) in buffer.as_mut_slice().iter_mut().zip(values) {
+                *z = cscalar::<B::Real>(v, 0.0);
+            }
+            self.backend.forward_fft_2d(&mut buffer);
+            buffer.as_slice().iter().map(|z| Complex64::new(z.re.to_accum(), z.im.to_accum()) / n as f64).collect()
+        };
+        let difference = |i: usize, j: usize| {
+            let (iy, ix, jy, jx) = (i / nx, i % nx, j / nx, j % nx);
+            (iy + ny - jy) % ny * nx + (ix + nx - jx) % nx
+        };
+        let mut galerkin = vec![Complex64::new(0.0, 0.0); m * m];
+        match self.polarization {
+            Polarization::TE => {
+                let components: Vec<Vec<Complex64>> = match self.dielectric.inv_eps_tensors() {
+                    Some(tensors) => (0..4).map(|c| transform(&mut tensors.iter().map(|t| t[c]))).collect(),
+                    None => {
+                        let scalar = transform(&mut self.dielectric.inv_eps().iter().copied());
+                        let zero = vec![Complex64::new(0.0, 0.0); n];
+                        vec![scalar.clone(), zero.clone(), zero, scalar]
+                    }
+                };
+                for (a, &i) in indices.iter().enumerate() {
+                    let qi = [self.k_plus_g_x[i], self.k_plus_g_y[i]];
+                    for (b, &j) in indices.iter().enumerate() {
+                        let qj = [self.k_plus_g_x[j], self.k_plus_g_y[j]];
+                        let d = difference(i, j);
+                        let mut value = Complex64::new(0.0, 0.0);
+                        for c in 0..2 {
+                            for e in 0..2 {
+                                value += components[2 * c + e][d] * (qi[c] * qj[e]);
+                            }
+                        }
+                        if a == b { value += shift + mass; }
+                        galerkin[a * m + b] = value;
+                    }
+                }
+            }
+            Polarization::TM => {
+                let eps = (shift != 0.0).then(|| transform(&mut self.dielectric.eps().iter().copied()));
+                for (a, &i) in indices.iter().enumerate() {
+                    for (b, &j) in indices.iter().enumerate() {
+                        let mut value = Complex64::new(if a == b { self.k_plus_g_sq[i] + mass } else { 0.0 }, 0.0);
+                        if let Some(eps) = &eps { value += eps[difference(i, j)] * shift; }
+                        galerkin[a * m + b] = value;
+                    }
+                }
+            }
+        }
+        (indices, galerkin)
+    }
+
+    fn build_fourier_diagonal(&self, shift: f64, q_units: bool, tm_mass_fraction: f64) -> FourierDiagonalPreconditioner {
         let near_zero_mask = self.is_gamma().then_some(self.k_plus_g_was_clamped.as_slice());
         let (eps_eff, mass_floor) = match self.polarization {
             Polarization::TM => {
@@ -443,6 +555,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             }
             Polarization::TE => (self.effective_te_epsilon(), 0.0),
         };
+        // The diagonal scales its shift by ε_eff; a shift in |k+G|² units enters unscaled.
+        let shift = if q_units && eps_eff.is_finite() && eps_eff > 0.0 { shift / eps_eff } else { shift };
         FourierDiagonalPreconditioner::new(build_inverse_diagonal(
             &self.k_plus_g_sq_precond, shift, eps_eff, mass_floor, near_zero_mask,
         ))

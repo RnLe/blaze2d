@@ -72,6 +72,24 @@ Without that gate, a completed calculation may still contain inaccurate remote e
 Band results report fresh residuals and B-orthogonality without rotating the tracked fields.
 Operator results include the existing final Rayleigh-Ritz refinement.
 
+Experimental solver settings live under `[eigensolver]` and `[eigensolver.preconditioner]`
+and can be swept. `history` chooses the LOBPCG search block (`"ritz"`, the next Ritz
+vectors; `"conjugate"`, Knyazev's implicit directions; `"none"`). The preconditioner
+`kind` is `"auto"` (Fourier diagonal for TM, transverse projection for TE),
+`"diagonal"`, `"transverse"` or `"none"`. Its `shift` rule is `"continuous"` by
+default (`shift_fraction`, default 0, times the smallest |k+G|², in |k+G|² units for
+both kinds, so it vanishes at Γ); `"legacy"` uses `shift_fraction` (default 0.5) times
+the smallest |k+G|² above `1e-6` (scaled by the effective permittivity in the Fourier
+diagonal), and `"band_window"` and `"fixed"` (`shift_value`) remain.
+`transverse_weight = "tensor"` (the default) weights the transverse projection with the
+inverse of the smoothed ε⁻¹ tensors the operator uses; `"scalar"` uses ε. On the
+preconditioner study matrix the defaults needed 7% (TE) and 11% (TM) fewer FFTs than
+`shift = "legacy"` with `transverse_weight = "scalar"`. `coarse_modes` adds an additive two-level
+correction on the lowest plane waves, with a Galerkin matrix assembled exactly from the
+material's Fourier coefficients and shifted by `coarse_shift`. Results report the
+resolved settings per k point in `metadata.preconditioner` and solver work counters
+in `metadata.work`.
+
 For an explicit band acceptance contract, add:
 
 ```toml

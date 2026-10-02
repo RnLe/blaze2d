@@ -78,7 +78,9 @@ fn f32_and_f64_bandstructure_agree() {
     let mut max_abs_diff = 0.0f64;
     for (kp, (b64, b32)) in bands64.bands.iter().zip(bands32.bands.iter()).enumerate() {
         assert_eq!(b64.len(), b32.len(), "band count mismatch at k#{kp}");
-        for (&w64, &w32) in b64.iter().zip(b32.iter()) {
+        // Tracking may order crossings differently; compare the spectra.
+        let sorted = |b: &[f64]| { let mut b = b.to_vec(); b.sort_by(f64::total_cmp); b };
+        for (&w64, &w32) in sorted(b64).iter().zip(sorted(b32).iter()) {
             max_abs_diff = max_abs_diff.max((w64 - w32).abs());
         }
     }

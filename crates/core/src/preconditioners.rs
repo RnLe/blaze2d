@@ -56,6 +56,7 @@
 
 use crate::backend::SpectralBackend;
 
+pub mod coarse;
 pub mod fft_preconditioner;
 pub mod fourier_diagonal;
 pub mod spec;
@@ -80,7 +81,8 @@ pub use fourier_diagonal::{
     compute_shift_quality_score,
 };
 pub use transverse_projection::TransverseProjectionPreconditioner;
-pub use spec::{PreconditionerInfo, PreconditionerKind, PreconditionerSpec, ShiftRule};
+pub use coarse::PlaneWaveCorrection;
+pub use spec::{PreconditionerInfo, PreconditionerKind, PreconditionerSpec, ShiftRule, TransverseWeight};
 
 // ============================================================================
 // Core Preconditioner Trait

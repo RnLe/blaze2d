@@ -101,7 +101,7 @@ fn integer_value(value: Value, target: &str) -> InterfaceResult<Value> {
 
 fn integer_target(target: &str) -> bool {
     matches!(target, "bands.count" | "operators.band_lo" | "operators.retained_bands" | "operators.remote_bands" |
-        "eigensolver.max_iterations" | "eigensolver.block_size" | "grid.resolution")
+        "eigensolver.max_iterations" | "eigensolver.block_size" | "grid.resolution" | "eigensolver.preconditioner.coarse_modes")
 }
 
 pub fn set_parameter(config: &mut Config, target: &str, mut value: Value) -> InterfaceResult<()> {
@@ -115,7 +115,9 @@ pub fn set_parameter(config: &mut Config, target: &str, mut value: Value) -> Int
         "eigensolver.stopping" | "eigensolver.residual_tolerance" | "eigensolver.history" |
         "eigensolver.preconditioner.kind" | "eigensolver.preconditioner.shift" | "eigensolver.preconditioner.shift_fraction" |
         "eigensolver.preconditioner.shift_value" | "eigensolver.preconditioner.band_window_blend" |
-        "eigensolver.preconditioner.band_window_scale" | "eigensolver.preconditioner.tm_mass_fraction");
+        "eigensolver.preconditioner.band_window_scale" | "eigensolver.preconditioner.tm_mass_fraction" |
+        "eigensolver.preconditioner.transverse_weight" | "eigensolver.preconditioner.coarse_modes" |
+        "eigensolver.preconditioner.coarse_shift");
     if parts.len() == 4 && parts[0] == "geometry" && parts[1] == "objects" && matches!(parts[3], "radius" | "epsilon" | "center") {
         let index = config.geometry.objects.iter().position(|o| o.name == parts[2])
             .ok_or_else(|| invalid(target, "unknown object name"))?;
