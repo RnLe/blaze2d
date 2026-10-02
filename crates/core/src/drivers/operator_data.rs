@@ -40,7 +40,14 @@ use crate::geometry::Geometry2D;
 use crate::grid::Grid2D;
 use crate::operators::maxwell::ThetaOperator;
 use crate::polarization::Polarization;
-use crate::preconditioners::OperatorPreconditioner;
+use crate::preconditioners::{OperatorPreconditioner, PreconditionerSpec};
+
+/// The band calculations' default preconditioner (transverse projection with the TE
+/// profile, continuous Fourier diagonal for TM); operator jobs take no settings.
+fn default_preconditioner<'a, B: SpectralBackend + 'a>(theta: &ThetaOperator<B>, bands: usize) -> Box<dyn OperatorPreconditioner<B> + 'a> {
+    theta.build_preconditioner(&PreconditionerSpec::default().for_bands(bands), None).0
+        .expect("the default preconditioner is never none")
+}
 
 // ============================================================================
 // Job Configuration
@@ -201,8 +208,7 @@ pub fn run_with_reference<B: SpectralBackend>(
     let mut theta = ThetaOperator::new(backend, dielectric, job.pol, job.k0);
 
     // 4. Build preconditioner and solve
-    let mut preconditioner: Box<dyn OperatorPreconditioner<B>> =
-        Box::new(theta.build_homogeneous_preconditioner_adaptive());
+    let mut preconditioner = default_preconditioner(&theta, n_total);
 
     let mut eigensolver_config = job.eigensolver.clone();
     // Ensure we solve for enough bands
@@ -301,8 +307,7 @@ pub fn run_with_warmstart<B: SpectralBackend>(
 
     let mut theta = ThetaOperator::new(backend, dielectric, job.pol, job.k0);
 
-    let mut preconditioner: Box<dyn OperatorPreconditioner<B>> =
-        Box::new(theta.build_homogeneous_preconditioner_adaptive());
+    let mut preconditioner = default_preconditioner(&theta, n_total);
 
     let mut eigensolver_config = job.eigensolver.clone();
     if eigensolver_config.n_bands < n_total {
@@ -486,8 +491,7 @@ pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
     // -- 2. Solve at center k₀ (cold start) --
     let (center_ea, center_eigvecs) = {
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, job.k0);
-        let mut preconditioner: Box<dyn OperatorPreconditioner<B>> =
-            Box::new(theta.build_homogeneous_preconditioner_adaptive());
+        let mut preconditioner = default_preconditioner(&theta, n_total);
 
         let mut eigensolver_config = job.eigensolver.clone();
         if eigensolver_config.n_bands < n_total {
@@ -624,8 +628,7 @@ pub fn run_k_stencil_with_progress<B: SpectralBackend + Clone>(
             .unwrap_or(center_omegas.as_slice());
 
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), job.pol, k_point);
-        let mut preconditioner: Box<dyn OperatorPreconditioner<B>> =
-            Box::new(theta.build_homogeneous_preconditioner_adaptive());
+        let mut preconditioner = default_preconditioner(&theta, n_total);
 
         let mut eigensolver_config = job.eigensolver.clone();
         if eigensolver_config.n_bands < n_total {
@@ -789,8 +792,7 @@ pub fn run_k_path<B: SpectralBackend + Clone>(
 
     for &k in k_points {
         let mut theta = ThetaOperator::new(backend.clone(), dielectric.clone(), pol, k);
-        let mut preconditioner: Box<dyn OperatorPreconditioner<B>> =
-            Box::new(theta.build_homogeneous_preconditioner_adaptive());
+        let mut preconditioner = default_preconditioner(&theta, n_bands);
 
         let mut cfg = eigensolver_config.clone();
         if cfg.n_bands < n_bands {

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Serial, pinned, single-threaded timing of variant pairs (or one variant) under load monitoring.
+"""Serial, pinned, single-threaded timing of variant pairs (or one variant, or blocks) under load monitoring.
 
 Each case gets adjacent A/B pairs in seeded random order while the loadmon sampler runs.
+With more than two variants every repetition is a block that runs all of them in seeded
+random order, admitted as a whole like a pair; ratios are then seconds(first variant) /
+seconds(variant) for every other variant.
 A pair whose members are not both clean reruns as a whole (at most three attempts, ten
 seconds apart); the first clean attempt wins, otherwise the first paired-matched attempt
 (only background-load reasons, Linux background <= 1.5 cores in both runs and differing
@@ -148,7 +151,7 @@ class Session:
                                  verdicts={r['variant']: r['load']['verdict'] for r in runs},
                                  reasons={r['variant']: r['load']['reasons'] for r in runs}))
             chosen[attempt] = runs
-            if strict or not quality:
+            if strict or not quality or (self.args.accept_matched and attempts[-1]['matched']):
                 break
         winner = next((a['attempt'] for a in attempts if a['quality'] and a['strict']), None)
         tier = 'strict' if winner is not None else None
@@ -181,7 +184,9 @@ def summarize(study: str, variants: list[str], entries: list[dict[str, Any]],
             solver = {r['run_id']: s['result']['seconds'] for r, s in zip(chosen, normalized['samples'])}
     metrics = {'solver': solver, 'process': {r['run_id']: r['wall_seconds'] for r in chosen}}
     pair_mode = len(variants) == 2
+    mode = 'pair' if pair_mode else 'block' if len(variants) > 2 else 'single'
     tiers: dict[str, dict[str, Any]] = {}
+    levels: dict[str, dict[str, Any]] = {}
     for tier, allowed in (('strict', {'strict'}), ('matched', {'strict', 'matched'})):
         tiers[tier] = {}
         for metric, seconds in metrics.items():
@@ -194,12 +199,23 @@ def summarize(study: str, variants: list[str], entries: list[dict[str, Any]],
                     values = grouped.setdefault(e['case_id'], [[] for _ in variants])
                     for index, name in enumerate(variants):
                         values[index].append(seconds[e['run_ids'][name]])
-            tiers[tier][metric] = (ratio_statistics({c: (v[0], v[1]) for c, v in grouped.items()}, seed, resamples)
-                                   if pair_mode else level_statistics({c: v[0] for c, v in grouped.items()}))
+            if mode == 'pair':
+                tiers[tier][metric] = ratio_statistics({c: (v[0], v[1]) for c, v in grouped.items()}, seed, resamples)
+            elif mode == 'block':
+                tiers[tier][metric] = {name: ratio_statistics({c: (v[0], v[i]) for c, v in grouped.items()}, seed, resamples)
+                                       for i, name in enumerate(variants) if i}
+                levels.setdefault(tier, {})[metric] = {name: level_statistics({c: v[i] for c, v in grouped.items()})
+                                                       for i, name in enumerate(variants)}
+            else:
+                tiers[tier][metric] = level_statistics({c: v[0] for c, v in grouped.items()})
     primary = 'solver' if solver else 'process'
-    key = 'geometric_mean' if pair_mode else 'median_case_seconds'
+    key = 'median_case_seconds' if mode == 'single' else 'geometric_mean'
     strict, loose = tiers['strict'][primary], tiers['matched'][primary]
-    sensitive = bool(strict and loose and abs(loose[key] / strict[key] - 1) > SENSITIVITY)
+    if mode == 'block':
+        sensitive = bool(strict and loose and any(strict.get(n) and loose.get(n) and abs(loose[n][key] / strict[n][key] - 1)
+                                                  > SENSITIVITY for n in variants[1:]))
+    else:
+        sensitive = bool(strict and loose and abs(loose[key] / strict[key] - 1) > SENSITIVITY)
     labels = {e['case_id']: (e['label'], e['params']) for e in entries}
     primary_seconds = metrics[primary]
     per_case = []
@@ -207,7 +223,10 @@ def summarize(study: str, variants: list[str], entries: list[dict[str, Any]],
         row = dict(case_id=case_id, label=label, params=params)
         for tier in tiers:
             stats = tiers[tier][primary]
-            row[tier] = stats['per_case'].get(case_id) if stats else None
+            if mode == 'block':
+                row[tier] = {n: s['per_case'].get(case_id) for n, s in (stats or {}).items() if s} or None
+            else:
+                row[tier] = stats['per_case'].get(case_id) if stats else None
         row['seconds'] = {}
         for name in variants:
             values = [primary_seconds[e['run_ids'][name]] for e in admitted
@@ -215,8 +234,10 @@ def summarize(study: str, variants: list[str], entries: list[dict[str, Any]],
             row['seconds'][name] = statistics.median(values) if values else None
         per_case.append(row)
     verdicts = [r['load']['verdict'] for r in runs if r.get('tag') == 'timing']
-    return dict(schema=SUMMARY_SCHEMA, study=study, mode='pair' if pair_mode else 'single', variants=variants,
-                orientation='seconds(A) / seconds(B); above one means B is faster' if pair_mode else 'seconds',
+    return dict(schema=SUMMARY_SCHEMA, study=study, mode=mode, variants=variants, levels=levels,
+                orientation=dict(pair='seconds(A) / seconds(B); above one means B is faster',
+                                 block='seconds(first variant) / seconds(variant); above one means the variant is faster',
+                                 single='seconds')[mode],
                 seed=seed, resamples=resamples, primary_metric=primary, clock=clock, tiers=tiers,
                 sensitive_to_environment=sensitive, per_case=per_case,
                 counts=dict(entries=len(entries), strict=sum(e['tier'] == 'strict' for e in entries),
@@ -231,14 +252,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--study', required=True)
     parser.add_argument('--subset', choices=cases.SUBSETS, default='timing48')
-    parser.add_argument('--variant', action='append', required=True, help='A, then optionally B')
+    parser.add_argument('--variant', action='append', required=True,
+                        help='A, then optionally B, or three or more variants (the first is the reference)')
     parser.add_argument('--binary', action='append', default=[], help='VARIANT=frozen|current|PATH')
     parser.add_argument('--cpu', type=int, default=2)
     parser.add_argument('--sampler-cpu', type=int, default=30)
-    parser.add_argument('--pairs', type=int, default=3, help='pairs (or runs) per case')
+    parser.add_argument('--pairs', type=int, default=3, help='pairs (runs, blocks) per case')
     parser.add_argument('--seed', type=int, default=SEED)
     parser.add_argument('--attempts', type=int, default=3)
     parser.add_argument('--pause', type=float, default=10)
+    parser.add_argument('--accept-matched', action='store_true',
+                        help='stop retrying a pair at its first paired-matched attempt (hosts without strict-clean windows)')
     parser.add_argument('--timeout', type=float, default=1200)
     parser.add_argument('--nice', type=int, default=0)
     parser.add_argument('--wait', type=float, default=120, help='preflight polling budget in seconds')
@@ -252,8 +276,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--stage', default='baseline')
     parser.add_argument('--results', type=Path, default=runlib.RESULTS)
     args = parser.parse_args()
-    if len(args.variant) not in (1, 2) or len(set(args.variant)) != len(args.variant):
-        parser.error('give one variant (absolute times) or two distinct variants (A/B pairs)')
+    if len(set(args.variant)) != len(args.variant):
+        parser.error('variants must be distinct')
     return args
 
 
@@ -278,12 +302,14 @@ def main() -> None:
                 meta['binaries'][n]['sha256'] != b['sha256'] for n, b in binaries.items()):
             raise SystemExit(f'{root} holds a different timing study; choose a new --study')
         meta.update(status='running', ended=None)
+        meta.setdefault('protocol', {})['accept_matched'] = args.accept_matched
     else:
         meta = runlib.manifest(args.study, 'timing', args.stage, args.subset, variants, binaries,
                                {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()})
-        meta['protocol'] = dict(mode='pair' if len(variants) == 2 else 'single', cpu=args.cpu,
+        meta['protocol'] = dict(mode='pair' if len(variants) == 2 else 'block' if len(variants) > 2 else 'single', cpu=args.cpu,
                                 sampler_cpu=args.sampler_cpu, pairs_per_case=args.pairs, seed=args.seed,
                                 attempts=args.attempts, pause_seconds=args.pause, warmups_per_variant=1,
+                                accept_matched=args.accept_matched,
                                 limits=loadmon.LIMITS, matched=dict(background=MATCHED_BACKGROUND,
                                                                     difference=MATCHED_DIFFERENCE),
                                 practical_ratio=PRACTICAL, resamples=RESAMPLES)
@@ -336,8 +362,18 @@ def main() -> None:
         runlib.remove_scratch(root)
         print(json.dumps(dict(status=status, counts=summary['counts'], clock=summary['clock'],
                               sensitive_to_environment=summary['sensitive_to_environment'],
-                              strict={k: (v and {x: v[x] for x in v if x != 'per_case'})
-                                      for k, v in summary['tiers']['strict'].items()}), indent=1))
+                              matched=headline(summary)), indent=1))
+
+
+def headline(summary: dict[str, Any]) -> dict[str, Any]:
+    """Primary-metric ratios (or levels) of the matched tier without per-case detail."""
+    stats = summary['tiers']['matched'][summary['primary_metric']]
+    if not stats:
+        return {}
+    if summary['mode'] == 'block':
+        return {n: s and {k: s[k] for k in ('cases', 'geometric_mean', 'ci95_geometric', 'time_weighted')}
+                for n, s in stats.items()}
+    return {k: v for k, v in stats.items() if k != 'per_case'}
 
 
 if __name__ == '__main__':

@@ -212,12 +212,12 @@ def timing_comparison(study: Study) -> Content:
         out.notes.append(f"{study.name}: no admitted pair yet ({summary['counts']['contaminated_runs']} "
                          'contaminated runs); no speed-up is reported.')
         return out
-    if strict:
-        # The renderer reads a tile delta as a signed change, so the time-weighted ratio goes in the note.
-        out.tiles.append(tile(f'Speed-up {b} over {a}', strict['geometric_mean'], 'x', ci=strict['ci95_geometric'],
-                              tone=tone(strict['ci95_geometric']),
-                              note=f"{strict['cases']} cases, strict-clean tier, {metric} seconds; "
-                                   f"time-weighted {strict['time_weighted']:.3g}x"))
+    # The renderer reads a tile delta as a signed change, so the time-weighted ratio goes in the note.
+    headline, tier = (strict, 'strict-clean') if strict else (loose, 'paired-matched')
+    out.tiles.append(tile(f'Speed-up {b} over {a}', headline['geometric_mean'], 'x', ci=headline['ci95_geometric'],
+                          tone=tone(headline['ci95_geometric']),
+                          note=f"{headline['cases']} cases, {tier} tier, {metric} seconds; "
+                               f"time-weighted {headline['time_weighted']:.3g}x"))
     flag = 'contaminated' if summary['sensitive_to_environment'] else None
     groups: dict[tuple, dict[str, list[float]]] = {}
     for row in summary['per_case']:
@@ -316,6 +316,56 @@ def work_comparison(study: Study) -> Content:
     return out
 
 
+def block_comparison(study: Study) -> Content:
+    """Speed-ups of every variant of a block timing study against its first variant."""
+    summary, out = study.timing, Content()
+    reference, others = summary['variants'][0], summary['variants'][1:]
+    metric = summary['primary_metric']
+    strict, loose = summary['tiers']['strict'][metric] or {}, summary['tiers']['matched'][metric] or {}
+    stats = {n: strict.get(n) or loose.get(n) for n in others}
+    tier = 'strict-clean' if strict and all(strict.get(n) for n in others) else 'paired-matched'
+    if not any(stats.values()):
+        out.notes.append(f"{study.name}: no admitted block yet; no speed-up is reported.")
+        return out
+    for name in others:
+        if stats[name]:
+            out.tiles.append(tile(f'{name} vs {reference}', stats[name]['geometric_mean'], 'x', ci=stats[name]['ci95_geometric'],
+                                  tone=tone(stats[name]['ci95_geometric']),
+                                  note=f"{stats[name]['cases']} cases, {tier} tier, {metric} seconds; "
+                                       f"time-weighted {stats[name]['time_weighted']:.3g}x"))
+    groups: dict[tuple, dict[str, list[float]]] = {}
+    for row in summary['per_case']:
+        ratios = row.get('strict') or row.get('matched') or {}
+        for name, value in ratios.items():
+            if value:
+                groups.setdefault(group_key(row['params']), {}).setdefault(name, []).append(value)
+    chart_groups = [dict(label=f'{p} N={n}', bars=[bar(v, geometric(by[v])) for v in others if by.get(v)])
+                    for (p, n), by in sorted(groups.items())]
+    chart_groups.append(dict(label='all cases', bars=[bar(n, stats[n]['geometric_mean'], stats[n]['ci95_geometric'])
+                                                      for n in others if stats[n]]))
+    out.charts.append(chart('ratio_bars', f'{study.name}-speedup', f'Speed-up against {reference}',
+                            f'seconds({reference}) / seconds(variant) per case, all variants timed back to back in random '
+                            'order per case; geometric mean per group, all-cases bars carry the case-bootstrap 95% interval',
+                            y_label='speed-up', groups=chart_groups))
+    resolutions = sorted({r['params']['resolution'] for r in summary['per_case']})
+    out.charts.append(chart('bars', f'{study.name}-seconds', f'{study.name}: seconds per diagram',
+                            f'median admitted {metric} seconds per diagram at each resolution', y_label='seconds',
+                            log_y=True, categories=[f'N={n}' for n in resolutions],
+                            series=[dict(label=v, values=[median([r['seconds'][v] for r in summary['per_case']
+                                                                  if r['seconds'].get(v) and r['params']['resolution'] == n])
+                                                          for n in resolutions]) for v in summary['variants']]))
+    out.tables.append(table(f'{study.name}-variants', f'{study.name}: speed-up against {reference}',
+                            [column('variant', 'Variant'), column('cases', 'Cases', 'int'),
+                             column('speedup', 'Speed-up', 'float3'), column('low', '95% low', 'float3'),
+                             column('high', '95% high', 'float3'), column('weighted', 'Time-weighted', 'float3'),
+                             column('decision', 'Decision')],
+                            [dict(variant=n, cases=s['cases'], speedup=s['geometric_mean'], low=s['ci95_geometric'][0],
+                                  high=s['ci95_geometric'][1], weighted=s['time_weighted'], decision=s['decision'])
+                             for n, s in stats.items() if s],
+                            f'{tier} tier; geometric mean over cases of per-case geometric means over repetitions'))
+    return out
+
+
 def comparisons(studies: list[Study], stage: str) -> Content:
     out = Content()
     for study in studies:
@@ -323,6 +373,8 @@ def comparisons(studies: list[Study], stage: str) -> Content:
             continue
         if study.kind == 'timing' and study.timing and study.timing['mode'] == 'pair':
             out += timing_comparison(study)
+        elif study.kind == 'timing' and study.timing and study.timing['mode'] == 'block':
+            out += block_comparison(study)
         elif study.kind == 'work' and len(study.variants) >= 2:
             out += work_comparison(study)
     return out
@@ -604,6 +656,18 @@ def ml_content(studies: list[Study], out: Content) -> None:
                                     column('cases', 'Diagrams', 'int'), column('fft', 'FFT ratio', 'float3'),
                                     column('gemm', 'GEMM ratio', 'float3'), column('worst', 'Worst FFT ratio', 'float3')],
                                    against, 'variant / c3 per diagram, geometric mean; c3 records from any work study'))
+    general = [r for _, r in rows if r['tag'] == 'general' and r['ok']]
+    if general:
+        out.tables.append(table('ml-general', 'Generalization of the TE default (profile auto vs none)',
+                                [column('group', 'Group'), column('name', 'Scenario'), column('fft', 'FFT ratio', 'float3'),
+                                 column('profiled', 'Profiled'), column('converged', 'Converged'),
+                                 column('difference', 'Max result difference', 'sci'),
+                                 column('error_none', 'Error none', 'sci'), column('error_auto', 'Error auto', 'sci')],
+                                [dict(group=r['group'], name=r['name'], fft=r.get('fft_ratio'), profiled=str(r['profiled']),
+                                      converged=str(r['converged']), difference=r.get('difference'),
+                                      error_none=(r.get('error') or {}).get('none'),
+                                      error_auto=(r.get('error') or {}).get('auto')) for r in general],
+                                'FFT work auto / none per scenario; errors against a tight f64 reference where computed'))
     oracle = [r for _, r in rows if r['tag'] == 'oracle']
     if oracle:
         names = list(oracle[0]['results'])
@@ -855,7 +919,8 @@ def index_page(studies: list[Study], pages: dict[str, dict]) -> dict[str, Any]:
     # The lab shows the first tile as the overview's headline: the latest speed-up, else the baseline.
     out = Content()
     latest = next((s for s in reversed(studies) if s.kind == 'timing' and s.timing and s.timing['mode'] == 'pair'
-                   and s.timing['tiers']['strict'][s.timing['primary_metric']]), None)
+                   and (s.timing['tiers']['strict'][s.timing['primary_metric']]
+                        or s.timing['tiers']['matched'][s.timing['primary_metric']])), None)
     if latest:
         out.tiles += timing_comparison(latest).tiles
     out.tiles += pages['tuning']['tiles'][:3]

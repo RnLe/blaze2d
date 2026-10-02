@@ -61,6 +61,8 @@ pub struct TransverseProjectionPreconditioner<B: SpectralBackend> {
     eps: Vec<f64>,
     /// Per-pixel weight E = (ε⁻¹ tensor)⁻¹, row-major [xx, xy, yx, yy]; replaces ε when set.
     tensor_weights: Option<Vec<[f64; 4]>>,
+    /// Spectral profile factor W^½ per mode, folded into `inverse_k_sq`.
+    profile_root: Option<Vec<f64>>,
     /// Regularization shift σ²
     #[allow(dead_code)]
     shift: f64,
@@ -123,6 +125,7 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             near_zero_mask,
             eps,
             tensor_weights: None,
+            profile_root: None,
             shift,
             grad_x,
             grad_y,
@@ -141,6 +144,15 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
                 [eps, 0.0, 0.0, eps]
             }
         }).collect());
+        self
+    }
+
+    /// Fold a spectral profile into both 1/(|k+G|² + σ) factors, giving W^½ T W^½ for
+    /// the per-mode factor `root` = W^½ (see `profile_root`).
+    pub fn with_profile_root(mut self, root: &[f64]) -> Self {
+        assert_eq!(root.len(), self.inverse_k_sq.len());
+        self.inverse_k_sq.iter_mut().zip(root).for_each(|(d, r)| *d *= r);
+        self.profile_root = Some(root.to_vec());
         self
     }
 
@@ -169,6 +181,9 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
                 let denom = k_sq + new_shift;
                 *inv_k_sq = if denom > 1e-15 { 1.0 / denom } else { 0.0 };
             }
+        }
+        if let Some(root) = &self.profile_root {
+            self.inverse_k_sq.iter_mut().zip(root).for_each(|(d, r)| *d *= r);
         }
     }
 

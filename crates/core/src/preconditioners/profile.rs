@@ -7,13 +7,12 @@
 //! with the symmetries of T; τ ≡ 0 reproduces T. Offline fitting lives in
 //! `benchmarks/preconditioner/ml`.
 
-use num_complex::Complex;
-
-use crate::backend::{SpectralBackend, SpectralBuffer};
-use crate::field::Real;
-use crate::preconditioners::OperatorPreconditioner;
-
 pub const PROFILE_KNOTS: usize = 8;
+
+/// Band count `TE_PROFILE` was fitted for. Below it the automatic profile follows the
+/// lower band window: s is scaled by `TE_PROFILE_BANDS / bands` (measured on 4 to 40
+/// bands; scaling up above it moved the damped low modes into the window and cost work).
+pub const TE_PROFILE_BANDS: usize = 12;
 
 /// Built-in profile of the TE transverse projection (continuous shift, tensor weight),
 /// fitted to the FFT work of 16² band runs on 16 training geometries. Over the 384 TE
@@ -56,45 +55,11 @@ pub fn shortest_reciprocal_sq(b1: [f64; 2], b2: [f64; 2]) -> f64 {
     dot(u, u)
 }
 
-pub struct ProfiledPreconditioner<'a, B: SpectralBackend> {
-    inner: Box<dyn OperatorPreconditioner<B> + 'a>,
-    /// exp(τ/2) per Fourier mode.
-    root: Vec<f64>,
-}
-
-impl<'a, B: SpectralBackend> ProfiledPreconditioner<'a, B> {
-    pub fn new(inner: Box<dyn OperatorPreconditioner<B> + 'a>, k_plus_g_sq: &[f64], b_min_sq: f64,
-        tau: &[f64; PROFILE_KNOTS]) -> Self {
-        let root = k_plus_g_sq.iter().map(|&q2| (0.5 * profile_value(q2 / b_min_sq, tau)).exp()).collect();
-        Self { inner, root }
-    }
-
-    fn weigh(&self, buffer: &mut B::Buffer, invert: bool) {
-        for (z, &w) in buffer.as_mut_slice().iter_mut().zip(&self.root) {
-            let w = if invert { 1.0 / w } else { w };
-            *z = *z * Complex::new(<B::Real as Real>::from_accum(w), <B::Real as Real>::from_accum(0.0));
-        }
-    }
-}
-
-impl<B: SpectralBackend> OperatorPreconditioner<B> for ProfiledPreconditioner<'_, B> {
-    /// Without a Fourier path in the inner smoother the buffer is restored up to rounding.
-    fn apply_fourier(&mut self, backend: &B, buffer: &mut B::Buffer) -> bool {
-        self.weigh(buffer, false);
-        if !self.inner.apply_fourier(backend, buffer) {
-            self.weigh(buffer, true);
-            return false;
-        }
-        self.weigh(buffer, false);
-        true
-    }
-
-    fn apply(&mut self, backend: &B, buffer: &mut B::Buffer) {
-        backend.forward_fft_2d(buffer);
-        let applied = self.apply_fourier(backend, buffer);
-        assert!(applied, "the spectral profile needs a preconditioner with a Fourier path");
-        backend.inverse_fft_2d(buffer);
-    }
+/// exp(τ(s)/2) per Fourier mode, the factor W^½. The smoothers fold it into their
+/// Fourier symbols: the diagonal gains W, each 1/|k+G|² factor of the transverse
+/// projection gains W^½, so a profile adds no work per application.
+pub fn profile_root(k_plus_g_sq: &[f64], b_min_sq: f64, tau: &[f64; PROFILE_KNOTS]) -> Vec<f64> {
+    k_plus_g_sq.iter().map(|&q2| (0.5 * profile_value(q2 / b_min_sq, tau)).exp()).collect()
 }
 
 #[cfg(test)]

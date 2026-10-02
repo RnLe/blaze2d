@@ -820,5 +820,51 @@
         }
       }
     }
+  },
+  "c4": {
+    "description": "Current defaults pinned: continuous shift at 0, tensor projection and the automatic TE profile",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile = \"auto\" (binaries from 9063f364)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "profile": "auto"
+      }
+    }
+  },
+  "complex-c4": {
+    "description": "c4 with spatial complex arithmetic (PT gate reference)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile = \"auto\" (binaries from 9063f364)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "spatial_complex",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "profile": "auto"
+      }
+    }
   }
 }

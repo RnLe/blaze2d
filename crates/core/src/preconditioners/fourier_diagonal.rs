@@ -265,6 +265,14 @@ impl FourierDiagonalPreconditioner {
         Self { inverse_diagonal }
     }
 
+    /// Fold a spectral profile into the symbol: d ← W^½ d W^½ = W d for the per-mode
+    /// factor `root` = W^½ (see `profile_root`).
+    pub fn with_profile_root(mut self, root: &[f64]) -> Self {
+        assert_eq!(root.len(), self.inverse_diagonal.len());
+        self.inverse_diagonal.iter_mut().zip(root).for_each(|(d, r)| *d *= r * r);
+        self
+    }
+
     /// Get the inverse diagonal values.
     pub fn inverse_diagonal(&self) -> &[f64] {
         &self.inverse_diagonal

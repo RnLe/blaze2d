@@ -33,7 +33,7 @@ fn run(c: Config) -> ResultRecord {
 fn defaults_reproduce_the_built_in_preconditioner_and_stopping_rule() {
     let plan = Plan::new(bands(""), Platform::Native).unwrap();
     let job = plan.job(0).unwrap();
-    assert_eq!(job.preconditioner(), blaze2d_core::preconditioners::PreconditionerSpec::default());
+    assert_eq!(job.preconditioner(), blaze2d_core::preconditioners::PreconditionerSpec::default().for_bands(6));
     let solver = job.eigensolver();
     assert_eq!(solver.stopping, blaze2d_core::eigensolver::StoppingRule::Residual);
     assert_eq!(solver.history, blaze2d_core::eigensolver::HistoryRule::Ritz);

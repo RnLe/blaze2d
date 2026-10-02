@@ -8,7 +8,8 @@ use blaze2d_core::{
     lattice::Lattice2D,
     operators::{LinearOperator, ThetaOperator},
     polarization::Polarization,
-    preconditioners::{OperatorPreconditioner, PreconditionerKind, PreconditionerSpec, ShiftRule, SpectralProfile, TE_PROFILE, TransverseWeight},
+    preconditioners::{OperatorPreconditioner, PreconditionerKind, PreconditionerSpec, ShiftRule, SpectralProfile, TE_PROFILE, TransverseWeight,
+        profile::shortest_reciprocal_sq, profile_root},
     backend::SpectralBackend,
 };
 use num_complex::Complex64 as C;
@@ -275,9 +276,47 @@ fn spectral_profiles_keep_the_preconditioner_hermitian_and_zero_reproduces_it() 
 }
 
 #[test]
+fn folded_profiles_equal_the_weighted_preconditioner() {
+    let tau = [0.7, -0.3, 0.2, 1.1, -0.8, 0.4, 0.0, 0.9];
+    for lattice in [Lattice2D::square(1.0), Lattice2D::hexagonal(1.0)] {
+        for pol in [Polarization::TE, Polarization::TM] {
+            for k in [[0.0, 0.0], [0.13, 0.21]] {
+                let op = operator(lattice, 10, pol, k, (1.0, 13.0));
+                let (mut base, _) = op.build_preconditioner(&PreconditionerSpec { profile: SpectralProfile::None, ..Default::default() }, None);
+                let (mut shaped, _) = op.build_preconditioner(&PreconditionerSpec { profile: SpectralProfile::Knots(tau), ..Default::default() }, None);
+                let (kx, ky) = op.k_plus_g_components();
+                let q2: Vec<f64> = kx.iter().zip(ky).map(|(x, y)| x * x + y * y).collect();
+                let b_min_sq = shortest_reciprocal_sq(op.dielectric().reciprocal_b1(), op.dielectric().reciprocal_b2());
+                let root = profile_root(&q2, b_min_sq, &tau);
+                let weigh = |v: &mut Field2D| {
+                    op.backend().forward_fft_2d(v);
+                    v.as_mut_slice().iter_mut().zip(&root).for_each(|(z, r)| *z *= r);
+                    op.backend().inverse_fft_2d(v);
+                };
+                let mut expected = probe(&op);
+                let mut actual = probe(&op);
+                weigh(&mut expected);
+                base.as_deref_mut().unwrap().apply(op.backend(), &mut expected);
+                weigh(&mut expected);
+                shaped.as_deref_mut().unwrap().apply(op.backend(), &mut actual);
+                let scale = expected.as_slice().iter().map(|z| z.norm()).fold(0.0, f64::max);
+                let error = expected.as_slice().iter().zip(actual.as_slice()).map(|(a, b)| (a - b).norm()).fold(0.0, f64::max);
+                assert!(error <= 1e-12 * scale, "{pol:?} {k:?}: {error:e}");
+            }
+        }
+    }
+}
+
+#[test]
 fn the_default_profile_applies_to_the_default_te_projection_only() {
     let default = PreconditionerSpec::default();
-    assert_eq!(default.resolve_profile(Polarization::TE), Some(TE_PROFILE));
+    assert_eq!(default.resolve_profile(Polarization::TE), Some((TE_PROFILE, 1.0)));
+    // Below the fitted band count the knots follow the lower band window.
+    assert_eq!(default.for_bands(4).resolve_profile(Polarization::TE), Some((TE_PROFILE, 3.0)));
+    assert_eq!(default.for_bands(12).resolve_profile(Polarization::TE), Some((TE_PROFILE, 1.0)));
+    assert_eq!(default.for_bands(40).resolve_profile(Polarization::TE), Some((TE_PROFILE, 1.0)));
+    let knots = PreconditionerSpec { profile: SpectralProfile::Knots([0.5; 8]), ..Default::default() }.for_bands(4);
+    assert_eq!(knots.resolve_profile(Polarization::TM), Some(([0.5; 8], 1.0)));
     assert_eq!(default.resolve_profile(Polarization::TM), None);
     assert_eq!(PreconditionerSpec::legacy().resolve_profile(Polarization::TE), None);
     let scalar = PreconditionerSpec { transverse_weight: TransverseWeight::Scalar, ..Default::default() };

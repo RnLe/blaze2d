@@ -428,27 +428,27 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             _ => legacy,
         };
         let q_units = spec.shift == ShiftRule::Continuous;
+        let profile = spec.resolve_profile(self.polarization).filter(|_| kind != PreconditionerKind::None);
+        let root = profile.map(|(tau, scale)| {
+            let b_min_sq = crate::preconditioners::profile::shortest_reciprocal_sq(
+                self.dielectric.reciprocal_b1(), self.dielectric.reciprocal_b2());
+            crate::preconditioners::profile_root(&self.k_plus_g_sq, b_min_sq / scale, &tau)
+        });
         let smoother: Option<Box<dyn OperatorPreconditioner<B> + 'a>> = match kind {
             PreconditionerKind::Auto => unreachable!("resolved above"),
             PreconditionerKind::None => None,
-            PreconditionerKind::Diagonal => Some(Box::new(self.build_fourier_diagonal(shift, q_units, spec.tm_mass_fraction))),
+            PreconditionerKind::Diagonal => {
+                let diagonal = self.build_fourier_diagonal(shift, q_units, spec.tm_mass_fraction);
+                Some(Box::new(match &root { Some(root) => diagonal.with_profile_root(root), None => diagonal }))
+            }
             PreconditionerKind::Transverse => {
                 let projection = self.build_transverse_projection_preconditioner_with_shift(shift);
-                Some(Box::new(match (spec.transverse_weight, self.dielectric.inv_eps_tensors()) {
+                let projection = match (spec.transverse_weight, self.dielectric.inv_eps_tensors()) {
                     (TransverseWeight::Tensor, Some(tensors)) => projection.with_tensor_weight(tensors),
                     _ => projection,
-                }))
+                };
+                Some(Box::new(match &root { Some(root) => projection.with_profile_root(root), None => projection }))
             }
-        };
-        let profile = spec.resolve_profile(self.polarization);
-        let smoother = match (smoother, profile) {
-            (Some(smoother), Some(tau)) => {
-                let b_min_sq = crate::preconditioners::profile::shortest_reciprocal_sq(
-                    self.dielectric.reciprocal_b1(), self.dielectric.reciprocal_b2());
-                Some(Box::new(crate::preconditioners::ProfiledPreconditioner::new(smoother, &self.k_plus_g_sq, b_min_sq, &tau))
-                    as Box<dyn OperatorPreconditioner<B> + 'a>)
-            }
-            (smoother, _) => smoother,
         };
         let mut coarse_modes = 0;
         let preconditioner = match smoother {
@@ -478,8 +478,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             }
             smoother => smoother,
         };
-        let profile = profile.filter(|_| kind != PreconditionerKind::None);
-        (preconditioner, PreconditionerInfo { kind, shift, s_min, coarse_modes, profile })
+        let (profile, profile_scale) = (profile.map(|(tau, _)| tau), profile.map(|(_, scale)| scale));
+        (preconditioner, PreconditionerInfo { kind, shift, s_min, coarse_modes, profile, profile_scale })
     }
 
     /// Coarse plane waves and their Galerkin matrix Zᴴ (A + σ B + m) Z, row-major,

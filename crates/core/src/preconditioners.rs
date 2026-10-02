@@ -83,7 +83,7 @@ pub use fourier_diagonal::{
 };
 pub use transverse_projection::TransverseProjectionPreconditioner;
 pub use coarse::{BasisCorrection, PlaneWaveCorrection};
-pub use profile::{PROFILE_KNOTS, ProfiledPreconditioner, TE_PROFILE};
+pub use profile::{PROFILE_KNOTS, TE_PROFILE, profile_root};
 pub use spec::{PreconditionerInfo, PreconditionerKind, PreconditionerSpec, ShiftRule, SpectralProfile, TransverseWeight};
 
 // ============================================================================

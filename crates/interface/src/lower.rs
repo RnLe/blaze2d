@@ -33,6 +33,7 @@ pub(crate) fn preconditioner_spec(p: &crate::Preconditioner) -> PreconditionerSp
             crate::PreconditionerProfile::Rule(crate::ProfileRule::None) => SpectralProfile::None,
             crate::PreconditionerProfile::Knots(v) => v.as_slice().try_into().map_or(SpectralProfile::None, SpectralProfile::Knots),
         },
+        bands: 0,
     }
 }
 
@@ -88,7 +89,7 @@ impl PlannedJob {
     }
 
     pub fn preconditioner(&self) -> PreconditionerSpec {
-        preconditioner_spec(&self.resolved.config.eigensolver.preconditioner)
+        preconditioner_spec(&self.resolved.config.eigensolver.preconditioner).for_bands(self.resolved.solved_bands)
     }
 
     /// Driver options for a band job, as the executor resolves them before solving.

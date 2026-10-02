@@ -76,6 +76,9 @@ pub struct PreconditionerSpec {
     /// σ_c of the coarse operator, in eigenvalue units.
     pub coarse_shift: f64,
     pub profile: SpectralProfile,
+    /// Bands the eigensolver targets, 0 when unknown; scales the automatic profile below
+    /// `TE_PROFILE_BANDS`.
+    pub bands: usize,
 }
 
 /// The default: no shift (the Γ-continuous rule at zero), the tensor-weighted
@@ -96,6 +99,7 @@ impl Default for PreconditionerSpec {
             coarse_modes: 0,
             coarse_shift: 0.0,
             profile: SpectralProfile::Auto,
+            bands: 0,
         }
     }
 }
@@ -108,15 +112,26 @@ impl PreconditionerSpec {
             transverse_weight: TransverseWeight::Scalar, profile: SpectralProfile::None, ..Self::default() }
     }
 
-    /// Knot values of the profile applied for `polarization`, if any.
-    pub fn resolve_profile(&self, polarization: Polarization) -> Option<[f64; super::PROFILE_KNOTS]> {
+    /// The same spec for an eigensolver targeting `bands` bands.
+    pub fn for_bands(self, bands: usize) -> Self {
+        Self { bands, ..self }
+    }
+
+    /// Knot values of the profile applied for `polarization`, if any, and the factor
+    /// that multiplies s (1 except for the automatic profile below its band count).
+    pub fn resolve_profile(&self, polarization: Polarization) -> Option<([f64; super::PROFILE_KNOTS], f64)> {
+        use super::profile::{TE_PROFILE, TE_PROFILE_BANDS};
         match self.profile {
-            SpectralProfile::Knots(tau) => Some(tau),
+            SpectralProfile::Knots(tau) => Some((tau, 1.0)),
             SpectralProfile::None => None,
             SpectralProfile::Auto => (self.resolve_kind(polarization) == PreconditionerKind::Transverse
                 && self.shift == ShiftRule::Continuous && self.shift_fraction == 0.0
                 && self.transverse_weight == TransverseWeight::Tensor && self.coarse_modes == 0)
-                .then_some(super::profile::TE_PROFILE),
+                .then(|| (TE_PROFILE, if (1..TE_PROFILE_BANDS).contains(&self.bands) {
+                    TE_PROFILE_BANDS as f64 / self.bands as f64
+                } else {
+                    1.0
+                })),
         }
     }
 
@@ -193,4 +208,7 @@ pub struct PreconditionerInfo {
     /// Knot values of the spectral profile, when one was applied.
     #[serde(default)]
     pub profile: Option<[f64; super::PROFILE_KNOTS]>,
+    /// Factor multiplying s = |k+G|²/|b_min|² in the profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_scale: Option<f64>,
 }
