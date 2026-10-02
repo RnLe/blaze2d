@@ -335,7 +335,7 @@
   "tensor-cont-0": {
     "description": "Tensor-weighted transverse projection, continuous shift at alpha 0",
     "binary": "current",
-    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "requires": "eigensolver.preconditioner.profile = \"none\" (binaries after 55dd68f5)",
     "bands": {
       "symmetry": {
         "arithmetic": "pt_real",
@@ -350,7 +350,8 @@
       "preconditioner": {
         "shift": "continuous",
         "shift_fraction": 0.0,
-        "transverse_weight": "tensor"
+        "transverse_weight": "tensor",
+        "profile": "none"
       }
     }
   },
@@ -449,7 +450,7 @@
   "coarse28-tensor-cont-0": {
     "description": "Two-level correction (28 modes), tensor projection, continuous shift at alpha 0",
     "binary": "current",
-    "requires": "eigensolver.preconditioner shift = continuous, transverse_weight and coarse_modes",
+    "requires": "eigensolver.preconditioner.profile = \"none\" (binaries after 55dd68f5)",
     "bands": {
       "symmetry": {
         "arithmetic": "pt_real",
@@ -465,14 +466,141 @@
         "shift": "continuous",
         "shift_fraction": 0.0,
         "coarse_modes": 28,
-        "transverse_weight": "tensor"
+        "transverse_weight": "tensor",
+        "profile": "none"
       }
     }
   },
   "c3": {
     "description": "Baseline settings with the new default preconditioner (continuous shift at 0, tensor projection)",
     "binary": "current",
-    "requires": "eigensolver.preconditioner shift = continuous and transverse_weight",
+    "requires": "eigensolver.preconditioner.profile = \"none\" (binaries after 55dd68f5)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "profile": "none"
+      }
+    }
+  },
+  "complex-c3": {
+    "description": "The c3 settings with spatial complex arithmetic",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile = \"none\" (binaries after 55dd68f5)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "spatial_complex",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "profile": "none"
+      }
+    }
+  },
+  "c3-coarse14": {
+    "description": "New default preconditioner plus the two-level plane-wave correction (14 modes)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile = \"none\" (binaries after 55dd68f5)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "coarse_modes": 14,
+        "profile": "none"
+      }
+    }
+  },
+  "c3-coarse28": {
+    "description": "New default preconditioner plus the two-level plane-wave correction (28 modes)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile = \"none\" (binaries after 55dd68f5)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "coarse_modes": 28,
+        "profile": "none"
+      }
+    }
+  },
+  "c4-tilt": {
+    "description": "New default preconditioner with the tilt-0.15 spectral profile (low-|k+G| boost up to 2.8x)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile (binaries after 55dd68f5)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "profile": [
+          1.039721,
+          0.831777,
+          0.623832,
+          0.415888,
+          0.207944,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  },
+  "c4-fit-s2": {
+    "description": "New default preconditioner with spectral profiles fitted on 16^2 training cases (c4-probe, objective TE s2, TM s2)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile (binaries after 55dd68f5)",
     "bands": {
       "symmetry": {
         "arithmetic": "pt_real",
@@ -489,12 +617,158 @@
         "shift_fraction": 0.0,
         "transverse_weight": "tensor"
       }
+    },
+    "by_polarization": {
+      "TE": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              0.462,
+              0.7866,
+              -0.2049,
+              0.4375,
+              0.1972,
+              -0.0167,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      "TM": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              2.6898,
+              2.6749,
+              -0.0814,
+              0.4299,
+              0.1467,
+              -0.0786,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      }
     }
   },
-  "complex-c3": {
-    "description": "The c3 settings with spatial complex arithmetic",
+  "c4-fit-s1": {
+    "description": "New default preconditioner with spectral profiles fitted on 16^2 training cases (c4-probe-s1, objective TE s1, TM s1)",
     "binary": "current",
-    "requires": "eigensolver.preconditioner shift = continuous and transverse_weight",
+    "requires": "eigensolver.preconditioner.profile (binaries after 55dd68f5)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor"
+      }
+    },
+    "by_polarization": {
+      "TE": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              -2.2417,
+              -0.8109,
+              0.0282,
+              0.6445,
+              0.1277,
+              0.0425,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      "TM": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              2.9885,
+              0.8358,
+              0.0473,
+              0.5639,
+              0.0248,
+              -0.012,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      }
+    }
+  },
+  "c4-fit-s3": {
+    "description": "New default preconditioner with spectral profiles fitted on 16^2 training cases (c4-probe-s3, objective TE s3, TM s3)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile (binaries after 55dd68f5)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor"
+      }
+    },
+    "by_polarization": {
+      "TE": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              -0.7859,
+              -1.6483,
+              -1.6596,
+              0.4915,
+              0.1951,
+              0.0596,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      "TM": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              1.6598,
+              0.2651,
+              -0.0762,
+              0.2959,
+              0.1016,
+              0.0151,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      }
+    }
+  },
+  "complex-c4-fit-s3": {
+    "description": "c4-fit-s3 with spatial complex arithmetic (PT gate reference)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile (binaries after 55dd68f5)",
     "bands": {
       "symmetry": {
         "arithmetic": "spatial_complex",
@@ -510,6 +784,40 @@
         "shift": "continuous",
         "shift_fraction": 0.0,
         "transverse_weight": "tensor"
+      }
+    },
+    "by_polarization": {
+      "TE": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              -0.7859,
+              -1.6483,
+              -1.6596,
+              0.4915,
+              0.1951,
+              0.0596,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      "TM": {
+        "eigensolver": {
+          "preconditioner": {
+            "profile": [
+              1.6598,
+              0.2651,
+              -0.0762,
+              0.2959,
+              0.1016,
+              0.0151,
+              0.0,
+              0.0
+            ]
+          }
+        }
       }
     }
   }

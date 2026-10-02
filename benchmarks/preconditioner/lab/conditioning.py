@@ -106,7 +106,7 @@ def main() -> int:
             for polarization in cases.POLARIZATIONS:
                 for eps_rod, eps_bg in PAIRS:
                     case = cases.Case(lattice, polarization, n, args.radius, eps_rod, eps_bg)
-                    config = cases.merge(case.config(), cases.overlay(variant))
+                    config = cases.merge(case.config(), cases.case_overlay(case, variant))
                     with tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False) as f:
                         f.write(cases.toml_text(config))
                         path = f.name

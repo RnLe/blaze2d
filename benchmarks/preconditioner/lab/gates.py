@@ -79,7 +79,7 @@ def main() -> int:
     block = cases.BANDS + 2
     band = cases.BANDS - 1
     for case in selected:
-        config = cases.merge(case.config(), cases.overlay(variant))
+        config = cases.merge(case.config(), cases.case_overlay(case, variant))
         with tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False) as f:
             f.write(cases.toml_text(config))
             path = f.name

@@ -4,7 +4,8 @@
 A case is one physical band diagram: a circular rod "rod" at the origin, analytic
 dielectric smoothing, 12 bands on the lattice's preset k-path with 20 intervals per
 segment (61 points) and no eigenvectors. Variants are overlays deep-merged into the
-case configuration; the reserved keys below select binaries and CLI arguments.
+case configuration; the reserved keys below select binaries and CLI arguments, and
+`by_polarization` holds further overlays keyed by TE or TM.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from typing import Any, Iterable
 
 HERE = Path(__file__).resolve().parent
 VARIANTS = HERE / 'variants.json'
-RESERVED = frozenset({'binary', 'cli_args', 'description', 'requires'})
+RESERVED = frozenset({'binary', 'cli_args', 'description', 'requires', 'by_polarization'})
 
 LATTICES = ('square', 'triangular')
 POLARIZATIONS = ('TE', 'TM')
@@ -30,9 +31,11 @@ RADII = (0.15, 0.30, 0.45)
 EPS_ROD = (1.0, 4.0, 7.0, 10.0)
 EPS_BG = (13.0, 11.0, 5.0, 2.0)
 SCREEN_PAIRS = ((1.0, 13.0), (10.0, 2.0), (7.0, 11.0), (4.0, 5.0))
+# High and low contrast pairs outside SCREEN_PAIRS, so fits on screen pairs are held out.
+PROBE_PAIRS = ((1.0, 11.0), (4.0, 2.0))
 BANDS = 12
 INTERVALS = 20
-SUBSETS = ('full768', 'dev96', 'screen32', 'timing48', 'pilot8', 'pt128', 'odd', 'sample96')
+SUBSETS = ('full768', 'dev96', 'screen32', 'timing48', 'pilot8', 'pt128', 'odd', 'sample96', 'probe16')
 ROLES = ('easy', 'median', 'hard')
 
 
@@ -148,6 +151,8 @@ def subset(name: str, work: dict[str, float] | None = None) -> list[Case]:
         return [Case(lattice, polarization, n, radius, *pairs[(i + j) % 8 + offset])
                 for j, n in enumerate(RESOLUTIONS) for i, (lattice, polarization, radius) in enumerate(family)
                 for offset in (0, 8)]
+    if name == 'probe16':
+        return [c for c in cases if c.resolution in (32, 64) and c.radius == 0.30 and _pair(c) in PROBE_PAIRS]
     if name == 'timing48':
         roles = timing_roles(work)
         return [c for c in cases if c.id in roles]
@@ -247,8 +252,12 @@ def toml_text(data: dict[str, Any]) -> str:
     return '\n'.join(lines) + '\n'
 
 
+def case_overlay(case: Case, variant: dict[str, Any]) -> dict[str, Any]:
+    return merge(overlay(variant), variant.get('by_polarization', {}).get(case.polarization, {}))
+
+
 def render(case: Case, variant: dict[str, Any]) -> str:
-    return toml_text(merge(case.config(), overlay(variant)))
+    return toml_text(merge(case.config(), case_overlay(case, variant)))
 
 
 def work_from_args(args: argparse.Namespace) -> dict[str, float] | None:

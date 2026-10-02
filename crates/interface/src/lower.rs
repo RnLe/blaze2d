@@ -10,7 +10,7 @@ use blaze2d_core::{
     operator_data::OperatorDataConfig,
     polarization::Polarization as CorePolarization,
 };
-use blaze2d_core::preconditioners::{PreconditionerKind, PreconditionerSpec, ShiftRule};
+use blaze2d_core::preconditioners::{PreconditionerKind, PreconditionerSpec, ShiftRule, SpectralProfile};
 use crate::{PlannedJob, Polarization, Quantity, Smoothing, KCoordinates, fractional_to_cartesian};
 
 pub(crate) fn preconditioner_spec(p: &crate::Preconditioner) -> PreconditionerSpec {
@@ -28,6 +28,11 @@ pub(crate) fn preconditioner_spec(p: &crate::Preconditioner) -> PreconditionerSp
         transverse_weight: match p.transverse_weight { crate::TransverseWeight::Scalar => blaze2d_core::preconditioners::TransverseWeight::Scalar,
             crate::TransverseWeight::Tensor => blaze2d_core::preconditioners::TransverseWeight::Tensor },
         coarse_modes: p.coarse_modes, coarse_shift: p.coarse_shift,
+        profile: match &p.profile {
+            crate::PreconditionerProfile::Rule(crate::ProfileRule::Auto) => SpectralProfile::Auto,
+            crate::PreconditionerProfile::Rule(crate::ProfileRule::None) => SpectralProfile::None,
+            crate::PreconditionerProfile::Knots(v) => v.as_slice().try_into().map_or(SpectralProfile::None, SpectralProfile::Knots),
+        },
     }
 }
 

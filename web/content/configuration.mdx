@@ -82,11 +82,18 @@ both kinds, so it vanishes at Γ); `"legacy"` uses `shift_fraction` (default 0.5
 the smallest |k+G|² above `1e-6` (scaled by the effective permittivity in the Fourier
 diagonal), and `"band_window"` and `"fixed"` (`shift_value`) remain.
 `transverse_weight = "tensor"` (the default) weights the transverse projection with the
-inverse of the smoothed ε⁻¹ tensors the operator uses; `"scalar"` uses ε. On the
-preconditioner study matrix the defaults needed 7% (TE) and 11% (TM) fewer FFTs than
-`shift = "legacy"` with `transverse_weight = "scalar"`. `coarse_modes` adds an additive two-level
-correction on the lowest plane waves, with a Galerkin matrix assembled exactly from the
-material's Fourier coefficients and shifted by `coarse_shift`. Results report the
+inverse of the smoothed ε⁻¹ tensors the operator uses; `"scalar"` uses ε. `coarse_modes`
+adds an additive two-level correction on the lowest plane waves, with a Galerkin matrix
+assembled exactly from the material's Fourier coefficients and shifted by `coarse_shift`. `profile` weights the
+preconditioner T as W^½ T W^½, where W multiplies each plane wave by exp τ(s) with
+s = |k+G|²/|b_min|² (b_min the shortest reciprocal lattice vector) and τ is piecewise linear
+in ln s through knots at s = 1/16, 1/4, …, 1024 and constant outside them. It takes eight
+knot values, `"none"`, or `"auto"` (the default): a built-in profile, fitted to band runs,
+for the TE transverse projection with the continuous shift at zero, the tensor weight and
+no coarse correction, and none otherwise. Every profile keeps the preconditioner Hermitian positive definite and
+symmetric, and zeros reproduce it. On the preconditioner study matrix the defaults needed
+18% (TE) and 10% (TM) fewer FFTs in total than `shift = "legacy"` with
+`transverse_weight = "scalar"` and `profile = "none"`, and more on no diagram. Results report the
 resolved settings per k point in `metadata.preconditioner` and solver work counters
 in `metadata.work`.
 

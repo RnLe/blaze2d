@@ -69,6 +69,8 @@ class Study:
         """Latest record per case, variant, tag and binary; every attempt for timing studies."""
         if self.kind == 'timing':
             return runlib.read_jsonl(self.root / 'runs.jsonl')
+        if self.kind == 'ml':
+            return runlib.read_jsonl(self.root / 'records.jsonl')
         name = 'profile_records.jsonl' if self.kind == 'profile' else 'records.jsonl'
         latest = {(r['case_id'], r['variant'], r.get('tag'), r['binary']['sha256']): r
                   for r in runlib.read_jsonl(self.root / name)}
@@ -476,33 +478,145 @@ def pt_gate_section(studies: list[Study]) -> Content:
     return out
 
 
-ADOPTED = ('c3', 'tensor-cont-0')
+# Variants that reproduce the current defaults, preferred first, per polarization.
+ADOPTED = {'TE': ('c4-fit-s3', 'c3', 'tensor-cont-0'), 'TM': ('c3', 'tensor-cont-0')}
+# Every loaded study; extensions receive only their stage's studies.
+ALL_STUDIES: list['Study'] = []
 
 
 def adopted_tiles(studies: list[Study], content: Content) -> None:
-    """Total FFT-vector reduction of the adopted default against the pinned baseline."""
-    for study in reversed(studies):
-        name = next((v for v in ADOPTED if v in study.variants), None)
-        if study.kind != 'work' or 'baseline' not in study.variants or not name:
-            continue
-        by_case: dict[str, dict[str, dict]] = {}
-        for r in study.records:
-            if r['validation']['completed']:
-                by_case.setdefault(r['case_id'], {})[r['variant']] = r
-        tiles = []
-        for polarization in ('TE', 'TM'):
-            pairs = [(work_value(c['baseline'], 'fft_vectors'), work_value(c[name], 'fft_vectors')) for c in by_case.values()
-                     if 'baseline' in c and name in c and c['baseline']['params']['polarization'] == polarization]
-            pairs = [(a, b) for a, b in pairs if a and b]
-            if pairs:
-                worst = min(a / b for a, b in pairs)
-                tiles.append(tile(f'{polarization}: fewer FFTs with the new default', sum(a for a, _ in pairs) / sum(b for _, b in pairs),
-                                  'x', tone='good', note=f'{len(pairs)} cases of {study.name}; worst case {worst:.3f}x'))
-        content.tiles[:0] = tiles
-        return
+    """Total FFT-vector reduction of the adopted default against the pinned baseline.
+
+    The baseline comes from the work study with the most baseline records (the full
+    matrix), each polarization's adopted variant from the latest study that ran it for
+    that polarization; counts are deterministic, so studies combine by case.
+    """
+    def runs(study: Study | None, variant: str | None) -> dict[str, dict]:
+        if study is None or variant is None:
+            return {}
+        return {r['case_id']: r for r in study.records if r['variant'] == variant and r['validation']['completed']}
+    work = [study for study in ALL_STUDIES if study.kind == 'work' and study.stage in ('baseline', 'tuning', 'ml')]
+    reference = max((study for study in work if 'baseline' in study.variants),
+                    key=lambda study: sum(r['variant'] == 'baseline' for r in study.records), default=None)
+    baseline = runs(reference, 'baseline')
+    adopted: dict[str, dict] = {}
+    sources = {}
+    for polarization, preferred in ADOPTED.items():
+        def covered(study: Study, variant: str) -> int:
+            return sum(r['variant'] == variant and r['params']['polarization'] == polarization for r in study.records)
+        found = next(((study, v) for v in preferred for study in sorted(work, key=lambda st: -covered(st, v))
+                      if covered(study, v)), None)
+        if found:
+            sources[polarization] = found
+            adopted.update({c: r for c, r in runs(*found).items() if r['params']['polarization'] == polarization})
+    name = ', '.join(f'{v} ({p})' for p, (_, v) in sources.items())
+    tiles = []
+    for polarization in ('TE', 'TM'):
+        pairs = [(work_value(baseline[c], 'fft_vectors'), work_value(r, 'fft_vectors')) for c, r in adopted.items()
+                 if c in baseline and r['params']['polarization'] == polarization]
+        pairs = [(a, b) for a, b in pairs if a and b]
+        if pairs:
+            worst = min(a / b for a, b in pairs)
+            study, variant = sources[polarization]
+            tiles.append(tile(f'{polarization}: fewer FFTs with the new default', sum(a for a, _ in pairs) / sum(b for _, b in pairs),
+                              'x', tone='good', note=f'{len(pairs)} cases ({variant} in {study.name} against the baseline); '
+                              f'worst case {worst:.3f}x'))
+    groups: dict[tuple, dict[str, tuple[list, list]]] = {}
+    for c, r in adopted.items():
+        a, b = (work_value(baseline[c], 'fft_vectors'), work_value(r, 'fft_vectors')) if c in baseline else (None, None)
+        if a and b:
+            groups.setdefault(group_key(r['params']), {})[c] = ([a], [b])
+    if groups:
+        bars = [dict(label=f'{p} N={n}', bars=[bar(sources[p][1], stats['geometric_mean'], stats['ci95_geometric'])])
+                for (p, n), data in sorted(groups.items()) for stats in [ratio_statistics(data, resamples=1000)]]
+        content.charts.insert(0, chart('ratio_bars', 'adopted-work', 'New default preconditioner: work against the baseline',
+                                       f'FFT vectors(baseline) / FFT vectors({name}) per case over the full matrix, geometric '
+                                       'mean with case-bootstrap 95% interval; deterministic counts', y_label='work ratio',
+                                       groups=bars))
+    if tiles:
+        seconds = [(baseline[c]['job_seconds'], work_value(baseline[c], 'fft_vectors'), work_value(r, 'fft_vectors'))
+                   for c, r in adopted.items() if c in baseline]
+        projected = sum(t for t, _, _ in seconds) / sum(t * b / a for t, a, b in seconds if a and b)
+        tiles.append(tile('Projected time saving', projected, 'x', tone='neutral',
+                          note='baseline seconds scaled by the FFT ratio per case; awaiting load-checked timing'))
+    content.tiles[:0] = tiles
 
 
 EXTENSIONS['tuning'] = adopted_tiles
+
+
+def ml_content(studies: list[Study], out: Content) -> None:
+    """Probe evidence of ml/probe.py: parity, surrogate agreement, fitted profiles and coarse-basis oracles."""
+    probes = [s for s in studies if s.kind == 'ml']
+    rows = [(s, r) for s in probes for r in s.records]
+    parity = [r['relative_error'] for _, r in rows if r['tag'] == 'parity']
+    if parity:
+        out.tiles.append(tile('Profile parity (Rust vs numpy)', f'{max(parity):.0e}', note='max relative error'))
+    for _, r in rows:
+        if r['tag'] == 'scan-summary':
+            out.tiles.append(tile(f"{r['polarization']} Spearman(kappa_eff, cold iterations)",
+                                  round(r['spearman_shapes'], 2), note=f"pointwise {r['spearman_pointwise']:.2f}"))
+    fits = [(s, r) for s, r in rows if r['tag'] == 'fit']
+    if fits:
+        series = [dict(label=f"{s.name.removeprefix('c4-')} {r['polarization']} ({r['objective']})",
+                       dashed=r['polarization'] == 'TM',
+                       points=[dict(x=4.0 ** (j - 2), y=t) for j, t in enumerate(r['knots'])]) for s, r in fits]
+        out.charts.append(chart('lines', 'ml-profiles', 'Fitted spectral profiles',
+                                'knot values tau(s), s = |k+G|^2 / |b_min|^2; the preconditioner is weighted by '
+                                'exp(tau) per plane wave, zero is the unprofiled default',
+                                x_label='s', y_label='tau', log_y=False, series=series))
+        out.tables.append(table('ml-fits', 'Profile fits on 16^2 training cases',
+                                [column('study', 'Study'), column('polarization', 'Pol.'), column('objective', 'Objective'),
+                                 column('cases', 'Cases'), column('knots', 'Knots'),
+                                 column('path', 'Path FFTs vs zero', 'float3'),
+                                 column('evaluations', 'Evaluations', 'int')],
+                                [dict(study=s.name, polarization=r['polarization'], objective=r['objective'],
+                                      cases=r.get('match') or 'all 16', evaluations=r['evaluations'],
+                                      knots=' '.join(f'{t:+.2f}' for t in r['knots']),
+                                      path=r.get('train_path_fft')) for s, r in fits],
+                                'S1 dense kappa_eff, S2 cold-solve iterations, S3 FFT work of full band runs'))
+    reference = {r['case_id']: r for s in ALL_STUDIES if s.kind == 'work' for r in s.records
+                 if r['variant'] == 'c3' and r['validation']['completed'] and work_value(r, 'fft_vectors')}
+    against = []
+    for study in studies:
+        if study.kind != 'work':
+            continue
+        for variant in study.variants:
+            if variant == 'c3':
+                continue
+            for polarization in ('TE', 'TM'):
+                pairs = [(reference[r['case_id']], r) for r in study.records if r['variant'] == variant
+                         and r['params']['polarization'] == polarization and r['case_id'] in reference
+                         and r['validation']['completed'] and work_value(r, 'fft_vectors')]
+                if pairs:
+                    ratios = [work_value(r, 'fft_vectors') / work_value(c, 'fft_vectors') for c, r in pairs]
+                    against.append(dict(study=study.name, variant=variant, polarization=polarization, cases=len(pairs),
+                                        fft=geometric(ratios), worst=max(ratios),
+                                        gemm=geometric([work_value(r, 'gemm_terms') / work_value(c, 'gemm_terms')
+                                                        for c, r in pairs])))
+    if against:
+        full = max(against, key=lambda row: (row['polarization'] == 'TE', row['cases'], -row['fft']))
+        out.tiles.insert(0, tile(f"{full['variant']} {full['polarization']} FFT work vs c3", round(full['fft'], 3),
+                                 note=f"{full['cases']} diagrams ({full['study']}), worst {full['worst']:.3f}",
+                                 tone='good' if full['worst'] <= 1 else 'neutral'))
+        out.tables.insert(0, table('ml-against-c3', 'Work against c3 (no profile)',
+                                   [column('study', 'Study'), column('variant', 'Variant'), column('polarization', 'Pol.'),
+                                    column('cases', 'Diagrams', 'int'), column('fft', 'FFT ratio', 'float3'),
+                                    column('gemm', 'GEMM ratio', 'float3'), column('worst', 'Worst FFT ratio', 'float3')],
+                                   against, 'variant / c3 per diagram, geometric mean; c3 records from any work study'))
+    oracle = [r for _, r in rows if r['tag'] == 'oracle']
+    if oracle:
+        names = list(oracle[0]['results'])
+        ratio = {n: geometric([r['results'][n]['iterations'] / r['results']['none']['iterations'] for r in oracle])
+                 for n in names}
+        out.charts.append(chart('bars', 'ml-oracle', 'Coarse-basis oracles (cold solves)',
+                                f'iterations relative to no coarse basis, geometric mean over {len(oracle)} '
+                                'case and k pairs; target = exact eigenvectors, slow = slowest preconditioned modes',
+                                y_label='iterations / none', categories=names,
+                                series=[dict(label='iterations ratio', values=[ratio[n] for n in names])]))
+
+
+EXTENSIONS['ml'] = ml_content
 
 
 def comparison_page(name: str, studies: list[Study]) -> dict[str, Any]:
@@ -687,12 +801,13 @@ def run_rows(study: Study) -> list[dict[str, Any]]:
         verdicts = [(r.get('load') or {}).get('verdict') for r in records]
         timing = study.kind == 'timing'
         rows.append(dict(id=f'{study.name}:{variant}', study=study.name, started=study.started, variant=variant,
-                         subset=study.manifest.get('subset', ''), cases=len({r['case_id'] for r in records}),
+                         subset=study.manifest.get('subset', ''), cases=len({r.get('case_id', r.get('label')) for r in records}),
                          status='complete' if study.status == 'complete' else
                          'failed' if study.status == 'preflight_failed' else 'partial',
                          contaminated=sum(v in ('contaminated', 'unknown') for v in verdicts) if timing else 0,
                          clean=verdicts.count('clean') if timing else len(records),
-                         wall_seconds=sum(r['wall_seconds'] for r in records) if records else None,
+                         wall_seconds=sum(r.get('wall_seconds', r.get('seconds', 0.0)) for r in records)
+                         if records else None,
                          binary=(binaries.get(variant) or next(iter(binaries.values()), {})).get('name', ''),
                          notes='; '.join(notes) or None))
     return rows
@@ -743,11 +858,14 @@ def index_page(studies: list[Study], pages: dict[str, dict]) -> dict[str, Any]:
                    and s.timing['tiers']['strict'][s.timing['primary_metric']]), None)
     if latest:
         out.tiles += timing_comparison(latest).tiles
+    out.tiles += pages['tuning']['tiles'][:3]
     out.tiles += [t for t in pages['baseline']['tiles'] if t['label'] in
-                  ('Median seconds per diagram', 'Median iterations per diagram', 'Total iterations')]
+                  ('Median seconds per diagram', 'Median iterations per diagram', 'PT gate cases passed')]
     contaminated = sum(r['contaminated'] for r in pages['runs']['runs'])
     out.tiles += [tile('Studies', len(studies)), tile('Contaminated timing runs', contaminated, tone='neutral')]
-    out.charts = [c for name, _, _ in STAGES for c in pages[name]['charts'] if c['kind'] == 'ratio_bars'][:2]
+    hero = [c for c in pages['tuning']['charts'] if c['id'] == 'adopted-work']
+    pt = [c for c in pages['baseline']['charts'] if c['kind'] == 'ratio_bars']
+    out.charts = (hero + pt + [c for name, _, _ in STAGES for c in pages[name]['charts'] if c['kind'] == 'ratio_bars'])[:2]
     if not studies:
         out.notes.append('No studies yet. Stages fill in as work sweeps, timing and profiles complete.')
     statuses = [s['status'] for s in stages]
@@ -758,6 +876,7 @@ def index_page(studies: list[Study], pages: dict[str, dict]) -> dict[str, Any]:
 
 def build(results: Path, exclude: list[str]) -> dict[str, dict[str, Any]]:
     studies = load_studies(results, exclude) if results.is_dir() else []
+    ALL_STUDIES[:] = studies
     pages = {'baseline': baseline_page(studies), 'conditioning': conditioning_page(studies),
              'multigrid': multigrid_page(studies)}
     pages.update({stage: comparison_page(stage, studies) for stage, _, _ in STAGES if stage not in pages})

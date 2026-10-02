@@ -8,7 +8,7 @@ use blaze2d_core::{
     lattice::Lattice2D,
     operators::{LinearOperator, ThetaOperator},
     polarization::Polarization,
-    preconditioners::{OperatorPreconditioner, PreconditionerKind, PreconditionerSpec, ShiftRule, TransverseWeight},
+    preconditioners::{OperatorPreconditioner, PreconditionerKind, PreconditionerSpec, ShiftRule, SpectralProfile, TE_PROFILE, TransverseWeight},
     backend::SpectralBackend,
 };
 use num_complex::Complex64 as C;
@@ -250,4 +250,44 @@ fn two_level_continuous_preconditioning_certifies_fresh_residuals() {
             }
         }
     }
+}
+
+#[test]
+fn spectral_profiles_keep_the_preconditioner_hermitian_and_zero_reproduces_it() {
+    let tau = [0.7, -0.3, 0.2, 1.1, -0.8, 0.4, 0.0, 0.9];
+    for pol in [Polarization::TE, Polarization::TM] {
+        for k in [[0.0, 0.0], [0.13, 0.21]] {
+            let op = operator(Lattice2D::hexagonal(1.0), 10, pol, k, (1.0, 13.0));
+            let (mut base, _) = op.build_preconditioner(&PreconditionerSpec { profile: SpectralProfile::None, ..Default::default() }, None);
+            let (base, n) = dense(&op, base.as_deref_mut().unwrap());
+            let (mut flat, _) = op.build_preconditioner(&PreconditionerSpec { profile: SpectralProfile::Knots([0.0; 8]), ..Default::default() }, None);
+            let (flat, _) = dense(&op, flat.as_deref_mut().unwrap());
+            let scale = base.iter().map(|z| z.norm()).fold(0.0, f64::max);
+            assert!(base.iter().zip(&flat).all(|(a, b)| (a - b).norm() <= 1e-14 * scale), "{pol:?} {k:?}");
+            let spec = PreconditionerSpec { profile: SpectralProfile::Knots(tau), coarse_modes: 9, ..Default::default() };
+            let (mut shaped, _) = op.build_preconditioner(&spec, None);
+            let (shaped, _) = dense(&op, shaped.as_deref_mut().unwrap());
+            assert_hermitian_psd(&shaped, n, &format!("profiled {pol:?} {k:?}"));
+        }
+    }
+    let invalid = PreconditionerSpec { profile: SpectralProfile::Knots([0.0, 0.0, f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0]), ..Default::default() };
+    assert!(invalid.validate(None).is_err());
+}
+
+#[test]
+fn the_default_profile_applies_to_the_default_te_projection_only() {
+    let default = PreconditionerSpec::default();
+    assert_eq!(default.resolve_profile(Polarization::TE), Some(TE_PROFILE));
+    assert_eq!(default.resolve_profile(Polarization::TM), None);
+    assert_eq!(PreconditionerSpec::legacy().resolve_profile(Polarization::TE), None);
+    let scalar = PreconditionerSpec { transverse_weight: TransverseWeight::Scalar, ..Default::default() };
+    assert_eq!(scalar.resolve_profile(Polarization::TE), None);
+    let diagonal = PreconditionerSpec { kind: PreconditionerKind::Diagonal, ..Default::default() };
+    assert_eq!(diagonal.resolve_profile(Polarization::TE), None);
+    let shifted = PreconditionerSpec { shift_fraction: 0.5, ..Default::default() };
+    assert_eq!(shifted.resolve_profile(Polarization::TE), None);
+    let coarse = PreconditionerSpec { coarse_modes: 28, ..Default::default() };
+    assert_eq!(coarse.resolve_profile(Polarization::TE), None);
+    let op = operator(Lattice2D::square(1.0), 8, Polarization::TE, [0.1, 0.0], (1.0, 13.0));
+    assert_eq!(op.build_preconditioner(&default, None).1.profile, Some(TE_PROFILE));
 }

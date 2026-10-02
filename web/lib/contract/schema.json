@@ -297,6 +297,7 @@
               "coarse_modes": 0,
               "coarse_shift": 0,
               "kind": "auto",
+              "profile": "auto",
               "shift": "continuous",
               "shift_value": 0,
               "tm_mass_fraction": 0.01,
@@ -540,6 +541,7 @@
             "coarse_modes": 0,
             "coarse_shift": 0,
             "kind": "auto",
+            "profile": "auto",
             "shift": "continuous",
             "shift_value": 0,
             "tm_mass_fraction": 0.01,
@@ -1291,6 +1293,11 @@
           "$ref": "#/$defs/PreconditionerKind",
           "default": "auto"
         },
+        "profile": {
+          "description": "Spectral weight of the smoother.",
+          "$ref": "#/$defs/PreconditionerProfile",
+          "default": "auto"
+        },
         "shift": {
           "$ref": "#/$defs/PreconditionerShift",
           "default": "continuous"
@@ -1330,6 +1337,23 @@
         "transverse"
       ]
     },
+    "PreconditionerProfile": {
+      "description": "`\"auto\"` (the built-in TE profile on the default transverse projection), `\"none\"`,\nor eight knot values τ of a spectral weight exp τ(s), s = |k+G|²/|b_min|², with\nknots at s = 4^(j−2); piecewise linear in ln s.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProfileRule"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 8,
+          "minItems": 8
+        }
+      ]
+    },
     "PreconditionerShift": {
       "type": "string",
       "enum": [
@@ -1337,6 +1361,13 @@
         "band_window",
         "fixed",
         "continuous"
+      ]
+    },
+    "ProfileRule": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "none"
       ]
     },
     "Quantity": {

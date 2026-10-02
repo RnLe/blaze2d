@@ -1,6 +1,7 @@
 /* Generated from blaze2d-interface. Run pnpm generate:contract to update. */
 
 export type SymmetryPolicy = "manual" | "auto";
+export type ProfileRule = "auto" | "none";
 export type LatticeKind = "square" | "triangular" | "rectangular" | "oblique" | "custom";
 export type ObjectKind = "circle";
 export type KCoordinates = "reciprocal_fractional" | "cartesian_angular";
@@ -210,6 +211,10 @@ export interface Preconditioner {
    */
   coarse_shift?: number;
   kind?: "auto" | "none" | "diagonal" | "transverse";
+  /**
+   * Spectral weight of the smoother.
+   */
+  profile?: ProfileRule | [number, number, number, number, number, number, number, number];
   shift?: "legacy" | "band_window" | "fixed" | "continuous";
   /**
    * Unset: 0.5 for the legacy and band-window rules, 0 for the continuous rule.

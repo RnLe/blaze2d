@@ -440,6 +440,16 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 }))
             }
         };
+        let profile = spec.resolve_profile(self.polarization);
+        let smoother = match (smoother, profile) {
+            (Some(smoother), Some(tau)) => {
+                let b_min_sq = crate::preconditioners::profile::shortest_reciprocal_sq(
+                    self.dielectric.reciprocal_b1(), self.dielectric.reciprocal_b2());
+                Some(Box::new(crate::preconditioners::ProfiledPreconditioner::new(smoother, &self.k_plus_g_sq, b_min_sq, &tau))
+                    as Box<dyn OperatorPreconditioner<B> + 'a>)
+            }
+            (smoother, _) => smoother,
+        };
         let mut coarse_modes = 0;
         let preconditioner = match smoother {
             Some(smoother) if spec.coarse_modes > 0 => {
@@ -468,7 +478,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             }
             smoother => smoother,
         };
-        (preconditioner, PreconditionerInfo { kind, shift, s_min, coarse_modes })
+        let profile = profile.filter(|_| kind != PreconditionerKind::None);
+        (preconditioner, PreconditionerInfo { kind, shift, s_min, coarse_modes, profile })
     }
 
     /// Coarse plane waves and their Galerkin matrix Zᴴ (A + σ B + m) Z, row-major,

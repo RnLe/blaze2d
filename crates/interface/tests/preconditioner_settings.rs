@@ -80,3 +80,21 @@ fn preconditioner_settings_are_sweepable() {
     assert_eq!(plan.job(0).unwrap().preconditioner().shift_fraction, 0.1);
     assert_eq!(plan.job(1).unwrap().preconditioner().shift_fraction, 0.5);
 }
+
+#[test]
+fn the_profile_takes_auto_none_or_eight_knots() {
+    use blaze2d_core::preconditioners::{SpectralProfile, TE_PROFILE};
+    let result = run(bands(""));
+    let knots: Vec<f64> = serde_json::from_value(result.metadata["preconditioner"]["points"][1]["profile"].clone()).unwrap();
+    assert_eq!(knots, TE_PROFILE);
+    let none = Plan::new(bands("[eigensolver.preconditioner]\nprofile = \"none\"\n"), Platform::Native).unwrap();
+    assert_eq!(none.job(0).unwrap().preconditioner().profile, SpectralProfile::None);
+    let list = "[eigensolver.preconditioner]\nprofile = [0, 0.5, 0, 0, 0, 0, 0, 0]\n";
+    let config = bands(list);
+    assert_eq!(Config::from_toml(&config.to_toml().unwrap()).unwrap(), config);
+    let job = Plan::new(config, Platform::Native).unwrap().job(0).unwrap();
+    assert_eq!(job.preconditioner().profile, SpectralProfile::Knots([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
+    assert!(Plan::new(bands("[eigensolver.preconditioner]\nprofile = [0.0, 1.0]\n"), Platform::Native).is_err());
+    let typo = Config::from_toml(&bands("").to_toml().unwrap().replace("profile = \"auto\"", "profile = \"Auto\"")).unwrap_err();
+    assert!(format!("{typo}").contains("eight knot values"), "{typo}");
+}

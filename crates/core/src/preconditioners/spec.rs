@@ -33,6 +33,20 @@ pub enum ShiftRule {
     Continuous,
 }
 
+/// Spectral profile of the smoother (see `profile`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpectralProfile {
+    /// `TE_PROFILE` on the configuration it was fitted on (the TE transverse projection
+    /// with the continuous shift at zero, the tensor weight and no coarse correction);
+    /// no profile otherwise.
+    #[default]
+    Auto,
+    None,
+    /// Knot values τ_j; the smoother becomes W^½ T W^½.
+    Knots([f64; super::PROFILE_KNOTS]),
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransverseWeight {
@@ -61,11 +75,13 @@ pub struct PreconditionerSpec {
     pub coarse_modes: usize,
     /// σ_c of the coarse operator, in eigenvalue units.
     pub coarse_shift: f64,
+    pub profile: SpectralProfile,
 }
 
-/// The default: no shift (the Γ-continuous rule at zero) and the tensor-weighted
-/// transverse projection; on the preconditioner study matrix this needed 7% (TE) and
-/// 11% (TM) fewer FFTs than `legacy()` and never more on any case.
+/// The default: no shift (the Γ-continuous rule at zero), the tensor-weighted
+/// transverse projection and, for TE, `TE_PROFILE`; over the 768-diagram study matrix
+/// this needed 18% (TE) and 10% (TM) fewer FFTs in total than `legacy()` and more on
+/// no diagram.
 impl Default for PreconditionerSpec {
     fn default() -> Self {
         Self {
@@ -79,6 +95,7 @@ impl Default for PreconditionerSpec {
             transverse_weight: TransverseWeight::Tensor,
             coarse_modes: 0,
             coarse_shift: 0.0,
+            profile: SpectralProfile::Auto,
         }
     }
 }
@@ -88,7 +105,19 @@ impl PreconditionerSpec {
     /// scalar-ε transverse projection.
     pub fn legacy() -> Self {
         Self { shift: ShiftRule::Legacy, shift_fraction: super::SHIFT_SMIN_FRACTION,
-            transverse_weight: TransverseWeight::Scalar, ..Self::default() }
+            transverse_weight: TransverseWeight::Scalar, profile: SpectralProfile::None, ..Self::default() }
+    }
+
+    /// Knot values of the profile applied for `polarization`, if any.
+    pub fn resolve_profile(&self, polarization: Polarization) -> Option<[f64; super::PROFILE_KNOTS]> {
+        match self.profile {
+            SpectralProfile::Knots(tau) => Some(tau),
+            SpectralProfile::None => None,
+            SpectralProfile::Auto => (self.resolve_kind(polarization) == PreconditionerKind::Transverse
+                && self.shift == ShiftRule::Continuous && self.shift_fraction == 0.0
+                && self.transverse_weight == TransverseWeight::Tensor && self.coarse_modes == 0)
+                .then_some(super::profile::TE_PROFILE),
+        }
     }
 
     pub fn resolve_kind(&self, polarization: Polarization) -> PreconditionerKind {
@@ -126,6 +155,14 @@ impl PreconditionerSpec {
         if self.coarse_modes > 0 && self.kind == PreconditionerKind::None {
             return Err("a coarse correction needs a smoothing preconditioner".into());
         }
+        if let SpectralProfile::Knots(profile) = &self.profile {
+            if profile.iter().any(|t| !t.is_finite() || t.abs() > 10.0) {
+                return Err("profile knot values must be finite with magnitude at most 10".into());
+            }
+            if self.kind == PreconditionerKind::None {
+                return Err("a spectral profile needs a preconditioner to weight".into());
+            }
+        }
         Ok(())
     }
 
@@ -153,4 +190,7 @@ pub struct PreconditionerInfo {
     /// when its Galerkin matrix was not positive definite).
     #[serde(default)]
     pub coarse_modes: usize,
+    /// Knot values of the spectral profile, when one was applied.
+    #[serde(default)]
+    pub profile: Option<[f64; super::PROFILE_KNOTS]>,
 }

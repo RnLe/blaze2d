@@ -104,6 +104,46 @@ impl<B: SpectralBackend> OperatorPreconditioner<B> for PlaneWaveCorrection<'_, B
     }
 }
 
+/// Additive correction on an arbitrary basis, the hook for learned subspace
+/// corrections: T₂ = T + Z (Zᴴ K Z)⁻¹ Zᴴ for spatial basis vectors Z. Any full-rank
+/// basis of the same span gives the same T₂. The caller assembles Zᴴ K Z (with
+/// operator applications); the correction runs on spatial vectors only.
+pub struct BasisCorrection<'a, B: SpectralBackend> {
+    smoother: Box<dyn OperatorPreconditioner<B> + 'a>,
+    basis: Vec<Vec<Complex64>>,
+    factor: Vec<Complex64>,
+    coarse: Vec<Complex64>,
+}
+
+impl<'a, B: SpectralBackend> BasisCorrection<'a, B> {
+    pub fn new(smoother: Box<dyn OperatorPreconditioner<B> + 'a>, basis: Vec<Vec<Complex64>>, galerkin: Vec<Complex64>)
+        -> Result<Self, (Box<dyn OperatorPreconditioner<B> + 'a>, String)> {
+        let m = basis.len();
+        assert_eq!(galerkin.len(), m * m);
+        match cholesky(galerkin, m) {
+            Ok(factor) => Ok(Self { smoother, basis, factor, coarse: vec![Complex64::new(0.0, 0.0); m] }),
+            Err(reason) => Err((smoother, reason)),
+        }
+    }
+}
+
+impl<B: SpectralBackend> OperatorPreconditioner<B> for BasisCorrection<'_, B> {
+    fn apply(&mut self, backend: &B, buffer: &mut B::Buffer) {
+        for (c, z) in self.coarse.iter_mut().zip(&self.basis) {
+            *c = z.iter().zip(buffer.as_slice()).map(|(z, r)| z.conj() * Complex64::new(r.re.to_accum(), r.im.to_accum())).sum();
+        }
+        self.smoother.apply(backend, buffer);
+        cholesky_solve(&self.factor, self.basis.len(), &mut self.coarse);
+        let data = buffer.as_mut_slice();
+        for (c, z) in self.coarse.iter().zip(&self.basis) {
+            for (value, z) in data.iter_mut().zip(z) {
+                let add = c * z;
+                *value += Complex::new(<B::Real as Real>::from_accum(add.re), <B::Real as Real>::from_accum(add.im));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

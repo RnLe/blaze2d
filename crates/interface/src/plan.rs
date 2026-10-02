@@ -117,7 +117,7 @@ pub fn set_parameter(config: &mut Config, target: &str, mut value: Value) -> Int
         "eigensolver.preconditioner.shift_value" | "eigensolver.preconditioner.band_window_blend" |
         "eigensolver.preconditioner.band_window_scale" | "eigensolver.preconditioner.tm_mass_fraction" |
         "eigensolver.preconditioner.transverse_weight" | "eigensolver.preconditioner.coarse_modes" |
-        "eigensolver.preconditioner.coarse_shift");
+        "eigensolver.preconditioner.coarse_shift" | "eigensolver.preconditioner.profile");
     if parts.len() == 4 && parts[0] == "geometry" && parts[1] == "objects" && matches!(parts[3], "radius" | "epsilon" | "center") {
         let index = config.geometry.objects.iter().position(|o| o.name == parts[2])
             .ok_or_else(|| invalid(target, "unknown object name"))?;

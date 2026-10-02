@@ -185,8 +185,11 @@ fn automatic_reuse_respects_the_metric_support_payload_allowance() {
 }
 
 #[test]
-fn two_level_continuous_preconditioning_keeps_pt_exact() {
-    let settings = "[eigensolver.preconditioner]\nshift = \"continuous\"\nshift_fraction = 0.0\ncoarse_modes = 28\n";
+fn two_level_and_profiled_preconditioning_keep_pt_exact() {
+    for settings in [
+        "[eigensolver.preconditioner]\nshift = \"continuous\"\nshift_fraction = 0.0\ncoarse_modes = 28\n",
+        "[eigensolver.preconditioner]\nprofile = [0.5, -0.2, 0.3, 0.8, -0.4, 0.1, 0.0, 0.6]\n",
+    ] {
     for lattice in ["square", "triangular"] {
         for polarization in ["TE", "TM"] {
             let run = |extra: &str| {
@@ -205,7 +208,9 @@ fn two_level_continuous_preconditioning_keeps_pt_exact() {
                     assert!(leakage <= 1e-10, "{case}: leakage {leakage:e}");
                 }
             }
-            assert!(pt.metadata["preconditioner"]["points"][1]["coarse_modes"].as_u64().unwrap() >= 28, "{case}");
+            if settings.contains("coarse_modes") {
+                assert!(pt.metadata["preconditioner"]["points"][1]["coarse_modes"].as_u64().unwrap() >= 28, "{case}");
+            }
             // Tracking follows eigenvector overlaps and may order crossings differently.
             let bands = pt.arrays["frequencies"].shape[1];
             let sorted = |data: &[f64]| data.chunks(bands).map(|k| {
@@ -215,6 +220,7 @@ fn two_level_continuous_preconditioning_keeps_pt_exact() {
                 assert!((a - b).abs() <= 1e-9 * a.abs().max(1e-3), "{case}: {a} vs {b}");
             }
         }
+    }
     }
 }
 

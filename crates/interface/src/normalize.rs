@@ -153,6 +153,10 @@ impl Config {
             // Measured f32 floors grow with the grid (about 1e-4 at 16x16, 1e-3 to 6e-3 at 64x64).
             return Err(invalid("eigensolver.stopping", "f32 storage has a grid-dependent residual floor; use eigenvalue_change stopping"));
         }
+        if matches!(&config.eigensolver.preconditioner.profile,
+            crate::PreconditionerProfile::Knots(p) if p.len() != blaze2d_core::preconditioners::PROFILE_KNOTS) {
+            return Err(invalid("eigensolver.preconditioner.profile", "expected eight knot values"));
+        }
         let polarization = match config.polarization { crate::Polarization::TE => blaze2d_core::polarization::Polarization::TE, crate::Polarization::TM => blaze2d_core::polarization::Polarization::TM };
         crate::lower::preconditioner_spec(&config.eigensolver.preconditioner).validate(Some(polarization))
             .map_err(|message| invalid("eigensolver.preconditioner", message))?;

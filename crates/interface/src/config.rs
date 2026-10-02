@@ -499,6 +499,20 @@ pub enum PreconditionerShift { Legacy, BandWindow, Fixed, #[default] Continuous 
 #[serde(rename_all = "snake_case")]
 pub enum TransverseWeight { Scalar, #[default] Tensor }
 
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileRule { #[default] Auto, None }
+
+/// `"auto"` (the built-in TE profile on the default transverse projection), `"none"`,
+/// or eight knot values τ of a spectral weight exp τ(s), s = |k+G|²/|b_min|², with
+/// knots at s = 4^(j−2); piecewise linear in ln s.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged, expecting = "\"auto\", \"none\" or a list of eight knot values")]
+pub enum PreconditionerProfile { Rule(ProfileRule), Knots(#[schemars(length(equal = 8))] Vec<f64>) }
+impl Default for PreconditionerProfile {
+    fn default() -> Self { Self::Rule(ProfileRule::Auto) }
+}
+
 /// Experimental preconditioner settings. `shift = "legacy"` with
 /// `transverse_weight = "scalar"` reproduces the preconditioner before `continuous`
 /// became the default.
@@ -529,6 +543,9 @@ pub struct Preconditioner {
     /// Shift of the coarse operator A + σB, in eigenvalue units.
     #[serde(default)]
     pub coarse_shift: f64,
+    /// Spectral weight of the smoother.
+    #[serde(default)]
+    pub profile: PreconditionerProfile,
 }
 fn half() -> f64 { 0.5 }
 fn tm_mass_fraction() -> f64 { blaze2d_core::operators::TM_PRECONDITIONER_MASS_FRACTION }
@@ -536,7 +553,8 @@ impl Default for Preconditioner {
     fn default() -> Self {
         Self { kind: PreconditionerKind::Auto, shift: PreconditionerShift::Continuous, shift_fraction: None,
             shift_value: 0.0, band_window_blend: half(), band_window_scale: half(), tm_mass_fraction: tm_mass_fraction(),
-            transverse_weight: TransverseWeight::Tensor, coarse_modes: 0, coarse_shift: 0.0 }
+            transverse_weight: TransverseWeight::Tensor, coarse_modes: 0, coarse_shift: 0.0,
+            profile: PreconditionerProfile::default() }
     }
 }
 

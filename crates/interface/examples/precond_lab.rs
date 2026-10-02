@@ -6,6 +6,8 @@
 //! optionally followed by a payload of the same layout.
 //!
 //! Requests: `info`; `set_k {index | k}`; `set_spec {spec, previous?}`;
+//! `set_basis {count, shift?}` (followed by a coarse basis: the preconditioner gains
+//! Z (Zᴴ (A + σB) Z)⁻¹ Zᴴ until the next `set_k` or `set_spec`);
 //! `apply {which: "A"|"B"|"T", count}`; `solve {trace?, vectors?}`; `quit`.
 
 use std::io::{BufRead, Read, Write};
@@ -16,7 +18,7 @@ use blaze2d_core::{
     eigensolver::Eigensolver,
     field::Field2D,
     operators::{LinearOperator, ThetaOperator},
-    preconditioners::{OperatorPreconditioner, PreconditionerInfo, PreconditionerSpec},
+    preconditioners::{BasisCorrection, OperatorPreconditioner, PreconditionerInfo, PreconditionerSpec},
 };
 use blaze2d_interface::{Config, Plan, Platform};
 use num_complex::Complex64;
@@ -113,6 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "bands": session.job.eigensolver.n_bands, "k_points": session.job.k_path,
                     "eigensolver": session.job.eigensolver, "spec": session.spec,
                     "lattice": {"a1": session.job.geom.lattice.a1, "a2": session.job.geom.lattice.a2},
+                    "reciprocal": [session.dielectric.reciprocal_b1(), session.dielectric.reciprocal_b2()],
                     "eps": session.dielectric.eps(), "inv_eps": session.dielectric.inv_eps(),
                     "inv_eps_tensors": session.dielectric.inv_eps_tensors()});
                 write_reply(&mut out, &reply, &[])?;
@@ -137,6 +140,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 session.previous = serde_json::from_value(request["previous"].clone()).ok();
                 let mut reply = session.rebuild();
                 reply["ok"] = json!(true);
+                write_reply(&mut out, &reply, &[])?;
+            }
+            "set_basis" => {
+                let count = request["count"].as_u64().unwrap_or(0) as usize;
+                let shift = request["shift"].as_f64().unwrap_or(0.0);
+                let basis = read_payload(&mut input, count, grid)?;
+                let operator = session.operator.as_mut().unwrap();
+                // Galerkin matrix Zᴴ (A + σB) Z from operator applications.
+                let applied: Vec<Field2D> = basis.iter().map(|z| {
+                    let (mut a, mut b) = (operator.alloc_field(), operator.alloc_field());
+                    operator.apply(z, &mut a);
+                    operator.apply_mass(z, &mut b);
+                    a.as_mut_slice().iter_mut().zip(b.as_slice()).for_each(|(a, b)| *a += b * shift);
+                    a
+                }).collect();
+                let galerkin = basis.iter().flat_map(|zi| applied.iter().map(move |kz|
+                    zi.as_slice().iter().zip(kz.as_slice()).map(|(z, k)| z.conj() * k).sum::<Complex64>())).collect();
+                let vectors = basis.iter().map(|z| z.as_slice().to_vec()).collect();
+                let reply = match session.preconditioner.take() {
+                    Some(smoother) => match BasisCorrection::new(smoother, vectors, galerkin) {
+                        Ok(correction) => { session.preconditioner = Some(Box::new(correction)); json!({"ok": true, "count": 0, "modes": count}) }
+                        Err((smoother, reason)) => { session.preconditioner = Some(smoother); json!({"ok": false, "error": reason}) }
+                    },
+                    None => json!({"ok": false, "error": "a coarse basis needs a preconditioner"}),
+                };
                 write_reply(&mut out, &reply, &[])?;
             }
             "apply" => {
