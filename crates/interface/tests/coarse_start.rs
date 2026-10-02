@@ -11,6 +11,7 @@ fn config(pol: Polarization) -> Config {
     let b = c.bands.as_mut().unwrap();
     b.count = 6;
     b.tracking = false;
+    b.symmetry.policy = Some(SymmetryPolicy::Manual);
     b.path = KPath {
         points: Some(vec![vec![0., 0.], vec![0.17, 0.], vec![0., 0.]]),
         intervals_per_segment: None,

@@ -258,10 +258,12 @@ pub struct CoarseStart {
     pub max_seed_field_bytes: usize,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, remote = "Self")]
 pub struct Symmetry {
-    #[serde(default)]
-    pub policy: SymmetryPolicy,
+    /// Unset resolves to automatic selection unless a mechanism key is present or the
+    /// dielectric is external; both select manual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<SymmetryPolicy>,
     #[serde(default)]
     pub continuation: ContinuationPolicy,
     /// Total resident continuation payload across native worker chains.
@@ -303,7 +305,64 @@ pub struct Symmetry {
     #[serde(default)]
     pub arithmetic: SymmetryArithmetic,
 }
-impl Default for Symmetry {fn default()->Self {Self {policy:SymmetryPolicy::Manual,continuation:ContinuationPolicy::Off,max_continuation_bytes:symmetry_cache_bytes(),k_reuse:KReuse::Off,k_traversal:KTraversal::Given,max_traversal_field_bytes:symmetry_cache_bytes(),max_cache_bytes:symmetry_cache_bytes(),max_sector_workspace_bytes:symmetry_sector_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,coarse_start:None,sectors:SectorPolicy::Off,sector_guard_budget:None,sector_storage:SectorStorage::FullGrid,sector_kernel:SectorKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:SymmetryArithmetic::SpatialComplex}}}
+impl Default for Symmetry {fn default()->Self {Self {policy:None,continuation:ContinuationPolicy::Off,max_continuation_bytes:symmetry_cache_bytes(),k_reuse:KReuse::Off,k_traversal:KTraversal::Given,max_traversal_field_bytes:symmetry_cache_bytes(),max_cache_bytes:symmetry_cache_bytes(),max_sector_workspace_bytes:symmetry_sector_bytes(),plane_group:None,seed_transfer:SeedTransfer::Copy,coarse_start:None,sectors:SectorPolicy::Off,sector_guard_budget:None,sector_storage:SectorStorage::FullGrid,sector_kernel:SectorKernel::FullGrid,reconstruct_partners:false,share_sector_workspace:false,correction_projection_interval:1,arithmetic:SymmetryArithmetic::SpatialComplex}}}
+
+/// Keys that bound memory or name the plane group; every other key chooses a mechanism.
+const SYMMETRY_LIMIT_KEYS: [&str; 6] = ["policy", "max_cache_bytes", "max_continuation_bytes",
+    "max_sector_workspace_bytes", "max_traversal_field_bytes", "plane_group"];
+
+fn symmetry_fields(symmetry: &Symmetry) -> serde_json::Map<String, serde_json::Value> {
+    match Symmetry::serialize(symmetry, serde_json::value::Serializer) {
+        Ok(serde_json::Value::Object(fields)) => fields,
+        _ => unreachable!("symmetry settings serialize to a map"),
+    }
+}
+
+/// Mechanism keys written with their default value.
+fn default_mechanism_keys(fields: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    let defaults = symmetry_fields(&Symmetry::default());
+    fields.iter().filter(|(key, value)| !SYMMETRY_LIMIT_KEYS.contains(&key.as_str()) && defaults.get(*key) == Some(*value))
+        .map(|(key, _)| key.clone()).collect()
+}
+
+impl Serialize for Symmetry {
+    /// Without a policy, mechanism keys at their default value are omitted: written,
+    /// they would select the manual policy when read back.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.policy.is_some() {
+            return Symmetry::serialize(self, serializer);
+        }
+        let mut fields = symmetry_fields(self);
+        for key in default_mechanism_keys(&fields) {
+            fields.remove(&key);
+        }
+        fields.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Symmetry {
+    /// Without `policy`, a mechanism key written with its default value selects the
+    /// manual policy. Non-default mechanisms select it during normalization.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let fields = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        let explicit_default = !default_mechanism_keys(&fields).is_empty();
+        let mut symmetry = Symmetry::deserialize(serde_json::Value::Object(fields)).map_err(serde::de::Error::custom)?;
+        if symmetry.policy.is_none() && explicit_default {
+            symmetry.policy = Some(SymmetryPolicy::Manual);
+        }
+        Ok(symmetry)
+    }
+}
+
+impl Symmetry {
+    pub fn is_auto(&self) -> bool { self.policy == Some(SymmetryPolicy::Auto) }
+    /// True when no mechanism is chosen explicitly (memory limits and the plane group are not mechanisms).
+    pub fn mechanisms_are_default(&self) -> bool {
+        *self == Symmetry { policy: self.policy, max_cache_bytes: self.max_cache_bytes,
+            max_continuation_bytes: self.max_continuation_bytes, max_sector_workspace_bytes: self.max_sector_workspace_bytes,
+            max_traversal_field_bytes: self.max_traversal_field_bytes, plane_group: self.plane_group.clone(), ..Default::default() }
+    }
+}
 
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -416,10 +475,12 @@ pub struct Eigensolver {
     pub preconditioner: Preconditioner,
 }
 
-/// Stopping rule: relative eigenvalue change (`tolerance`) or relative residual (`residual_tolerance`).
+/// Stopping rule: relative eigenvalue change (`tolerance`) or relative residual
+/// (`residual_tolerance`). `auto` uses the residual for native f64 band
+/// calculations without an explicit `tolerance`, and eigenvalue change otherwise.
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Stopping { #[default] EigenvalueChange, Residual }
+pub enum Stopping { #[default] Auto, EigenvalueChange, Residual }
 
 /// Third LOBPCG search block: next Ritz vectors, conjugate directions, or none.
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

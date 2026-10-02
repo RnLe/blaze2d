@@ -68,7 +68,7 @@ impl PlannedJob {
             max_iter: e.max_iterations.unwrap(),
             tol: e.tolerance.unwrap(),
             block_size: e.block_size,
-            stopping: match e.stopping { crate::Stopping::EigenvalueChange => StoppingRule::EigenvalueChange, crate::Stopping::Residual => StoppingRule::Residual },
+            stopping: match e.stopping { crate::Stopping::Residual => StoppingRule::Residual, _ => StoppingRule::EigenvalueChange },
             residual_tol: e.residual_tolerance.unwrap_or(if e.precision == crate::Precision::F64 { 1e-7 } else { 1e-5 }),
             history: match e.history { crate::History::Ritz => HistoryRule::Ritz, crate::History::Conjugate => HistoryRule::Conjugate, crate::History::None => HistoryRule::None },
             ..Default::default()
@@ -143,7 +143,7 @@ impl crate::Bands {
         blaze2d_core::drivers::bandstructure::RunOptions {
             reuse_gamma: false, disable_band_tracking: !self.tracking, retain_eigenvectors,
             symmetry: blaze2d_core::symmetry::reuse::SymmetryOptions {
-                        automatic_policy: self.symmetry.policy == crate::SymmetryPolicy::Auto,
+                        automatic_policy: self.symmetry.is_auto(),
                         k_reuse: match self.symmetry.k_reuse {crate::KReuse::Off=>blaze2d_core::symmetry::reuse::KReuse::Off,crate::KReuse::Identical=>blaze2d_core::symmetry::reuse::KReuse::Identical,crate::KReuse::Unitary=>blaze2d_core::symmetry::reuse::KReuse::Unitary,crate::KReuse::TimeReversal=>blaze2d_core::symmetry::reuse::KReuse::TimeReversal},
                         k_traversal:match self.symmetry.k_traversal {crate::KTraversal::Given=>blaze2d_core::symmetry::traversal::KTraversal::Given,crate::KTraversal::Nearest=>blaze2d_core::symmetry::traversal::KTraversal::Nearest},
                         max_traversal_field_bytes:self.symmetry.max_traversal_field_bytes,

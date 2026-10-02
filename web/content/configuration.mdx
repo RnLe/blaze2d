@@ -55,11 +55,18 @@ The current release supports two-dimensional circles and positive scalar permitt
 
 Defaults are grid 32 × 32, `f64`, eight bands, and analytic dielectric smoothing
 with mesh size 3 and interface tolerance `1e-6`. Eigenvector retention is off.
-Band calculations use tolerance `1e-6` and 200 iterations. Operators use `1e-8`
-and 300 iterations, starting at band 0 with four retained and eight upper remote bands.
+Band calculations use 200 iterations. Operators use `1e-8` and 300 iterations,
+starting at band 0 with four retained and eight upper remote bands.
 
-The stopping tolerance measures **relative eigenvalue changes**. Fresh operator
-residuals and orthogonality defects are reported separately. Set
+Native `f64` band calculations stop when every requested band's **relative residual**
+‖Au − λBu‖/(‖Au‖ + |λ|‖Bu‖) is at most `residual_tolerance` (`1e-7`), confirmed with
+fresh operator applications. Operator calculations, an explicit `tolerance` (also as
+a sweep target), `f32` storage, or the browser select the **relative eigenvalue
+change** rule instead (default `1e-6` for bands, `1e-8` for operators); `f32` storage
+has a grid-dependent residual floor and supports only that rule. Set `stopping = "residual"` or
+`"eigenvalue_change"` to choose explicitly. Normalized configurations keep `"auto"`,
+so an exported configuration resolves again when edited. Fresh operator
+residuals and orthogonality defects are reported in either case. Set
 `operators.fail_on_residual` to enforce a normalized residual acceptance threshold.
 Without that gate, a completed calculation may still contain inaccurate remote eigenvectors.
 Band results report fresh residuals and B-orthogonality without rotating the tracked fields.
@@ -102,20 +109,24 @@ follow the returned band order; their conventions and units are recorded in meta
 A band path is a preset, vertices with `intervals_per_segment`, or already sampled
 points. These forms cannot be combined. A path with $S$ segments and $N$ intervals
 per segment has $SN+1$ samples. Distances use the reciprocal Cartesian metric.
-Labels retain their exact sample indices. The manual default recomputes a closing
-Gamma point; certified identical-point reuse can eliminate that solve.
+Labels retain their exact sample indices. Certified identical-point reuse eliminates
+the solve at a closing Gamma point; the automatic policy selects it whenever the path
+repeats a point and `max_cache_bytes` is positive.
 
 ## Symmetry and execution reports
 
 <ExampleSource slug="certified-symmetry" language="toml" />
 
-The recommended native f64 path is explicit `policy = "auto"` with a suitably
-tight stopping tolerance and an accuracy gate. `public-sweep-v3` considers PT
-on equal square/triangular grids 31–65 with 8–16 bands and stopping tolerance
-at most `1e-13`. The ordinary `1e-6` tolerance uses the complex path: measured PT
-attempts failed certification and added work there. Repeated-point reuse still
-requires its own certificate. Triangular metric support additionally requires
-the measured cutoff range described in [Symmetries](/symmetries).
+Without mechanism keys, `policy` resolves to `"auto"`. Writing any mechanism key,
+even with its default value, selects `"manual"`; memory limits and `plane_group` are
+not mechanisms. External dielectric input always runs manually. `residual-pt-v1`
+considers PT on native `f64` equal square/triangular FFT grids 16–128 with 8–16 bands
+under residual stopping between `1e-8` and `1e-6`, for objects that are symmetric
+under inversion about the cell origin. Under eigenvalue-change stopping it keeps the
+earlier envelope (grids 31–65, tolerance at most `1e-13`), where triangular metric
+support also requires the measured cutoff range described in [Symmetries](/symmetries).
+Elsewhere the complex path is used. Every PT and repeated-point result still requires
+its own certificate.
 
 Auto never changes material sampling, Fourier support or precision. Native PT
 profitability is not assumed in the browser. Requested and resolved settings,

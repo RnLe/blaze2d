@@ -35,10 +35,10 @@ fn defaults_reproduce_the_built_in_preconditioner_and_stopping_rule() {
     let job = plan.job(0).unwrap();
     assert_eq!(job.preconditioner(), blaze2d_core::preconditioners::PreconditionerSpec::default());
     let solver = job.eigensolver();
-    assert_eq!(solver.stopping, blaze2d_core::eigensolver::StoppingRule::EigenvalueChange);
+    assert_eq!(solver.stopping, blaze2d_core::eigensolver::StoppingRule::Residual);
     assert_eq!(solver.history, blaze2d_core::eigensolver::HistoryRule::Ritz);
     let result = run(bands(""));
-    assert_eq!(result.metadata["stopping_criterion"], "relative_eigenvalue_change");
+    assert_eq!(result.metadata["stopping_criterion"], "relative_residual");
     let points = result.metadata["point_seconds"].as_array().unwrap();
     assert_eq!(points.len(), result.metadata["iterations"].as_array().unwrap().len());
     let work = &result.metadata["work"];

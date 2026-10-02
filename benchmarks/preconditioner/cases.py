@@ -32,7 +32,7 @@ EPS_BG = (13.0, 11.0, 5.0, 2.0)
 SCREEN_PAIRS = ((1.0, 13.0), (10.0, 2.0), (7.0, 11.0), (4.0, 5.0))
 BANDS = 12
 INTERVALS = 20
-SUBSETS = ('full768', 'dev96', 'screen32', 'timing48', 'pilot8')
+SUBSETS = ('full768', 'dev96', 'screen32', 'timing48', 'pilot8', 'pt128', 'odd', 'sample96')
 ROLES = ('easy', 'median', 'hard')
 
 
@@ -133,6 +133,21 @@ def subset(name: str, work: dict[str, float] | None = None) -> list[Case]:
     if name == 'pilot8':
         return [c for c in cases if c.resolution in (64, 128) and c.radius == 0.30
                 and _pair(c) == (1.0, 13.0)]
+    if name == 'pt128':
+        return [c for c in cases if c.resolution == 128 and c.radius in (0.15, 0.45)
+                and _pair(c) in ((1.0, 13.0), (10.0, 2.0))]
+    if name == 'odd':
+        return [Case(lattice, polarization, n, 0.30, 1.0, 13.0)
+                for lattice in LATTICES for polarization in POLARIZATIONS for n in (17, 127)]
+    if name == 'sample96':
+        # Two of the 16 dielectric pairs per lattice x polarization x N x radius group,
+        # rotating so that every pair appears at every resolution.
+        pairs = [(r, b) for r in EPS_ROD for b in EPS_BG]
+        family = [(lattice, polarization, radius) for lattice in LATTICES
+                  for polarization in POLARIZATIONS for radius in RADII]
+        return [Case(lattice, polarization, n, radius, *pairs[(i + j) % 8 + offset])
+                for j, n in enumerate(RESOLUTIONS) for i, (lattice, polarization, radius) in enumerate(family)
+                for offset in (0, 8)]
     if name == 'timing48':
         roles = timing_roles(work)
         return [c for c in cases if c.id in roles]

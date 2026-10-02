@@ -300,24 +300,27 @@ Output arrays, FFT plans and library scratch have separate memory costs.
 `bands.symmetry.policy = "auto"` selects among measured options and records its
 model version, reasons, resolved configuration and runtime fallbacks. Numerical
 qualification still governs every selected optimization. Automatic mode does
-not change the material, Fourier support or precision. The manual policy remains
-the default and permits explicit experiments.
+not change the material, Fourier support or precision. It is the default for band
+calculations without mechanism keys; writing a mechanism key selects the manual
+policy for explicit experiments, and external dielectric input always runs manually.
 
-The `public-sweep-v3` policy is calibrated on native f64 square/triangular grids
-with equal dimensions 31–65 and 8–16 bands, at stopping tolerance at most
-`1e-13`. For triangular metric balls its
-cutoff satisfies $0.40 \le R/N \le 0.46$, with $R$ measured in units of
-$2\pi/a$. Within that envelope it attempts PT and caches repeated requested
-k points. Outside it, the original complex solve remains available. A failed
-PT attempt disables further automatic PT retries for that geometry. Calibration
-used centered circular rods; numerical qualification is still required for
-other motifs. These size bounds are an empirical policy, not a theorem about
-performance.
+The `residual-pt-v1` policy attempts PT on native f64 square/triangular FFT grids
+with equal dimensions 16–128 and 8–16 bands when bands stop on a relative residual
+between `1e-8` and `1e-6` (the default stopping rule), provided the objects are
+symmetric under inversion about the cell origin. It caches repeated requested
+k points. Under eigenvalue-change stopping it keeps the earlier calibration: grids
+31–65 at tolerance at most `1e-13`, and for triangular metric balls a cutoff with
+$0.40 \le R/N \le 0.46$, with $R$ measured in units of $2\pi/a$. Outside the
+envelope the original complex solve remains available. A failed PT attempt disables
+further automatic PT retries for that geometry. Calibration used centered circular
+rods; numerical qualification is still required for other motifs. These bounds are
+an empirical policy, not a theorem about performance.
 
-Ordinary-tolerance qualification found that `1e-6` PT attempts consistently
-failed the strict physical certificate and incurred a second solve. V3 therefore
-uses complex arithmetic at looser stopping tolerances. Close frequencies alone
-did not establish accurate fields. The optional `[bands.accuracy]` contract
+Qualification with eigenvalue-change stopping at `1e-6` found that PT attempts
+consistently failed the strict physical certificate and incurred a second solve,
+so that rule keeps complex arithmetic at looser tolerances. Residual stopping
+certifies each solve directly. Close frequencies alone did not establish accurate
+fields. The optional `[bands.accuracy]` contract
 now checks every final output, including the ordinary fallback: convergence,
 absolute-or-relative residuals and B-orthogonality. See [API & TOML](/configuration)
 for its limits, Gamma behavior and execution summaries.
@@ -335,7 +338,8 @@ Results from separate experiments are never multiplied into a combined speedup.
 ## Configuring an experiment
 
 The [Workbench](/workbench), native command and Python interface share the public
-configuration contract. To use the measured native policy in an otherwise complete calculation:
+configuration contract. Native band calculations use the measured policy by default;
+written out with an accuracy contract it reads:
 
 ```toml
 [bands.symmetry]
@@ -345,13 +349,11 @@ policy = "auto"
 max_relative_residual = 1e-5
 max_absolute_residual = 1e-7
 max_orthogonality_defect = 1e-8
-
-[eigensolver]
-tolerance = 1e-14
-max_iterations = 600
 ```
 
-The following blocks instead illustrate an explicit PT experiment:
+Setting an eigenvalue-change `tolerance` here would leave the residual-stopping
+envelope for the narrower eigenvalue-change calibration. The following blocks instead
+illustrate an explicit PT experiment:
 
 ```toml
 [eigensolver]

@@ -429,11 +429,39 @@ def baseline_page(studies: list[Study]) -> dict[str, Any]:
         out.notes.append('No profile yet: run run_profile.py --stage baseline with the profiling binary.')
     if work:
         out.tables.append(case_table(work, seconds, variant))
+    out += pt_gate_section(studies)
     extra = comparisons(studies, 'baseline')
     out += extra
     present = [bool(completed), bool(seconds), bool(profiles)]
     status = 'complete' if all(present) else 'partial' if any(present) or extra.charts else 'empty'
     return page('baseline', stage, status, out, subtitle=f'variant {variant}' if variant else None)
+
+
+def pt_gate_section(studies: list[Study]) -> Content:
+    """PT-real against spatial-complex gates (pt_gate.py) on their own studies."""
+    rows = []
+    for study in studies:
+        gate = study._json('pt_gate.json') if study.stage == 'pt-gate' else None
+        if gate:
+            s = gate['summary']
+            tolerance = next((v.get('eigensolver', {}).get('residual_tolerance') for v in study.manifest['variants'].values()
+                              if v.get('eigensolver', {}).get('residual_tolerance')), None)
+            rows.append(dict(study=study.name, subset=study.manifest.get('subset'), tolerance=tolerance, cases=s['cases'],
+                             residual=s['max_residual'], leakage=s['max_leakage'], gap=s['max_frequency_gap'],
+                             iterations=s['iterations_pt'] / s['iterations_ref'] if s['iterations_ref'] else None,
+                             passed='passed' if s['passed'] else f"{len(s['failures'])} failures"))
+    out = Content()
+    if rows:
+        passed = sum(r['cases'] for r in rows if r['passed'] == 'passed')
+        out.tiles.append(tile('PT gate cases passed', passed, note=f"of {sum(r['cases'] for r in rows)}; "
+                              'PT-real against spatial-complex arithmetic', tone='good' if all(r['passed'] == 'passed' for r in rows) else 'bad'))
+        out.tables.append(table('pt-gate', 'PT arithmetic gates', [
+            column('study', 'Study'), column('subset', 'Subset'), column('tolerance', 'Residual target', 'sci'),
+            column('cases', 'Cases', 'int'), column('residual', 'Max residual', 'sci'), column('leakage', 'Max leakage', 'sci'),
+            column('gap', 'Max frequency gap', 'sci'), column('iterations', 'PT / complex iterations', 'float3'),
+            column('passed', 'Gate')], rows,
+            'fresh residuals on nonzero modes, real-subspace leakage and relative frequency gap to the complex solve'))
+    return out
 
 
 def comparison_page(name: str, studies: list[Study]) -> dict[str, Any]:
@@ -444,6 +472,158 @@ def comparison_page(name: str, studies: list[Study]) -> dict[str, Any]:
                          'and a reference plus candidate variant.')
     status = 'empty' if not out.charts else 'complete' if all(s.status == 'complete' for s in stage) else 'partial'
     return page(name, stage, status, out, subtitle=dict((s, d) for s, _, d in STAGES)[name])
+
+
+K_LABELS = {0: 'Gamma', 1: 'first path point', 20: 'X / K'}
+
+
+def conditioning_page(studies: list[Study]) -> dict[str, Any]:
+    """kappa(TA) and kappa_eff of the top band per preconditioner configuration (lab/conditioning.py)."""
+    stage = [s for s in studies if s.stage == 'conditioning' and s.kind == 'spectra']
+    records = {(r['case_id'], r['k_index'], r['variant']): r for s in stage for r in s.records}
+    rows = list(records.values())
+    out = Content()
+    if not rows:
+        out.notes.append('No spectra yet: run lab/conditioning.py with the precond_lab binary.')
+        return page('conditioning', stage, 'empty', out, subtitle=dict((s, d) for s, _, d in STAGES)['conditioning'])
+    configurations = list(dict.fromkeys(r['variant'] for r in sorted(rows, key=lambda r: r['binary']['name'])))
+    reference = 'baseline' if 'baseline' in configurations else configurations[0]
+
+    def top(record: dict) -> float | None:
+        return record['bands'][-1]['kappa_eff'] if record['bands'] else None
+    base = [r for r in rows if r['variant'] == reference]
+    for polarization in ('TE', 'TM'):
+        own = [r for r in base if r['params']['polarization'] == polarization]
+        if own:
+            out.tiles.append(tile(f'{polarization} median kappa(TA)', median([r['kappa_ta'] for r in own]),
+                                  note=f'{reference}; {len(own)} spectra, nonzero spectrum'))
+            dense = [r for r in own if r['bands']]
+            if dense:
+                out.tiles.append(tile(f'{polarization} worst kappa_eff', max(top(r) for r in dense), tone='neutral',
+                                      note=f"band {dense[0]['bands'][-1]['band']} after deflating the block; dense spectra"))
+    for polarization in ('TE', 'TM'):
+        series = []
+        for configuration in configurations:
+            for k, name in K_LABELS.items():
+                points = {}
+                for r in rows:
+                    if (r['variant'], r['k_index'], r['params']['polarization']) == (configuration, k, polarization):
+                        points.setdefault(r['params']['resolution'], []).append(r['kappa_ta'])
+                if points:
+                    series.append(dict(label=f'{configuration} {name}' if len(configurations) > 1 else name,
+                                       dashed=k != 0, points=[dict(x=n, y=statistics.median(v), lo=None, hi=None)
+                                                             for n, v in sorted(points.items())]))
+        if series:
+            out.charts.append(chart('lines', f'kappa-ta-{polarization}', f'{polarization}: kappa(TA) vs N',
+                                    'median over lattices and permittivity pairs at r=0.30; the spectra table holds '
+                                    'every value. A flat line means the preconditioner is mesh-independent.',
+                                    x_label='N', y_label='kappa(TA)', series=series))
+    dense = [r for r in rows if r['bands']]
+    if dense:
+        out.charts.append(chart('scatter', 'kappa-eff-contrast', 'kappa_eff of the top band vs contrast',
+                                'deflated top band of the 12-band block per spectrum; predicts the slowest '
+                                'band\'s convergence rate', x_label='contrast', y_label='kappa_eff', log_x=True,
+                                log_y=True, series=[dict(label=f'{c} {p}', points=[
+                                    dict(x=r['contrast'], y=top(r), tag=f"{r['label']} k{r['k_index']}")
+                                    for r in dense if (r['variant'], r['params']['polarization']) == (c, p)])
+                                    for c in configurations for p in ('TE', 'TM')]))
+    if len(configurations) > 1:
+        groups = []
+        for configuration in configurations:
+            if configuration == reference:
+                continue
+            by_group: dict[tuple, list[float]] = {}
+            for (case, k, variant), r in records.items():
+                ref = records.get((case, k, reference))
+                if variant == configuration and ref and top(r) and top(ref):
+                    by_group.setdefault(group_key(r['params']), []).append(top(ref) / top(r))
+            groups += [dict(label=f'{p} N={n}', bars=[bar(configuration, geometric(v))])
+                       for (p, n), v in sorted(by_group.items())]
+        if groups:
+            out.charts.insert(0, chart('ratio_bars', 'kappa-eff-ratio', f'kappa_eff improvement over {reference}',
+                                       f'kappa_eff({reference}) / kappa_eff(configuration) of the top band; '
+                                       'geometric mean per group', y_label='kappa ratio', groups=groups))
+    table_rows = [dict(label=r['label'], k=K_LABELS.get(r['k_index'], r['k_index']), configuration=r['variant'],
+                       kind=(r.get('preconditioner') or {}).get('kind'), shift=(r.get('preconditioner') or {}).get('shift'),
+                       kappa_ta=r['kappa_ta'], kappa_eff=top(r), gap=r['bands'][-1]['gap'] if r['bands'] else None,
+                       method=r.get('method', 'dense'))
+                  for r in sorted(rows, key=lambda r: (r['variant'], r['label'], r['k_index']))]
+    out.tables.append(table('spectra', 'Spectra', [
+        column('label', 'Case'), column('k', 'k'), column('configuration', 'Configuration'), column('kind', 'Kind'),
+        column('shift', 'Shift', 'float3'), column('kappa_ta', 'kappa(TA)', 'float2'),
+        column('kappa_eff', 'kappa_eff top band', 'float2'), column('gap', 'lambda_n / lambda_m', 'float3'),
+        column('method', 'Method')], table_rows,
+        'kappa(TA) on the nonzero spectrum; kappa_eff of T P^H (A - lambda_n B) P with P the B-orthogonal '
+        'complement of the lowest m = 14 modes'))
+    out += comparisons(studies, 'conditioning')
+    status = 'complete' if all(s.status == 'complete' for s in stage) else 'partial'
+    return page('conditioning', stage, status, out, subtitle=f'{len(rows)} spectra, reference {reference}')
+
+
+def gates_content(studies: list[Study]) -> Content:
+    """E10 spectral gates (lab/gates.py): kappa_eff gains of candidates over the solver's preconditioner.
+
+    The implied speed-up assumes iterations scale with sqrt(kappa_eff) and charges each
+    iteration one operator and one preconditioner application in FFT units (no dense
+    overhead, which favours cheap candidates).
+    """
+    # Later studies replace earlier spectra of the same case and k point.
+    rows = list({(r['case_id'], r['k_index']): r for s in studies if s.kind == 'spectra' and s.stage == 'multigrid'
+                 for r in s.records}.values())
+    out = Content()
+    if not rows:
+        return out
+    names = list(dict.fromkeys(n for r in rows for n in r['candidates'] if n != 'reference'))
+    summary, groups = [], []
+    for polarization in ('TE', 'TM'):
+        own = [r for r in rows if r['params']['polarization'] == polarization]
+        if not own:
+            continue
+        bars = []
+        for name in names:
+            ratios = [r['candidates'][name]['ratio'] for r in own if name in r['candidates']]
+            if not ratios:
+                continue
+            costs = [r['candidates'][name]['cost_fft'] for r in own if name in r['candidates']]
+            reference = own[0]['candidates']['reference']['cost_fft']
+            a_cost = own[0].get('a_cost_fft', 6.0 if polarization == 'TE' else 2.0)
+            cost = statistics.median(costs)
+            speedup = (math.sqrt(geometric(ratios)) * (a_cost + reference) / (a_cost + cost)
+                       if math.isfinite(cost) else None)
+            hard = [r['candidates'][name]['ratio'] for r in own if name in r['candidates'] and r['contrast'] >= 5]
+            summary.append(dict(polarization=polarization, candidate=name, ratio=geometric(ratios), worst=min(ratios),
+                                hard=geometric(hard) if hard else None, cost=cost / reference if math.isfinite(cost) else None,
+                                speedup=speedup, spectra=len(ratios)))
+            bars.append(bar(name, geometric(ratios)))
+        groups.append(dict(label=polarization, bars=bars))
+    out.charts.append(chart('ratio_bars', 'gates-kappa', 'kappa_eff gain over the solver preconditioner',
+                            'kappa_eff(reference) / kappa_eff(candidate) of the top band, geometric mean over '
+                            'cases and k; exact-inverse is the (A + shift B)^-1 oracle', y_label='kappa ratio',
+                            groups=groups))
+    best = [r for r in summary if r['speedup'] and not r['candidate'].startswith('exact-inverse')]
+    for polarization in ('TE', 'TM'):
+        own = sorted((r for r in best if r['polarization'] == polarization), key=lambda r: -r['speedup'])
+        if own:
+            out.tiles.append(tile(f'{polarization} best implied speed-up', own[0]['speedup'], 'x',
+                                  tone='good' if own[0]['speedup'] > 1.05 else 'neutral',
+                                  note=f"{own[0]['candidate']}; kappa ratio {own[0]['ratio']:.2f}"))
+    out.tables.append(table('gates', 'Spectral gates', [
+        column('polarization', 'Pol.'), column('candidate', 'Candidate'), column('ratio', 'kappa gain', 'float2'),
+        column('worst', 'Worst gain', 'float2'), column('hard', 'Gain at contrast >= 5', 'float2'),
+        column('cost', 'Relative cost', 'float2'), column('speedup', 'Implied speed-up', 'float2'),
+        column('spectra', 'Spectra', 'int')], summary,
+        'implied speed-up = sqrt(kappa gain) x (operator + reference) / (operator + candidate) in FFT units'))
+    return out
+
+
+def multigrid_page(studies: list[Study]) -> dict[str, Any]:
+    stage = [s for s in studies if s.stage == 'multigrid']
+    out = gates_content(stage)
+    out += comparisons(studies, 'multigrid')
+    if not out.charts:
+        out.notes.append('No multigrid evidence yet: run lab/gates.py (E10) or a work comparison with --stage multigrid.')
+    status = 'empty' if not out.charts else 'complete' if all(s.status == 'complete' for s in stage) else 'partial'
+    return page('multigrid', stage, status, out, subtitle=dict((s, d) for s, _, d in STAGES)['multigrid'])
 
 
 def run_rows(study: Study) -> list[dict[str, Any]]:
@@ -537,8 +717,9 @@ def index_page(studies: list[Study], pages: dict[str, dict]) -> dict[str, Any]:
 
 def build(results: Path, exclude: list[str]) -> dict[str, dict[str, Any]]:
     studies = load_studies(results, exclude) if results.is_dir() else []
-    pages = {'baseline': baseline_page(studies)}
-    pages.update({stage: comparison_page(stage, studies) for stage, _, _ in STAGES[1:]})
+    pages = {'baseline': baseline_page(studies), 'conditioning': conditioning_page(studies),
+             'multigrid': multigrid_page(studies)}
+    pages.update({stage: comparison_page(stage, studies) for stage, _, _ in STAGES if stage not in pages})
     pages['runs'] = runs_page(studies)
     pages['index'] = index_page(studies, pages)
     return pages

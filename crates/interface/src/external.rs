@@ -66,6 +66,13 @@ pub fn execute_sampled<B: SpectralBackend>(backend: B, backend_name: &str, job: 
     out.metadata["iterations"] = json!([result.iterations]);
     out.metadata["converged"] = json!(result.converged);
     out.metadata["converged_per_point"] = json!([result.converged]);
+    let e = &job.resolved.config.eigensolver;
+    out.metadata["stopping_criterion"] = json!(match e.stopping {
+        crate::Stopping::Residual => "relative_residual",
+        _ => "relative_eigenvalue_change",
+    });
+    out.metadata["eigensolver"] = json!({"stopping": e.stopping, "tolerance": e.tolerance, "residual_tolerance": e.residual_tolerance,
+        "history": e.history, "block_size": job.eigensolver().effective_block_size()});
     out.metadata["elapsed_seconds"] = json!(result.elapsed_seconds);
     out.metadata["certification"] = json!({"source":"fresh_rayleigh_ritz",
         "residual_convention":"norm(Au-lambda*Bu)/(norm(Au)+abs(lambda)*norm(Bu))",

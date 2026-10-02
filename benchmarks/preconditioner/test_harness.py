@@ -20,7 +20,7 @@ FIXTURE = Path(__file__).with_name('fixtures') / 'e054876-sq-TM-016-pt.json.gz'
 class CaseTests(unittest.TestCase):
     def test_subset_sizes(self):
         sizes = {name: len(cases.subset(name)) for name in cases.SUBSETS}
-        self.assertEqual(sizes, dict(full768=768, dev96=96, screen32=32, timing48=48, pilot8=8))
+        self.assertEqual(sizes, dict(full768=768, dev96=96, screen32=32, timing48=48, pilot8=8, pt128=16, odd=8, sample96=96))
 
     def test_ids_and_labels_are_unique_and_stable(self):
         matrix = cases.full_matrix()

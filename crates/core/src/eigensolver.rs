@@ -703,9 +703,10 @@ where
                     }
                 }
             }
-            // Second pass: re-apply operator (requires mutable borrow)
+            // Second pass: re-apply both operators (requires mutable borrow)
             for entry in &mut x_block {
                 self.operator.apply(&entry.vector, &mut entry.applied);
+                self.operator.apply_mass(&entry.vector, &mut entry.mass);
             }
         }
 
@@ -959,7 +960,9 @@ where
 
     /// Residual-rule convergence and soft locking. Positions lock at η ≤ τ/2 and
     /// unlock when a fresh η exceeds τ; after two unlocks a position stays active.
-    fn residual_convergence(&mut self, iter: usize, eta: &[f64], convergence: &mut ConvergenceInfo) -> bool {
+    /// When every required band passes on cached products, `eta` is replaced by
+    /// freshly recomputed values.
+    fn residual_convergence(&mut self, iter: usize, eta: &mut Vec<f64>, convergence: &mut ConvergenceInfo) -> bool {
         crate::profile_scope!("eigensolver.convergence");
         let tol = self.config.residual_tol;
         convergence.update_with_residuals(eta, tol);
@@ -968,7 +971,13 @@ where
         }
         let required = self.required_positions().min(eta.len());
         if eta[..required].iter().all(|&e| e <= tol) {
-            return true;
+            // Cached products accumulate through the subspace updates; accept
+            // only residuals confirmed with fresh operator applications.
+            *eta = self.refresh_products();
+            convergence.update_with_residuals(eta, tol);
+            if eta[..required].iter().all(|&e| e <= tol) {
+                return true;
+            }
         }
         for i in 0..self.soft_locked.len().min(eta.len()) {
             if self.soft_locked[i] && eta[i] > tol && self.unlocks[i] < 2 {
@@ -981,6 +990,27 @@ where
             .collect();
         self.soft_lock_bands(&candidates);
         false
+    }
+
+    /// Residual mode at the iteration limit: the last update was never checked, so
+    /// accept it if fresh products meet the target for every required band.
+    fn final_residual_convergence(&mut self) -> bool {
+        let tol = self.config.residual_tol;
+        let eta = self.refresh_products();
+        let required = self.required_positions().min(eta.len());
+        eta[..required].iter().all(|&e| e <= tol)
+    }
+
+    /// Recompute A·x and B·x for the whole block and return fresh relative residuals.
+    fn refresh_products(&mut self) -> Vec<f64> {
+        crate::profiler::count("eigensolver.product_refreshes", 1);
+        let Self { operator, x_block, .. } = self;
+        for entry in x_block.iter_mut() {
+            operator.apply(&entry.vector, &mut entry.applied);
+            operator.apply_mass(&entry.vector, &mut entry.mass);
+        }
+        let residuals = self.compute_residuals();
+        self.relative_residual_norms(&residuals)
     }
 
     fn record_trace(&mut self, eta: &[f64], active: usize, rank: usize) {
@@ -2029,7 +2059,7 @@ where
                 crate::profile_scope!("eigensolver.residuals");
                 self.compute_residuals()
             };
-            let eta = if residual_mode || self.config.trace {
+            let mut eta = if residual_mode || self.config.trace {
                 self.relative_residual_norms(&residuals)
             } else {
                 Vec::new()
@@ -2071,7 +2101,7 @@ where
             // ================================================================
             let n_check = n_active.min(relative_residuals.len());
 
-            if residual_mode && self.residual_convergence(iter, &eta, &mut convergence) {
+            if residual_mode && self.residual_convergence(iter, &mut eta, &mut convergence) {
                 residual_converged = true;
                 self.record_trace(&eta, 0, 0);
                 break;
@@ -2491,7 +2521,7 @@ where
 
         // Determine if we actually converged (count both hard and soft locked)
         let total_converged = self.converged_band_count(&[]);
-        let converged = if residual_mode { residual_converged } else { total_converged >= n_bands_requested };
+        let converged = if residual_mode { residual_converged || self.final_residual_convergence() } else { total_converged >= n_bands_requested };
 
         // Convert Bloch wavevector to fractional k-point for logging
         let k_frac = [bloch[0] / (2.0 * PI), bloch[1] / (2.0 * PI)];
@@ -2595,7 +2625,7 @@ where
 
             // Compute residuals R_k = A*X_k - B*X_k * Λ_k
             let mut residuals = self.compute_residuals();
-            let eta = if residual_mode || self.config.trace {
+            let mut eta = if residual_mode || self.config.trace {
                 self.relative_residual_norms(&residuals)
             } else {
                 Vec::new()
@@ -2615,7 +2645,7 @@ where
 
             // Check convergence based on eigenvalue changes (starting from iter 2)
             if residual_mode {
-                residual_converged = self.residual_convergence(iter, &eta, &mut convergence);
+                residual_converged = self.residual_convergence(iter, &mut eta, &mut convergence);
             } else if iter >= 2 {
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 convergence.update_with_eigenvalue_changes(
@@ -2732,7 +2762,7 @@ where
 
         // End of loop: either max iterations reached or all bands soft-locked
         let all_eigenvalues = self.collect_all_eigenvalues();
-        let converged = if residual_mode { residual_converged } else { self.converged_band_count(&[]) >= n_bands_requested };
+        let converged = if residual_mode { residual_converged || self.final_residual_convergence() } else { self.converged_band_count(&[]) >= n_bands_requested };
 
         EigensolverResult {
             eigenvalues: all_eigenvalues[..n_bands_requested.min(all_eigenvalues.len())].to_vec(),
@@ -2988,7 +3018,7 @@ where
             // Step 1: Compute residuals R_k = A*X_k - B*X_k * Λ_k
             // ================================================================
             let mut residuals = self.compute_residuals();
-            let eta = if residual_mode || self.config.trace {
+            let mut eta = if residual_mode || self.config.trace {
                 self.relative_residual_norms(&residuals)
             } else {
                 Vec::new()
@@ -3025,7 +3055,7 @@ where
             // iter 1: first Ritz update - store these as baseline
             // iter 2+: compare to previous iteration
             if residual_mode {
-                residual_converged = self.residual_convergence(iter, &eta, &mut convergence);
+                residual_converged = self.residual_convergence(iter, &mut eta, &mut convergence);
             } else if iter >= 2 {
                 let relative_eigenvalue_changes = self.compute_relative_eigenvalue_changes();
                 convergence.update_with_eigenvalue_changes(
@@ -3034,6 +3064,9 @@ where
                     self.config.tol,
                 );
             }
+
+            // Residual mode may have replaced eta with freshly confirmed values.
+            let relative_residuals = if residual_mode { eta.clone() } else { relative_residuals };
 
             // Check for overall convergence
             let n_soft_locked = self.soft_locked_count();
@@ -3336,7 +3369,7 @@ where
         let (freq_min, freq_max) = frequency_range_from_slice(&all_eigenvalues);
 
         let total_converged = self.converged_band_count(&[]);
-        let converged = if residual_mode { residual_converged } else { total_converged >= n_bands_requested };
+        let converged = if residual_mode { residual_converged || self.final_residual_convergence() } else { total_converged >= n_bands_requested };
 
         if converged {
             info!(

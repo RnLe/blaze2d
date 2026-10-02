@@ -4,8 +4,9 @@ use serde_json::json;
 #[test]
 fn symmetry_memory_planning_accounts_for_bounded_cache_and_conversion_tables() {
     let mut c=Config::default();c.results.eigenvectors=false;
+    c.bands.as_mut().unwrap().symmetry.policy=Some(SymmetryPolicy::Manual);
     c.grid.resolution=Resolution::Uniform(13);
-    c.bands.as_mut().unwrap().path=KPath {points:Some(vec![vec![0.0,0.0],vec![0.17,0.0],vec![0.0,0.0]]),intervals_per_segment:None,..Default::default()};
+    c.bands.as_mut().unwrap().path=KPath {points:Some(vec![vec![0.0,0.0],vec![0.17,0.0],vec![0.0,0.0],vec![0.17,0.0],vec![0.3,0.0]]),intervals_per_segment:None,..Default::default()};
     let bytes=|c:Config|Plan::new(c,Platform::Native).unwrap().summary.estimated_peak_bytes;
     let disabled=bytes(c.clone());
     c.bands.as_mut().unwrap().symmetry.max_cache_bytes=usize::MAX;
@@ -14,12 +15,13 @@ fn symmetry_memory_planning_accounts_for_bounded_cache_and_conversion_tables() {
     c.bands.as_mut().unwrap().symmetry.max_cache_bytes=0;
     let empty=bytes(c.clone());assert!(empty>disabled,"insertion still creates a transient entry");
     let entry=c.bands.as_ref().unwrap().count*(13*13*16+24);
-    c.bands.as_mut().unwrap().symmetry.max_cache_bytes=2*entry;
-    let two=bytes(c.clone());assert_eq!(two-empty,(2*entry) as u64);
+    c.bands.as_mut().unwrap().symmetry.max_cache_bytes=entry;
+    let one=bytes(c.clone());assert_eq!(one-empty,entry as u64);
     c.bands.as_mut().unwrap().symmetry.max_cache_bytes=usize::MAX;
-    assert_eq!(bytes(c.clone())-empty,(3*entry) as u64,"path length bounds resident entries");
+    let two=bytes(c.clone());
+    assert_eq!(two-empty,(2*entry) as u64,"identical reuse caches only the two recurring points");
     c.bands.as_mut().unwrap().symmetry.k_reuse=KReuse::Unitary;
-    let qualified=bytes(c.clone());assert!(qualified>two+entry as u64);
+    let qualified=bytes(c.clone());assert!(qualified>two+3*entry as u64,"qualified reuse may cache every point");
     c.bands.as_mut().unwrap().symmetry.arithmetic=SymmetryArithmetic::PtReal;
     assert!(bytes(c)>qualified,"phase, conversion and physical scratch remain resident");
 }
@@ -27,6 +29,7 @@ fn symmetry_memory_planning_accounts_for_bounded_cache_and_conversion_tables() {
 #[test]
 fn rectangular_sector_admission_reserves_growth_and_exports_the_bound() {
     let mut c=Config::default();c.grid.resolution=Resolution::Uniform(9);
+    c.bands.as_mut().unwrap().symmetry.policy=Some(SymmetryPolicy::Manual);
     c.eigensolver.tolerance=Some(1e-14);c.eigensolver.max_iterations=Some(500);
     c.bands.as_mut().unwrap().count=5;
     c.bands.as_mut().unwrap().path=KPath {points:Some(vec![vec![0.0,0.0]]),intervals_per_segment:None,..Default::default()};
@@ -81,6 +84,7 @@ fn symmetry_options_require_an_implemented_representation_path() {
 fn nearest_traversal_accounts_for_tracking_fields_without_export() {
     let mut config=Config::default();
     config.results.eigenvectors=false;
+    config.bands.as_mut().unwrap().symmetry.policy=Some(SymmetryPolicy::Manual);
     let original=Plan::new(config.clone(),Platform::Native).unwrap();
     config.bands.as_mut().unwrap().symmetry.k_traversal=KTraversal::Nearest;
     let reordered=Plan::new(config.clone(),Platform::Native).unwrap();

@@ -18,7 +18,7 @@ def configuration(pol, pt=False, sectors=False, coarse=False):
     c['results'] = {'eigenvectors': True}
     c['bands'] = {'count': 6, 'tracking': False,
                   'path': {'points': [[0., 0.], [.17, 0.], [0., 0.]]},
-                  'symmetry': {}}
+                  'symmetry': {'policy': 'manual'}}
     s = c['bands']['symmetry']
     if pt:
         s['arithmetic'] = 'pt_real'

@@ -65,14 +65,18 @@ def lanczos_kappa_ta(apply_a, apply_t, n: int, steps: int = 80, seed: int = 0,
     basis, abasis = [v / norm], [av / norm]
     for _ in range(steps):
         w = project(apply_t(abasis[-1]))
-        aw = apply_a(w)
         for _ in range(2):
             for q, aq in zip(basis, abasis):
-                c = aq.conj() @ w
-                w, aw = w - c * q, aw - c * aq
-        beta = np.sqrt(max(np.real(w.conj() @ aw), 0.0))
-        if beta < 1e-12:
+                w = w - (aq.conj() @ w) * q
+        # The kernel is invisible to the A-inner product, so Gram-Schmidt reintroduces it
+        # through earlier vectors and nothing damps it: project it out again. A fresh A w
+        # keeps each (q, A q) pair exact instead of drifting through the recurrence.
+        w = project(w)
+        aw = apply_a(w)
+        beta2 = np.real(w.conj() @ aw)
+        if not np.isfinite(beta2) or beta2 <= 1e-24 * max(np.real(basis[0].conj() @ abasis[0]), 1e-300):
             break
+        beta = np.sqrt(beta2)
         basis.append(w / beta)
         abasis.append(aw / beta)
     taq = [apply_t(aq) for aq in abasis]

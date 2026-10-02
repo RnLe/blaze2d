@@ -135,7 +135,7 @@ fn automatic_policy_uses_qualified_pt_and_stops_retrying_broken_material() {
     let bands = config.bands.as_mut().unwrap();
     bands.path = KPath { points:Some(vec![vec![0.19,0.13], vec![0.27,0.13], vec![0.19,0.13]]),
         intervals_per_segment:None, ..Default::default() };
-    bands.symmetry.policy = SymmetryPolicy::Auto;
+    bands.symmetry.policy = Some(SymmetryPolicy::Auto);
     if metric {
         let mut value = serde_json::to_value(&config).unwrap();
         value["geometry"]["lattice"] = json!({"type":"triangular","a":1.0});
@@ -159,20 +159,34 @@ fn automatic_policy_uses_qualified_pt_and_stops_retrying_broken_material() {
     assert!(!qualified.metadata["symmetry"]["points"][0]["coordinates"].is_null());
     assert_eq!(qualified.metadata["iterations"][2], 0);
     let mut manual = config.clone();
-    manual.bands.as_mut().unwrap().symmetry.policy = SymmetryPolicy::Manual;
+    manual.bands.as_mut().unwrap().symmetry.policy = Some(SymmetryPolicy::Manual);
     manual.bands.as_mut().unwrap().symmetry.arithmetic = SymmetryArithmetic::PtReal;
     manual.bands.as_mut().unwrap().symmetry.k_reuse = KReuse::Identical;
     assert_eq!(qualified.arrays, solve(manual).arrays);
 
-    config.geometry.objects[0].center = vec![0.13,0.07];
+    // Off-centre objects fail the policy's inversion check, so PT is never attempted.
+    let mut shifted = config.clone();
+    shifted.geometry.objects[0].center = vec![0.13,0.07];
+    let skipped = solve(shifted);
+    assert!(skipped.metadata["symmetry"]["automatic"]["reasons"].as_array().unwrap().iter().any(|r| r.as_str().unwrap().contains("inversion")));
+    for point in skipped.metadata["symmetry"]["points"].as_array().unwrap() {
+        assert!(point["solver_attempts"].as_array().unwrap().iter().all(|a| a["method"] != method));
+    }
+    // Overlaps can break the sampled symmetry behind an inversion-symmetric object list;
+    // qualification then rejects the first PT attempt and automatic retries stop.
+    // Voronoi smoothing admits only disjoint disks, where the object check is exact.
+    if metric { continue; }
+    let rod = config.geometry.objects[0].clone();
+    let side = |name: &str, x: f64| Object { name: name.into(), center: vec![x, 0.0], radius: 0.1, epsilon: 3.0, ..rod.clone() };
+    let (left, right) = (side("left", 0.12), side("right", 0.88));
+    config.geometry.objects = vec![left, rod, right];
     let fallback = solve(config.clone());
     let points = fallback.metadata["symmetry"]["points"].as_array().unwrap();
     assert!(points[0]["solver_attempts"].as_array().unwrap().iter().any(|a| a["method"] == method && a["retained"] == false));
     assert!(points[1]["solver_attempts"].as_array().unwrap().iter().all(|a| a["method"] != method));
     assert!(points[1]["rejected"].as_array().unwrap().iter().any(|v| v.as_str().unwrap().contains("automatic arithmetic fallback")));
-    config.bands.as_mut().unwrap().symmetry.policy = SymmetryPolicy::Manual;
+    config.bands.as_mut().unwrap().symmetry.policy = Some(SymmetryPolicy::Manual);
     config.bands.as_mut().unwrap().symmetry.k_reuse = KReuse::Identical;
-    if metric { config.bands.as_mut().unwrap().symmetry.arithmetic = SymmetryArithmetic::FourierComplex; }
     assert_eq!(fallback.arrays, solve(config).arrays);
     }
 }

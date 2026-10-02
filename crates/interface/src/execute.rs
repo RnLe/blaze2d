@@ -160,8 +160,8 @@ fn execute_impl<B: SpectralBackend + Clone>(backend: B, backend_name: &str, job:
             out.metadata["band_indices"] = json!((0..n).collect::<Vec<_>>());
             let e = &job.resolved.config.eigensolver;
             out.metadata["stopping_criterion"] = json!(match e.stopping {
-                crate::Stopping::EigenvalueChange => "relative_eigenvalue_change",
                 crate::Stopping::Residual => "relative_residual",
+                _ => "relative_eigenvalue_change",
             });
             let mut total_work = blaze2d_core::work::Work::default();
             for w in &point_work { total_work.add(*w); }

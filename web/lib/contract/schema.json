@@ -154,21 +154,9 @@
         "symmetry": {
           "$ref": "#/$defs/Symmetry",
           "default": {
-            "arithmetic": "spatial_complex",
-            "continuation": "off",
-            "correction_projection_interval": 1,
-            "k_reuse": "off",
-            "k_traversal": "given",
             "max_cache_bytes": 67108864,
             "max_continuation_bytes": 67108864,
-            "max_traversal_field_bytes": 67108864,
-            "policy": "manual",
-            "reconstruct_partners": false,
-            "sector_kernel": "full_grid",
-            "sector_storage": "full_grid",
-            "sectors": "off",
-            "seed_transfer": "copy",
-            "share_sector_workspace": false
+            "max_traversal_field_bytes": 67108864
           }
         },
         "tracking": {
@@ -312,7 +300,7 @@
               "shift_value": 0,
               "tm_mass_fraction": 0.01
             },
-            "stopping": "eigenvalue_change"
+            "stopping": "auto"
           }
         },
         "geometry": {
@@ -563,7 +551,7 @@
         },
         "stopping": {
           "$ref": "#/$defs/Stopping",
-          "default": "eigenvalue_change"
+          "default": "auto"
         },
         "tolerance": {
           "type": [
@@ -1617,9 +1605,10 @@
       ]
     },
     "Stopping": {
-      "description": "Stopping rule: relative eigenvalue change (`tolerance`) or relative residual (`residual_tolerance`).",
+      "description": "Stopping rule: relative eigenvalue change (`tolerance`) or relative residual\n(`residual_tolerance`). `auto` uses the residual for native f64 band\ncalculations without an explicit `tolerance`, and eigenvalue change otherwise.",
       "type": "string",
       "enum": [
+        "auto",
         "eigenvalue_change",
         "residual"
       ]
@@ -1724,8 +1713,15 @@
           ]
         },
         "policy": {
-          "$ref": "#/$defs/SymmetryPolicy",
-          "default": "manual"
+          "description": "Unset resolves to automatic selection unless a mechanism key is present or the\ndielectric is external; both select manual.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SymmetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "reconstruct_partners": {
           "type": "boolean",

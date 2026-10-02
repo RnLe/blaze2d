@@ -113,7 +113,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "bands": session.job.eigensolver.n_bands, "k_points": session.job.k_path,
                     "eigensolver": session.job.eigensolver, "spec": session.spec,
                     "lattice": {"a1": session.job.geom.lattice.a1, "a2": session.job.geom.lattice.a2},
-                    "eps": session.dielectric.eps(), "inv_eps_tensors": session.dielectric.inv_eps_tensors()});
+                    "eps": session.dielectric.eps(), "inv_eps": session.dielectric.inv_eps(),
+                    "inv_eps_tensors": session.dielectric.inv_eps_tensors()});
                 write_reply(&mut out, &reply, &[])?;
             }
             "set_k" => {

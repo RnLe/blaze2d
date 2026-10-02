@@ -95,7 +95,8 @@ pub fn cartesian_to_fractional(k: [f64; 2], a: [[f64; 2]; 2]) -> [f64; 2] {
 }
 
 impl Config {
-    /// Resolve schema defaults without expanding parameter sweeps.
+    /// Resolve schema defaults without expanding parameter sweeps. `stopping = "auto"`
+    /// resolves for native execution; `Plan::new` applies the browser rule first.
     pub fn resolve(&self) -> InterfaceResult<ResolvedConfig> {
         self.resolve_fields(true)
     }
@@ -133,6 +134,14 @@ impl Config {
         let grid_size = resolution[0].checked_mul(resolution[1]).ok_or_else(|| invalid("grid.resolution", "grid size overflows"))?;
         config.grid.resolution = Resolution::Axes(resolution.to_vec());
         let is_operator = config.task == Task::Operators;
+        if config.eigensolver.stopping == crate::Stopping::Auto {
+            // Sweeps apply to the resolved base configuration, so a tolerance sweep
+            // counts as an explicit tolerance.
+            let explicit = config.eigensolver.tolerance.is_some()
+                || config.sweeps.iter().any(|axis| axis.target == "eigensolver.tolerance");
+            let residual = !is_operator && !explicit && config.eigensolver.precision == Precision::F64;
+            config.eigensolver.stopping = if residual { crate::Stopping::Residual } else { crate::Stopping::EigenvalueChange };
+        }
         let tolerance = *config.eigensolver.tolerance.get_or_insert(if is_operator { 1e-8 } else { 1e-6 });
         positive(tolerance, "eigensolver.tolerance")?;
         let max_iterations = *config.eigensolver.max_iterations.get_or_insert(if is_operator { 300 } else { 200 });
@@ -140,8 +149,9 @@ impl Config {
         let residual_tolerance = *config.eigensolver.residual_tolerance
             .get_or_insert(if config.eigensolver.precision == Precision::F64 { 1e-7 } else { 1e-5 });
         positive(residual_tolerance, "eigensolver.residual_tolerance")?;
-        if config.eigensolver.stopping == crate::Stopping::Residual && config.eigensolver.precision != Precision::F64 && residual_tolerance < 1e-5 {
-            return Err(invalid("eigensolver.residual_tolerance", "f32 storage cannot reach residuals below 1e-5"));
+        if config.eigensolver.stopping == crate::Stopping::Residual && config.eigensolver.precision != Precision::F64 {
+            // Measured f32 floors grow with the grid (about 1e-4 at 16x16, 1e-3 to 6e-3 at 64x64).
+            return Err(invalid("eigensolver.stopping", "f32 storage has a grid-dependent residual floor; use eigenvalue_change stopping"));
         }
         let polarization = match config.polarization { crate::Polarization::TE => blaze2d_core::polarization::Polarization::TE, crate::Polarization::TM => blaze2d_core::polarization::Polarization::TM };
         crate::lower::preconditioner_spec(&config.eigensolver.preconditioner).validate(Some(polarization))
@@ -170,20 +180,15 @@ impl Config {
                     positive(accuracy.max_absolute_residual, "bands.accuracy.max_absolute_residual")?;
                     positive(accuracy.max_orthogonality_defect, "bands.accuracy.max_orthogonality_defect")?;
                 }
-                if config.dielectric.source == DielectricSource::External && bands.symmetry != Symmetry::default() {
+                if bands.symmetry.policy.is_none() {
+                    let manual = config.dielectric.source == DielectricSource::External || !bands.symmetry.mechanisms_are_default();
+                    bands.symmetry.policy = Some(if manual { SymmetryPolicy::Manual } else { SymmetryPolicy::Auto });
+                }
+                if config.dielectric.source == DielectricSource::External && bands.symmetry != (Symmetry { policy: Some(SymmetryPolicy::Manual), ..Symmetry::default() }) {
                     return Err(invalid("bands.symmetry", "external sampled-point execution supports the default spatial solve and accuracy policy; symmetry options are not implemented for this entry point"));
                 }
-                if bands.symmetry.policy == SymmetryPolicy::Auto {
-                    let mut manual = bands.symmetry.clone();
-                    manual.policy = SymmetryPolicy::Manual;
-                    let defaults = Symmetry { max_cache_bytes: manual.max_cache_bytes,
-                        max_continuation_bytes: manual.max_continuation_bytes,
-                        max_sector_workspace_bytes: manual.max_sector_workspace_bytes,
-                        max_traversal_field_bytes: manual.max_traversal_field_bytes,
-                        plane_group: manual.plane_group.clone(), ..Default::default() };
-                    if manual != defaults {
-                        return Err(invalid("bands.symmetry.policy", "auto selects arithmetic, reuse and continuation; use manual for explicit mechanism choices"));
-                    }
+                if bands.symmetry.is_auto() && !bands.symmetry.mechanisms_are_default() {
+                    return Err(invalid("bands.symmetry.policy", "auto selects arithmetic, reuse and continuation; use manual for explicit mechanism choices"));
                 }
                 if let Some(coarse)=&bands.symmetry.coarse_start {
                     if config.dielectric.source==DielectricSource::External {

@@ -108,6 +108,7 @@ fn band_results_report_quality_and_recompute_closing_gamma() {
     b.count = 3;
     b.path = KPath { points: Some(vec![vec![0.,0.],vec![0.2,0.13],vec![0.,0.]]),
         intervals_per_segment: None, ..Default::default() };
+    b.symmetry.policy = Some(SymmetryPolicy::Manual);
     c.results.eigenvectors = true;
     let out = solve(c).unwrap();
     assert_eq!(out.arrays["frequencies"].shape, [3,3]);

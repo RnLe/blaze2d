@@ -1,5 +1,6 @@
 /* Generated from blaze2d-interface. Run pnpm generate:contract to update. */
 
+export type SymmetryPolicy = "manual" | "auto";
 export type LatticeKind = "square" | "triangular" | "rectangular" | "oblique" | "custom";
 export type ObjectKind = "circle";
 export type KCoordinates = "reciprocal_fractional" | "cartesian_angular";
@@ -144,7 +145,11 @@ export interface Symmetry {
   max_sector_workspace_bytes?: number;
   max_traversal_field_bytes?: number;
   plane_group?: string | null;
-  policy?: "manual" | "auto";
+  /**
+   * Unset resolves to automatic selection unless a mechanism key is present or the
+   * dielectric is external; both select manual.
+   */
+  policy?: SymmetryPolicy | null;
   reconstruct_partners?: boolean;
   sector_guard_budget?: number | null;
   sector_kernel?: "full_grid" | "mirror_tm" | "mirror_tm_te";
@@ -181,9 +186,11 @@ export interface Eigensolver {
   preconditioner?: Preconditioner;
   residual_tolerance?: number | null;
   /**
-   * Stopping rule: relative eigenvalue change (`tolerance`) or relative residual (`residual_tolerance`).
+   * Stopping rule: relative eigenvalue change (`tolerance`) or relative residual
+   * (`residual_tolerance`). `auto` uses the residual for native f64 band
+   * calculations without an explicit `tolerance`, and eigenvalue change otherwise.
    */
-  stopping?: "eigenvalue_change" | "residual";
+  stopping?: "auto" | "eigenvalue_change" | "residual";
   tolerance?: number | null;
 }
 /**

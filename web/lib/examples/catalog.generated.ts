@@ -77,7 +77,7 @@ export const examples = [
     "category": "Bands",
     "image": "/examples/certified-symmetry.svg",
     "accent": "#59b6ff",
-    "source": "schema = \"blaze2d/1\"\ntask = \"bands\"\npolarization = \"TM\"\n\n[geometry]\nbackground_epsilon = 1.0\nlattice = { type = \"square\", a = 1.0 }\n\n[[geometry.objects]]\nname = \"rod\"\nkind = \"circle\"\ncenter = [0.0, 0.0]\nradius = 0.2\nepsilon = 8.9\n\n[grid]\nresolution = 32\n\n[bands]\ncount = 8\npath = { preset = \"square\", intervals_per_segment = 3 }\n\n[bands.symmetry]\npolicy = \"auto\"\n\n[bands.accuracy]\nmax_relative_residual = 1e-5\nmax_absolute_residual = 1e-7\nmax_orthogonality_defect = 1e-8\n\n[eigensolver]\nprecision = \"f64\"\ntolerance = 1e-14\nmax_iterations = 600\n",
+    "source": "schema = \"blaze2d/1\"\ntask = \"bands\"\npolarization = \"TM\"\n\n[geometry]\nbackground_epsilon = 1.0\nlattice = { type = \"square\", a = 1.0 }\n\n[[geometry.objects]]\nname = \"rod\"\nkind = \"circle\"\ncenter = [0.0, 0.0]\nradius = 0.2\nepsilon = 8.9\n\n[grid]\nresolution = 32\n\n[bands]\ncount = 8\npath = { preset = \"square\", intervals_per_segment = 3 }\n\n[bands.symmetry]\npolicy = \"auto\"\n\n[bands.accuracy]\nmax_relative_residual = 1e-5\nmax_absolute_residual = 1e-7\nmax_orthogonality_defect = 1e-8\n\n[eigensolver]\nprecision = \"f64\"\nmax_iterations = 600\n",
     "python": "from pathlib import Path\nimport blaze\n\nconfig = blaze.Config.from_file(Path(__file__).with_suffix(\".toml\"))\nresult = blaze.solve(config)\nprint(blaze.execution_summary(result))\nprint(result[\"frequencies\"])\n"
   }
 ] as const;

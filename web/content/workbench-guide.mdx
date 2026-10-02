@@ -22,7 +22,9 @@ card:
 # Workbench
 
 The [Workbench](/workbench) runs Blaze2D in your browser. It uses the same
-configuration and numerical defaults as Python, with an `f64` backend.
+configuration contract as Python, with an `f64` backend. Automatic stopping resolves
+to the relative eigenvalue change in the browser and to the relative residual for
+native band calculations.
 
 1. **Choose a model.** Open the Examples tab, inspect a calculation, and select **Load example**. Its geometry, task, settings, and sweeps fill the workspace together. You can also import a `TOML` file.
 2. **Configure a study.** The Setup sidebar has **Crystal** and **Calculation** controls. Geometry shows the crystal; Study shows the reciprocal-space path and calculation plan. Choose bands or operators, sampling, sweep axes, and retained outputs in Calculation.
@@ -47,8 +49,8 @@ validates the result, and applies it. A completed result always keeps the
 configuration used for that run. The live band's horizontal axis uses the complete
 planned path, so arriving points do not rescale it.
 
-The eigensolver stopping tolerance measures relative eigenvalue changes.
-Band and operator results also contain fresh residuals and an orthogonality
+In the browser the eigensolver stopping tolerance measures relative eigenvalue
+changes. Band and operator results also contain fresh residuals and an orthogonality
 defect. `[bands.accuracy]` enforces an explicit final band acceptance policy;
 `operators.fail_on_residual` is the operator threshold. Results separately show
 stopping convergence and accuracy acceptance. The execution summary identifies

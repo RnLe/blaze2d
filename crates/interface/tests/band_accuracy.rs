@@ -97,7 +97,7 @@ fn projected_and_external_pencils_enforce_the_same_policy() {
         c.dielectric.source = DielectricSource::External;
         c.geometry.objects.clear();
         let mut unsupported = c.clone();
-        unsupported.bands.as_mut().unwrap().symmetry.policy = SymmetryPolicy::Auto;
+        unsupported.bands.as_mut().unwrap().symmetry.policy = Some(SymmetryPolicy::Auto);
         assert!(Plan::new(unsupported, Platform::Native).is_err());
         let job = Plan::new(c.clone(), Platform::Native)
             .unwrap()

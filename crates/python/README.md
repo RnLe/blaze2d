@@ -2,7 +2,7 @@
 
 Blaze2D computes photonic bands and projected Maxwell operators for two-dimensional periodic dielectric structures. It supports TE and TM polarization, circle geometries, positive scalar permittivity, and square, triangular, rectangular, or explicit oblique lattices. Independent configurations can run in parallel as ordered parameter studies.
 
-The Rust solver is available through Python, a command-line interface, and the browser [Workbench](https://rnle.github.io/blaze2d/workbench). Each uses the same versioned configuration, numerical defaults, coordinate conventions, and result names. Native calculations support f32 or f64 storage; the browser uses f64. Three-dimensional computation, general geometry, and an MPB compatibility adapter are future work.
+The Rust solver is available through Python, a command-line interface, and the browser [Workbench](https://rnle.github.io/blaze2d/workbench). Each uses the same versioned configuration, coordinate conventions, and result names; automatic stopping resolves to the relative residual for native band calculations and to the relative eigenvalue change in the browser. Native calculations support f32 or f64 storage; the browser uses f64. Three-dimensional computation, general geometry, and an MPB compatibility adapter are future work.
 
 ## Install
 
@@ -35,15 +35,16 @@ print(frequencies.shape)
 print(result["metadata"]["build"])
 ```
 
-Results are ordinary dictionaries containing named NumPy arrays and scientific metadata. Frequencies use the common reference length recorded in that metadata. Arrays use C ordering; complex outputs have dtype `complex128`. Eigenvectors are retained only when requested. The solver stopping flag reports eigenvalue stabilization; band and operator results also include freshly evaluated residuals and orthogonality information.
+Results are ordinary dictionaries containing named NumPy arrays and scientific metadata. Frequencies use the common reference length recorded in that metadata. Arrays use C ordering; complex outputs have dtype `complex128`. Eigenvectors are retained only when requested. Band calculations stop on a freshly confirmed relative residual by default, operator calculations on eigenvalue stabilization; both also report freshly evaluated residuals and orthogonality information.
 
 ## Symmetry and accuracy
 
-Symmetry remains explicit. In a complete configuration, use `[bands.symmetry]`
-with `policy = "auto"` for the measured native f64 path. PT selection currently
-covers square/triangular equal grids 31–65, 8–16 bands and stopping tolerance at
-most `1e-13`; runtime qualification and fallback still apply. Default-tolerance
-PT attempts did not pay off, so auto preserves complex arithmetic there.
+Band calculations select symmetry automatically unless `[bands.symmetry]` sets a
+mechanism key or the dielectric is supplied externally. PT selection covers square/triangular equal grids 16–128 with 8–16
+bands under the default residual stopping (between `1e-8` and `1e-6`) for objects
+symmetric under inversion about the cell origin; runtime qualification and fallback
+still apply. An explicit eigenvalue-change `tolerance` keeps the earlier envelope
+(grids 31–65, tolerance at most `1e-13`).
 
 Add `[bands.accuracy]` to require final convergence, a relative residual at most
 `1e-5` OR an absolute residual at most `1e-7` for every mode, and B-orthogonality

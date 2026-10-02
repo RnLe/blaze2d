@@ -56,7 +56,8 @@ The public runner now carries bounded certified continuation across full paths
 and changing geometries, with private worker caches and deterministic geometry
 chains. Original job IDs, output order and requested physical fields are
 preserved. `bands.symmetry.policy = "auto"` adds a measured, versioned native
-policy; the manual policy remains the default.
+policy. It was opt-in for these measurements; with residual stopping it later became
+the default (see [API & TOML](/configuration)).
 
 These complete CLI measurements use six **unique** radius/contrast combinations,
 held-out radii 0.175/0.215/0.255 and dielectric constants 6.5/13, native f64,

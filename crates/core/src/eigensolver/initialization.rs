@@ -362,6 +362,12 @@ where
     if norm == 0.0 {
         return None;
     }
+    // Projection can cancel most of a nearly dependent seed; the incrementally
+    // updated B·x then carries rounding error amplified by 1/norm.
+    operator.apply_mass(&vector, &mut mass);
+    if normalize_to_unit_b_norm_with_tol(operator.backend(), &mut vector, &mut mass, zero_tol) == 0.0 {
+        return None;
+    }
 
     // Apply the operator to get A*x
     let mut applied = operator.alloc_field();

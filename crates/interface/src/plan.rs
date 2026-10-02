@@ -166,8 +166,23 @@ impl Plan {
     }
 
     pub fn new(config: Config, platform: Platform) -> InterfaceResult<Self> {
+        let mut config = config;
+        if platform == Platform::Browser && config.eigensolver.stopping == crate::Stopping::Auto {
+            config.eigensolver.stopping = crate::Stopping::EigenvalueChange;
+        }
         let base = config.resolve()?;
-        let config = base.config.clone();
+        // Automatic stopping and symmetry choices stay unresolved in the plan's own
+        // configuration: every job resolves them, and an exported configuration keeps
+        // its meaning when it is edited (another tolerance, precision or mechanism).
+        let mut resolved = base.config.clone();
+        if config.eigensolver.stopping == crate::Stopping::Auto {
+            resolved.eigensolver.stopping = crate::Stopping::Auto;
+            resolved.eigensolver.tolerance = config.eigensolver.tolerance;
+        }
+        if let (Some(bands), Some(original)) = (resolved.bands.as_mut(), config.bands.as_ref()) {
+            if original.symmetry.policy.is_none() { bands.symmetry.policy = None; }
+        }
+        let config = resolved;
         if config.dielectric.source == DielectricSource::External {
             if platform == Platform::Browser {
                 return Err(Diagnostic::new("unsupported_capability", "dielectric.source", "external dielectric arrays require the native Python interface"));
@@ -244,7 +259,7 @@ impl Plan {
         // The largest grid and solver block can occur together in a Cartesian
         // sweep. Estimating each axis independently underestimates that job.
         envelope.solved_bands = max_bands;
-        let peak = estimate_memory(&envelope)?;
+        let peak = estimate_memory(&envelope, if platform == Platform::Browser { "wasm" } else { "cpu" })?;
         let registry_points = config.operators.as_ref().and_then(|o| o.registry.as_ref()).map_or(1, |r| r.points.len());
         let jobs = combinations.checked_mul(registry_points).ok_or_else(|| invalid("sweeps", "job count overflows"))?;
         let per_job = match config.task {
@@ -289,7 +304,8 @@ impl Plan {
     }
 }
 
-fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
+/// `backend` names the execution backend whose automatic symmetry choices are reserved.
+fn estimate_memory(resolved: &ResolvedConfig, backend: &str) -> InterfaceResult<u64> {
     let samples = resolved.resolution[0] as u64 * resolved.resolution[1] as u64;
     let bands = resolved.solved_bands as u64;
     let block = blaze2d_core::eigensolver::EigensolverConfig {
@@ -314,9 +330,13 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             if b.symmetry.sectors==SectorPolicy::Off {
                 let driver=blaze2d_core::drivers::support_bands::driver_payload_bytes(samples as usize,bands as usize,nk as usize).map_err(|e|invalid("bands.discretization",e))?;
                 let solve=blaze2d_core::symmetry::galerkin::estimated_payload_bytes_for_dimensions(samples as usize,coefficients as usize,&cfg,false).map_err(|e|invalid("bands.discretization",e))?;
-                let cache = if b.symmetry.k_reuse != KReuse::Off || b.symmetry.policy == SymmetryPolicy::Auto { b.symmetry.max_cache_bytes as u128 } else { 0 };
+                let (arithmetic, k_reuse) = if b.symmetry.is_auto() {
+                    let (arithmetic, k_reuse, _) = crate::policy::select(resolved, backend);
+                    (arithmetic, k_reuse)
+                } else { (b.symmetry.arithmetic, b.symmetry.k_reuse) };
+                let cache = if k_reuse != KReuse::Off { b.symmetry.max_cache_bytes as u128 } else { 0 };
                 let continuation = if b.symmetry.continuation != ContinuationPolicy::Off { b.symmetry.max_continuation_bytes as u128 } else { 0 };
-                let qualification = if b.symmetry.arithmetic == SymmetryArithmetic::PtReal || b.symmetry.policy == SymmetryPolicy::Auto { 256*samples as u128 } else { 0 };
+                let qualification = if arithmetic == SymmetryArithmetic::PtReal { 256*samples as u128 } else { 0 };
                 reserved=reserved.min(driver as u128+solve as u128+cache+continuation+qualification);
             }
             // Retained physical outputs need both temporary complex fields and
@@ -353,8 +373,13 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
     let symmetry_payload=if resolved.config.task==Task::Bands {
         let b=resolved.config.bands.as_ref().unwrap();
         let mut options=b.run_options(false).symmetry;
-        if b.symmetry.policy == SymmetryPolicy::Auto {
-            options.k_reuse = blaze2d_core::symmetry::reuse::KReuse::Identical;
+        if b.symmetry.is_auto() {
+            // Reserve exactly what the automatic policy selects for this backend.
+            let (arithmetic, k_reuse, _) = crate::policy::select(resolved, backend);
+            let mut selected = b.clone();
+            selected.symmetry.arithmetic = arithmetic;
+            selected.symmetry.k_reuse = k_reuse;
+            options = selected.run_options(false).symmetry;
         }
         use blaze2d_core::symmetry::{sectors::memory, reduced::SectorStorage as Storage};
         let rows=usize::try_from(samples).map_err(|_|invalid("configuration","grid does not fit the target platform"))?;
@@ -384,7 +409,11 @@ fn estimate_memory(resolved: &ResolvedConfig) -> InterfaceResult<u64> {
             // Resident entries are bounded by both path length and cache cap.
             // Lookup/reconstruction and insertion also create transient copies,
             // including a discarded insertion when the cache limit is zero.
-            let entries=(options.max_cache_bytes/entry).min(nk as usize);
+            // Identical reuse caches only points that recur later on the path.
+            let cached=if options.k_reuse==blaze2d_core::symmetry::reuse::KReuse::Identical {
+                crate::policy::recurring_k_points(&resolved.k_points_fractional)
+            } else { nk as usize };
+            let entries=(options.max_cache_bytes/entry).min(cached);
             extra+=(entries as u128+2)*entry as u128;
             if options.k_reuse!=blaze2d_core::symmetry::reuse::KReuse::Identical {
                 extra+=memory::setup_payload(rows,1,Storage::FullGrid).map_err(error)? as u128;

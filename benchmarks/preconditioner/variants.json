@@ -6,21 +6,175 @@
   "frozen-pt-tight": {
     "description": "Frozen binary with PT-real arithmetic forced and a tight eigenvalue-change stop",
     "binary": "frozen",
-    "bands": {"symmetry": {"arithmetic": "pt_real", "k_reuse": "identical"}},
-    "eigensolver": {"tolerance": 1e-13, "max_iterations": 600}
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "tolerance": 1e-13,
+      "max_iterations": 600
+    }
   },
   "baseline": {
     "description": "PT-real arithmetic with residual stopping at 1e-7 and Ritz history; new binary only",
     "binary": "current",
     "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
-    "bands": {"symmetry": {"arithmetic": "pt_real", "k_reuse": "identical"}},
-    "eigensolver": {"stopping": "residual", "residual_tolerance": 1e-7, "max_iterations": 600, "history": "ritz"}
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz"
+    }
   },
   "complex-baseline": {
     "description": "Baseline with spatial complex arithmetic; new binary only",
     "binary": "current",
     "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
-    "bands": {"symmetry": {"arithmetic": "spatial_complex", "k_reuse": "identical"}},
-    "eigensolver": {"stopping": "residual", "residual_tolerance": 1e-7, "max_iterations": 600, "history": "ritz"}
+    "bands": {
+      "symmetry": {
+        "arithmetic": "spatial_complex",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz"
+    }
+  },
+  "default": {
+    "description": "Built-in defaults of the current binary (residual stopping and automatic PT on native f64)",
+    "binary": "current"
+  },
+  "hist-conjugate": {
+    "description": "Baseline with Knyazev conjugate history directions",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "conjugate"
+    }
+  },
+  "hist-none": {
+    "description": "Baseline without a history block (preconditioned steepest descent)",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "none"
+    }
+  },
+  "slack6": {
+    "description": "Baseline with six extra block vectors (block 18 for 12 bands)",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "block_size": 18
+    }
+  },
+  "slack6-conjugate": {
+    "description": "Six extra block vectors and conjugate history",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "conjugate",
+      "block_size": 18
+    }
+  },
+  "slack6-none": {
+    "description": "Six extra block vectors and no history block",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "none",
+      "block_size": 18
+    }
+  },
+  "baseline-tight": {
+    "description": "PT-real arithmetic with residual stopping at 1e-8 (lower edge of the automatic PT window)",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-08,
+      "max_iterations": 600,
+      "history": "ritz"
+    }
+  },
+  "complex-tight": {
+    "description": "Spatial complex arithmetic with residual stopping at 1e-8 (lower edge of the automatic PT window)",
+    "binary": "current",
+    "requires": "eigensolver.stopping, eigensolver.residual_tolerance and eigensolver.history",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "spatial_complex",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-08,
+      "max_iterations": 600,
+      "history": "ritz"
+    }
   }
 }
