@@ -124,6 +124,12 @@ pub trait SpectralBackend {
         result
     }
 
+    /// Gram matrices of `x` with each block of `ys` (each row-major), so a backend can
+    /// read `x` once for all of them; a block equal to `x` itself may reuse its copy.
+    fn gram_matrices(&self, x: &[Self::Buffer], ys: &[&[Self::Buffer]]) -> Vec<Vec<Complex64>> {
+        ys.iter().map(|y| self.gram_matrix(x, y)).collect()
+    }
+
     /// Compute batched linear combinations: Y = Q × C
     ///
     /// Given a basis Q of r vectors (each of length n) and a coefficient

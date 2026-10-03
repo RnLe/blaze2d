@@ -45,7 +45,7 @@ pub use initialization::{
 };
 pub use normalization::{
     SvqbConfig, SvqbResult, b_inner_product, b_norm, normalize_to_unit_b_norm,
-    orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize, svqb_transform,
+    orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize, svqb_transform_from_gram,
 };
 pub use refine::{BlockCertification, rayleigh_ritz_certify};
 pub use subspace_prediction::{
@@ -579,6 +579,8 @@ where
     /// subspace S: the projection is Tᵀ(SᵀA S)T and the updates use T·Y, so the orthonormal
     /// block is never formed.
     composed: Option<Vec<num_complex::Complex64>>,
+    /// Sᵀ·A·S computed together with the SVQB Gram of a composed iteration (row-major).
+    composed_projection: Option<Vec<num_complex::Complex64>>,
     /// Per-iteration record when tracing.
     trace: Vec<IterationTrace>,
     /// Current iteration count.
@@ -623,6 +625,7 @@ where
             implicit_aq: None,
             implicit_age: 0,
             composed: None,
+            composed_projection: None,
             trace: Vec::new(),
             iteration: 0,
             initialized: false,
@@ -1226,6 +1229,25 @@ where
 
         let backend = self.operator.backend();
 
+        // Blocked on backends with fast linear combinations: overlaps C = (B L)ᵀ R as one
+        // Gram product and R ← R − L C as one combination, instead of a dot and an axpy
+        // pass per (residual, locked band). The soft-locked X are B-orthonormal, so this
+        // equals the sequential projection up to rounding.
+        if backend.prefer_backend_linear_combinations() && !residuals.is_empty() {
+            let locked: Vec<usize> = (0..self.soft_locked.len().min(self.x_block.len())).filter(|&j| self.soft_locked[j]).collect();
+            let vectors: Vec<B::Buffer> = locked.iter().map(|&j| self.x_block[j].vector.clone()).collect();
+            let masses: Vec<B::Buffer> = if self.operator.mass_is_identity() { Vec::new() } else { locked.iter().map(|&j| self.x_block[j].mass.clone()).collect() };
+            let mass = if self.operator.mass_is_identity() { &vectors } else { &masses };
+            let (s, n) = (vectors.len(), residuals.len());
+            let overlaps = backend.gram_matrix(mass, residuals);
+            let coefficients: Vec<num_complex::Complex64> = (0..s * n).map(|k| -overlaps[(k % s) * n + k / s]).collect();
+            let corrections = backend.linear_combinations(&vectors, &coefficients, n);
+            for (r, d) in residuals.iter_mut().zip(&corrections) {
+                backend.axpy(num_complex::Complex64::new(1.0, 0.0), d, r);
+            }
+            return;
+        }
+
         // Preconditioning compacts the active block, so its positions no
         // longer identify band indices. Project every supplied vector;
         // zero residuals from locked bands remain zero.
@@ -1444,16 +1466,29 @@ where
         // Composed iterations keep the raw subspace and only compute the transform; the
         // projection and the Ritz update fold it into their coefficients.
         self.composed = None;
+        self.composed_projection = None;
         if composed {
+            // A·S: carried products, or applied to the whole block now, so both Gram
+            // products of S (Sᵀ·B·S for SVQB and Sᵀ·A·S for Rayleigh-Ritz) come from one pass.
+            self.implicit_age = if products.is_some() { self.implicit_age + 1 } else { 0 };
+            let applied = products.unwrap_or_else(|| {
+                let mut applied: Vec<B::Buffer> = (0..q_block.len()).map(|_| self.operator.alloc_field()).collect();
+                self.operator.batch_apply(&q_block, &mut applied);
+                applied
+            });
             crate::profiler::start_timer("svqb");
+            let p = q_block.len();
+            crate::profiler::count("svqb_gram.elements", p * p);
+            crate::profiler::count("svqb_gram.multiply_terms", p * p * q_block.first().map_or(0, |v| self.operator.backend().gram_rows(v)));
             let mass = if identity_mass { &q_block } else { &bq_block };
-            let mut result = svqb_transform(self.operator.backend(), &q_block, mass, &SvqbConfig::default());
+            let mut grams = self.operator.backend().gram_matrices(&q_block, &[mass.as_slice(), applied.as_slice()]);
+            let projection = grams.pop().expect("two Gram products");
+            let mut result = svqb_transform_from_gram(self.operator.backend(), &grams[0], p, &SvqbConfig::default());
             crate::profiler::stop_timer("svqb");
             result.block_drops = Some(result.compute_block_drops(x_size, p_size, w_size));
             self.composed = result.transform.clone();
-            // A·S itself: carried products, or `compute_aq_block` applies A to S.
-            self.implicit_aq = products;
-            self.implicit_age = if self.implicit_aq.is_some() { self.implicit_age + 1 } else { 0 };
+            self.composed_projection = Some(projection);
+            self.implicit_aq = Some(applied);
             crate::profiler::stop_timer("orthonormalize_subspace");
             return (q_block, bq_block, result);
         }
@@ -1559,7 +1594,7 @@ where
         }
 
         if self.operator.backend().real_coefficients() {
-            let gram=self.operator.backend().gram_matrix(q_block,aq_block);
+            let gram=match &self.composed_projection {Some(h) if h.len()==r*r => h.clone(), _ => self.operator.backend().gram_matrix(q_block,aq_block)};
             let mut result=vec![num_complex::Complex64::ZERO;r*r];
             for i in 0..r {for j in 0..r {result[i+r*j]=0.5*(gram[i*r+j]+gram[j*r+i].conj());}}
             if let Some(transform) = &self.composed {

@@ -283,6 +283,19 @@ pub fn svqb_transform<B: SpectralBackend>(
         return empty(0, vec![]);
     }
     let raw = backend.gram_matrix(vectors, mass_vectors);
+    svqb_transform_from_gram(backend, &raw, p, config)
+}
+
+/// [`svqb_transform`] from the row-major raw Gram matrix Sᵀ·B·S of `p` columns, for callers
+/// that compute it together with other products of S.
+pub fn svqb_transform_from_gram<B: SpectralBackend>(backend: &B, raw: &[Complex64], p: usize, config: &SvqbConfig) -> SvqbResult {
+    let empty = |dropped: usize, singular_values: Vec<f64>| SvqbResult {
+        output_rank: 0, input_count: p, dropped_count: dropped, singular_values, kept_indices: vec![],
+        block_drops: None, transform: Some(vec![]),
+    };
+    if p == 0 {
+        return empty(0, vec![]);
+    }
     let unit: Vec<f64> = (0..p).map(|i| {
         let norm = raw[i * p + i].re.max(0.0).sqrt();
         if norm > 1e-30 { 1.0 / norm } else { 0.0 }

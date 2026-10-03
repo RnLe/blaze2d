@@ -138,6 +138,35 @@ impl SpectralBackend for CoordinateBackend {
         #[cfg(feature="wasm-linalg")]
         {(0..m).map(|j|{let mut out=self.alloc_field(q[0].grid());for i in 0..self.nreal {let value=(0..r).map(|p|scalar(q[p].as_slice(),i,self.packed)*coefficients[p+r*j].re).sum();set_scalar(out.as_mut_slice(),i,value,self.packed);}out}).collect()}
     }
+    fn gram_matrices(&self,x:&[CoordinateBuffer],ys:&[&[CoordinateBuffer]])->Vec<Vec<C>> {
+        #[cfg(feature="native-linalg")]
+        if self.real_space && self.real_gram && !x.is_empty() {
+            crate::profile_scope!("real_gram");
+            let p=x.len();
+            for y in ys {crate::profiler::count("real_gram.multiply_terms",self.nreal*p*y.len());}
+            let mut products:Vec<faer::Mat<f64>>=ys.iter().map(|y|faer::Mat::<f64>::zeros(p,y.len())).collect();
+            PANELS.with_borrow_mut(|[a,b]|{
+                resize(a,PANEL*p);resize(b,PANEL*ys.iter().map(|y|y.len()).max().unwrap_or(0));
+                let mut start=0;let mut accum=faer::Accum::Replace;
+                while start<self.nreal {
+                    let rows=PANEL.min(self.nreal-start);
+                    for (j,column) in x.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut a[j*rows..(j+1)*rows]);}
+                    let left=faer::MatRef::from_column_major_slice(&a[..rows*p],rows,p);
+                    for (y,product) in ys.iter().zip(&mut products) {
+                        // A block that is `x` itself reuses its packed panel.
+                        let right=if std::ptr::eq(y.as_ptr(),x.as_ptr()) && y.len()==p {left} else {
+                            for (j,column) in y.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut b[j*rows..(j+1)*rows]);}
+                            faer::MatRef::from_column_major_slice(&b[..rows*y.len()],rows,y.len())
+                        };
+                        faer::linalg::matmul::matmul(product.as_mut(),accum,left.transpose(),right,1.0,faer::get_global_parallelism());
+                    }
+                    accum=faer::Accum::Add;start+=rows;
+                }
+            });
+            return products.iter().map(|m|(0..m.nrows()*m.ncols()).map(|i|C::new(m[(i/m.ncols(),i%m.ncols())],0.0)).collect()).collect();
+        }
+        ys.iter().map(|y|self.gram_matrix(x,y)).collect()
+    }
     fn gram_matrix(&self,x:&[CoordinateBuffer],y:&[CoordinateBuffer])->Vec<C> {
         // The storage experiment expands real coordinates into the same complex
         // dense Gram kernel. Real GEMM is a separately measured change.
@@ -233,11 +262,36 @@ impl<B:SpectralBackend+Clone> Conversion<B> {
         }
         if self.real_space && check_real {let defect=(imaginary/norm.max(f64::MIN_POSITIVE)).sqrt();self.leakage.set(if defect.is_finite() {self.leakage.get().max(defect)}else{f64::INFINITY});}
     }
+    /// Two PT-real coordinate vectors as one Fourier field gauge·(a + i b). The operators
+    /// and preconditioners are complex-linear and keep PT-real vectors PT-real, so one
+    /// transform serves both columns and `pack_pair` separates the results as the real
+    /// and imaginary parts of the gauged coefficients (half the FFTs of two applications).
+    fn unpack_pair(&self,a:&[C],b:&[C],out:&mut B::Buffer) {
+        debug_assert!(self.real_space);
+        for (i,dst) in out.as_mut_slice().iter_mut().enumerate() {let z=self.gauge[i]*C::new(scalar(a,i,self.packed),scalar(b,i,self.packed));*dst=cscalar::<B::Real>(z.re,z.im);}
+    }
+    fn pack_pair(&self,field:&B::Buffer,a:&mut[C],b:&mut[C],factor:f64) {
+        a.fill(C::ZERO);b.fill(C::ZERO);
+        for (i,src) in field.as_slice().iter().enumerate() {
+            let z=C::new(src.re.to_accum()*factor,src.im.to_accum()*factor)*self.gauge[i].conj();
+            set_scalar(a,i,z.re,self.packed);set_scalar(b,i,z.im,self.packed);
+        }
+    }
     fn promote(&self,buffer:&B::Buffer)->Field2D {Field2D::from_vec(self.grid,buffer.as_slice().iter().map(|z|C::new(z.re.to_accum(),z.im.to_accum())).collect())}
 }
 struct FourierOperator<'a,B:SpectralBackend+Clone> {
     full:&'a mut ThetaOperator<B>,backend:CoordinateBackend,conversion:Conversion<B>,input:B::Buffer,output:B::Buffer,direct_tm:bool,direct_te:bool,
     sector:Option<sector::SectorProjection<'a>>,correction_rounds:usize,projected_rounds:usize,
+}
+impl<B:SpectralBackend+Clone> FourierOperator<'_,B> {
+    /// `input` holds an unpacked pair in Fourier space; leaves the spatial application of
+    /// A (or B) transformed back to Fourier space in `output`, unscaled for `pack_pair`.
+    fn spatial_pair_apply(&mut self,mass:bool) {
+        self.conversion.backend.inverse_fft_2d(&mut self.input);
+        self.conversion.backend.scale(C::new((self.conversion.grid.len() as f64).sqrt(),0.0),&mut self.input);
+        if mass {self.full.apply_mass(&self.input,&mut self.output);} else {self.full.apply(&self.input,&mut self.output);}
+        self.conversion.backend.forward_fft_2d(&mut self.output);
+    }
 }
 impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOperator<'_,B> {
     fn apply(&mut self,x:&CoordinateBuffer,y:&mut CoordinateBuffer) {
@@ -262,6 +316,41 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
             crate::profiler::count("operator_B.columns",1);crate::profiler::count("operator_B.elements",self.backend.nreal);
             y.as_mut_slice().copy_from_slice(x.as_slice());
         } else {self.conversion.spatial(x.as_slice(),&mut self.input);self.full.apply_mass(&self.input,&mut self.output);self.conversion.fourier(&mut self.output,y.as_mut_slice(),true);}
+    }
+    fn batch_apply(&mut self,inputs:&[CoordinateBuffer],outputs:&mut[CoordinateBuffer]) {
+        assert_eq!(inputs.len(),outputs.len());
+        let paired=self.conversion.real_space && !self.direct_tm && self.sector.is_none();
+        let mut start=0;
+        if paired {
+            for (x,y) in inputs.chunks_exact(2).zip(outputs.chunks_exact_mut(2)) {
+                let (y0,y1)=y.split_at_mut(1);
+                self.conversion.unpack_pair(x[0].as_slice(),x[1].as_slice(),&mut self.input);
+                if self.direct_te {
+                    self.full.apply_fourier(&self.input,&mut self.output);
+                    self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),1.0);
+                } else {
+                    self.spatial_pair_apply(false);
+                    self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),(self.conversion.grid.len() as f64).sqrt().recip());
+                }
+            }
+            start=inputs.len()-inputs.len()%2;
+        }
+        for (x,y) in inputs[start..].iter().zip(&mut outputs[start..]) {self.apply(x,y);}
+    }
+    fn batch_apply_mass(&mut self,inputs:&[CoordinateBuffer],outputs:&mut[CoordinateBuffer]) {
+        assert_eq!(inputs.len(),outputs.len());
+        let paired=self.conversion.real_space && !self.direct_te && self.sector.is_none();
+        let mut start=0;
+        if paired {
+            for (x,y) in inputs.chunks_exact(2).zip(outputs.chunks_exact_mut(2)) {
+                let (y0,y1)=y.split_at_mut(1);
+                self.conversion.unpack_pair(x[0].as_slice(),x[1].as_slice(),&mut self.input);
+                self.spatial_pair_apply(true);
+                self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),(self.conversion.grid.len() as f64).sqrt().recip());
+            }
+            start=inputs.len()-inputs.len()%2;
+        }
+        for (x,y) in inputs[start..].iter().zip(&mut outputs[start..]) {self.apply_mass(x,y);}
     }
     fn alloc_field(&self)->CoordinateBuffer {self.backend.alloc_field(self.conversion.coordinate_grid())}
     fn backend(&self)->&CoordinateBackend {&self.backend}
@@ -332,6 +421,25 @@ impl<B:SpectralBackend+Clone> OperatorPreconditioner<CoordinateBackend> for Four
         }
         crate::profile_scope!("preconditioner.pt_spatial_fallback");
         self.conversion.spatial(v.as_slice(),&mut self.scratch);self.inner.apply(&self.conversion.backend,&mut self.scratch);self.conversion.fourier(&mut self.scratch,v.as_mut_slice(),true);
+    }
+    fn batch_apply(&mut self,backend:&CoordinateBackend,buffers:&mut[CoordinateBuffer]) {
+        // Pairs share one Fourier field when the inner preconditioner has a Fourier path.
+        let paired=self.direct_fourier && self.conversion.real_space && !(self.direct_diagonal && self.inner.fourier_diagonal().is_some());
+        let mut start=0;
+        if paired {
+            for pair in buffers.chunks_exact_mut(2) {
+                crate::profile_scope!("preconditioner.pt_fourier");
+                let (a,b)=pair.split_at_mut(1);
+                self.conversion.unpack_pair(a[0].as_slice(),b[0].as_slice(),&mut self.scratch);
+                if !self.inner.apply_fourier(&self.conversion.backend,&mut self.scratch) {
+                    // No Fourier path after all: apply the pair one by one.
+                    self.apply(backend,&mut a[0]);self.apply(backend,&mut b[0]);continue;
+                }
+                self.conversion.pack_pair(&self.scratch,a[0].as_mut_slice(),b[0].as_mut_slice(),1.0);
+            }
+            start=buffers.len()-buffers.len()%2;
+        }
+        for v in &mut buffers[start..] {self.apply(backend,v);}
     }
 }
 
