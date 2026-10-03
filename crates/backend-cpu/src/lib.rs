@@ -286,6 +286,27 @@ impl<R: Real + FftNum> CpuBackend<R> {
     }
 }
 
+// Complex GEMMs run over row panels: each panel of every column is copied (at f64) into
+// a small L2-resident buffer, multiplied by faer and written straight to its destination,
+// so every column is read once and every output written once.
+#[cfg(feature = "native-linalg")]
+const PANEL: usize = 256;
+#[cfg(feature = "native-linalg")]
+thread_local! {static PANELS: std::cell::RefCell<[Vec<Complex64>; 2]> = const { std::cell::RefCell::new([Vec::new(), Vec::new()]) };}
+
+/// Grow (never shrink) a workspace to at least `len`; callers overwrite what they use.
+#[cfg(feature = "native-linalg")]
+fn resize(buffer: &mut Vec<Complex64>, len: usize) {
+    if buffer.len() < len {
+        buffer.resize(len, Complex64::new(0.0, 0.0));
+    }
+}
+
+#[cfg(feature = "native-linalg")]
+fn pack_rows<R: Real>(src: &[Complex<R>], dst: &mut [Complex64]) {
+    R::copy_to_accum(src, &mut dst[..src.len()]);
+}
+
 enum FftDirection {
     Forward,
     Inverse,
@@ -484,6 +505,112 @@ impl<R: Real + FftNum> SpectralBackend for CpuBackend<R> {
                 a64.conj() * b64
             })
             .sum()
+    }
+
+    /// One pass: r = a − λ·b (as `axpy` computes it) and the norms as `dot` sums them.
+    fn residual(&self, a: &Self::Buffer, b: &Self::Buffer, lambda: f64) -> (Self::Buffer, [f64; 3]) {
+        let alpha = cscalar::<R>(-lambda, 0.0);
+        let mut data = Vec::with_capacity(a.len());
+        let mut norms = [0.0f64; 3];
+        let square = |z: Complex<R>| {
+            let (re, im) = (z.re.to_accum(), z.im.to_accum());
+            re * re + im * im
+        };
+        for (&x, &y) in a.as_slice().iter().zip(b.as_slice()) {
+            let r = x + alpha * y;
+            data.push(r);
+            norms[0] += square(r);
+            norms[1] += square(x);
+            norms[2] += square(y);
+        }
+        (Field2D::from_vec(a.grid(), data), norms)
+    }
+
+    #[cfg(feature = "native-linalg")]
+    fn prefer_backend_linear_combinations(&self) -> bool {
+        true
+    }
+
+    #[cfg(feature = "native-linalg")]
+    fn linear_combinations(&self, q: &[Self::Buffer], coeffs: &[Complex64], m: usize) -> Vec<Self::Buffer> {
+        let r = q.len();
+        if r == 0 || m == 0 {
+            return vec![];
+        }
+        assert_eq!(coeffs.len(), r * m, "coeffs must have r×m elements");
+        let (grid, n) = (q[0].grid(), q[0].len());
+        // Outputs grow panel by panel, so they are written once and never zero-filled.
+        let mut outputs: Vec<Vec<Complex<R>>> = (0..m).map(|_| Vec::with_capacity(n)).collect();
+        let c = faer::MatRef::from_column_major_slice(coeffs, r, m);
+        PANELS.with_borrow_mut(|[a, result]| {
+            resize(a, PANEL * r);
+            resize(result, PANEL * m);
+            let mut start = 0;
+            while start < n {
+                let rows = PANEL.min(n - start);
+                for (j, column) in q.iter().enumerate() {
+                    pack_rows(&column.as_slice()[start..start + rows], &mut a[j * rows..(j + 1) * rows]);
+                }
+                faer::linalg::matmul::matmul(
+                    faer::MatMut::from_column_major_slice_mut(&mut result[..rows * m], rows, m),
+                    faer::Accum::Replace,
+                    faer::MatRef::from_column_major_slice(&a[..rows * r], rows, r),
+                    c,
+                    Complex64::new(1.0, 0.0),
+                    faer::get_global_parallelism(),
+                );
+                for (j, out) in outputs.iter_mut().enumerate() {
+                    R::extend_from_accum(out, &result[j * rows..(j + 1) * rows]);
+                }
+                start += rows;
+            }
+        });
+        outputs.into_iter().map(|data| Field2D::from_vec(grid, data)).collect()
+    }
+
+    #[cfg(feature = "native-linalg")]
+    fn gram_matrix(&self, x: &[Self::Buffer], y: &[Self::Buffer]) -> Vec<Complex64> {
+        self.gram_matrices(x, &[y]).pop().unwrap_or_default()
+    }
+
+    /// G = Xᴴ·Y for every block of `ys`, accumulated in `Complex<f64>` over row panels;
+    /// a block that is `x` itself reuses its packed panel.
+    #[cfg(feature = "native-linalg")]
+    fn gram_matrices(&self, x: &[Self::Buffer], ys: &[&[Self::Buffer]]) -> Vec<Vec<Complex64>> {
+        let p = x.len();
+        let mut products: Vec<faer::Mat<Complex64>> = ys.iter().map(|y| faer::Mat::zeros(p, y.len())).collect();
+        if p > 0 && ys.iter().any(|y| !y.is_empty()) {
+            let n = x[0].len();
+            PANELS.with_borrow_mut(|[a, b]| {
+                resize(a, PANEL * p);
+                resize(b, PANEL * ys.iter().map(|y| y.len()).max().unwrap_or(0));
+                let (mut start, mut accum) = (0, faer::Accum::Replace);
+                while start < n {
+                    let rows = PANEL.min(n - start);
+                    for (j, column) in x.iter().enumerate() {
+                        pack_rows(&column.as_slice()[start..start + rows], &mut a[j * rows..(j + 1) * rows]);
+                    }
+                    let left = faer::MatRef::from_column_major_slice(&a[..rows * p], rows, p);
+                    for (y, product) in ys.iter().zip(&mut products) {
+                        if y.is_empty() {
+                            continue;
+                        }
+                        let right = if std::ptr::eq(y.as_ptr(), x.as_ptr()) && y.len() == p {
+                            left
+                        } else {
+                            for (j, column) in y.iter().enumerate() {
+                                pack_rows(&column.as_slice()[start..start + rows], &mut b[j * rows..(j + 1) * rows]);
+                            }
+                            faer::MatRef::from_column_major_slice(&b[..rows * y.len()], rows, y.len())
+                        };
+                        faer::linalg::matmul::matmul(product.as_mut(), accum, left.adjoint(), right, Complex64::new(1.0, 0.0), faer::get_global_parallelism());
+                    }
+                    accum = faer::Accum::Add;
+                    start += rows;
+                }
+            });
+        }
+        products.iter().map(|g| (0..g.nrows() * g.ncols()).map(|k| g[(k / g.ncols(), k % g.ncols())]).collect()).collect()
     }
 
     fn batch_forward_fft_2d(&self, buffers: &mut [Self::Buffer]) {

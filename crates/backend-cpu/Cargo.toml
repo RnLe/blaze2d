@@ -8,7 +8,7 @@ authors.workspace = true
 
 [features]
 default = ["native-linalg", "parallel", "batched-fft"]
-native-linalg = ["blaze2d-core/native-linalg"]
+native-linalg = ["blaze2d-core/native-linalg", "dep:faer"]
 wasm-linalg = ["blaze2d-core/wasm-linalg"]
 profiling = ["blaze2d-core/profiling"]
 batched-fft = ["blaze2d-core/batched-fft"]
@@ -20,6 +20,7 @@ parallel = ["dep:rayon", "dep:num_cpus"]
 [dependencies]
 blaze2d-core = { path = "../core", default-features = false }
 num-complex.workspace = true
+faer = { workspace = true, optional = true }
 rustfft.workspace = true
 thiserror.workspace = true
 

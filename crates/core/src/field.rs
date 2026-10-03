@@ -46,6 +46,18 @@ pub trait Real:
 
     /// Demote an `f64` accumulator back to storage precision.
     fn from_accum(value: f64) -> Self;
+
+    /// Copy storage values into `dst` at accumulation precision (a plain copy at f64).
+    fn copy_to_accum(src: &[Complex<Self>], dst: &mut [Complex64]) {
+        for (d, z) in dst.iter_mut().zip(src) {
+            *d = Complex64::new(z.re.to_accum(), z.im.to_accum());
+        }
+    }
+
+    /// Append accumulation values to `dst` at storage precision (a plain copy at f64).
+    fn extend_from_accum(dst: &mut Vec<Complex<Self>>, src: &[Complex64]) {
+        dst.extend(src.iter().map(|z| Complex::new(Self::from_accum(z.re), Self::from_accum(z.im))));
+    }
 }
 
 impl Real for f32 {
@@ -67,6 +79,14 @@ impl Real for f64 {
     #[inline]
     fn from_accum(value: f64) -> Self {
         value
+    }
+    #[inline]
+    fn copy_to_accum(src: &[Complex64], dst: &mut [Complex64]) {
+        dst[..src.len()].copy_from_slice(src);
+    }
+    #[inline]
+    fn extend_from_accum(dst: &mut Vec<Complex64>, src: &[Complex64]) {
+        dst.extend_from_slice(src);
     }
 }
 

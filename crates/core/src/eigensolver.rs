@@ -581,6 +581,10 @@ where
     composed: Option<Vec<num_complex::Complex64>>,
     /// Sᵀ·A·S computed together with the SVQB Gram of a composed iteration (row-major).
     composed_projection: Option<Vec<num_complex::Complex64>>,
+    /// A·X moved out of the block by a composed iteration's subspace collection, and the
+    /// number of X columns moved (the block is rebuilt by the Ritz update).
+    moved_applied: Option<Vec<B::Buffer>>,
+    moved_x: usize,
     /// Per-iteration record when tracing.
     trace: Vec<IterationTrace>,
     /// Current iteration count.
@@ -626,6 +630,8 @@ where
             implicit_age: 0,
             composed: None,
             composed_projection: None,
+            moved_applied: None,
+            moved_x: 0,
             trace: Vec::new(),
             iteration: 0,
             initialized: false,
@@ -728,10 +734,13 @@ where
                 }
             }
             // Second pass: re-apply both operators (requires mutable borrow)
-            for entry in &mut x_block {
-                self.operator.apply(&entry.vector, &mut entry.applied);
-                self.operator.apply_mass(&entry.vector, &mut entry.mass);
-            }
+            let (vectors, (mut masses, mut applied)): (Vec<B::Buffer>, (Vec<B::Buffer>, Vec<B::Buffer>)) =
+                x_block.into_iter().map(|entry| (entry.vector, (entry.mass, entry.applied))).unzip();
+            self.operator.batch_apply(&vectors, &mut applied);
+            self.operator.batch_apply_mass(&vectors, &mut masses);
+            x_block = vectors.into_iter().zip(masses).zip(applied)
+                .map(|((vector, mass), applied)| BlockEntry { vector, mass, applied })
+                .collect();
         }
 
         self.x_block = x_block;
@@ -845,43 +854,24 @@ where
     ///
     /// where λ_i is the current Rayleigh quotient estimate.
     ///
-    /// **Soft Locking Optimization**: Skips residual computation for soft-locked bands,
-    /// returning a zero vector as a placeholder. These zeros won't be used since
-    /// P[j] will also be skipped for soft-locked bands.
+    /// **Soft Locking**: outside residual stopping, soft-locked bands return a zero vector
+    /// as a placeholder. These zeros won't be used since P[j] is skipped for them.
     ///
-    /// Returns only the residual vectors (norms computed separately after deflation).
-    fn compute_residuals(&self) -> Vec<B::Buffer> {
+    /// Returns the residual vectors with their undeflated squared norms
+    /// [‖r‖², ‖A·x‖², ‖B·x‖²] (B-norms are computed separately after deflation).
+    fn compute_residuals(&self) -> (Vec<B::Buffer>, Vec<[f64; 3]>) {
         let backend = self.operator.backend();
-        let n = self.x_block.len();
-
-        let mut residuals: Vec<B::Buffer> = Vec::with_capacity(n);
-
         let residual_mode = self.config.stopping == StoppingRule::Residual;
-        for (i, entry) in self.x_block.iter().enumerate() {
-            // Skip expensive computation for soft-locked bands
-            if !residual_mode && i < self.soft_locked.len() && self.soft_locked[i] {
-                // Return zero residual for soft-locked bands (won't be used)
-                let mut zero = entry.vector.clone();
-                backend.scale(Complex64::ZERO, &mut zero);
-                residuals.push(zero);
-                continue;
+        // r_i = A·x_i − λ_i·B·x_i with ‖r_i‖², ‖A·x_i‖², ‖B·x_i‖² from one pass.
+        self.x_block.iter().zip(&self.eigenvalues).enumerate().map(|(i, (entry, &lambda))| {
+            let (r, norms) = backend.residual(&entry.applied, &entry.mass, lambda);
+            // Soft-locked bands keep a zero residual outside residual stopping (unused).
+            if !residual_mode && self.soft_locked.get(i).copied().unwrap_or(false) {
+                (self.operator.alloc_field(), norms)
+            } else {
+                (r, norms)
             }
-
-            // r_i = A*x_i (start with applied)
-            let mut r = entry.applied.clone();
-
-            // r_i = A*x_i - λ_i * B*x_i
-            let lambda = self.eigenvalues[i];
-            backend.axpy(
-                num_complex::Complex64::new(-lambda, 0.0),
-                &entry.mass,
-                &mut r,
-            );
-
-            residuals.push(r);
-        }
-
-        residuals
+        }).unzip()
     }
 
     /// Compute B-norms of residual vectors: ||r_i||_B = sqrt(r_i^* B r_i)
@@ -957,22 +947,12 @@ where
         self.previous_eigenvalues = self.eigenvalues.clone();
     }
 
-    /// Relative residuals η = ‖r‖/(‖Ax‖+|λ|‖Bx‖) of every block position,
-    /// matching the fresh certificate. `residuals` must be undeflated.
-    fn relative_residual_norms(&self, residuals: &[B::Buffer]) -> Vec<f64> {
-        let backend = self.operator.backend();
-        let placeholders = self.config.stopping != StoppingRule::Residual;
-        self.x_block.iter().zip(residuals).zip(&self.eigenvalues).enumerate().map(|(i, ((entry, r), &lambda))| {
-            let r_norm = if placeholders && self.soft_locked.get(i).copied().unwrap_or(false) {
-                let mut fresh = entry.applied.clone();
-                backend.axpy(Complex64::new(-lambda, 0.0), &entry.mass, &mut fresh);
-                backend.dot(&fresh, &fresh).re.max(0.0).sqrt()
-            } else {
-                backend.dot(r, r).re.max(0.0).sqrt()
-            };
-            let ax = backend.dot(&entry.applied, &entry.applied).re.max(0.0).sqrt();
-            let bx = backend.dot(&entry.mass, &entry.mass).re.max(0.0).sqrt();
-            let denom = ax + lambda.abs() * bx;
+    /// Relative residuals η = ‖r‖/(‖Ax‖+|λ|‖Bx‖) of every block position, matching the
+    /// fresh certificate, from the undeflated squared norms of `compute_residuals`.
+    fn relative_residual_norms(&self, norms: &[[f64; 3]]) -> Vec<f64> {
+        norms.iter().zip(&self.eigenvalues).map(|(&[rr, aa, bb], &lambda)| {
+            let r_norm = rr.max(0.0).sqrt();
+            let denom = aa.max(0.0).sqrt() + lambda.abs() * bb.max(0.0).sqrt();
             if denom > 1e-300 { r_norm / denom } else { r_norm }
         }).collect()
     }
@@ -1033,8 +1013,18 @@ where
             operator.apply(&entry.vector, &mut entry.applied);
             operator.apply_mass(&entry.vector, &mut entry.mass);
         }
-        let residuals = self.compute_residuals();
-        self.relative_residual_norms(&residuals)
+        // Eigenvalues become the Rayleigh quotients of the fresh products, accurate to
+        // O(η²) whatever rounding the projection carried (composed Ritz values can be off by
+        // ~1e-11 relative when the raw subspace is ill-conditioned).
+        let backend = self.operator.backend();
+        for (entry, lambda) in self.x_block.iter().zip(self.eigenvalues.iter_mut()) {
+            let mass = backend.dot(&entry.vector, &entry.mass).re;
+            if mass > 0.0 {
+                *lambda = backend.dot(&entry.vector, &entry.applied).re / mass;
+            }
+        }
+        let (_, norms) = self.compute_residuals();
+        self.relative_residual_norms(&norms)
     }
 
     fn record_trace(&mut self, eta: &[f64], active: usize, rank: usize) {
@@ -1065,19 +1055,19 @@ where
     ///
     /// **Soft Locking Optimization**: Only processes residuals for active (non-soft-locked)
     /// bands. Returns a smaller P block containing only active band directions.
-    fn precondition_residuals(&mut self, residuals: &[B::Buffer]) -> Vec<B::Buffer> {
+    fn precondition_residuals(&mut self, residuals: Vec<B::Buffer>) -> Vec<B::Buffer> {
         let backend = self.operator.backend();
 
-        // 1. Collect active residuals (cloned)
+        // 1. Collect active residuals (moved)
         let mut p_block: Vec<B::Buffer> = residuals
-            .iter()
+            .into_iter()
             .enumerate()
             .filter_map(|(i, r)| {
                 // Skip soft-locked bands entirely (their residuals are zeros anyway)
                 if i < self.soft_locked.len() && self.soft_locked[i] {
                     None
                 } else {
-                    Some(r.clone())
+                    Some(r)
                 }
             })
             .collect();
@@ -1294,8 +1284,8 @@ where
     /// By returning the precomputed B*X vectors, we avoid recomputing them in SVQB.
     /// This saves m mass applications per iteration.
     fn collect_subspace_with_mass(
-        &self,
-        p_block: &[B::Buffer],
+        &mut self,
+        p_block: Vec<B::Buffer>,
     ) -> (Vec<B::Buffer>, Vec<B::Buffer>, (usize, usize, usize)) {
         let m = self.x_block.len();
         // Composed iterations with B = I use the subspace itself as its B-image.
@@ -1322,24 +1312,32 @@ where
 
         // Add ALL X_k vectors (cloned) and their precomputed B*X
         // (including soft-locked bands - they stay in X for Rayleigh-Ritz)
-        for entry in &self.x_block {
-            subspace.push(entry.vector.clone());
-            if !skip_mass {
-                bx_precomputed.push(entry.mass.clone());
+        if self.composed_iteration() {
+            // Composed iterations keep S, B·S and A·S raw until the Ritz update replaces
+            // X, so X, B·X and A·X move into them instead of being copied.
+            let entries = std::mem::take(&mut self.x_block);
+            self.moved_x = entries.len();
+            let mut applied = Vec::with_capacity(entries.len());
+            for entry in entries {
+                subspace.push(entry.vector);
+                if !skip_mass {
+                    bx_precomputed.push(entry.mass);
+                }
+                applied.push(entry.applied);
+            }
+            self.moved_applied = Some(applied);
+        } else {
+            for entry in &self.x_block {
+                subspace.push(entry.vector.clone());
+                if !skip_mass {
+                    bx_precomputed.push(entry.mass.clone());
+                }
             }
         }
 
         // Add P_k vectors ONLY for active (non-soft-locked) bands
         // p_block is indexed by the active band indices
-        let mut p_idx = 0;
-        for (i, &is_locked) in self.soft_locked.iter().take(m).enumerate() {
-            if !is_locked && p_idx < p_block.len() {
-                subspace.push(p_block[p_idx].clone());
-                p_idx += 1;
-            }
-            // Skip P for soft-locked bands (no residual was computed for them)
-            let _ = i; // silence unused variable warning
-        }
+        subspace.extend(p_block.into_iter().take(n_active));
 
         // Add W_k vectors ONLY for active (non-soft-locked) bands
         let mut w_size = w_size;
@@ -1351,6 +1349,10 @@ where
                     w_size += 1;
                 }
             }
+        } else if has_w && self.composed_iteration() {
+            // The Ritz update replaces W, so it moves into the subspace.
+            let w_block = std::mem::take(&mut self.w_block);
+            subspace.extend(w_block.into_iter().take(n_active));
         } else if has_w {
             let mut w_idx = 0;
             for &is_locked in self.soft_locked.iter().take(m) {
@@ -1451,10 +1453,14 @@ where
             && !self.operator.apply_is_diagonal()
             && self.w_positions.is_none()
             && self.implicit_age < IMPLICIT_PRODUCT_REFRESH
-            && x_size == self.x_block.len()
+            && x_size == (if self.moved_applied.is_some() { self.moved_x } else { self.x_block.len() })
             && (w_size == 0 || self.w_applied.as_ref().is_some_and(|aw| aw.len() >= w_size));
+        let moved = self.moved_applied.take();
         let products = carried.then(|| {
-            let mut products: Vec<B::Buffer> = self.x_block.iter().map(|entry| entry.applied.clone()).collect();
+            let mut products: Vec<B::Buffer> = match moved {
+                Some(applied) => applied,
+                None => self.x_block.iter().map(|entry| entry.applied.clone()).collect(),
+            };
             let mut applied: Vec<B::Buffer> = (0..p_size).map(|_| self.operator.alloc_field()).collect();
             self.operator.batch_apply(&q_block[x_size..x_size + p_size], &mut applied);
             products.append(&mut applied);
@@ -1539,10 +1545,10 @@ where
     /// # Returns
     /// A vector of buffers containing A*q_j for each q_j in q_block.
     /// Whether iterations compose the SVQB transform into their coefficients instead of
-    /// forming the orthonormal block (real-coefficient backends with Ritz or no history).
+    /// forming the orthonormal block (backends with fast linear combinations, with Ritz or
+    /// no history).
     fn composed_iteration(&self) -> bool {
-        let backend = self.operator.backend();
-        backend.prefer_backend_linear_combinations() && backend.real_coefficients() && self.config.history != HistoryRule::Conjugate
+        self.operator.backend().prefer_backend_linear_combinations() && self.config.history != HistoryRule::Conjugate
     }
 
     fn compute_aq_block(&mut self, q_block: &[B::Buffer]) -> Vec<B::Buffer> {
@@ -1593,7 +1599,7 @@ where
             return vec![];
         }
 
-        if self.operator.backend().real_coefficients() {
+        if self.operator.backend().real_coefficients() || self.operator.backend().prefer_backend_linear_combinations() {
             let gram=match &self.composed_projection {Some(h) if h.len()==r*r => h.clone(), _ => self.operator.backend().gram_matrix(q_block,aq_block)};
             let mut result=vec![num_complex::Complex64::ZERO;r*r];
             for i in 0..r {for j in 0..r {result[i+r*j]=0.5*(gram[i*r+j]+gram[j*r+i].conj());}}
@@ -1721,10 +1727,21 @@ where
         let m = n_bands.min(r); // Number of Ritz pairs to extract
 
         if m == 0 || r == 0 {
+            // A composed iteration moved X out of the block; its raw subspace starts with
+            // the old X, B·X and A·X, so the block is restored from there.
+            if self.x_block.is_empty() && self.moved_x > 0 && q_block.len() >= self.moved_x {
+                let x = self.moved_x;
+                let vectors = q_block[..x].to_vec();
+                let masses = if bq_block.len() >= x { bq_block[..x].to_vec() } else { vectors.clone() };
+                self.x_block = vectors.into_iter().zip(masses).zip(aq_block[..x].to_vec())
+                    .map(|((vector, mass), applied)| BlockEntry { vector, mass, applied }).collect();
+            }
+            self.moved_x = 0;
             #[cfg(feature = "profiling")]
             crate::profiler::stop_timer("update_ritz_vectors");
             return;
         }
+        self.moved_x = 0;
 
         // Update eigenvalues: take the m smallest (already sorted)
         self.eigenvalues.clear();
@@ -2215,12 +2232,12 @@ where
             // ================================================================
             // Step 1: Compute residuals R_k = A*X_k - B*X_k * Λ_k
             // ================================================================
-            let mut residuals = {
+            let (mut residuals, residual_norms) = {
                 crate::profile_scope!("eigensolver.residuals");
                 self.compute_residuals()
             };
             let mut eta = if residual_mode || self.config.trace {
-                self.relative_residual_norms(&residuals)
+                self.relative_residual_norms(&residual_norms)
             } else {
                 Vec::new()
             };
@@ -2394,7 +2411,7 @@ where
             // Step 6: Precondition residuals P_k = M^{-1} R_k
             // Soft-locked bands are skipped (returns smaller P block)
             // ================================================================
-            let mut p_block = self.precondition_residuals(&residuals);
+            let mut p_block = self.precondition_residuals(residuals);
 
             // ================================================================
             // Step 7: Apply deflation to P
@@ -2413,7 +2430,7 @@ where
             // ================================================================
             let (subspace, bx_precomputed, block_sizes) = {
                 crate::profile_scope!("eigensolver.collect_subspace");
-                self.collect_subspace_with_mass(&p_block)
+                self.collect_subspace_with_mass(p_block)
             };
             crate::profiler::count("search_P.columns", block_sizes.1);
             let pw_basis = if self.config.history == HistoryRule::Conjugate {
@@ -2784,9 +2801,9 @@ where
             }
 
             // Compute residuals R_k = A*X_k - B*X_k * Λ_k
-            let mut residuals = self.compute_residuals();
+            let (mut residuals, residual_norms) = self.compute_residuals();
             let mut eta = if residual_mode || self.config.trace {
-                self.relative_residual_norms(&residuals)
+                self.relative_residual_norms(&residual_norms)
             } else {
                 Vec::new()
             };
@@ -2876,13 +2893,13 @@ where
             }
 
             // Precondition residuals (skips soft-locked bands)
-            let mut p_block = self.precondition_residuals(&residuals);
+            let mut p_block = self.precondition_residuals(residuals);
             self.apply_deflation(&mut p_block);
             self.apply_soft_deflation(&mut p_block);
 
             // Build search subspace Z_k = [X_k, P_k, W_k] with precomputed B*X
             let n_corrections = p_block.len();
-            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
+            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(p_block);
             crate::profiler::count("search_P.columns", block_sizes.1);
             let pw_basis = if self.config.history == HistoryRule::Conjugate {
                 subspace[block_sizes.0..].to_vec()
@@ -3177,9 +3194,9 @@ where
             // ================================================================
             // Step 1: Compute residuals R_k = A*X_k - B*X_k * Λ_k
             // ================================================================
-            let mut residuals = self.compute_residuals();
+            let (mut residuals, residual_norms) = self.compute_residuals();
             let mut eta = if residual_mode || self.config.trace {
-                self.relative_residual_norms(&residuals)
+                self.relative_residual_norms(&residual_norms)
             } else {
                 Vec::new()
             };
@@ -3316,7 +3333,7 @@ where
             // Step 6: Precondition residuals P_k = M^{-1} R_k
             // Soft-locked bands are skipped
             // ================================================================
-            let mut p_block = self.precondition_residuals(&residuals);
+            let mut p_block = self.precondition_residuals(residuals);
 
             // ================================================================
             // Step 7: Apply deflation to P
@@ -3330,7 +3347,7 @@ where
             // Also collects precomputed B*X to avoid recomputing in SVQB
             // ================================================================
             let n_corrections = p_block.len();
-            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(&p_block);
+            let (subspace, bx_precomputed, block_sizes) = self.collect_subspace_with_mass(p_block);
             crate::profiler::count("search_P.columns", block_sizes.1);
             let pw_basis = if self.config.history == HistoryRule::Conjugate {
                 subspace[block_sizes.0..].to_vec()

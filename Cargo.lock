@@ -147,6 +147,7 @@ version = "0.7.0"
 dependencies = [
  "blaze2d-core",
  "criterion",
+ "faer",
  "num-complex",
  "num_cpus",
  "rayon",

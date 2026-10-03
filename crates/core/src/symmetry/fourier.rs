@@ -109,6 +109,22 @@ impl SpectralBackend for CoordinateBackend {
         else if self.real_space {C::new(x.as_slice().iter().zip(y.as_slice()).map(|(a,b)|a.re*b.re).sum(),0.0)}
         else {x.as_slice().iter().zip(y.as_slice()).map(|(a,b)|a.conj()*b).sum()}
     }
+    fn residual(&self,a:&CoordinateBuffer,b:&CoordinateBuffer,lambda:f64)->(CoordinateBuffer,[f64;3]) {
+        if !(self.real_space && self.packed) {
+            let mut r=a.clone();self.axpy(C::new(-lambda,0.0),b,&mut r);
+            let norms=[self.dot(&r,&r).re,self.dot(a,a).re,self.dot(b,b).re];
+            return (r,norms);
+        }
+        // One pass over the f64 views: r = a − λ·b as `axpy` computes it (every lane), the
+        // norms summed sequentially over the real coordinates as `dot` does.
+        let mut r=CoordinateBuffer{grid:a.grid,data:self.ledger.take(a.data.len(),false),ledger:self.ledger.clone()};
+        let mut norms=[0.0f64;3];
+        for (i,((d,&x),&y)) in reals_mut(&mut r.data).iter_mut().zip(reals(&a.data)).zip(reals(&b.data)).enumerate() {
+            *d=x+(-lambda)*y;
+            if i<self.nreal {norms[0]+=*d**d;norms[1]+=x*x;norms[2]+=y*y;}
+        }
+        (r,norms)
+    }
     fn linear_combinations(&self,q:&[CoordinateBuffer],coefficients:&[C],m:usize)->Vec<CoordinateBuffer> {
         let r=q.len();if r==0 || m==0 {return vec![];}
         assert_eq!(coefficients.len(),r*m);
@@ -284,24 +300,27 @@ impl<B:SpectralBackend+Clone> Conversion<B> {
         }
         if self.real_space && check_real {let defect=(imaginary/norm.max(f64::MIN_POSITIVE)).sqrt();self.leakage.set(if defect.is_finite() {self.leakage.get().max(defect)}else{f64::INFINITY});}
     }
-    /// Two PT-real coordinate vectors as one Fourier field gauge·(a + i b). The operators
-    /// and preconditioners are complex-linear and keep PT-real vectors PT-real, so one
-    /// transform serves both columns and `pack_pair` separates the results as the real
-    /// and imaginary parts of the gauged coefficients (half the FFTs of two applications).
-    fn unpack_pair(&self,a:&[C],b:&[C],out:&mut B::Buffer) {
+    /// Two PT-real coordinate vectors as one Fourier field gauge·(a·sa + i b·sb). The
+    /// operators and preconditioners are complex-linear and keep PT-real vectors PT-real,
+    /// so one transform serves both columns and `pack_pair` separates the results as the
+    /// real and imaginary parts of the gauged coefficients (half the FFTs of two
+    /// applications). Each result carries the rounding of the transform relative to the
+    /// larger member, so `pair_scales` first brings both to comparable size.
+    fn unpack_pair(&self,a:&[C],b:&[C],(sa,sb):(f64,f64),out:&mut B::Buffer) {
         debug_assert!(self.real_space);
         if self.packed {
-            for (((dst,&g),&x),&y) in out.as_mut_slice().iter_mut().zip(self.gauge.iter()).zip(reals(a)).zip(reals(b)) {let z=g*C::new(x,y);*dst=cscalar::<B::Real>(z.re,z.im);}
+            for (((dst,&g),&x),&y) in out.as_mut_slice().iter_mut().zip(self.gauge.iter()).zip(reals(a)).zip(reals(b)) {let z=g*C::new(x*sa,y*sb);*dst=cscalar::<B::Real>(z.re,z.im);}
             return;
         }
-        for (i,dst) in out.as_mut_slice().iter_mut().enumerate() {let z=self.gauge[i]*C::new(scalar(a,i,self.packed),scalar(b,i,self.packed));*dst=cscalar::<B::Real>(z.re,z.im);}
+        for (i,dst) in out.as_mut_slice().iter_mut().enumerate() {let z=self.gauge[i]*C::new(scalar(a,i,self.packed)*sa,scalar(b,i,self.packed)*sb);*dst=cscalar::<B::Real>(z.re,z.im);}
     }
-    fn pack_pair(&self,field:&B::Buffer,a:&mut[C],b:&mut[C],factor:f64) {
+    fn pack_pair(&self,field:&B::Buffer,a:&mut[C],b:&mut[C],factor:f64,(sa,sb):(f64,f64)) {
+        let (ua,ub)=(sa.recip(),sb.recip());
         if self.packed {
             let n=field.as_slice().len();let (la,lb)=(reals_mut(a),reals_mut(b));
             for (((x,y),src),&g) in la.iter_mut().zip(lb.iter_mut()).zip(field.as_slice()).zip(self.gauge.iter()) {
                 let z=C::new(src.re.to_accum()*factor,src.im.to_accum()*factor)*g.conj();
-                *x=z.re;*y=z.im;
+                *x=z.re*ua;*y=z.im*ub;
             }
             if n%2==1 {la[n]=0.0;lb[n]=0.0;}
             return;
@@ -309,8 +328,18 @@ impl<B:SpectralBackend+Clone> Conversion<B> {
         a.fill(C::ZERO);b.fill(C::ZERO);
         for (i,src) in field.as_slice().iter().enumerate() {
             let z=C::new(src.re.to_accum()*factor,src.im.to_accum()*factor)*self.gauge[i].conj();
-            set_scalar(a,i,z.re,self.packed);set_scalar(b,i,z.im,self.packed);
+            set_scalar(a,i,z.re*ua,self.packed);set_scalar(b,i,z.im*ub,self.packed);
         }
+    }
+    /// Power-of-two scales bringing both members of a pair to norm ≈ 1 (exact, and 1 for
+    /// norms within √2 of 1), so a small column is not swamped by its partner's rounding.
+    fn pair_scales(&self,a:&[C],b:&[C])->(f64,f64) {
+        let scale=|v:&[C]| {
+            let squares:f64=if self.packed {reals(v)[..self.grid.len()].iter().map(|x|x*x).sum()} else {v.iter().map(|z|z.re*z.re).sum()};
+            let exponent=(0.5*squares.log2()).round();
+            if exponent.is_finite() {2f64.powi(-(exponent.clamp(-1000.0,1000.0) as i32))} else {1.0}
+        };
+        (scale(a),scale(b))
     }
     fn promote(&self,buffer:&B::Buffer)->Field2D {Field2D::from_vec(self.grid,buffer.as_slice().iter().map(|z|C::new(z.re.to_accum(),z.im.to_accum())).collect())}
 }
@@ -364,13 +393,14 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
         if paired {
             for (x,y) in inputs.chunks_exact(2).zip(outputs.chunks_exact_mut(2)) {
                 let (y0,y1)=y.split_at_mut(1);
-                self.conversion.unpack_pair(x[0].as_slice(),x[1].as_slice(),&mut self.input);
+                let scales=self.conversion.pair_scales(x[0].as_slice(),x[1].as_slice());
+                self.conversion.unpack_pair(x[0].as_slice(),x[1].as_slice(),scales,&mut self.input);
                 if self.direct_te {
                     self.full.apply_fourier(&self.input,&mut self.output);
-                    self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),1.0);
+                    self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),1.0,scales);
                 } else {
                     self.spatial_pair_apply(false);
-                    self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),(self.conversion.grid.len() as f64).sqrt().recip());
+                    self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),(self.conversion.grid.len() as f64).sqrt().recip(),scales);
                 }
             }
             start=inputs.len()-inputs.len()%2;
@@ -384,9 +414,10 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
         if paired {
             for (x,y) in inputs.chunks_exact(2).zip(outputs.chunks_exact_mut(2)) {
                 let (y0,y1)=y.split_at_mut(1);
-                self.conversion.unpack_pair(x[0].as_slice(),x[1].as_slice(),&mut self.input);
+                let scales=self.conversion.pair_scales(x[0].as_slice(),x[1].as_slice());
+                self.conversion.unpack_pair(x[0].as_slice(),x[1].as_slice(),scales,&mut self.input);
                 self.spatial_pair_apply(true);
-                self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),(self.conversion.grid.len() as f64).sqrt().recip());
+                self.conversion.pack_pair(&self.output,y0[0].as_mut_slice(),y1[0].as_mut_slice(),(self.conversion.grid.len() as f64).sqrt().recip(),scales);
             }
             start=inputs.len()-inputs.len()%2;
         }
@@ -474,12 +505,13 @@ impl<B:SpectralBackend+Clone> OperatorPreconditioner<CoordinateBackend> for Four
             for pair in buffers.chunks_exact_mut(2) {
                 crate::profile_scope!("preconditioner.pt_fourier");
                 let (a,b)=pair.split_at_mut(1);
-                self.conversion.unpack_pair(a[0].as_slice(),b[0].as_slice(),&mut self.scratch);
+                let scales=self.conversion.pair_scales(a[0].as_slice(),b[0].as_slice());
+                self.conversion.unpack_pair(a[0].as_slice(),b[0].as_slice(),scales,&mut self.scratch);
                 if !self.inner.apply_fourier(&self.conversion.backend,&mut self.scratch) {
                     // No Fourier path after all: apply the pair one by one.
                     self.apply(backend,&mut a[0]);self.apply(backend,&mut b[0]);continue;
                 }
-                self.conversion.pack_pair(&self.scratch,a[0].as_mut_slice(),b[0].as_mut_slice(),1.0);
+                self.conversion.pack_pair(&self.scratch,a[0].as_mut_slice(),b[0].as_mut_slice(),1.0,scales);
             }
             start=buffers.len()-buffers.len()%2;
         }

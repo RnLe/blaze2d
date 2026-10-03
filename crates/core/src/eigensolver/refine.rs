@@ -79,14 +79,10 @@ where
     }
 
     // -- Projected matrices S = UᴴBU, H = UᴴAU (column-major) --
-    let mut s_mat = vec![Complex64::ZERO; n * n];
-    let mut h_mat = vec![Complex64::ZERO; n * n];
-    for j in 0..n {
-        for i in 0..n {
-            s_mat[i + j * n] = operator.backend().dot(&u[i], &bu[j]);
-            h_mat[i + j * n] = operator.backend().dot(&u[i], &au[j]);
-        }
-    }
+    let grams = operator.backend().gram_matrices(&u, &[bu.as_slice(), au.as_slice()]);
+    let column_major = |g: &[Complex64]| (0..n * n).map(|k| g[(k % n) * n + k / n]).collect::<Vec<_>>();
+    let mut s_mat = column_major(&grams[0]);
+    let mut h_mat = column_major(&grams[1]);
     hermitize_in_place(&mut s_mat, n);
     hermitize_in_place(&mut h_mat, n);
 
@@ -169,18 +165,7 @@ where
     }
 
     // -- B-orthogonality defect of the rotated block --
-    let mut defect = 0.0f64;
-    for j in 0..n {
-        for i in 0..n {
-            let s_ij = operator.backend().dot(&u_new[i], &bu_new[j]);
-            let target = if i == j {
-                Complex64::new(1.0, 0.0)
-            } else {
-                Complex64::ZERO
-            };
-            defect = defect.max((s_ij - target).norm());
-        }
-    }
+    let defect = orthogonality_defect(&operator.backend().gram_matrix(&u_new, &bu_new), n);
 
     // -- Write the refined eigenpairs back --
     let grid = operator.grid();
@@ -216,19 +201,16 @@ where
         .collect();
     let mut residuals = Vec::with_capacity(n);
     let mut absolute_residuals = Vec::with_capacity(n);
-    let mut defect = 0.0_f64;
+    let mut masses = Vec::with_capacity(n);
     for (j, field) in fields.iter().enumerate() {
         let mut a = operator.alloc_field();
         let mut b = operator.alloc_field();
         operator.apply(field, &mut a);
         operator.apply_mass(field, &mut b);
         let lambda = eigenvalues[j];
-        let denominator = operator.backend().dot(&a, &a).re.max(0.0).sqrt()
-            + lambda.abs() * operator.backend().dot(&b, &b).re.max(0.0).sqrt();
-        operator
-            .backend()
-            .axpy(Complex64::new(-lambda, 0.0), &b, &mut a);
-        let numerator = operator.backend().dot(&a, &a).re.max(0.0).sqrt();
+        let (_, [rr, aa, bb]) = operator.backend().residual(&a, &b, lambda);
+        let denominator = aa.max(0.0).sqrt() + lambda.abs() * bb.max(0.0).sqrt();
+        let numerator = rr.max(0.0).sqrt();
         let norm = operator.backend().dot(field, field).re.max(0.0).sqrt();
         absolute_residuals.push(if norm > 0.0 { numerator / norm } else { numerator });
         residuals.push(if denominator > 0.0 {
@@ -236,15 +218,9 @@ where
         } else {
             numerator
         });
-        for (i, other) in fields.iter().enumerate() {
-            let target = if i == j {
-                Complex64::new(1.0, 0.0)
-            } else {
-                Complex64::ZERO
-            };
-            defect = defect.max((operator.backend().dot(other, &b) - target).norm());
-        }
+        masses.push(b);
     }
+    let defect = orthogonality_defect(&operator.backend().gram_matrix(&fields, &masses), n);
     BlockCertification {
         residuals,
         absolute_residuals,
@@ -255,6 +231,14 @@ where
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Largest entry of |UᴴBU − I| from the row-major n×n Gram matrix.
+fn orthogonality_defect(gram: &[Complex64], n: usize) -> f64 {
+    gram.iter().enumerate().fold(0.0f64, |defect, (k, &s)| {
+        let target = if k / n == k % n { Complex64::new(1.0, 0.0) } else { Complex64::ZERO };
+        defect.max((s - target).norm())
+    })
+}
 
 fn field_to_buffer<O, B>(operator: &O, field: &Field2D) -> B::Buffer
 where

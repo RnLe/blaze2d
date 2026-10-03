@@ -107,6 +107,15 @@ pub trait SpectralBackend {
     /// [`Real::to_accum`] before adding.
     fn dot(&self, x: &Self::Buffer, y: &Self::Buffer) -> Complex64;
 
+    /// Residual r = a − λ·b with the squared Euclidean norms [‖r‖², ‖a‖², ‖b‖²], so a
+    /// backend can produce all of them from one pass over `a` and `b`.
+    fn residual(&self, a: &Self::Buffer, b: &Self::Buffer, lambda: f64) -> (Self::Buffer, [f64; 3]) {
+        let mut r = a.clone();
+        self.axpy(Complex64::new(-lambda, 0.0), b, &mut r);
+        let norms = [self.dot(&r, &r).re, self.dot(a, a).re, self.dot(b, b).re];
+        (r, norms)
+    }
+
     /// Compute the Gram matrix G_ij = ⟨x_i, y_j⟩ for batches of vectors.
     ///
     /// Result is row-major p×q where p = x.len(), q = y.len(). Always

@@ -29,7 +29,7 @@ use crate::backend::{SpectralBackend, SpectralBuffer};
 use crate::field::{Field2D, Real, cscalar};
 use crate::operators::LinearOperator;
 
-use super::normalization::{normalize_to_unit_b_norm_with_tol, project_out};
+use super::normalization::{b_norm, normalize_to_unit_b_norm_with_tol, project_out};
 
 // ============================================================================
 // Block Entry
@@ -251,21 +251,40 @@ where
 /// cannot occupy a slot that becomes zero only after block construction.
 pub(crate) fn initialize_block_with_deflation<O,B>(operator:&mut O,config:&InitializationConfig,warm_start:Option<&[Field2D]>,deflation:Option<&super::deflation::DeflationSubspace<B>>)->(Vec<BlockEntry<B>>,InitializationResult)
 where O:LinearOperator<B>, B:SpectralBackend {
-    let mut entries: Vec<BlockEntry<B>> = Vec::with_capacity(config.block_size);
+    // Accepted (x, B·x) pairs; A·x is applied to the finished block in one batch.
+    let mut accepted: Vec<(B::Buffer, B::Buffer)> = Vec::with_capacity(config.block_size);
     let mut warm_hits = 0usize;
 
-    // Phase 1: Try to use warm-start vectors
+    // Phase 1: Try to use warm-start vectors. The seeds that can fill the block get
+    // their B·x from one batched application; later seeds are only needed after rejections.
     if let Some(seeds) = warm_start {
+        let batch = seeds.len().min(config.block_size);
+        let mut vectors: Vec<B::Buffer> = seeds[..batch].iter().map(|field| field_to_buffer(operator, field)).collect();
+        // Constraints apply to both warm starts and random rank repair.
+        for vector in &mut vectors {
+            operator.constrain(vector);
+        }
+        let mut masses: Vec<B::Buffer> = (0..batch).map(|_| operator.alloc_field()).collect();
+        operator.batch_apply_mass(&vectors, &mut masses);
+        let mut batched = vectors.into_iter().zip(masses);
         for field in seeds {
-            crate::profiler::count("initialization.warm_attempts", 1);
-            if let Some(entry) =
-                build_entry_from_field(operator, field, &entries, config.zero_tolerance, deflation)
-            {
-                entries.push(entry);
-                warm_hits += 1;
-            }
-            if entries.len() >= config.block_size {
+            if accepted.len() >= config.block_size {
                 break;
+            }
+            crate::profiler::count("initialization.warm_attempts", 1);
+            let (vector, mass) = match batched.next() {
+                Some(pair) => pair,
+                None => {
+                    let mut vector = field_to_buffer(operator, field);
+                    operator.constrain(&mut vector);
+                    let mut mass = operator.alloc_field();
+                    operator.apply_mass(&vector, &mut mass);
+                    (vector, mass)
+                }
+            };
+            if let Some(pair) = orthonormalize_entry(operator, vector, mass, &accepted, config.zero_tolerance, deflation) {
+                accepted.push(pair);
+                warm_hits += 1;
             }
         }
     }
@@ -274,20 +293,28 @@ where O:LinearOperator<B>, B:SpectralBackend {
     let mut attempts = 0usize;
     let mut phase = 1.0f64;
 
-    while entries.len() < config.block_size && attempts < config.max_random_attempts {
+    while accepted.len() < config.block_size && attempts < config.max_random_attempts {
         crate::profiler::count("initialization.random_attempts", 1);
         let mut vector = operator.alloc_field();
         operator.seed_initial_vector(&mut vector, phase);
         phase += 1.0;
+        operator.constrain(&mut vector);
+        let mut mass = operator.alloc_field();
+        operator.apply_mass(&vector, &mut mass);
 
-        if let Some(entry) =
-            build_entry_from_buffer(operator, vector, &entries, config.zero_tolerance, deflation)
-        {
-            entries.push(entry);
+        if let Some(pair) = orthonormalize_entry(operator, vector, mass, &accepted, config.zero_tolerance, deflation) {
+            accepted.push(pair);
         } else {
             attempts += 1;
         }
     }
+
+    let (vectors, masses): (Vec<B::Buffer>, Vec<B::Buffer>) = accepted.into_iter().unzip();
+    let mut applied: Vec<B::Buffer> = (0..vectors.len()).map(|_| operator.alloc_field()).collect();
+    operator.batch_apply(&vectors, &mut applied);
+    let entries: Vec<BlockEntry<B>> = vectors.into_iter().zip(masses).zip(applied)
+        .map(|((vector, mass), applied)| BlockEntry { vector, mass, applied })
+        .collect();
 
     let result = InitializationResult {
         warm_start_hits: warm_hits,
@@ -301,15 +328,8 @@ where O:LinearOperator<B>, B:SpectralBackend {
     (entries, result)
 }
 
-/// Build a block entry from an f64 Field2D warm-start vector, demoting to
-/// the backend's storage precision (`B::Real`) on the way in.
-fn build_entry_from_field<O, B>(
-    operator: &mut O,
-    field: &Field2D,
-    existing: &[BlockEntry<B>],
-    zero_tol: f64,
-    deflation:Option<&super::deflation::DeflationSubspace<B>>,
-) -> Option<BlockEntry<B>>
+/// An f64 Field2D warm-start vector at the backend's storage precision (`B::Real`).
+fn field_to_buffer<O, B>(operator: &O, field: &Field2D) -> B::Buffer
 where
     O: LinearOperator<B>,
     B: SpectralBackend,
@@ -322,60 +342,44 @@ where
             <B::Real as Real>::from_accum(s.im),
         );
     }
-    build_entry_from_buffer(operator, vector, existing, zero_tol, deflation)
+    vector
 }
 
-/// Build a block entry from a raw buffer, orthogonalizing against existing entries.
-fn build_entry_from_buffer<O, B>(
+/// B-orthonormalize a constrained vector and its B-image against the deflated modes and
+/// the accepted pairs; `None` when nothing above `zero_tol` remains.
+fn orthonormalize_entry<O, B>(
     operator: &mut O,
     mut vector: B::Buffer,
-    existing: &[BlockEntry<B>],
+    mut mass: B::Buffer,
+    existing: &[(B::Buffer, B::Buffer)],
     zero_tol: f64,
     deflation:Option<&super::deflation::DeflationSubspace<B>>,
-) -> Option<BlockEntry<B>>
+) -> Option<(B::Buffer, B::Buffer)>
 where
     O: LinearOperator<B>,
     B: SpectralBackend,
 {
-    // Constraints apply to both warm starts and random rank repair.
-    operator.constrain(&mut vector);
-    // Compute mass vector
-    let mut mass = operator.alloc_field();
-    operator.apply_mass(&vector, &mut mass);
-
-    if let Some(locked)=deflation {locked.project_single(operator.backend(),&mut vector,&mut mass);}
+    let backend = operator.backend();
+    let before = b_norm(backend, &vector, &mass);
+    if let Some(locked)=deflation {locked.project_single(backend,&mut vector,&mut mass);}
 
     // Project out components along existing basis vectors (B-orthogonalization)
-    for entry in existing {
-        project_out(
-            operator.backend(),
-            &mut vector,
-            &mut mass,
-            &entry.vector,
-            &entry.mass,
-        );
+    for (basis, basis_mass) in existing {
+        project_out(backend, &mut vector, &mut mass, basis, basis_mass);
     }
 
     // Normalize to unit B-norm (returns 0.0 if norm is below tolerance)
-    let norm =
-        normalize_to_unit_b_norm_with_tol(operator.backend(), &mut vector, &mut mass, zero_tol);
+    let norm = normalize_to_unit_b_norm_with_tol(backend, &mut vector, &mut mass, zero_tol);
     if norm == 0.0 {
         return None;
     }
-    // Projection can cancel most of a nearly dependent seed; the incrementally
-    // updated B·x then carries rounding error amplified by 1/norm.
-    operator.apply_mass(&vector, &mut mass);
-    if normalize_to_unit_b_norm_with_tol(operator.backend(), &mut vector, &mut mass, zero_tol) == 0.0 {
-        return None;
+    // Projection can cancel most of a nearly dependent seed; the incrementally updated
+    // B·x then carries rounding error amplified by the lost norm, so it is recomputed.
+    if norm < 0.5 * before {
+        operator.apply_mass(&vector, &mut mass);
+        if normalize_to_unit_b_norm_with_tol(operator.backend(), &mut vector, &mut mass, zero_tol) == 0.0 {
+            return None;
+        }
     }
-
-    // Apply the operator to get A*x
-    let mut applied = operator.alloc_field();
-    operator.apply(&vector, &mut applied);
-
-    Some(BlockEntry {
-        vector,
-        mass,
-        applied,
-    })
+    Some((vector, mass))
 }

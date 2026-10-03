@@ -398,7 +398,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     crate::profiler::start_timer("svqb::gram_matrix");
 
     #[cfg(feature = "native-linalg")]
-    let gram = if backend.real_coefficients() {backend.gram_matrix(vectors,mass_vectors)} else {
+    let gram = if backend.real_coefficients() || backend.prefer_backend_linear_combinations() {backend.gram_matrix(vectors,mass_vectors)} else {
         // CPU path with faer: use GEMM for Gram matrix computation
         // G = X^H * BX where X is n×p and BX is n×p, result is p×p
         // This is O(n*p²) with optimized BLAS instead of O(p²) separate dot products
@@ -432,7 +432,7 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
     };
 
     #[cfg(feature = "wasm-linalg")]
-    let gram = if backend.real_coefficients() {backend.gram_matrix(vectors,mass_vectors)} else {
+    let gram = if backend.real_coefficients() || backend.prefer_backend_linear_combinations() {backend.gram_matrix(vectors,mass_vectors)} else {
         // CPU path with nalgebra: use GEMM for Gram matrix computation
         // G = X^H * BX where X is n×p and BX is n×p, result is p×p
         let n = vectors[0].as_slice().len();
