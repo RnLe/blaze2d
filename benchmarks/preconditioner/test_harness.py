@@ -168,15 +168,20 @@ class VerdictTests(unittest.TestCase):
         self.assertTrue(any(r.startswith('windows_mean') for r in heavy['reasons']))
 
     def test_memory_cpu_pressure_and_on_cpu(self):
-        rows = samples()
-        for row in rows:
-            if row['kind'] == 'linux' and row['t'] > 5:
-                row['pswpout'] = 3
-                row['psi_cpu_some_us'] = 2e6
-        result = self.verdict(rows)
+        def swapping(pages):
+            rows = samples()
+            for row in rows:
+                if row['kind'] == 'linux' and row['t'] > 5:
+                    row['pswpout'] = pages
+                    row['psi_cpu_some_us'] = 2e6
+            return self.verdict(rows)
+        result = swapping(loadmon.SWAP_TOLERANCE_PAGES + 1)
         codes = {r.split(':')[0] for r in result['reasons']}
         self.assertEqual(codes, {'memory', 'psi_cpu'})
         self.assertFalse(loadmon.background_only(result))
+        stray = swapping(3)  # a few pages of other processes are background noise
+        self.assertEqual({r.split(':')[0] for r in stray['reasons']}, {'swap', 'psi_cpu'})
+        self.assertTrue(loadmon.background_only(stray))
         starved = self.verdict(samples(), child_cpu_seconds=7.0)
         self.assertTrue(any(r.startswith('on_cpu') for r in starved['reasons']))
         low = self.verdict(samples(mem_available=1024**3))
@@ -240,6 +245,7 @@ class StatisticsTests(unittest.TestCase):
         self.assertTrue(run_timing.matched([run('contaminated', 1.2, ['linux_mean: 1.2 > 0.5']), run('clean', 0.9)]))
         self.assertFalse(run_timing.matched([run('contaminated', 1.4, ['linux_mean: x']), run('clean', 0.2)]))
         self.assertFalse(run_timing.matched([run('contaminated', 0.3, ['memory: swap']), run('clean', 0.2)]))
+        self.assertTrue(run_timing.matched([run('contaminated', 0.3, ['swap: swap_in increased by 3']), run('clean', 0.2)]))
         self.assertFalse(run_timing.matched([run('unknown', 0.3, ['evidence: x']), run('clean', 0.2)]))
 
 

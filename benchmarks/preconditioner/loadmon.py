@@ -26,7 +26,11 @@ from quiet_host import QuietHost, assess
 
 LIMITS = dict(linux_mean=0.5, linux_peak=1.5, windows_mean=1.5, windows_peak=3.0,
               psi_cpu=0.02, on_cpu=0.98, memory_available=2 * 1024**3)
-BACKGROUND_REASONS = frozenset({'linux_mean', 'linux_peak', 'windows_mean', 'windows_peak', 'psi_cpu'})
+BACKGROUND_REASONS = frozenset({'linux_mean', 'linux_peak', 'windows_mean', 'windows_peak', 'psi_cpu', 'swap'})
+# Stray swap traffic of other processes (WSL pages idle processes in and out): up to this
+# many pages it is background noise like the CPU limits; more, or any full memory stall,
+# stays a hard failure.
+SWAP_TOLERANCE_PAGES = 1024
 TICKS = os.sysconf('SC_CLK_TCK')
 HERE = Path(__file__).resolve().parent
 
@@ -227,7 +231,8 @@ def verdict(samples: list[dict[str, Any]], t0: float, t1: float, child_cpu_secon
             reasons.append(f'{code}: {value:.3f} > {bound}')
     for key in ('swap_in', 'swap_out', 'memory_full_stall_us'):
         if m[key]:
-            reasons.append(f'memory: {key} increased by {m[key]}')
+            code = 'swap' if key != 'memory_full_stall_us' and m[key] <= SWAP_TOLERANCE_PAGES else 'memory'
+            reasons.append(f'{code}: {key} increased by {m[key]}')
     if m['min_mem_available_bytes'] < limits['memory_available']:
         reasons.append(f"memory: MemAvailable {m['min_mem_available_bytes'] / 1024**3:.2f} GiB < 2 GiB")
     if child_cpu_seconds is not None:

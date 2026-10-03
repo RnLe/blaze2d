@@ -867,6 +867,29 @@
       }
     }
   },
+  "complex-c4-ref": {
+    "description": "complex-c4 settings, for A/B against another binary (reference side)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile = \"auto\" (binaries from 9063f364)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "spatial_complex",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "profile": "auto"
+      }
+    }
+  },
   "frozen-complex-tight": {
     "description": "Frozen binary with its default (complex) arithmetic and a tight eigenvalue-change stop, for accuracy-matched timing",
     "binary": "frozen",

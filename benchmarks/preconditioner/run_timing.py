@@ -7,9 +7,10 @@ random order, admitted as a whole like a pair; ratios are then seconds(first var
 seconds(variant) for every other variant.
 A pair whose members are not both clean reruns as a whole (at most three attempts, ten
 seconds apart); the first clean attempt wins, otherwise the first paired-matched attempt
-(only background-load reasons, Linux background <= 1.5 cores in both runs and differing
-by <= 0.5). Solver seconds are the job timer rescaled to CLOCK_MONOTONIC_RAW through
-normalized_timing; process seconds are raw wall time including startup and output.
+(only background-load reasons incl. small swap traffic, Linux background <= 1.5 cores in
+both runs and differing by <= 0.5, Windows background <= 4 cores). Solver seconds are the
+job timer rescaled to CLOCK_MONOTONIC_RAW through normalized_timing; process seconds are
+raw wall time including startup and output.
 Ratios are seconds(A) / seconds(B), so values above one mean B is faster.
 """
 from __future__ import annotations
@@ -34,6 +35,7 @@ RESAMPLES = 10000
 PRACTICAL = 1.02
 MATCHED_BACKGROUND = 1.5
 MATCHED_DIFFERENCE = 0.5
+MATCHED_WINDOWS = 4.0
 SENSITIVITY = 0.10
 SUMMARY_SCHEMA = 'blaze2d-lab/preconditioner/timing-summary/1'
 
@@ -100,7 +102,7 @@ def matched(runs: list[dict[str, Any]]) -> bool:
     backgrounds = [m.get('linux_background_mean') for m in metrics]
     if any(b is None or b > MATCHED_BACKGROUND for b in backgrounds):
         return False
-    if any((m.get('windows_background_mean') or 0) > loadmon.LIMITS['windows_peak'] for m in metrics):
+    if any((m.get('windows_background_mean') or 0) > MATCHED_WINDOWS for m in metrics):
         return False
     return max(backgrounds) - min(backgrounds) <= MATCHED_DIFFERENCE
 
@@ -311,7 +313,8 @@ def main() -> None:
                                 attempts=args.attempts, pause_seconds=args.pause, warmups_per_variant=1,
                                 accept_matched=args.accept_matched,
                                 limits=loadmon.LIMITS, matched=dict(background=MATCHED_BACKGROUND,
-                                                                    difference=MATCHED_DIFFERENCE),
+                                                                    difference=MATCHED_DIFFERENCE,
+                                                                    windows=MATCHED_WINDOWS),
                                 practical_ratio=PRACTICAL, resamples=RESAMPLES)
     runlib.write_json(path, meta)
     entries = json.loads((root / 'pairs.json').read_text()) if (root / 'pairs.json').exists() else []
