@@ -897,5 +897,28 @@
         "profile": "none"
       }
     }
+  },
+  "c4-ref": {
+    "description": "c4 settings, for A/B against another binary (reference side)",
+    "binary": "current",
+    "requires": "eigensolver.preconditioner.profile = \"auto\" (binaries from 9063f364)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "residual",
+      "residual_tolerance": 1e-07,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "continuous",
+        "shift_fraction": 0.0,
+        "transverse_weight": "tensor",
+        "profile": "auto"
+      }
+    }
   }
 }

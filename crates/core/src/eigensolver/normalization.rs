@@ -249,11 +249,77 @@ pub struct SvqbConfig {
     pub drop_tol: f64,
     /// Return the input-to-output coefficient map in [`SvqbResult::transform`].
     pub keep_transform: bool,
+    /// B is the identity: the mass vectors equal the vectors, so the updated mass
+    /// vectors are copies instead of a second linear combination.
+    pub mass_is_identity: bool,
 }
 
 impl Default for SvqbConfig {
     fn default() -> Self {
-        Self { drop_tol: 1e-12, keep_transform: false }
+        Self { drop_tol: 1e-12, keep_transform: false, mass_is_identity: false }
+    }
+}
+
+/// SVQB without forming the orthonormal block (real-coefficient backends): returns the
+/// transform T with Q = S·T, column normalization folded in, from one Gram product of the
+/// raw columns. Callers that only need Q inside linear combinations compose T with their
+/// coefficients, so Q, B·Q and A·Q are never written. Rank and drops follow
+/// [`svqb_orthonormalize`]; B-norms come from the Gram diagonal.
+pub fn svqb_transform<B: SpectralBackend>(
+    backend: &B,
+    vectors: &[B::Buffer],
+    mass_vectors: &[B::Buffer],
+    config: &SvqbConfig,
+) -> SvqbResult {
+    assert!(backend.real_coefficients(), "the transform-only SVQB needs real coefficients");
+    let p = vectors.len();
+    crate::profiler::count("svqb_gram.elements", p * p);
+    crate::profiler::count("svqb_gram.multiply_terms", p * p * vectors.first().map_or(0, |v| backend.gram_rows(v)));
+    let empty = |dropped: usize, singular_values: Vec<f64>| SvqbResult {
+        output_rank: 0, input_count: p, dropped_count: dropped, singular_values, kept_indices: vec![],
+        block_drops: None, transform: Some(vec![]),
+    };
+    if p == 0 {
+        return empty(0, vec![]);
+    }
+    let raw = backend.gram_matrix(vectors, mass_vectors);
+    let unit: Vec<f64> = (0..p).map(|i| {
+        let norm = raw[i * p + i].re.max(0.0).sqrt();
+        if norm > 1e-30 { 1.0 / norm } else { 0.0 }
+    }).collect();
+    let mut column_major = vec![Complex64::ZERO; p * p];
+    for i in 0..p {
+        for j in 0..p {
+            column_major[i + p * j] = 0.5 * (raw[i * p + j] + raw[j * p + i].conj()) * (unit[i] * unit[j]);
+        }
+    }
+    let eigen = backend.dense_eigen(&column_major, p);
+    // Descending order, as in `svqb_orthonormalize`.
+    let eigenvalues: Vec<f64> = eigen.eigenvalues.iter().rev().copied().collect();
+    let max_eigenvalue = eigenvalues.iter().cloned().fold(0.0f64, f64::max);
+    let threshold = config.drop_tol * max_eigenvalue;
+    let singular_values: Vec<f64> = eigenvalues.iter().map(|&ev| ev.max(0.0).sqrt()).collect();
+    let kept_indices: Vec<usize> = (0..p).filter(|&i| eigenvalues[i] >= threshold && eigenvalues[i] > 0.0).collect();
+    let rank = kept_indices.len();
+    if rank == 0 {
+        return empty(p, singular_values);
+    }
+    let mut transform = vec![Complex64::ZERO; p * rank];
+    for (j, &col) in kept_indices.iter().enumerate() {
+        let scale = 1.0 / eigenvalues[col].max(1e-30).sqrt();
+        let source = p - 1 - col;
+        for i in 0..p {
+            transform[i + p * j] = eigen.eigenvectors[i + p * source] * (scale * unit[i]);
+        }
+    }
+    SvqbResult {
+        output_rank: rank,
+        input_count: p,
+        dropped_count: p - rank,
+        singular_values,
+        kept_indices,
+        block_drops: None,
+        transform: Some(transform),
     }
 }
 
@@ -450,9 +516,13 @@ pub fn svqb_orthonormalize<B: SpectralBackend>(
             let mut coefficients=vec![Complex64::ZERO;p*rank];
             for j in 0..rank {for i in 0..p {coefficients[i+p*j]=eigenvectors[i*p+kept_indices[j]]/eigenvalues[kept_indices[j]].max(1e-30).sqrt();}}
             let x=backend.linear_combinations(vectors,&coefficients,rank);
-            let bx=backend.linear_combinations(mass_vectors,&coefficients,rank);
+            if config.mass_is_identity {
+                for (dst,src) in mass_vectors.iter_mut().zip(&x) {dst.as_mut_slice().copy_from_slice(src.as_slice());}
+            } else {
+                let bx=backend.linear_combinations(mass_vectors,&coefficients,rank);
+                for (dst,src) in mass_vectors.iter_mut().zip(bx) {*dst=src;}
+            }
             for (dst,src) in vectors.iter_mut().zip(x) {*dst=src;}
-            for (dst,src) in mass_vectors.iter_mut().zip(bx) {*dst=src;}
         } else {
         // CPU path: use GEMM for matrix multiplication
         // X_new = X_old * T where X_old is n×p and T is p×rank

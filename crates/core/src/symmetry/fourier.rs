@@ -53,26 +53,45 @@ impl CoordinateSetup {
     }
 }
 
+/// Columns released by the solver, kept for reuse: allocating, faulting in and zeroing a
+/// fresh column for every product dominated the dense work at large grids.
+const POOLED_COLUMNS:usize=256;
 #[derive(Default)]
-struct AllocationLedger {live:AtomicUsize,peak:AtomicUsize}
+struct AllocationLedger {live:AtomicUsize,peak:AtomicUsize,pool:std::sync::Mutex<Vec<Vec<C>>>}
 impl AllocationLedger {
     fn add(&self,n:usize) {let live=self.live.fetch_add(n,Ordering::Relaxed)+n;self.peak.fetch_max(live,Ordering::Relaxed);}
+    /// A column of `len` values, reused when possible; zeroed unless the caller overwrites it.
+    fn take(&self,len:usize,zeroed:bool)->Vec<C> {
+        self.add(len*16);
+        let reused={let mut pool=self.pool.lock().unwrap();pool.iter().rposition(|v|v.len()==len).map(|i|pool.swap_remove(i))};
+        match reused {Some(mut v)=>{if zeroed {v.fill(C::ZERO);}v} None=>vec![C::ZERO;len]}
+    }
+    fn release(&self,data:Vec<C>) {
+        self.live.fetch_sub(data.len()*16,Ordering::Relaxed);
+        let mut pool=self.pool.lock().unwrap();
+        if !data.is_empty() && pool.len()<POOLED_COLUMNS {pool.push(data);}
+    }
 }
-struct CoordinateBuffer {field:Field2D,ledger:Arc<AllocationLedger>}
-impl Clone for CoordinateBuffer {fn clone(&self)->Self {self.ledger.add(self.field.len()*16);Self{field:self.field.clone(),ledger:self.ledger.clone()}}}
-impl Drop for CoordinateBuffer {fn drop(&mut self) {self.ledger.live.fetch_sub(self.field.len()*16,Ordering::Relaxed);}}
+struct CoordinateBuffer {grid:Grid2D,data:Vec<C>,ledger:Arc<AllocationLedger>}
+impl CoordinateBuffer {
+    fn to_field(&self)->Field2D {Field2D::from_vec(self.grid,self.data.clone())}
+}
+impl Clone for CoordinateBuffer {
+    fn clone(&self)->Self {let mut data=self.ledger.take(self.data.len(),false);data.copy_from_slice(&self.data);Self{grid:self.grid,data,ledger:self.ledger.clone()}}
+}
+impl Drop for CoordinateBuffer {fn drop(&mut self) {self.ledger.release(std::mem::take(&mut self.data));}}
 impl SpectralBuffer for CoordinateBuffer {
     type Real=f64;
-    fn len(&self)->usize {self.field.len()}
-    fn grid(&self)->Grid2D {self.field.grid()}
-    fn as_slice(&self)->&[C] {self.field.as_slice()}
-    fn as_mut_slice(&mut self)->&mut[C] {self.field.as_mut_slice()}
+    fn len(&self)->usize {self.data.len()}
+    fn grid(&self)->Grid2D {self.grid}
+    fn as_slice(&self)->&[C] {&self.data}
+    fn as_mut_slice(&mut self)->&mut[C] {&mut self.data}
 }
 #[derive(Clone)]
 struct CoordinateBackend {ledger:Arc<AllocationLedger>,nreal:usize,real_space:bool,packed:bool,real_vectors:bool,real_gram:bool,real_dense:bool}
 impl SpectralBackend for CoordinateBackend {
     type Real=f64;type Buffer=CoordinateBuffer;
-    fn alloc_field(&self,grid:Grid2D)->CoordinateBuffer {self.ledger.add(grid.len()*16);CoordinateBuffer{field:Field2D::zeros(grid),ledger:self.ledger.clone()}}
+    fn alloc_field(&self,grid:Grid2D)->CoordinateBuffer {CoordinateBuffer{grid,data:self.ledger.take(grid.len(),true),ledger:self.ledger.clone()}}
     fn forward_fft_2d(&self,_:&mut CoordinateBuffer) {unreachable!("Fourier coordinates use the physical FFT backend")}
     fn inverse_fft_2d(&self,_:&mut CoordinateBuffer) {unreachable!("Fourier coordinates use the physical FFT backend")}
     fn real_coefficients(&self)->bool {self.real_space}
@@ -98,9 +117,23 @@ impl SpectralBackend for CoordinateBackend {
         crate::profiler::count("real_vector.multiply_terms",self.nreal*r*m);
         #[cfg(feature="native-linalg")]
         {
-            let a=faer::Mat::<f64>::from_fn(self.nreal,r,|i,j|scalar(q[j].as_slice(),i,self.packed));
-            let b=faer::Mat::<f64>::from_fn(r,m,|i,j|coefficients[i+r*j].re);let result=a*b;
-            (0..m).map(|j|{let mut out=self.alloc_field(q[0].grid());for i in 0..self.nreal {set_scalar(out.as_mut_slice(),i,result[(i,j)],self.packed);}out}).collect()
+            let b=faer::Mat::<f64>::from_fn(r,m,|i,j|coefficients[i+r*j].re);
+            // Every output value is written below, so recycled columns need no zeroing.
+            let grid=q[0].grid();
+            let mut outputs:Vec<CoordinateBuffer>=(0..m).map(|_|CoordinateBuffer{grid,data:self.ledger.take(grid.len(),false),ledger:self.ledger.clone()}).collect();
+            PANELS.with_borrow_mut(|[a,result]|{
+                resize(a,PANEL*r);resize(result,PANEL*m);
+                let mut start=0;
+                while start<self.nreal {
+                    let rows=PANEL.min(self.nreal-start);
+                    for (j,column) in q.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut a[j*rows..(j+1)*rows]);}
+                    faer::linalg::matmul::matmul(faer::MatMut::from_column_major_slice_mut(&mut result[..rows*m],rows,m),faer::Accum::Replace,
+                        faer::MatRef::from_column_major_slice(&a[..rows*r],rows,r),b.as_ref(),1.0,faer::get_global_parallelism());
+                    for (j,out) in outputs.iter_mut().enumerate() {unpack_rows(&result[j*rows..(j+1)*rows],start,rows,self.packed,out.as_mut_slice());}
+                    start+=rows;
+                }
+            });
+            outputs
         }
         #[cfg(feature="wasm-linalg")]
         {(0..m).map(|j|{let mut out=self.alloc_field(q[0].grid());for i in 0..self.nreal {let value=(0..r).map(|p|scalar(q[p].as_slice(),i,self.packed)*coefficients[p+r*j].re).sum();set_scalar(out.as_mut_slice(),i,value,self.packed);}out}).collect()}
@@ -114,9 +147,20 @@ impl SpectralBackend for CoordinateBackend {
         {
             if self.real_gram {
                 crate::profile_scope!("real_gram");crate::profiler::count("real_gram.multiply_terms",self.nreal*p*q);
-                let a=faer::Mat::<f64>::from_fn(self.nreal,p,|i,j|scalar(x[j].as_slice(),i,self.packed));
-                let b=faer::Mat::<f64>::from_fn(self.nreal,q,|i,j|scalar(y[j].as_slice(),i,self.packed));
-                let product=a.transpose()*b;return (0..p*q).map(|i|C::new(product[(i/q,i%q)],0.0)).collect();
+                let mut product=faer::Mat::<f64>::zeros(p,q);
+                PANELS.with_borrow_mut(|[a,b]|{
+                    resize(a,PANEL*p);resize(b,PANEL*q);
+                    let mut start=0;let mut accum=faer::Accum::Replace;
+                    while start<self.nreal {
+                        let rows=PANEL.min(self.nreal-start);
+                        for (j,column) in x.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut a[j*rows..(j+1)*rows]);}
+                        for (j,column) in y.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut b[j*rows..(j+1)*rows]);}
+                        faer::linalg::matmul::matmul(product.as_mut(),accum,faer::MatRef::from_column_major_slice(&a[..rows*p],rows,p).transpose(),
+                            faer::MatRef::from_column_major_slice(&b[..rows*q],rows,q),1.0,faer::get_global_parallelism());
+                        accum=faer::Accum::Add;start+=rows;
+                    }
+                });
+                return (0..p*q).map(|i|C::new(product[(i/q,i%q)],0.0)).collect();
             }
             let a=faer::Mat::<faer::c64>::from_fn(self.nreal,p,|i,j|C::new(scalar(x[j].as_slice(),i,self.packed),0.0));
             let b=faer::Mat::<faer::c64>::from_fn(self.nreal,q,|i,j|C::new(scalar(y[j].as_slice(),i,self.packed),0.0));
@@ -125,6 +169,42 @@ impl SpectralBackend for CoordinateBackend {
         }
         #[cfg(feature="wasm-linalg")]
         {(0..p*q).map(|i|self.dot(&x[i/q],&y[i%q])).collect()}
+    }
+}
+
+// Real GEMMs run over row panels: each panel of every column is copied into a small
+// L2-resident buffer, multiplied by faer and written straight to its destination, so
+// every column is read once and every output written once, without N-sized workspaces.
+#[cfg(feature="native-linalg")]
+const PANEL:usize=512;
+#[cfg(feature="native-linalg")]
+thread_local! {static PANELS:std::cell::RefCell<[Vec<f64>;2]>=const{std::cell::RefCell::new([Vec::new(),Vec::new()])};}
+
+/// Grow (never shrink) a workspace to at least `len`; callers overwrite what they use.
+#[cfg(feature="native-linalg")]
+fn resize(buffer:&mut Vec<f64>,len:usize) {if buffer.len()<len {buffer.resize(len,0.0);}}
+
+/// Real coordinates `start..start + rows` of one column into `dst`; `start` is even.
+#[cfg(feature="native-linalg")]
+fn pack_rows(column:&[C],start:usize,rows:usize,packed:bool,dst:&mut[f64]) {
+    if packed {
+        let (pairs,slots)=(rows/2,&column[start/2..]);
+        for (pair,z) in dst[..2*pairs].chunks_exact_mut(2).zip(&slots[..pairs]) {pair[0]=z.re;pair[1]=z.im;}
+        if rows%2==1 {dst[rows-1]=slots[pairs].re;}
+    } else {
+        for (d,z) in dst[..rows].iter_mut().zip(&column[start..start+rows]) {*d=z.re;}
+    }
+}
+
+/// Inverse of `pack_rows`; writes every storage value of the rows, including unused lanes.
+#[cfg(feature="native-linalg")]
+fn unpack_rows(src:&[f64],start:usize,rows:usize,packed:bool,column:&mut[C]) {
+    if packed {
+        let (pairs,slots)=(rows/2,&mut column[start/2..]);
+        for (z,pair) in slots[..pairs].iter_mut().zip(src[..2*pairs].chunks_exact(2)) {*z=C::new(pair[0],pair[1]);}
+        if rows%2==1 {slots[pairs]=C::new(src[rows-1],0.0);}
+    } else {
+        for (z,&value) in column[start..start+rows].iter_mut().zip(&src[..rows]) {*z=C::new(value,0.0);}
     }
 }
 
@@ -189,6 +269,8 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
     fn grid(&self)->Grid2D {self.conversion.coordinate_grid()}
     fn subspace_dimension(&self)->usize {self.sector.as_ref().map_or(self.full.grid().len(),|s|s.dimension)}
     fn owns_gamma_kernel(&self)->bool {self.sector.as_ref().is_none_or(|s|s.owns_gamma_kernel)}
+    fn apply_is_diagonal(&self)->bool {self.direct_tm}
+    fn mass_is_identity(&self)->bool {self.full.mass_is_identity()}
     fn constrain(&mut self,v:&mut CoordinateBuffer) {
         if let Some(sector)=&self.sector {
             self.conversion.unpack_fourier(v.as_slice(),&mut self.input);

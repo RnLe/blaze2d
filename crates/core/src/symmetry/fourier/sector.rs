@@ -136,7 +136,7 @@ pub(super) fn dense_complete<B: SpectralBackend + Clone>(
             op.backend
                 .axpy(eig.eigenvectors[i + rank * j], &q[i], &mut v);
         }
-        fields.push(v.field.clone());
+        fields.push(v.to_field());
     }
     let mut values = eig.eigenvalues;
     if op.owns_gamma_kernel()

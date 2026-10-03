@@ -1745,6 +1745,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
 }
 
 impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
+    fn mass_is_identity(&self) -> bool {
+        self.polarization == Polarization::TE
+    }
+
     fn apply(&mut self, input: &B::Buffer, output: &mut B::Buffer) {
         match self.polarization {
             Polarization::TE => self.apply_te(input, output),

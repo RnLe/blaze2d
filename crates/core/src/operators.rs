@@ -127,6 +127,13 @@ pub trait LinearOperator<B: SpectralBackend> {
     /// Whether the analytic constant Γ kernel belongs to this solver's space.
     fn owns_gamma_kernel(&self) -> bool { true }
 
+    /// Whether `apply` is a cheap diagonal without transforms, so applying it to a whole
+    /// block beats forming the products from carried ones.
+    fn apply_is_diagonal(&self) -> bool { false }
+
+    /// Whether `apply_mass` is the identity (TE), so B-images are copies of their vectors.
+    fn mass_is_identity(&self) -> bool { false }
+
     /// Whether this coordinate space contains a known exact zero mode at the
     /// current fiber. The default preserves the spatial Γ convention; a
     /// Fourier subspace can also identify the folded mode G = -k without

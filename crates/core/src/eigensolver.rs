@@ -45,7 +45,7 @@ pub use initialization::{
 };
 pub use normalization::{
     SvqbConfig, SvqbResult, b_inner_product, b_norm, normalize_to_unit_b_norm,
-    orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize,
+    orthogonalize_against_basis, orthonormalize_against_basis, project_out, svqb_orthonormalize, svqb_transform,
 };
 pub use refine::{BlockCertification, rayleigh_ritz_certify};
 pub use subspace_prediction::{
@@ -222,6 +222,10 @@ pub struct IterationTrace {
     /// Rank of the orthonormalized search subspace (0 on the converging check).
     pub rank: usize,
 }
+
+/// Iterations that may form A·Q from carried products before A is applied to the whole
+/// search block again.
+const IMPLICIT_PRODUCT_REFRESH: usize = 32;
 
 /// Slack to add to block size beyond n_bands for better convergence.
 const BLOCK_SIZE_SLACK: usize = 2;
@@ -563,6 +567,18 @@ where
     unlocks: Vec<u8>,
     /// Block position of each W vector; `None` keeps the leading-W layout of Ritz history.
     w_positions: Option<Vec<usize>>,
+    /// A·W for the current W block when it was formed from carried products.
+    w_applied: Option<Vec<B::Buffer>>,
+    /// W and A·W produced by the last Ritz update, taken by the Ritz-history update.
+    pending_history: Option<(Vec<B::Buffer>, Option<Vec<B::Buffer>>)>,
+    /// A·Q formed from carried products while orthonormalizing, taken by `compute_aq_block`.
+    implicit_aq: Option<Vec<B::Buffer>>,
+    /// Consecutive iterations whose A·Q came from carried products.
+    implicit_age: usize,
+    /// SVQB transform T (column-major, input × rank) while the iteration works on the raw
+    /// subspace S: the projection is Tᵀ(SᵀA S)T and the updates use T·Y, so the orthonormal
+    /// block is never formed.
+    composed: Option<Vec<num_complex::Complex64>>,
     /// Per-iteration record when tracing.
     trace: Vec<IterationTrace>,
     /// Current iteration count.
@@ -602,6 +618,11 @@ where
             soft_locked: Vec::new(),
             unlocks: Vec::new(),
             w_positions: None,
+            w_applied: None,
+            pending_history: None,
+            implicit_aq: None,
+            implicit_age: 0,
+            composed: None,
             trace: Vec::new(),
             iteration: 0,
             initialized: false,
@@ -1255,6 +1276,8 @@ where
         p_block: &[B::Buffer],
     ) -> (Vec<B::Buffer>, Vec<B::Buffer>, (usize, usize, usize)) {
         let m = self.x_block.len();
+        // Composed iterations with B = I use the subspace itself as its B-image.
+        let skip_mass = self.operator.mass_is_identity() && self.composed_iteration();
 
         // Count active (non-soft-locked) bands
         let n_active = self.soft_locked.iter().take(m).filter(|&&b| !b).count();
@@ -1279,7 +1302,9 @@ where
         // (including soft-locked bands - they stay in X for Rayleigh-Ritz)
         for entry in &self.x_block {
             subspace.push(entry.vector.clone());
-            bx_precomputed.push(entry.mass.clone());
+            if !skip_mass {
+                bx_precomputed.push(entry.mass.clone());
+            }
         }
 
         // Add P_k vectors ONLY for active (non-soft-locked) bands
@@ -1378,8 +1403,10 @@ where
         // Remaining vectors (P and W): compute B*v fresh using batched apply_mass
         let p_w_start = x_size;
         let p_w_count = q_block.len() - x_size;
+        let composed = self.composed_iteration();
+        let identity_mass = composed && self.operator.mass_is_identity();
 
-        if p_w_count > 0 {
+        if p_w_count > 0 && !identity_mass {
             // Allocate outputs for P and W mass application
             let mut b_pw_block = Vec::with_capacity(p_w_count);
             for _ in 0..p_w_count {
@@ -1394,10 +1421,48 @@ where
             bq_block.append(&mut b_pw_block);
         }
 
+        // A·Q = [A·X, A·P, A·W]·T: with A·X from the Ritz update and A·W carried from the
+        // history update, only the new block P needs operator applications. Applying A
+        // to the whole block again every `IMPLICIT_PRODUCT_REFRESH` iterations bounds drift;
+        // convergence is only ever accepted on fresh products (`refresh_products`).
+        let carried = self.operator.backend().prefer_backend_linear_combinations()
+            && !self.operator.apply_is_diagonal()
+            && self.w_positions.is_none()
+            && self.implicit_age < IMPLICIT_PRODUCT_REFRESH
+            && x_size == self.x_block.len()
+            && (w_size == 0 || self.w_applied.as_ref().is_some_and(|aw| aw.len() >= w_size));
+        let products = carried.then(|| {
+            let mut products: Vec<B::Buffer> = self.x_block.iter().map(|entry| entry.applied.clone()).collect();
+            let mut applied: Vec<B::Buffer> = (0..p_size).map(|_| self.operator.alloc_field()).collect();
+            self.operator.batch_apply(&q_block[x_size..x_size + p_size], &mut applied);
+            products.append(&mut applied);
+            products.extend(self.w_applied.take().unwrap_or_default().into_iter().take(w_size));
+            products
+        });
+        self.w_applied = None;
+
+        // Composed iterations keep the raw subspace and only compute the transform; the
+        // projection and the Ritz update fold it into their coefficients.
+        self.composed = None;
+        if composed {
+            crate::profiler::start_timer("svqb");
+            let mass = if identity_mass { &q_block } else { &bq_block };
+            let mut result = svqb_transform(self.operator.backend(), &q_block, mass, &SvqbConfig::default());
+            crate::profiler::stop_timer("svqb");
+            result.block_drops = Some(result.compute_block_drops(x_size, p_size, w_size));
+            self.composed = result.transform.clone();
+            // A·S itself: carried products, or `compute_aq_block` applies A to S.
+            self.implicit_aq = products;
+            self.implicit_age = if self.implicit_aq.is_some() { self.implicit_age + 1 } else { 0 };
+            crate::profiler::stop_timer("orthonormalize_subspace");
+            return (q_block, bq_block, result);
+        }
+
         // Apply SVQB to B-orthonormalize
         crate::profiler::start_timer("svqb");
         let config = SvqbConfig {
-            keep_transform: self.config.history == HistoryRule::Conjugate,
+            keep_transform: self.config.history == HistoryRule::Conjugate || products.is_some(),
+            mass_is_identity: self.operator.mass_is_identity(),
             ..SvqbConfig::default()
         };
         let mut result = svqb_orthonormalize(
@@ -1407,6 +1472,11 @@ where
             &config,
         );
         crate::profiler::stop_timer("svqb");
+        self.implicit_aq = products.map(|products| {
+            let transform = result.transform.as_ref().expect("the transform was kept");
+            self.operator.backend().linear_combinations(&products, transform, result.output_rank)
+        });
+        self.implicit_age = if self.implicit_aq.is_some() { self.implicit_age + 1 } else { 0 };
 
         // Compute per-block drop counts from kept_indices
         let block_drops = result.compute_block_drops(x_size, p_size, w_size);
@@ -1433,7 +1503,18 @@ where
     ///
     /// # Returns
     /// A vector of buffers containing A*q_j for each q_j in q_block.
+    /// Whether iterations compose the SVQB transform into their coefficients instead of
+    /// forming the orthonormal block (real-coefficient backends with Ritz or no history).
+    fn composed_iteration(&self) -> bool {
+        let backend = self.operator.backend();
+        backend.prefer_backend_linear_combinations() && backend.real_coefficients() && self.config.history != HistoryRule::Conjugate
+    }
+
     fn compute_aq_block(&mut self, q_block: &[B::Buffer]) -> Vec<B::Buffer> {
+        if let Some(aq_block) = self.implicit_aq.take() {
+            debug_assert_eq!(aq_block.len(), q_block.len());
+            return aq_block;
+        }
         crate::profiler::start_timer("compute_aq_block");
 
         let r = q_block.len();
@@ -1481,6 +1562,16 @@ where
             let gram=self.operator.backend().gram_matrix(q_block,aq_block);
             let mut result=vec![num_complex::Complex64::ZERO;r*r];
             for i in 0..r {for j in 0..r {result[i+r*j]=0.5*(gram[i*r+j]+gram[j*r+i].conj());}}
+            if let Some(transform) = &self.composed {
+                // A_s = Tᵀ H T with H = SᵀA S (symmetrized above), all r ≤ 3m small.
+                let rank = transform.len() / r.max(1);
+                let mut ht = vec![num_complex::Complex64::ZERO; r * rank];
+                for j in 0..rank {for k in 0..r {let t = transform[k + r * j]; if t != num_complex::Complex64::ZERO {for i in 0..r {ht[i + r * j] += result[i + r * k] * t;}}}}
+                let mut projected = vec![num_complex::Complex64::ZERO; rank * rank];
+                for j in 0..rank {for i in 0..rank {projected[i + rank * j] = (0..r).map(|k| transform[k + r * i].conj() * ht[k + r * j]).sum();}}
+                for j in 0..rank {for i in 0..j {let mean = 0.5 * (projected[i + rank * j] + projected[j + rank * i].conj()); projected[i + rank * j] = mean; projected[j + rank * i] = mean.conj();}}
+                crate::profiler::stop_timer("project_operator");return projected;
+            }
             crate::profiler::stop_timer("project_operator");return result;
         }
 
@@ -1607,12 +1698,33 @@ where
         }
 
         if self.operator.backend().prefer_backend_linear_combinations() {
-            let backend=self.operator.backend();let coefficients=&dense_result.eigenvectors[..r*m];
-            let x=backend.linear_combinations(q_block,coefficients,m);let bx=backend.linear_combinations(bq_block,coefficients,m);let ax=backend.linear_combinations(aq_block,coefficients,m);
-            self.x_block=x.into_iter().zip(bx).zip(ax).map(|((vector,mass),applied)|BlockEntry{vector,mass,applied}).collect();
-            #[cfg(feature="profiling")] crate::profiler::stop_timer("update_ritz_vectors");
+            // Ritz history takes the next columns of Y as W, so X and W (and A·X with A·W
+            // when products are carried) come from one pass over Q and A·Q.
+            let n_w = if self.config.history == HistoryRule::Ritz { (2 * m).min(r) - m } else { 0 };
+            let carry = n_w > 0 && !self.operator.apply_is_diagonal();
+            // Composed iterations work on the raw subspace: the coefficients are T·Y.
+            let composed = self.composed.take().map(|transform| {
+                let p = q_block.len();
+                let mut c = vec![num_complex::Complex64::ZERO; p * (m + n_w)];
+                for j in 0..m + n_w {for l in 0..r {let y = dense_result.eigenvectors[l + r * j]; if y != num_complex::Complex64::ZERO {for i in 0..p {c[i + p * j] += transform[i + p * l] * y;}}}}
+                c
+            });
+            let rows = composed.as_ref().map_or(r, |_| q_block.len());
+            let all = composed.as_deref().unwrap_or(&dense_result.eigenvectors);
+            let coefficients = |k: usize| &all[..rows * k];
+            let backend = self.operator.backend();
+            let mut x = backend.linear_combinations(q_block, coefficients(m + n_w), m + n_w);
+            let bx = if self.operator.mass_is_identity() { x[..m].to_vec() } else { backend.linear_combinations(bq_block, coefficients(m), m) };
+            let mut ax = backend.linear_combinations(aq_block, coefficients(if carry { m + n_w } else { m }), if carry { m + n_w } else { m });
+            let w = x.split_off(m);
+            let aw = carry.then(|| ax.split_off(m));
+            self.pending_history = (n_w > 0).then_some((w, aw));
+            self.x_block = x.into_iter().zip(bx).zip(ax).map(|((vector, mass), applied)| BlockEntry { vector, mass, applied }).collect();
+            #[cfg(feature = "profiling")]
+            crate::profiler::stop_timer("update_ritz_vectors");
             return;
         }
+        self.pending_history = None;
 
         #[cfg(feature = "native-linalg")]
         let new_x_block = {
@@ -1809,6 +1921,8 @@ where
         let w_end = (2 * m).min(r);
         let n_w = w_end.saturating_sub(w_start);
 
+        let pending = self.pending_history.take();
+        self.w_applied = None;
         if n_w == 0 || r == 0 {
             // No room for W directions (subspace too small)
             self.w_block.clear();
@@ -1816,7 +1930,14 @@ where
         }
 
         if self.operator.backend().prefer_backend_linear_combinations() {
-            self.w_block=self.operator.backend().linear_combinations(q_block,&dense_result.eigenvectors[r*w_start..r*w_end],n_w);return;
+            match pending {
+                Some((w, aw)) if w.len() == n_w => {
+                    self.w_block = w;
+                    self.w_applied = aw;
+                }
+                _ => self.w_block = self.operator.backend().linear_combinations(q_block, &dense_result.eigenvectors[r * w_start..r * w_end], n_w),
+            }
+            return;
         }
 
         #[cfg(feature = "native-linalg")]
@@ -1905,8 +2026,12 @@ where
             HistoryRule::None => {
                 self.w_block.clear();
                 self.w_positions = None;
+                self.w_applied = None;
             }
-            HistoryRule::Conjugate => self.update_conjugate_directions(dense_result, pw_basis, svqb_result, x_size),
+            HistoryRule::Conjugate => {
+                self.w_applied = None;
+                self.update_conjugate_directions(dense_result, pw_basis, svqb_result, x_size)
+            }
         }
     }
 
