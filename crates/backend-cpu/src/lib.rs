@@ -118,7 +118,9 @@ impl<R: Real + FftNum> CpuBackend<R> {
             (row, col)
         };
 
-        let required_len = ny;
+        // The serial path keeps a transposed copy plus the FFT scratch.
+        let fft_scratch_len = row_fft.get_inplace_scratch_len().max(col_fft.get_inplace_scratch_len());
+        let required_len = grid.len() + fft_scratch_len;
         let zero = Complex::<R>::new(R::zero(), R::zero());
 
         let mut scratch_guard = self.scratch_cache.lock().unwrap();
@@ -126,6 +128,7 @@ impl<R: Real + FftNum> CpuBackend<R> {
             scratch_guard.resize(required_len, zero);
         }
         let scratch = &mut *scratch_guard;
+        let mut scaled = false;
 
         let data = buffer.as_mut_slice();
 
@@ -150,11 +153,19 @@ impl<R: Real + FftNum> CpuBackend<R> {
                 );
             }
         } else {
-            process_rows_serial(data, nx, &row_fft);
-            process_columns_serial_with_scratch_buffer(data, nx, ny, &col_fft, scratch);
+            // All rows in one batched call, a cache-tiled transpose, all columns in one
+            // batched call, and the transpose back with the inverse scaling folded in.
+            let (transposed, fft_scratch) = scratch.split_at_mut(data.len());
+            let fft_scratch = &mut fft_scratch[..fft_scratch_len];
+            row_fft.process_with_scratch(data, fft_scratch);
+            transpose_tiled(data, transposed, nx, ny, None);
+            col_fft.process_with_scratch(transposed, fft_scratch);
+            let scale = matches!(direction, FftDirection::Inverse).then(|| R::from_accum(1.0 / (nx * ny) as f64));
+            transpose_tiled(transposed, data, ny, nx, scale);
+            scaled = true;
         }
 
-        if matches!(direction, FftDirection::Inverse) {
+        if matches!(direction, FftDirection::Inverse) && !scaled {
             let scale = R::from_accum(1.0 / (nx * ny) as f64);
             #[cfg(feature = "parallel")]
             if use_parallel {
@@ -278,6 +289,35 @@ impl<R: Real + FftNum> CpuBackend<R> {
 enum FftDirection {
     Forward,
     Inverse,
+}
+
+/// `dst[ix * ny + iy] = src[iy * nx + ix]` (times `scale`), through a stack tile so both
+/// matrices are read and written as contiguous row segments.
+fn transpose_tiled<R: Real>(src: &[Complex<R>], dst: &mut [Complex<R>], nx: usize, ny: usize, scale: Option<R>) {
+    const TILE: usize = 16;
+    assert!(src.len() == nx * ny && dst.len() == nx * ny);
+    let zero = Complex::<R>::new(R::zero(), R::zero());
+    let mut tile = [zero; TILE * TILE];
+    for y0 in (0..ny).step_by(TILE) {
+        let h = TILE.min(ny - y0);
+        for x0 in (0..nx).step_by(TILE) {
+            let w = TILE.min(nx - x0);
+            for dy in 0..h {
+                let row = &src[(y0 + dy) * nx + x0..][..w];
+                for (dx, &value) in row.iter().enumerate() {
+                    tile[dx * TILE + dy] = value;
+                }
+            }
+            for dx in 0..w {
+                let out = &mut dst[(x0 + dx) * ny + y0..][..h];
+                let column = &tile[dx * TILE..][..h];
+                match scale {
+                    Some(scale) => out.iter_mut().zip(column).for_each(|(o, &v)| *o = v * scale),
+                    None => out.copy_from_slice(column),
+                }
+            }
+        }
+    }
 }
 
 fn process_rows_serial<R: FftNum>(data: &mut [Complex<R>], nx: usize, fft: &Arc<dyn Fft<R>>) {

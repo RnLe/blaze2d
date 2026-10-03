@@ -103,7 +103,10 @@ impl SpectralBackend for CoordinateBackend {
     fn scale(&self,a:C,v:&mut CoordinateBuffer) {if self.real_space {assert!(a.im.abs()<1e-10*a.norm().max(1.0));for x in v.as_mut_slice() {*x*=a.re;}} else {for x in v.as_mut_slice() {*x*=a;}}}
     fn axpy(&self,a:C,x:&CoordinateBuffer,y:&mut CoordinateBuffer) {if self.real_space {assert!(a.im.abs()<1e-10*a.norm().max(1.0));for (dst,src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {*dst+=a.re*src;}} else {for (dst,src) in y.as_mut_slice().iter_mut().zip(x.as_slice()) {*dst+=a*src;}}}
     fn dot(&self,x:&CoordinateBuffer,y:&CoordinateBuffer)->C {
-        if self.real_space {C::new((0..self.nreal).map(|i|scalar(x.as_slice(),i,self.packed)*scalar(y.as_slice(),i,self.packed)).sum(),0.0)}
+        // Sequential summation on purpose: the near-Γ TM case with a coarse correction
+        // (pt_envelope) stalls when the reduction order changes.
+        if self.real_space && self.packed {C::new(reals(x.as_slice())[..self.nreal].iter().zip(&reals(y.as_slice())[..self.nreal]).map(|(a,b)|a*b).sum(),0.0)}
+        else if self.real_space {C::new(x.as_slice().iter().zip(y.as_slice()).map(|(a,b)|a.re*b.re).sum(),0.0)}
         else {x.as_slice().iter().zip(y.as_slice()).map(|(a,b)|a.conj()*b).sum()}
     }
     fn linear_combinations(&self,q:&[CoordinateBuffer],coefficients:&[C],m:usize)->Vec<CoordinateBuffer> {
@@ -217,9 +220,7 @@ fn resize(buffer:&mut Vec<f64>,len:usize) {if buffer.len()<len {buffer.resize(le
 #[cfg(feature="native-linalg")]
 fn pack_rows(column:&[C],start:usize,rows:usize,packed:bool,dst:&mut[f64]) {
     if packed {
-        let (pairs,slots)=(rows/2,&column[start/2..]);
-        for (pair,z) in dst[..2*pairs].chunks_exact_mut(2).zip(&slots[..pairs]) {pair[0]=z.re;pair[1]=z.im;}
-        if rows%2==1 {dst[rows-1]=slots[pairs].re;}
+        dst[..rows].copy_from_slice(&reals(column)[start..start+rows]);
     } else {
         for (d,z) in dst[..rows].iter_mut().zip(&column[start..start+rows]) {*d=z.re;}
     }
@@ -229,13 +230,19 @@ fn pack_rows(column:&[C],start:usize,rows:usize,packed:bool,dst:&mut[f64]) {
 #[cfg(feature="native-linalg")]
 fn unpack_rows(src:&[f64],start:usize,rows:usize,packed:bool,column:&mut[C]) {
     if packed {
-        let (pairs,slots)=(rows/2,&mut column[start/2..]);
-        for (z,pair) in slots[..pairs].iter_mut().zip(src[..2*pairs].chunks_exact(2)) {*z=C::new(pair[0],pair[1]);}
-        if rows%2==1 {slots[pairs]=C::new(src[rows-1],0.0);}
+        let lanes=reals_mut(column);
+        lanes[start..start+rows].copy_from_slice(&src[..rows]);
+        // An odd count leaves the last slot's second lane unused; keep it zero.
+        if rows%2==1 {lanes[start+rows]=0.0;}
     } else {
         for (z,&value) in column[start..start+rows].iter_mut().zip(&src[..rows]) {*z=C::new(value,0.0);}
     }
 }
+
+/// Packed storage as its real coordinates: coordinate i is lane i of the f64 view
+/// (a safe, layout-checked cast; complex arithmetic is never applied to packed pairs).
+fn reals(v:&[C])->&[f64] {bytemuck::cast_slice(v)}
+fn reals_mut(v:&mut[C])->&mut[f64] {bytemuck::cast_slice_mut(v)}
 
 // Each complex storage lane can hold two independent real coordinates. No
 // unsafe casts and no interpretation as a complex vector space are involved.
@@ -246,7 +253,12 @@ impl<B:SpectralBackend+Clone> Clone for Conversion<B> {fn clone(&self)->Self {Se
 impl<B:SpectralBackend+Clone> Conversion<B> {
     fn coordinate_grid(&self)->Grid2D {if self.packed {Grid2D::new(self.grid.len().div_ceil(2),1,1.0,1.0)} else {self.grid}}
     fn unpack_fourier(&self,coordinates:&[C],out:&mut B::Buffer) {
-        for (i,dst) in out.as_mut_slice().iter_mut().enumerate() {let value=if self.real_space {C::new(scalar(coordinates,i,self.packed),0.0)} else {coordinates[i]};let z=self.gauge[i]*value;*dst=cscalar::<B::Real>(z.re,z.im);}
+        let out=out.as_mut_slice();
+        if self.real_space && self.packed {
+            for ((dst,&g),&c) in out.iter_mut().zip(self.gauge.iter()).zip(reals(coordinates)) {let z=g*c;*dst=cscalar::<B::Real>(z.re,z.im);}
+            return;
+        }
+        for (i,dst) in out.iter_mut().enumerate() {let value=if self.real_space {C::new(scalar(coordinates,i,self.packed),0.0)} else {coordinates[i]};let z=self.gauge[i]*value;*dst=cscalar::<B::Real>(z.re,z.im);}
     }
     fn spatial(&self,coordinates:&[C],out:&mut B::Buffer) {
         self.unpack_fourier(coordinates,out);
@@ -256,9 +268,19 @@ impl<B:SpectralBackend+Clone> Conversion<B> {
         self.backend.forward_fft_2d(spatial);self.pack_fourier(spatial,out,(self.grid.len() as f64).sqrt().recip(),check_real);
     }
     fn pack_fourier(&self,spatial:&B::Buffer,out:&mut[C],factor:f64,check_real:bool) {
-        let mut imaginary=0.0;let mut norm=0.0;out.fill(C::ZERO);
+        let mut imaginary=0.0;let mut norm=0.0;
+        if self.real_space && self.packed {
+            let n=spatial.as_slice().len();let lanes=reals_mut(out);
+            for ((dst,src),&g) in lanes.iter_mut().zip(spatial.as_slice()).zip(self.gauge.iter()) {
+                let z=C::new(src.re.to_accum()*factor,src.im.to_accum()*factor)*g.conj();
+                *dst=z.re;imaginary+=z.im*z.im;norm+=z.norm_sqr();
+            }
+            if n%2==1 {lanes[n]=0.0;}
+        } else {
+        out.fill(C::ZERO);
         for (i,src) in spatial.as_slice().iter().enumerate() {let z=C::new(src.re.to_accum()*factor,src.im.to_accum()*factor)*self.gauge[i].conj();
             if self.real_space {set_scalar(out,i,z.re,self.packed);imaginary+=z.im*z.im;norm+=z.norm_sqr();} else {out[i]=z;}
+        }
         }
         if self.real_space && check_real {let defect=(imaginary/norm.max(f64::MIN_POSITIVE)).sqrt();self.leakage.set(if defect.is_finite() {self.leakage.get().max(defect)}else{f64::INFINITY});}
     }
@@ -268,9 +290,22 @@ impl<B:SpectralBackend+Clone> Conversion<B> {
     /// and imaginary parts of the gauged coefficients (half the FFTs of two applications).
     fn unpack_pair(&self,a:&[C],b:&[C],out:&mut B::Buffer) {
         debug_assert!(self.real_space);
+        if self.packed {
+            for (((dst,&g),&x),&y) in out.as_mut_slice().iter_mut().zip(self.gauge.iter()).zip(reals(a)).zip(reals(b)) {let z=g*C::new(x,y);*dst=cscalar::<B::Real>(z.re,z.im);}
+            return;
+        }
         for (i,dst) in out.as_mut_slice().iter_mut().enumerate() {let z=self.gauge[i]*C::new(scalar(a,i,self.packed),scalar(b,i,self.packed));*dst=cscalar::<B::Real>(z.re,z.im);}
     }
     fn pack_pair(&self,field:&B::Buffer,a:&mut[C],b:&mut[C],factor:f64) {
+        if self.packed {
+            let n=field.as_slice().len();let (la,lb)=(reals_mut(a),reals_mut(b));
+            for (((x,y),src),&g) in la.iter_mut().zip(lb.iter_mut()).zip(field.as_slice()).zip(self.gauge.iter()) {
+                let z=C::new(src.re.to_accum()*factor,src.im.to_accum()*factor)*g.conj();
+                *x=z.re;*y=z.im;
+            }
+            if n%2==1 {la[n]=0.0;lb[n]=0.0;}
+            return;
+        }
         a.fill(C::ZERO);b.fill(C::ZERO);
         for (i,src) in field.as_slice().iter().enumerate() {
             let z=C::new(src.re.to_accum()*factor,src.im.to_accum()*factor)*self.gauge[i].conj();
@@ -300,8 +335,13 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
             crate::profiler::count("operator_A.columns",1);
             crate::profiler::count("operator_A.elements",self.backend.nreal);
             y.as_mut_slice().fill(C::ZERO);
+            if self.backend.packed {
+                let weights=self.full.k_plus_g_squares();
+                for ((dst,&v),&w) in reals_mut(y.as_mut_slice()).iter_mut().zip(reals(x.as_slice())).zip(weights) {*dst=v*w;}
+            } else {
             for (i,&weight) in self.full.k_plus_g_squares().iter().enumerate() {
                 set_scalar(y.as_mut_slice(),i,scalar(x.as_slice(),i,self.backend.packed)*weight,self.backend.packed);
+            }
             }
         } else if self.direct_te {
             self.conversion.unpack_fourier(x.as_slice(),&mut self.input);
@@ -405,9 +445,13 @@ impl<B:SpectralBackend+Clone> OperatorPreconditioner<CoordinateBackend> for Four
             if let Some(diagonal)=self.inner.fourier_diagonal() {
                 crate::profile_scope!("preconditioner_fourier_diagonal");
                 assert_eq!(diagonal.len(),self.conversion.grid.len());
+                if self.conversion.packed {
+                    for (value,&weight) in reals_mut(v.as_mut_slice()).iter_mut().zip(diagonal) {*value*=weight;}
+                } else {
                 for (i,&weight) in diagonal.iter().enumerate() {
                     let value=scalar(v.as_slice(),i,self.conversion.packed)*weight;
                     set_scalar(v.as_mut_slice(),i,value,self.conversion.packed);
+                }
                 }
                 return;
             }

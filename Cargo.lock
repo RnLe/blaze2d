@@ -204,6 +204,7 @@ name = "blaze2d-core"
 version = "0.7.0"
 dependencies = [
  "blaze2d-backend-cpu",
+ "bytemuck",
  "clap",
  "criterion",
  "faer",

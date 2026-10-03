@@ -36,6 +36,7 @@ std-time = []
 
 [dependencies]
 num-complex.workspace = true
+bytemuck = "1"
 num-traits = "0.2"
 serde.workspace = true
 serde_json.workspace = true
