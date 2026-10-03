@@ -2952,18 +2952,27 @@ where
 
     /// Collect all eigenvalues (locked + active) in sorted order.
     fn collect_all_eigenvalues(&self) -> Vec<f64> {
-        let mut all: Vec<f64> = Vec::with_capacity(self.deflation.len() + self.eigenvalues.len());
+        let locked = self.deflation.eigenvalues();
+        self.output_order().into_iter().map(|i| if i < locked.len() { locked[i] } else { self.eigenvalues[i - locked.len()] }).collect()
+    }
 
-        // Add locked eigenvalues
-        all.extend_from_slice(self.deflation.eigenvalues());
-
-        // Add active eigenvalues
-        all.extend_from_slice(&self.eigenvalues);
-
-        // Sort (locked should already be sorted, but ensure overall ordering)
-        all.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-        all
+    /// Output order of all eigenpairs as indices into [deflated, active block]: the
+    /// deflated modes and the requested block positions sorted by eigenvalue, then the
+    /// slack positions sorted. Requested positions are the ones convergence was checked
+    /// on; taking them by position keeps a slack vector out of the result when fresh
+    /// Rayleigh quotients reorder a near-degenerate pair across that boundary.
+    fn output_order(&self) -> Vec<usize> {
+        let locked = self.deflation.eigenvalues();
+        let value = |i: usize| if i < locked.len() { locked[i] } else { self.eigenvalues[i - locked.len()] };
+        let active = self.eigenvalues.len().min(self.x_block.len());
+        let requested = locked.len() + self.required_positions().min(active);
+        let by_value = |a: &usize, b: &usize| value(*a).partial_cmp(&value(*b)).unwrap_or(std::cmp::Ordering::Equal);
+        let mut head: Vec<usize> = (0..requested).collect();
+        head.sort_by(by_value);
+        let mut tail: Vec<usize> = (requested..locked.len() + active).collect();
+        tail.sort_by(by_value);
+        head.extend(tail);
+        head
     }
 
     /// Post-solve certification: final dense Rayleigh–Ritz rotation of a
@@ -3010,35 +3019,15 @@ where
     pub fn all_eigenvectors(&self) -> Vec<Field2D> {
         let grid = self.operator.grid();
 
-        // Collect (eigenvalue, eigenvector) pairs
-        let mut all_pairs: Vec<(f64, Field2D)> =
-            Vec::with_capacity(self.deflation.len() + self.x_block.len());
-
-        // Add locked (deflated) vectors
-        for (eigenvalue, vector) in self
-            .deflation
-            .eigenvalues()
-            .iter()
-            .zip(self.deflation.vectors().iter())
-        {
-            let field = Field2D::from_vec(grid, buffer_to_f64_vec::<B>(vector));
-            all_pairs.push((*eigenvalue, field));
-        }
-
-        // Add active vectors
-        for (eigenvalue, entry) in self.eigenvalues.iter().zip(self.x_block.iter()) {
-            let field = Field2D::from_vec(grid, buffer_to_f64_vec::<B>(&entry.vector));
-            all_pairs.push((*eigenvalue, field));
-        }
-
-        // Sort by eigenvalue
-        all_pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Take n_bands and extract eigenvectors
-        all_pairs
+        // Locked (deflated) vectors, then the active block, in output order; take n_bands.
+        let locked = self.deflation.vectors();
+        self.output_order()
             .into_iter()
             .take(self.config.n_bands)
-            .map(|(_, vec)| vec)
+            .map(|i| {
+                let vector = if i < locked.len() { &locked[i] } else { &self.x_block[i - locked.len()].vector };
+                Field2D::from_vec(grid, buffer_to_f64_vec::<B>(vector))
+            })
             .collect()
     }
 

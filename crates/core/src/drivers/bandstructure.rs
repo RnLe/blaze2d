@@ -817,6 +817,8 @@ fn run_core<B: SpectralBackend + Clone>(
         let mut k_absolute_residuals = Vec::new();
         let mut final_evals: Vec<f64>;
         let mut eigenvectors: Vec<Field2D>;
+        // A coordinate solve certifies its returned pairs with fresh applications of `theta`.
+        let mut coordinate_defect = None;
         if let Some(ref entry) = reused {
             k_iterations = 0;
             k_converged = true;
@@ -831,6 +833,7 @@ fn run_core<B: SpectralBackend + Clone>(
             final_evals=result.spectrum.eigenvalues;eigenvectors=result.spectrum.fields;
         } else if let Some(result)=coordinate_result {
             k_iterations=result.iterations;k_converged=true;k_residuals=result.spectrum.residuals;k_absolute_residuals=result.spectrum.absolute_residuals;final_evals=result.spectrum.eigenvalues;eigenvectors=result.spectrum.fields;
+            coordinate_defect=Some(result.spectrum.orthogonality_defect);
         } else if let Some(study) = study.as_deref_mut() {
             let mut cfg = job.eigensolver.clone();
             cfg.k_index = Some(k_idx);
@@ -893,6 +896,8 @@ fn run_core<B: SpectralBackend + Clone>(
         // returned fields without altering eigenvalues, gauges, or warm starts.
         let mut k_b_orthogonality_defect = if let Some(ref entry) = reused {
             entry.orthogonality_defect
+        } else if let Some(defect) = coordinate_defect {
+            defect
         } else if on_k_point.is_some() || options.symmetry.k_reuse != KReuse::Off || point_continuation.is_some() {
             let certificate = crate::eigensolver::refine::certify_without_refinement(
                 &mut theta,

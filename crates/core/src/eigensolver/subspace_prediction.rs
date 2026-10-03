@@ -1030,10 +1030,13 @@ fn extrapolate_nalgebra(
 // B-Orthonormalization
 // ============================================================================
 
-/// B-orthonormalize a set of field vectors using modified Gram-Schmidt.
+/// B-orthonormalize a set of field vectors in order (Gram-Schmidt).
 ///
 /// This is a simple implementation for predicted vectors. For production use,
 /// the eigensolver's SVQB is more robust, but this suffices for warm-start.
+/// Well-conditioned sets take Cholesky QR (one Gram product, one combination pass,
+/// the same result as Gram-Schmidt in exact arithmetic); nearly dependent ones fall
+/// back to modified Gram-Schmidt.
 ///
 /// # Arguments
 /// * `vectors` - The vectors to orthonormalize
@@ -1045,6 +1048,10 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
     let m = vectors.len();
     if m == 0 {
         return Vec::new();
+    }
+    #[cfg(feature = "native-linalg")]
+    if let Some(result) = cholesky_orthonormalize(vectors, eps) {
+        return result;
     }
 
     let grid = vectors[0].grid();
@@ -1094,6 +1101,43 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
         .into_iter()
         .map(|data| Field2D::from_f64_vec(grid, data))
         .collect()
+}
+
+/// Cholesky QR in the B-inner product: G = Vᴴ·B·V = L·Lᴴ, V ← V·L⁻ᴴ. `None` when a pivot
+/// falls below 1e-10 of the largest diagonal (nearly dependent vectors).
+#[cfg(feature = "native-linalg")]
+fn cholesky_orthonormalize(vectors: &[Field2D], eps: Option<&[f64]>) -> Option<Vec<Field2D>> {
+    let (m, n, grid) = (vectors.len(), vectors[0].len(), vectors[0].grid());
+    let v = Mat::<faer::c64>::from_fn(n, m, |row, col| vectors[col].as_slice()[row]);
+    let gram = match eps {
+        Some(epsilon) => v.adjoint() * Mat::<faer::c64>::from_fn(n, m, |row, col| vectors[col].as_slice()[row] * epsilon[row]),
+        None => v.adjoint() * &v,
+    };
+    let largest = (0..m).map(|i| gram[(i, i)].re).fold(0.0f64, f64::max);
+    let mut l = vec![Complex64::ZERO; m * m];
+    for j in 0..m {
+        let pivot = gram[(j, j)].re - (0..j).map(|k| l[j + m * k].norm_sqr()).sum::<f64>();
+        if !(pivot > 1e-10 * largest) {
+            return None;
+        }
+        let d = pivot.sqrt();
+        l[j + m * j] = Complex64::new(d, 0.0);
+        for i in j + 1..m {
+            let off = gram[(i, j)] - (0..j).map(|k| l[i + m * k] * l[j + m * k].conj()).sum::<Complex64>();
+            l[i + m * j] = off / d;
+        }
+    }
+    // T = L⁻ᴴ (upper triangular), column by column from Lᴴ·T = I.
+    let mut t = Mat::<faer::c64>::zeros(m, m);
+    for c in 0..m {
+        for i in (0..=c).rev() {
+            let rhs = if i == c { Complex64::new(1.0, 0.0) } else { Complex64::ZERO };
+            let sum: Complex64 = (i + 1..=c).map(|k| l[k + m * i].conj() * t[(k, c)]).sum();
+            t[(i, c)] = (rhs - sum) / l[i + m * i].conj();
+        }
+    }
+    let q = &v * &t;
+    Some((0..m).map(|col| Field2D::from_f64_vec(grid, (0..n).map(|row| q[(row, col)]).collect())).collect())
 }
 
 /// Compute B-norm: ||x||_B = sqrt(⟨x, x⟩_B)
