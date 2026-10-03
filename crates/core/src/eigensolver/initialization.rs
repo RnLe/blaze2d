@@ -264,7 +264,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
         for vector in &mut vectors {
             operator.constrain(vector);
         }
-        let mut masses: Vec<B::Buffer> = (0..batch).map(|_| operator.alloc_field()).collect();
+        let mut masses: Vec<B::Buffer> = (0..batch).map(|_| operator.alloc_output()).collect();
         operator.batch_apply_mass(&vectors, &mut masses);
         let mut batched = vectors.into_iter().zip(masses);
         for field in seeds {
@@ -277,7 +277,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
                 None => {
                     let mut vector = field_to_buffer(operator, field);
                     operator.constrain(&mut vector);
-                    let mut mass = operator.alloc_field();
+                    let mut mass = operator.alloc_output();
                     operator.apply_mass(&vector, &mut mass);
                     (vector, mass)
                 }
@@ -299,7 +299,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
         operator.seed_initial_vector(&mut vector, phase);
         phase += 1.0;
         operator.constrain(&mut vector);
-        let mut mass = operator.alloc_field();
+        let mut mass = operator.alloc_output();
         operator.apply_mass(&vector, &mut mass);
 
         if let Some(pair) = orthonormalize_entry(operator, vector, mass, &accepted, config.zero_tolerance, deflation) {
@@ -310,7 +310,7 @@ where O:LinearOperator<B>, B:SpectralBackend {
     }
 
     let (vectors, masses): (Vec<B::Buffer>, Vec<B::Buffer>) = accepted.into_iter().unzip();
-    let mut applied: Vec<B::Buffer> = (0..vectors.len()).map(|_| operator.alloc_field()).collect();
+    let mut applied: Vec<B::Buffer> = (0..vectors.len()).map(|_| operator.alloc_output()).collect();
     operator.batch_apply(&vectors, &mut applied);
     let entries: Vec<BlockEntry<B>> = vectors.into_iter().zip(masses).zip(applied)
         .map(|((vector, mass), applied)| BlockEntry { vector, mass, applied })

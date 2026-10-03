@@ -312,29 +312,22 @@ enum FftDirection {
     Inverse,
 }
 
-/// `dst[ix * ny + iy] = src[iy * nx + ix]` (times `scale`), through a stack tile so both
-/// matrices are read and written as contiguous row segments.
+/// `dst[ix * ny + iy] = src[iy * nx + ix]` (times `scale`), in 16×16 blocks.
 fn transpose_tiled<R: Real>(src: &[Complex<R>], dst: &mut [Complex<R>], nx: usize, ny: usize, scale: Option<R>) {
     const TILE: usize = 16;
     assert!(src.len() == nx * ny && dst.len() == nx * ny);
-    let zero = Complex::<R>::new(R::zero(), R::zero());
-    let mut tile = [zero; TILE * TILE];
+    // Within a block the 16 source row segments stay in L1, so every element moves once:
+    // read strided from the block, written as a contiguous destination run.
     for y0 in (0..ny).step_by(TILE) {
         let h = TILE.min(ny - y0);
         for x0 in (0..nx).step_by(TILE) {
             let w = TILE.min(nx - x0);
-            for dy in 0..h {
-                let row = &src[(y0 + dy) * nx + x0..][..w];
-                for (dx, &value) in row.iter().enumerate() {
-                    tile[dx * TILE + dy] = value;
-                }
-            }
             for dx in 0..w {
                 let out = &mut dst[(x0 + dx) * ny + y0..][..h];
-                let column = &tile[dx * TILE..][..h];
+                let column = src[y0 * nx + x0 + dx..].iter().step_by(nx);
                 match scale {
                     Some(scale) => out.iter_mut().zip(column).for_each(|(o, &v)| *o = v * scale),
-                    None => out.copy_from_slice(column),
+                    None => out.iter_mut().zip(column).for_each(|(o, &v)| *o = v),
                 }
             }
         }

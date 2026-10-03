@@ -883,7 +883,7 @@ where
 
         for r in residuals {
             // Compute B*r
-            let mut br = self.operator.alloc_field();
+            let mut br = self.operator.alloc_output();
             self.operator.apply_mass(r, &mut br);
 
             // ||r||_B = sqrt(r^* B r)
@@ -1434,7 +1434,7 @@ where
             // Allocate outputs for P and W mass application
             let mut b_pw_block = Vec::with_capacity(p_w_count);
             for _ in 0..p_w_count {
-                b_pw_block.push(self.operator.alloc_field());
+                b_pw_block.push(self.operator.alloc_output());
             }
 
             // Apply mass operator in batch
@@ -1461,7 +1461,7 @@ where
                 Some(applied) => applied,
                 None => self.x_block.iter().map(|entry| entry.applied.clone()).collect(),
             };
-            let mut applied: Vec<B::Buffer> = (0..p_size).map(|_| self.operator.alloc_field()).collect();
+            let mut applied: Vec<B::Buffer> = (0..p_size).map(|_| self.operator.alloc_output()).collect();
             self.operator.batch_apply(&q_block[x_size..x_size + p_size], &mut applied);
             products.append(&mut applied);
             products.extend(self.w_applied.take().unwrap_or_default().into_iter().take(w_size));
@@ -1478,7 +1478,7 @@ where
             // products of S (Sᵀ·B·S for SVQB and Sᵀ·A·S for Rayleigh-Ritz) come from one pass.
             self.implicit_age = if products.is_some() { self.implicit_age + 1 } else { 0 };
             let applied = products.unwrap_or_else(|| {
-                let mut applied: Vec<B::Buffer> = (0..q_block.len()).map(|_| self.operator.alloc_field()).collect();
+                let mut applied: Vec<B::Buffer> = (0..q_block.len()).map(|_| self.operator.alloc_output()).collect();
                 self.operator.batch_apply(&q_block, &mut applied);
                 applied
             });
@@ -1563,7 +1563,7 @@ where
 
         // Pre-allocate output buffers
         for _ in 0..r {
-            aq_block.push(self.operator.alloc_field());
+            aq_block.push(self.operator.alloc_output());
         }
 
         // Apply operator in batch to leverage optimized backends (e.g. batched FFTs)

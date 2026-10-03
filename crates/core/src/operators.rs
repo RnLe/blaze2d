@@ -101,6 +101,12 @@ pub trait LinearOperator<B: SpectralBackend> {
     /// Allocate a new field buffer compatible with this operator.
     fn alloc_field(&self) -> B::Buffer;
 
+    /// Allocate a buffer that `apply`, `apply_mass` or their batched forms overwrite
+    /// completely; its initial values are unspecified (operators may skip zeroing).
+    fn alloc_output(&self) -> B::Buffer {
+        self.alloc_field()
+    }
+
     /// Get a reference to the spectral backend.
     fn backend(&self) -> &B;
 

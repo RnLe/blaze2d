@@ -24,11 +24,26 @@ impl From<GroupError> for ActionError { fn from(_:GroupError)->Self {Self::Arith
 /// The order and Nyquist convention used by ThetaOperator, without aliasing.
 pub fn fft_indices(n: usize) -> Vec<i64> { (0..n).map(|i|if i<=n/2 {i as i64} else {i as i64-n as i64}).collect() }
 
+/// Permutations already derived, by operation and grid size: they do not depend on the
+/// wavevector, and exact rational arithmetic per node dominated per-k setup.
+static PERMUTATIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(AffineOp,usize,usize),std::sync::Arc<Vec<usize>>>>> =
+    std::sync::LazyLock::new(Default::default);
+const CACHED_PERMUTATIONS: usize = 64;
+
 /// Exact pullback of sampling nodes, independent of any Fourier support.
 /// Callers must budget its index array. This does not authorize derivatives.
 pub(super) fn sampled_node_permutation(operation: AffineOp, grid: Grid2D) -> Result<Vec<usize>,ActionError> {
     if grid.centered {return Err(ActionError::UnsupportedSamplingOrigin);}
     if grid.nx==0 || grid.ny==0 || grid.nx>i32::MAX as usize || grid.ny>i32::MAX as usize || grid.nx.checked_mul(grid.ny).is_none() {return Err(ActionError::InvalidInput);}
+    let key=(operation,grid.nx,grid.ny);
+    if let Some(cached)=PERMUTATIONS.lock().unwrap().get(&key) {return Ok(cached.as_ref().clone());}
+    let result=derive_node_permutation(operation,grid)?;
+    let mut cache=PERMUTATIONS.lock().unwrap();
+    if cache.len()<CACHED_PERMUTATIONS {cache.insert(key,std::sync::Arc::new(result.clone()));}
+    Ok(result)
+}
+
+fn derive_node_permutation(operation: AffineOp, grid: Grid2D) -> Result<Vec<usize>,ActionError> {
     let wr=operation.reciprocal_matrix();let winv=[[wr[0][0],wr[1][0]],[wr[0][1],wr[1][1]]];
     let shifts=operation.translation();let mut result=vec![0;grid.len()];
     for j in 0..grid.ny {for i in 0..grid.nx {
@@ -87,9 +102,10 @@ impl BlochActionPlan {
         } }
         let spatial_source=sampled_node_permutation(operation,grid)?;let mut spatial_phase=vec![Complex64::ZERO;grid.len()];
         for j in 0..grid.ny {for i in 0..grid.nx {
-            let xi=[Rational::new(i as i64,grid.nx as i64)?,Rational::new(j as i64,grid.ny as i64)?];
+            // Node fractions i/nx, j/ny: one correctly rounded division, as Rational::value.
+            let xi=[i as f64/grid.nx as f64,j as f64/grid.ny as f64];
             let pos=grid.idx(i,j);
-            let phase=-raw[0]*tau[0]-raw[1]*tau[1]+folding[0] as f64*xi[0].value()+folding[1] as f64*xi[1].value();
+            let phase=-raw[0]*tau[0]-raw[1]*tau[1]+folding[0] as f64*xi[0]+folding[1] as f64*xi[1];
             spatial_phase[pos]=Complex64::from_polar(character,std::f64::consts::TAU*phase);
         } }
         Ok(Self {operation,source,destination,grid,polarization,folding,fourier_destination,fourier_phase,spatial_source,spatial_phase})

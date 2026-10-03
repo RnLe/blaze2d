@@ -1048,7 +1048,6 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
     }
 
     let grid = vectors[0].grid();
-    let n = vectors[0].len();
 
     // Clone input vectors and upcast to f64 for the orthonormalization computation
     let mut result: Vec<Vec<Complex64>> = vectors
@@ -1073,19 +1072,19 @@ pub fn orthonormalize_fields(vectors: &[Field2D], eps: Option<&[f64]>) -> Vec<Fi
         }
 
         // Project out from remaining vectors
-        for j in (i + 1)..m {
+        let (head, tail) = result.split_at_mut(i + 1);
+        let vi = &head[i];
+        for vj in tail.iter_mut() {
             // coeff = <v_i, v_j>_B
             let coeff = if let Some(epsilon) = eps {
-                b_inner_product(&result[i], &result[j], epsilon)
+                b_inner_product(vi, vj, epsilon)
             } else {
-                inner_product(&result[i], &result[j])
+                inner_product(vi, vj)
             };
 
             // v_j = v_j - coeff * v_i
-            // Clone v_i to avoid borrow conflict
-            let vi: Vec<Complex64> = result[i].clone();
-            for k in 0..n {
-                result[j][k] -= coeff * vi[k];
+            for (x, &v) in vj.iter_mut().zip(vi) {
+                *x -= coeff * v;
             }
         }
     }

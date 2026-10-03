@@ -363,11 +363,14 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
             crate::profile_scope!("apply_tm_fourier_diagonal");
             crate::profiler::count("operator_A.columns",1);
             crate::profiler::count("operator_A.elements",self.backend.nreal);
-            y.as_mut_slice().fill(C::ZERO);
             if self.backend.packed {
                 let weights=self.full.k_plus_g_squares();
-                for ((dst,&v),&w) in reals_mut(y.as_mut_slice()).iter_mut().zip(reals(x.as_slice())).zip(weights) {*dst=v*w;}
+                let lanes=reals_mut(y.as_mut_slice());
+                for ((dst,&v),&w) in lanes.iter_mut().zip(reals(x.as_slice())).zip(weights) {*dst=v*w;}
+                // An odd count leaves the last slot's second lane unused; keep it zero.
+                for dst in &mut lanes[weights.len()..] {*dst=0.0;}
             } else {
+            y.as_mut_slice().fill(C::ZERO);
             for (i,&weight) in self.full.k_plus_g_squares().iter().enumerate() {
                 set_scalar(y.as_mut_slice(),i,scalar(x.as_slice(),i,self.backend.packed)*weight,self.backend.packed);
             }
@@ -424,6 +427,7 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
         for (x,y) in inputs[start..].iter().zip(&mut outputs[start..]) {self.apply_mass(x,y);}
     }
     fn alloc_field(&self)->CoordinateBuffer {self.backend.alloc_field(self.conversion.coordinate_grid())}
+    fn alloc_output(&self)->CoordinateBuffer {let grid=self.conversion.coordinate_grid();CoordinateBuffer{grid,data:self.backend.ledger.take(grid.len(),false),ledger:self.backend.ledger.clone()}}
     fn backend(&self)->&CoordinateBackend {&self.backend}
     fn backend_mut(&mut self)->&mut CoordinateBackend {&mut self.backend}
     fn grid(&self)->Grid2D {self.conversion.coordinate_grid()}
