@@ -244,12 +244,12 @@ class StatisticsTests(unittest.TestCase):
 
 
 def timing_study(seconds):
-    """Entries and runs of an admitted pair study with seconds = {case: (a, b)} and a fixed clock."""
+    """Entries and runs of an admitted pair (or block) study with seconds = {case: (a, b, ...)} and a fixed clock."""
     entries, runs = [], []
-    for case, (a, b) in seconds.items():
+    for case, values in seconds.items():
         params = dict(lattice='square', polarization='TM', resolution=16, radius=0.3, eps_rod=1.0, eps_bg=13.0)
         ids = {}
-        for name, value in (('A', a), ('B', b)):
+        for name, value in zip('ABCDEFGH', values):
             ids[name] = f'{case}:0:0:{name}'
             start = dict(monotonic=0.0, monotonic_raw=0.0, windows=dict(qpc_ticks=0, qpc_frequency=1000))
             end = dict(monotonic=value, monotonic_raw=1.1 * value,
@@ -295,6 +295,31 @@ class SummaryTests(unittest.TestCase):
         self.assertIn('Speed-up B over A', [t['label'] for t in pages['index']['tiles']])
         self.assertEqual(pages['runs']['runs'][0]['clean'], 4)
         self.assertEqual(pages['baseline']['status'], 'empty')
+        json.dumps(pages, allow_nan=False)
+
+    def test_block_summary_and_pages(self):
+        entries, runs = timing_study({'c0': (2.0, 1.0, 4.0), 'c1': (3.0, 1.0, 6.0)})
+        summary = run_timing.summarize('block-demo', ['A', 'B', 'C'], entries, runs, resamples=500)
+        self.assertEqual(summary['mode'], 'block')
+        strict = summary['tiers']['strict']['solver']
+        self.assertAlmostEqual(strict['B']['geometric_mean'], math.sqrt(6))
+        self.assertAlmostEqual(strict['C']['geometric_mean'], 0.5)
+        self.assertAlmostEqual(summary['levels']['strict']['solver']['A']['total_seconds'], 2.2 + 3.3)
+        self.assertEqual(summary['per_case'][0]['strict'], {'B': 2.0, 'C': 0.5})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'tuning-block'
+            root.mkdir()
+            binary = dict(name='bin', sha256='0' * 64, revision='r')
+            (root / 'manifest.json').write_text(json.dumps(dict(
+                kind='timing', stage='tuning', status='complete', started='2026-10-01T00:00:00+00:00',
+                subset='dev96', variants={'A': {}, 'B': {}, 'C': {}}, binaries={'A': binary, 'B': binary, 'C': binary})))
+            (root / 'summary.json').write_text(json.dumps(summary))
+            (root / 'runs.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in runs))
+            pages = summarize.build(Path(directory), [])
+        tuning = pages['tuning']
+        self.assertEqual([t['label'] for t in tuning['tiles'][-2:]], ['B vs A', 'C vs A'])
+        self.assertEqual([c['kind'] for c in tuning['charts']], ['ratio_bars', 'bars'])
+        self.assertEqual(tuning['tables'][0]['rows'][1]['speedup'], 0.5)
         json.dumps(pages, allow_nan=False)
 
     def test_empty_results_produce_empty_pages(self):

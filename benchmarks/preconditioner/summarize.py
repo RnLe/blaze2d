@@ -845,6 +845,14 @@ def multigrid_page(studies: list[Study]) -> dict[str, Any]:
     return page('multigrid', stage, status, out, subtitle=dict((s, d) for s, _, d in STAGES)['multigrid'])
 
 
+def run_seconds(record: dict[str, Any]) -> float:
+    """Wall seconds of one record; ML records may hold seconds per compared setting."""
+    value = record.get('wall_seconds', record.get('seconds'))
+    if isinstance(value, dict):
+        return sum(v for v in value.values() if v)
+    return value or 0.0
+
+
 def run_rows(study: Study) -> list[dict[str, Any]]:
     """One runs-page row per variant (per variant pair for timing studies)."""
     binaries = study.manifest.get('binaries', {})
@@ -870,8 +878,7 @@ def run_rows(study: Study) -> list[dict[str, Any]]:
                          'failed' if study.status == 'preflight_failed' else 'partial',
                          contaminated=sum(v in ('contaminated', 'unknown') for v in verdicts) if timing else 0,
                          clean=verdicts.count('clean') if timing else len(records),
-                         wall_seconds=sum(r.get('wall_seconds', r.get('seconds', 0.0)) for r in records)
-                         if records else None,
+                         wall_seconds=sum(run_seconds(r) for r in records) if records else None,
                          binary=(binaries.get(variant) or next(iter(binaries.values()), {})).get('name', ''),
                          notes='; '.join(notes) or None))
     return rows
@@ -880,7 +887,7 @@ def run_rows(study: Study) -> list[dict[str, Any]]:
 def runs_page(studies: list[Study]) -> dict[str, Any]:
     runs = [row for study in studies for row in run_rows(study)]
     out = Content(tiles=[tile('Studies', len(studies)), tile('Runs recorded', sum(len(s.records) for s in studies)),
-                         tile('Contaminated timing runs', sum(r['contaminated'] for r in runs), tone='neutral')])
+                         tile('Timing runs below the strict tier', sum(r['contaminated'] for r in runs), tone='neutral', note='admitted only as paired-matched blocks')])
     # The lab draws `runs` as its run log, so no table repeats it.
     if studies:
         out.notes.append('Clean counts load-admitted timing runs, or recorded runs for load-independent work '
@@ -918,16 +925,22 @@ def index_page(studies: list[Study], pages: dict[str, dict]) -> dict[str, Any]:
     timeline.sort(key=lambda event: event['when'])
     # The lab shows the first tile as the overview's headline: the latest speed-up, else the baseline.
     out = Content()
-    latest = next((s for s in reversed(studies) if s.kind == 'timing' and s.timing and s.timing['mode'] == 'pair'
-                   and (s.timing['tiers']['strict'][s.timing['primary_metric']]
-                        or s.timing['tiers']['matched'][s.timing['primary_metric']])), None)
-    if latest:
+    # The headline is the latest admitted timing that includes the shipped default (c4).
+    timed = [s for s in studies if s.kind == 'timing' and s.timing and s.timing['mode'] in ('pair', 'block')
+             and (s.timing['tiers']['strict'][s.timing['primary_metric']]
+                  or s.timing['tiers']['matched'][s.timing['primary_metric']])]
+    latest = next((s for s in reversed(timed) if 'c4' in s.timing['variants']), timed[-1] if timed else None)
+    if latest and latest.timing['mode'] == 'block':
+        # The headline is the shipped default; the full set lives on the tuning page.
+        tiles = block_comparison(latest).tiles
+        out.tiles += sorted([t for t in tiles if t['label'].split(' vs ')[0] in ('c4', 'c3')], key=lambda t: t['label'], reverse=True)
+    elif latest:
         out.tiles += timing_comparison(latest).tiles
     out.tiles += pages['tuning']['tiles'][:3]
     out.tiles += [t for t in pages['baseline']['tiles'] if t['label'] in
                   ('Median seconds per diagram', 'Median iterations per diagram', 'PT gate cases passed')]
     contaminated = sum(r['contaminated'] for r in pages['runs']['runs'])
-    out.tiles += [tile('Studies', len(studies)), tile('Contaminated timing runs', contaminated, tone='neutral')]
+    out.tiles += [tile('Studies', len(studies)), tile('Timing runs below the strict tier', contaminated, tone='neutral', note='admitted only as paired-matched blocks')]
     hero = [c for c in pages['tuning']['charts'] if c['id'] == 'adopted-work']
     pt = [c for c in pages['baseline']['charts'] if c['kind'] == 'ratio_bars']
     out.charts = (hero + pt + [c for name, _, _ in STAGES for c in pages[name]['charts'] if c['kind'] == 'ratio_bars'])[:2]

@@ -866,5 +866,36 @@
         "profile": "auto"
       }
     }
+  },
+  "frozen-complex-tight": {
+    "description": "Frozen binary with its default (complex) arithmetic and a tight eigenvalue-change stop, for accuracy-matched timing",
+    "binary": "frozen",
+    "eigensolver": {
+      "tolerance": 1e-13,
+      "max_iterations": 600
+    }
+  },
+  "current-pt-tight": {
+    "description": "Current binary configured like frozen-pt-tight (PT, eigenvalue-change stop 1e-13, legacy preconditioner, Ritz history), for per-iteration overhead checks",
+    "binary": "current",
+    "requires": "eigensolver.stopping (binaries from ed9607c6)",
+    "bands": {
+      "symmetry": {
+        "arithmetic": "pt_real",
+        "k_reuse": "identical"
+      }
+    },
+    "eigensolver": {
+      "stopping": "eigenvalue_change",
+      "tolerance": 1e-13,
+      "max_iterations": 600,
+      "history": "ritz",
+      "preconditioner": {
+        "shift": "legacy",
+        "shift_fraction": 0.5,
+        "transverse_weight": "scalar",
+        "profile": "none"
+      }
+    }
   }
 }
