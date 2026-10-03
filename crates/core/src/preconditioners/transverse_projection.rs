@@ -70,6 +70,15 @@ pub struct TransverseProjectionPreconditioner<B: SpectralBackend> {
     grad_x: B::Buffer,
     /// Scratch buffer for gradient y-component
     grad_y: B::Buffer,
+    /// The spatial weight in the transposed node order of `inverse_fft_2d_transposed`,
+    /// built on first use.
+    transposed_weights: std::sync::OnceLock<TransposedWeights>,
+}
+
+/// Tensor or scalar spatial weight in transposed node order.
+enum TransposedWeights {
+    Tensors(Vec<[f64; 4]>),
+    Scalars(Vec<f64>),
 }
 
 impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
@@ -129,6 +138,7 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             shift,
             grad_x,
             grad_y,
+            transposed_weights: std::sync::OnceLock::new(),
         }
     }
 
@@ -144,6 +154,7 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
                 [eps, 0.0, 0.0, eps]
             }
         }).collect());
+        self.transposed_weights = std::sync::OnceLock::new();
         self
     }
 
@@ -226,33 +237,43 @@ impl<B: SpectralBackend> TransverseProjectionPreconditioner<B> {
             }
         }
 
-        // Step 3: IFFT both gradient components to real space
-        backend.inverse_fft_2d(&mut self.grad_x);
-        backend.inverse_fft_2d(&mut self.grad_y);
+        // Step 3: IFFT both gradient components to real space, left in transposed node
+        // order (the weight is pointwise) with the normalization still to apply
+        let scale = backend.inverse_fft_2d_transposed(&mut self.grad_x);
+        backend.inverse_fft_2d_transposed(&mut self.grad_y);
 
         // Step 4: Multiply by ε(r), or by the tensor weight, in real space
         {
+            let s = <B::Real as Real>::from_accum(scale);
+            let (nx, ny) = (self.grid.nx, self.grid.ny);
+            let weights = self.transposed_weights.get_or_init(|| match &self.tensor_weights {
+                Some(tensors) => TransposedWeights::Tensors(crate::backend::transposed_layout(tensors, nx, ny)),
+                None => TransposedWeights::Scalars(crate::backend::transposed_layout(&self.eps, nx, ny)),
+            });
             let grad_x_data = self.grad_x.as_mut_slice();
             let grad_y_data = self.grad_y.as_mut_slice();
-            if let Some(weights) = &self.tensor_weights {
-                for (idx, w) in weights.iter().enumerate() {
-                    let (gx, gy) = (grad_x_data[idx], grad_y_data[idx]);
-                    let w = w.map(<B::Real as Real>::from_accum);
-                    grad_x_data[idx] = gx * w[0] + gy * w[1];
-                    grad_y_data[idx] = gx * w[2] + gy * w[3];
+            match weights {
+                TransposedWeights::Tensors(tensors) => {
+                    for ((gx, gy), w) in grad_x_data.iter_mut().zip(grad_y_data.iter_mut()).zip(tensors) {
+                        let (x, y) = (*gx * s, *gy * s);
+                        let w = w.map(<B::Real as Real>::from_accum);
+                        *gx = x * w[0] + y * w[1];
+                        *gy = x * w[2] + y * w[3];
+                    }
                 }
-            } else {
-                for idx in 0..self.grid.len() {
-                    let eps_val = <B::Real as Real>::from_accum(self.eps[idx]);
-                    grad_x_data[idx] *= eps_val;
-                    grad_y_data[idx] *= eps_val;
+                TransposedWeights::Scalars(eps) => {
+                    for ((gx, gy), &eps_val) in grad_x_data.iter_mut().zip(grad_y_data.iter_mut()).zip(eps) {
+                        let eps_val = <B::Real as Real>::from_accum(eps_val);
+                        *gx = *gx * s * eps_val;
+                        *gy = *gy * s * eps_val;
+                    }
                 }
             }
         }
 
         // Step 5: FFT both components back to k-space
-        backend.forward_fft_2d(&mut self.grad_x);
-        backend.forward_fft_2d(&mut self.grad_y);
+        backend.forward_fft_2d_transposed(&mut self.grad_x);
+        backend.forward_fft_2d_transposed(&mut self.grad_y);
 
         // Step 6: Assemble divergence and apply second inverse Laplacian
         {

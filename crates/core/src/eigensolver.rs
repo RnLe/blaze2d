@@ -1487,7 +1487,7 @@ where
             crate::profiler::count("svqb_gram.elements", p * p);
             crate::profiler::count("svqb_gram.multiply_terms", p * p * q_block.first().map_or(0, |v| self.operator.backend().gram_rows(v)));
             let mass = if identity_mass { &q_block } else { &bq_block };
-            let mut grams = self.operator.backend().gram_matrices(&q_block, &[mass.as_slice(), applied.as_slice()]);
+            let mut grams = self.operator.backend().hermitian_gram_matrices(&q_block, &[mass.as_slice(), applied.as_slice()]);
             let projection = grams.pop().expect("two Gram products");
             let mut result = svqb_transform_from_gram(self.operator.backend(), &grams[0], p, &SvqbConfig::default());
             crate::profiler::stop_timer("svqb");
@@ -1600,7 +1600,7 @@ where
         }
 
         if self.operator.backend().real_coefficients() || self.operator.backend().prefer_backend_linear_combinations() {
-            let gram=match &self.composed_projection {Some(h) if h.len()==r*r => h.clone(), _ => self.operator.backend().gram_matrix(q_block,aq_block)};
+            let gram=match &self.composed_projection {Some(h) if h.len()==r*r => h.clone(), _ => self.operator.backend().hermitian_gram_matrices(q_block,&[aq_block]).swap_remove(0)};
             let mut result=vec![num_complex::Complex64::ZERO;r*r];
             for i in 0..r {for j in 0..r {result[i+r*j]=0.5*(gram[i*r+j]+gram[j*r+i].conj());}}
             if let Some(transform) = &self.composed {

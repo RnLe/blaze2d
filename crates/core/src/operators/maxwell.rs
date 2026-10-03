@@ -100,6 +100,25 @@ pub struct ThetaOperator<B: SpectralBackend> {
     grad_x: B::Buffer,
     grad_y: B::Buffer,
     k_plus_g_was_clamped: Vec<bool>,
+    /// ε⁻¹ and ε in the transposed node order of `inverse_fft_2d_transposed`, built on
+    /// first use.
+    transposed_inverse: std::sync::OnceLock<TransposedInverse>,
+    transposed_eps: std::sync::OnceLock<Vec<f64>>,
+}
+
+/// Inverse permittivity (smoothed tensors or scalars) in transposed node order.
+enum TransposedInverse {
+    Tensors(Vec<[f64; 4]>),
+    Scalars(Vec<f64>),
+}
+
+impl TransposedInverse {
+    fn new(dielectric: &Dielectric2D, grid: Grid2D) -> Self {
+        match dielectric.inv_eps_tensors() {
+            Some(tensors) => Self::Tensors(crate::backend::transposed_layout(tensors, grid.nx, grid.ny)),
+            None => Self::Scalars(crate::backend::transposed_layout(dielectric.inv_eps(), grid.nx, grid.ny)),
+        }
+    }
 }
 
 /// Snapshot of operator state for debugging and visualization.
@@ -181,6 +200,8 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             grad_x,
             grad_y,
             k_plus_g_was_clamped: tables.clamp_mask,
+            transposed_inverse: std::sync::OnceLock::new(),
+            transposed_eps: std::sync::OnceLock::new(),
         }
     }
 
@@ -857,12 +878,36 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             }
             Polarization::TE => {
                 compute_gradients_from_potential(input.as_slice(),self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),&self.k_plus_g_x,&self.k_plus_g_y);
-                self.backend.inverse_fft_2d(&mut self.grad_x);
-                self.backend.inverse_fft_2d(&mut self.grad_y);
-                apply_inv_eps(self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),&self.dielectric);
-                self.backend.forward_fft_2d(&mut self.grad_x);
-                self.backend.forward_fft_2d(&mut self.grad_y);
+                // The spatial ε⁻¹ step works in transposed node order, so neither transform
+                // restores the spatial layout.
+                let scale=self.backend.inverse_fft_2d_transposed(&mut self.grad_x);
+                self.backend.inverse_fft_2d_transposed(&mut self.grad_y);
+                let inverse=self.transposed_inverse.get_or_init(||TransposedInverse::new(&self.dielectric,self.grid));
+                apply_transposed_inv_eps(self.grad_x.as_mut_slice(),self.grad_y.as_mut_slice(),inverse,scale);
+                self.backend.forward_fft_2d_transposed(&mut self.grad_x);
+                self.backend.forward_fft_2d_transposed(&mut self.grad_y);
                 assemble_divergence(self.grad_x.as_slice(),self.grad_y.as_slice(),output.as_mut_slice(),&self.k_plus_g_x,&self.k_plus_g_y);
+            }
+        }
+    }
+
+    /// B·x of a spatial field in the transposed order of `inverse_fft_2d_transposed`,
+    /// times `scale` (the normalization the transform left to its caller).
+    pub fn apply_mass_transposed(&mut self, input: &B::Buffer, output: &mut B::Buffer, scale: f64) {
+        crate::profiler::count("operator_B.columns", 1);
+        crate::profiler::count("operator_B.elements", self.grid.len());
+        let s = B::Real::from_accum(scale);
+        match self.polarization {
+            Polarization::TE => {
+                for (dst, &src) in output.as_mut_slice().iter_mut().zip(input.as_slice()) {
+                    *dst = src * s;
+                }
+            }
+            Polarization::TM => {
+                let eps = self.transposed_eps.get_or_init(|| crate::backend::transposed_layout(self.dielectric.eps(), self.grid.nx, self.grid.ny));
+                for ((dst, &src), &e) in output.as_mut_slice().iter_mut().zip(input.as_slice()).zip(eps) {
+                    *dst = src * s * B::Real::from_accum(e);
+                }
             }
         }
     }
@@ -1762,8 +1807,9 @@ impl<B: SpectralBackend> LinearOperator<B> for ThetaOperator<B> {
         match self.polarization {
             Polarization::TE => copy_buffer(output, input),
             Polarization::TM => {
-                copy_buffer(output, input);
-                apply_scalar_eps(output.as_mut_slice(), self.dielectric.eps());
+                for ((dst, &src), &e) in output.as_mut_slice().iter_mut().zip(input.as_slice()).zip(self.dielectric.eps()) {
+                    *dst = src * B::Real::from_accum(e);
+                }
             }
         }
     }
@@ -2063,9 +2109,25 @@ fn apply_inv_eps<R: Real>(
     }
 }
 
-fn apply_scalar_eps<R: Real>(field: &mut [Complex<R>], eps: &[f64]) {
-    for (value, &eps_val) in field.iter_mut().zip(eps.iter()) {
-        *value *= R::from_accum(eps_val);
+/// `apply_inv_eps` on transposed fields, first applying the transform's `scale`.
+fn apply_transposed_inv_eps<R: Real>(grad_x: &mut [Complex<R>], grad_y: &mut [Complex<R>], inverse: &TransposedInverse, scale: f64) {
+    let s = R::from_accum(scale);
+    match inverse {
+        TransposedInverse::Tensors(tensors) => {
+            for ((gx, gy), tensor) in grad_x.iter_mut().zip(grad_y.iter_mut()).zip(tensors) {
+                let (x, y) = (*gx * s, *gy * s);
+                let t = tensor.map(R::from_accum);
+                *gx = x * t[0] + y * t[1];
+                *gy = x * t[2] + y * t[3];
+            }
+        }
+        TransposedInverse::Scalars(values) => {
+            for ((gx, gy), &inv) in grad_x.iter_mut().zip(grad_y.iter_mut()).zip(values) {
+                let v = R::from_accum(inv);
+                *gx = *gx * s * v;
+                *gy = *gy * s * v;
+            }
+        }
     }
 }
 

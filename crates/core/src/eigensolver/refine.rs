@@ -79,7 +79,7 @@ where
     }
 
     // -- Projected matrices S = UᴴBU, H = UᴴAU (column-major) --
-    let grams = operator.backend().gram_matrices(&u, &[bu.as_slice(), au.as_slice()]);
+    let grams = operator.backend().hermitian_gram_matrices(&u, &[bu.as_slice(), au.as_slice()]);
     let column_major = |g: &[Complex64]| (0..n * n).map(|k| g[(k % n) * n + k / n]).collect::<Vec<_>>();
     let mut s_mat = column_major(&grams[0]);
     let mut h_mat = column_major(&grams[1]);

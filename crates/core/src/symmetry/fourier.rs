@@ -89,6 +89,49 @@ impl SpectralBuffer for CoordinateBuffer {
 }
 #[derive(Clone)]
 struct CoordinateBackend {ledger:Arc<AllocationLedger>,nreal:usize,real_space:bool,packed:bool,real_vectors:bool,real_gram:bool,real_dense:bool}
+impl CoordinateBackend {
+    /// Real Gram matrices of `x` with each block of `ys` over row panels (`None` when this
+    /// backend has no real Gram); with `hermitian`, square blocks get their lower triangle
+    /// from faer's triangular product and mirror it.
+    #[allow(unused_variables)]
+    fn real_grams(&self,x:&[CoordinateBuffer],ys:&[&[CoordinateBuffer]],hermitian:bool)->Option<Vec<Vec<C>>> {
+        #[cfg(feature="native-linalg")]
+        if self.real_space && self.real_gram && !x.is_empty() {
+            use faer::linalg::matmul::triangular::{matmul as triangular,BlockStructure};
+            crate::profile_scope!("real_gram");
+            let p=x.len();
+            for y in ys {crate::profiler::count("real_gram.multiply_terms",self.nreal*p*y.len());}
+            let mut products:Vec<faer::Mat<f64>>=ys.iter().map(|y|faer::Mat::<f64>::zeros(p,y.len())).collect();
+            PANELS.with_borrow_mut(|[a,b]|{
+                resize(a,PANEL*p);resize(b,PANEL*ys.iter().map(|y|y.len()).max().unwrap_or(0));
+                let mut start=0;let mut accum=faer::Accum::Replace;
+                while start<self.nreal {
+                    let rows=PANEL.min(self.nreal-start);
+                    for (j,column) in x.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut a[j*rows..(j+1)*rows]);}
+                    let left=faer::MatRef::from_column_major_slice(&a[..rows*p],rows,p);
+                    for (y,product) in ys.iter().zip(&mut products) {
+                        // A block that is `x` itself reuses its packed panel.
+                        let right=if std::ptr::eq(y.as_ptr(),x.as_ptr()) && y.len()==p {left} else {
+                            for (j,column) in y.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut b[j*rows..(j+1)*rows]);}
+                            faer::MatRef::from_column_major_slice(&b[..rows*y.len()],rows,y.len())
+                        };
+                        if hermitian && y.len()==p {
+                            triangular(product.as_mut(),BlockStructure::TriangularLower,accum,left.transpose(),BlockStructure::Rectangular,right,BlockStructure::Rectangular,1.0,faer::get_global_parallelism());
+                        } else {
+                            faer::linalg::matmul::matmul(product.as_mut(),accum,left.transpose(),right,1.0,faer::get_global_parallelism());
+                        }
+                    }
+                    accum=faer::Accum::Add;start+=rows;
+                }
+            });
+            return Some(products.iter().map(|m| {
+                let (rows,cols)=(m.nrows(),m.ncols());let mirror=hermitian && rows==cols;
+                (0..rows*cols).map(|i| {let (r,c)=(i/cols,i%cols);C::new(if mirror && r<c {m[(c,r)]} else {m[(r,c)]},0.0)}).collect()
+            }).collect());
+        }
+        None
+    }
+}
 impl SpectralBackend for CoordinateBackend {
     type Real=f64;type Buffer=CoordinateBuffer;
     fn alloc_field(&self,grid:Grid2D)->CoordinateBuffer {CoordinateBuffer{grid,data:self.ledger.take(grid.len(),true),ledger:self.ledger.clone()}}
@@ -158,33 +201,10 @@ impl SpectralBackend for CoordinateBackend {
         {(0..m).map(|j|{let mut out=self.alloc_field(q[0].grid());for i in 0..self.nreal {let value=(0..r).map(|p|scalar(q[p].as_slice(),i,self.packed)*coefficients[p+r*j].re).sum();set_scalar(out.as_mut_slice(),i,value,self.packed);}out}).collect()}
     }
     fn gram_matrices(&self,x:&[CoordinateBuffer],ys:&[&[CoordinateBuffer]])->Vec<Vec<C>> {
-        #[cfg(feature="native-linalg")]
-        if self.real_space && self.real_gram && !x.is_empty() {
-            crate::profile_scope!("real_gram");
-            let p=x.len();
-            for y in ys {crate::profiler::count("real_gram.multiply_terms",self.nreal*p*y.len());}
-            let mut products:Vec<faer::Mat<f64>>=ys.iter().map(|y|faer::Mat::<f64>::zeros(p,y.len())).collect();
-            PANELS.with_borrow_mut(|[a,b]|{
-                resize(a,PANEL*p);resize(b,PANEL*ys.iter().map(|y|y.len()).max().unwrap_or(0));
-                let mut start=0;let mut accum=faer::Accum::Replace;
-                while start<self.nreal {
-                    let rows=PANEL.min(self.nreal-start);
-                    for (j,column) in x.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut a[j*rows..(j+1)*rows]);}
-                    let left=faer::MatRef::from_column_major_slice(&a[..rows*p],rows,p);
-                    for (y,product) in ys.iter().zip(&mut products) {
-                        // A block that is `x` itself reuses its packed panel.
-                        let right=if std::ptr::eq(y.as_ptr(),x.as_ptr()) && y.len()==p {left} else {
-                            for (j,column) in y.iter().enumerate() {pack_rows(column.as_slice(),start,rows,self.packed,&mut b[j*rows..(j+1)*rows]);}
-                            faer::MatRef::from_column_major_slice(&b[..rows*y.len()],rows,y.len())
-                        };
-                        faer::linalg::matmul::matmul(product.as_mut(),accum,left.transpose(),right,1.0,faer::get_global_parallelism());
-                    }
-                    accum=faer::Accum::Add;start+=rows;
-                }
-            });
-            return products.iter().map(|m|(0..m.nrows()*m.ncols()).map(|i|C::new(m[(i/m.ncols(),i%m.ncols())],0.0)).collect()).collect();
-        }
-        ys.iter().map(|y|self.gram_matrix(x,y)).collect()
+        self.real_grams(x,ys,false).unwrap_or_else(||ys.iter().map(|y|self.gram_matrix(x,y)).collect())
+    }
+    fn hermitian_gram_matrices(&self,x:&[CoordinateBuffer],ys:&[&[CoordinateBuffer]])->Vec<Vec<C>> {
+        self.real_grams(x,ys,true).unwrap_or_else(||ys.iter().map(|y|self.gram_matrix(x,y)).collect())
     }
     fn gram_matrix(&self,x:&[CoordinateBuffer],y:&[CoordinateBuffer])->Vec<C> {
         // The storage experiment expands real coordinates into the same complex
@@ -351,6 +371,13 @@ impl<B:SpectralBackend+Clone> FourierOperator<'_,B> {
     /// `input` holds an unpacked pair in Fourier space; leaves the spatial application of
     /// A (or B) transformed back to Fourier space in `output`, unscaled for `pack_pair`.
     fn spatial_pair_apply(&mut self,mass:bool) {
+        if mass {
+            // B is pointwise in space, so the field stays in transposed node order.
+            let scale=self.conversion.backend.inverse_fft_2d_transposed(&mut self.input)*(self.conversion.grid.len() as f64).sqrt();
+            self.full.apply_mass_transposed(&self.input,&mut self.output,scale);
+            self.conversion.backend.forward_fft_2d_transposed(&mut self.output);
+            return;
+        }
         self.conversion.backend.inverse_fft_2d(&mut self.input);
         self.conversion.backend.scale(C::new((self.conversion.grid.len() as f64).sqrt(),0.0),&mut self.input);
         if mass {self.full.apply_mass(&self.input,&mut self.output);} else {self.full.apply(&self.input,&mut self.output);}

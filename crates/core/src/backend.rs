@@ -70,6 +70,13 @@ impl<R: Real> SpectralBuffer for Field2D<R> {
     }
 }
 
+/// `values` (row length `nx`, `ny` rows) in transposed order: `out[ix * ny + iy] =
+/// values[iy * nx + ix]`, the spatial layout of `inverse_fft_2d_transposed`.
+pub fn transposed_layout<T: Copy>(values: &[T], nx: usize, ny: usize) -> Vec<T> {
+    assert_eq!(values.len(), nx * ny);
+    (0..nx * ny).map(|k| values[(k % ny) * nx + k / ny]).collect()
+}
+
 pub trait SpectralBackend {
     /// The real scalar type used for field storage (`f32` or `f64`).
     type Real: Real;
@@ -90,6 +97,28 @@ pub trait SpectralBackend {
     fn alloc_field(&self, grid: Grid2D) -> Self::Buffer;
     fn forward_fft_2d(&self, buffer: &mut Self::Buffer);
     fn inverse_fft_2d(&self, buffer: &mut Self::Buffer);
+
+    /// Inverse 2D FFT that leaves the spatial field transposed (node (ix, iy) at
+    /// `ix * ny + iy`) and returns the normalization it did not apply. Pointwise work on
+    /// the transposed field uses transposed coefficients ([`transposed_layout`]) and applies
+    /// the factor; [`forward_fft_2d_transposed`](Self::forward_fft_2d_transposed) returns
+    /// to Fourier coefficients in the standard layout. A backend can skip the transposes
+    /// that restore the spatial layout in between.
+    fn inverse_fft_2d_transposed(&self, buffer: &mut Self::Buffer) -> f64 {
+        self.inverse_fft_2d(buffer);
+        let grid = buffer.grid();
+        let transposed = transposed_layout(buffer.as_slice(), grid.nx, grid.ny);
+        buffer.as_mut_slice().copy_from_slice(&transposed);
+        1.0
+    }
+
+    /// Forward 2D FFT of a transposed spatial field (see `inverse_fft_2d_transposed`).
+    fn forward_fft_2d_transposed(&self, buffer: &mut Self::Buffer) {
+        let grid = buffer.grid();
+        let standard = transposed_layout(buffer.as_slice(), grid.ny, grid.nx);
+        buffer.as_mut_slice().copy_from_slice(&standard);
+        self.forward_fft_2d(buffer);
+    }
 
     /// Scale buffer by a complex scalar. `alpha` is always taken at f64
     /// accumulation precision; backends downcast to storage precision
@@ -137,6 +166,13 @@ pub trait SpectralBackend {
     /// read `x` once for all of them; a block equal to `x` itself may reuse its copy.
     fn gram_matrices(&self, x: &[Self::Buffer], ys: &[&[Self::Buffer]]) -> Vec<Vec<Complex64>> {
         ys.iter().map(|y| self.gram_matrix(x, y)).collect()
+    }
+
+    /// [`gram_matrices`](Self::gram_matrices) whose square blocks are Hermitian by
+    /// construction (Xᴴ·B·X, Xᴴ·A·X for self-adjoint A, B), so a backend may compute one
+    /// triangle and mirror it.
+    fn hermitian_gram_matrices(&self, x: &[Self::Buffer], ys: &[&[Self::Buffer]]) -> Vec<Vec<Complex64>> {
+        self.gram_matrices(x, ys)
     }
 
     /// Compute batched linear combinations: Y = Q × C
