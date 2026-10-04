@@ -56,20 +56,31 @@ impl CoordinateSetup {
 /// Columns released by the solver, kept for reuse: allocating, faulting in and zeroing a
 /// fresh column for every product dominated the dense work at large grids.
 const POOLED_COLUMNS:usize=256;
+thread_local! {
+    /// Released columns of this thread, kept across solves: every wavevector builds a new
+    /// backend, and handing its columns back to the allocator made each one fault in
+    /// fresh pages (12% of a TM band diagram in kernel time). Holds one column length at a
+    /// time and never more columns than this thread had live at once.
+    static COLUMN_POOL:std::cell::RefCell<Vec<Vec<C>>>=const{std::cell::RefCell::new(Vec::new())};
+}
 #[derive(Default)]
-struct AllocationLedger {live:AtomicUsize,peak:AtomicUsize,pool:std::sync::Mutex<Vec<Vec<C>>>}
+struct AllocationLedger {live:AtomicUsize,peak:AtomicUsize}
 impl AllocationLedger {
     fn add(&self,n:usize) {let live=self.live.fetch_add(n,Ordering::Relaxed)+n;self.peak.fetch_max(live,Ordering::Relaxed);}
     /// A column of `len` values, reused when possible; zeroed unless the caller overwrites it.
     fn take(&self,len:usize,zeroed:bool)->Vec<C> {
         self.add(len*16);
-        let reused={let mut pool=self.pool.lock().unwrap();pool.iter().rposition(|v|v.len()==len+ALIGN_PAD).map(|i|pool.swap_remove(i))};
+        let reused=COLUMN_POOL.with_borrow_mut(|pool|pool.iter().rposition(|v|v.len()==len+ALIGN_PAD).map(|i|pool.swap_remove(i)));
         match reused {Some(mut v)=>{if zeroed {v.fill(C::ZERO);}v} None=>vec![C::ZERO;len+ALIGN_PAD]}
     }
     fn release(&self,data:Vec<C>) {
         self.live.fetch_sub(data.len().saturating_sub(ALIGN_PAD)*16,Ordering::Relaxed);
-        let mut pool=self.pool.lock().unwrap();
-        if !data.is_empty() && pool.len()<POOLED_COLUMNS {pool.push(data);}
+        if data.is_empty() {return;}
+        COLUMN_POOL.with_borrow_mut(|pool| {
+            // A new column length (another grid) retires the columns of the previous one.
+            if pool.first().is_some_and(|v|v.len()!=data.len()) {pool.clear();}
+            if pool.len()<POOLED_COLUMNS {pool.push(data);}
+        });
     }
 }
 /// Values of room in front of a pooled column so its data can start on a 64-byte boundary.
@@ -338,6 +349,16 @@ fn unpack_rows(src:&[f64],start:usize,rows:usize,packed:bool,column:&mut[C]) {
     }
 }
 
+/// Σ x² in eight independent partial sums (vectorizable, no sequential add chain), for
+/// magnitudes where only the exponent matters.
+fn sum_squares(values:&[f64])->f64 {
+    let mut acc=[0.0f64;8];
+    let chunks=values.chunks_exact(8);
+    let tail:f64=chunks.remainder().iter().map(|x|x*x).sum();
+    for chunk in chunks {for k in 0..8 {acc[k]+=chunk[k]*chunk[k];}}
+    acc.iter().sum::<f64>()+tail
+}
+
 /// Packed storage as its real coordinates: coordinate i is lane i of the f64 view
 /// (a safe, layout-checked cast; complex arithmetic is never applied to packed pairs).
 fn reals(v:&[C])->&[f64] {bytemuck::cast_slice(v)}
@@ -418,7 +439,7 @@ impl<B:SpectralBackend+Clone> Conversion<B> {
     /// norms within √2 of 1), so a small column is not swamped by its partner's rounding.
     fn pair_scales(&self,a:&[C],b:&[C])->(f64,f64) {
         let scale=|v:&[C]| {
-            let squares:f64=if self.packed {reals(v)[..self.grid.len()].iter().map(|x|x*x).sum()} else {v.iter().map(|z|z.re*z.re).sum()};
+            let squares:f64=if self.packed {sum_squares(&reals(v)[..self.grid.len()])} else {v.iter().map(|z|z.re*z.re).sum()};
             let exponent=(0.5*squares.log2()).round();
             if exponent.is_finite() {2f64.powi(-(exponent.clamp(-1000.0,1000.0) as i32))} else {1.0}
         };

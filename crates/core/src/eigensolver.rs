@@ -2554,7 +2554,9 @@ where
             // ================================================================
             // Debug logging at selected iterations
             // ================================================================
-            if should_log_iteration(iter) {
+            // Debug and warning diagnostics only: without an active logger their inputs are not
+            // computed (the Rayleigh-quotient check costs two products per band).
+            if should_log_iteration(iter) && log::log_enabled!(log::Level::Warn) {
                 let iter_elapsed = start_time.elapsed_secs();
                 let n_converged = convergence.n_converged;
                 let max_res = convergence.max_residual;

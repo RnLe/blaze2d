@@ -28,3 +28,6 @@ chrono = "0.4"
 blaze2d-interface = { path = "../interface" }
 blaze2d-runner = { path = "../runner" }
 serde_json.workspace = true
+
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"

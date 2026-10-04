@@ -88,7 +88,9 @@ impl BlochActionPlan {
         let raw=operation.map_wavevector(source);let mut folding=[0;2];
         for i in 0..2 { let shift=raw[i]-destination[i]; if (shift-shift.round()).abs()>tolerance {return Err(ActionError::DifferentFiber);} folding[i]=shift.round() as i64; }
         let nx=fft_indices(grid.nx); let ny=fft_indices(grid.ny);
-        let support:std::collections::HashMap<_,_>=ny.iter().enumerate().flat_map(|(j,&y)|nx.iter().enumerate().map(move |(i,&x)|([x,y],grid.idx(i,j)))).collect();
+        // Position of FFT index v on an axis of n nodes (inverse of fft_indices): v itself or
+        // v + n, for hi − n < v ≤ hi with hi = ⌊n/2⌋; anything else is outside the support.
+        let position=|v:i64,n:usize|->Option<usize> {let (n,hi)=(n as i64,(n/2) as i64);(v<=hi && v>hi-n).then_some((if v>=0 {v} else {v+n}) as usize)};
         let wr=operation.reciprocal_matrix();let sign: i64=if operation.conjugates(){-1}else{1};
         // Physical Ez is polar; Hz is axial and odd under time reversal.
         let character=match polarization {Polarization::TM=>1.0,Polarization::TE=>(operation.determinant() as i64*sign) as f64};
@@ -96,7 +98,11 @@ impl BlochActionPlan {
         let mut fourier_destination=vec![0;grid.len()];let mut fourier_phase=vec![Complex64::ZERO;grid.len()];
         for (j,&y) in ny.iter().enumerate() { for (i,&x) in nx.iter().enumerate() {
             let index=[x,y];let mapped=[sign*(wr[0][0]*x+wr[0][1]*y)+folding[0],sign*(wr[1][0]*x+wr[1][1]*y)+folding[1]];
-            let pos=grid.idx(i,j);fourier_destination[pos]=*support.get(&mapped).ok_or(ActionError::FourierSupportNotClosed{index,mapped})?;
+            let pos=grid.idx(i,j);
+            fourier_destination[pos]=match (position(mapped[0],grid.nx),position(mapped[1],grid.ny)) {
+                (Some(a),Some(b))=>grid.idx(a,b),
+                _=>return Err(ActionError::FourierSupportNotClosed{index,mapped}),
+            };
             let q=operation.map_wavevector([x as f64+source[0],y as f64+source[1]]);
             fourier_phase[pos]=Complex64::from_polar(character,-std::f64::consts::TAU*(q[0]*tau[0]+q[1]*tau[1]));
         } }
