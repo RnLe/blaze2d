@@ -120,6 +120,26 @@ pub trait SpectralBackend {
         self.forward_fft_2d(buffer);
     }
 
+    /// Forward 2D FFT of a standard-layout spatial field that leaves its Fourier
+    /// coefficients transposed (mode (ix, iy) at `ix * ny + iy`); pointwise Fourier work
+    /// uses transposed tables and [`inverse_fft_2d_from_transposed`](Self::inverse_fft_2d_from_transposed)
+    /// returns to a standard spatial field.
+    fn forward_fft_2d_to_transposed(&self, buffer: &mut Self::Buffer) {
+        self.forward_fft_2d(buffer);
+        let grid = buffer.grid();
+        let transposed = transposed_layout(buffer.as_slice(), grid.nx, grid.ny);
+        buffer.as_mut_slice().copy_from_slice(&transposed);
+    }
+
+    /// Normalized inverse 2D FFT of transposed Fourier coefficients into a standard-layout
+    /// spatial field (see `forward_fft_2d_to_transposed`).
+    fn inverse_fft_2d_from_transposed(&self, buffer: &mut Self::Buffer) {
+        let grid = buffer.grid();
+        let standard = transposed_layout(buffer.as_slice(), grid.ny, grid.nx);
+        buffer.as_mut_slice().copy_from_slice(&standard);
+        self.inverse_fft_2d(buffer);
+    }
+
     /// Scale buffer by a complex scalar. `alpha` is always taken at f64
     /// accumulation precision; backends downcast to storage precision
     /// internally if `Self::Real = f32`.
@@ -173,6 +193,18 @@ pub trait SpectralBackend {
     /// triangle and mirror it.
     fn hermitian_gram_matrices(&self, x: &[Self::Buffer], ys: &[&[Self::Buffer]]) -> Vec<Vec<Complex64>> {
         self.gram_matrices(x, ys)
+    }
+
+    /// R ← R − L·(Mᴴ·R) for borrowed columns L and M (M = B·L for B-orthonormal L): every
+    /// column of `r` projected out of span(L) with all overlaps taken from the original R,
+    /// without copying L or M.
+    fn project_out_block(&self, l: &[&Self::Buffer], m: &[&Self::Buffer], r: &mut [Self::Buffer]) {
+        let overlaps: Vec<Vec<Complex64>> = r.iter().map(|res| m.iter().map(|mi| self.dot(mi, res)).collect()).collect();
+        for (res, overlap) in r.iter_mut().zip(overlaps) {
+            for (li, o) in l.iter().zip(overlap) {
+                self.axpy(-o, li, res);
+            }
+        }
     }
 
     /// Compute batched linear combinations: Y = Q × C

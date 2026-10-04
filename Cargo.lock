@@ -214,6 +214,7 @@ dependencies = [
  "num-complex",
  "num-traits",
  "num_cpus",
+ "pulp",
  "rayon",
  "serde",
  "serde_json",

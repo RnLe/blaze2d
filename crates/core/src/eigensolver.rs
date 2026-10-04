@@ -1224,17 +1224,10 @@ where
         // pass per (residual, locked band). The soft-locked X are B-orthonormal, so this
         // equals the sequential projection up to rounding.
         if backend.prefer_backend_linear_combinations() && !residuals.is_empty() {
-            let locked: Vec<usize> = (0..self.soft_locked.len().min(self.x_block.len())).filter(|&j| self.soft_locked[j]).collect();
-            let vectors: Vec<B::Buffer> = locked.iter().map(|&j| self.x_block[j].vector.clone()).collect();
-            let masses: Vec<B::Buffer> = if self.operator.mass_is_identity() { Vec::new() } else { locked.iter().map(|&j| self.x_block[j].mass.clone()).collect() };
-            let mass = if self.operator.mass_is_identity() { &vectors } else { &masses };
-            let (s, n) = (vectors.len(), residuals.len());
-            let overlaps = backend.gram_matrix(mass, residuals);
-            let coefficients: Vec<num_complex::Complex64> = (0..s * n).map(|k| -overlaps[(k % s) * n + k / s]).collect();
-            let corrections = backend.linear_combinations(&vectors, &coefficients, n);
-            for (r, d) in residuals.iter_mut().zip(&corrections) {
-                backend.axpy(num_complex::Complex64::new(1.0, 0.0), d, r);
-            }
+            let locked: Vec<&BlockEntry<B>> = self.x_block.iter().zip(&self.soft_locked).filter(|(_, locked)| **locked).map(|(e, _)| e).collect();
+            let vectors: Vec<&B::Buffer> = locked.iter().map(|e| &e.vector).collect();
+            let masses: Vec<&B::Buffer> = if self.operator.mass_is_identity() { vectors.clone() } else { locked.iter().map(|e| &e.mass).collect() };
+            backend.project_out_block(&vectors, &masses, residuals);
             return;
         }
 

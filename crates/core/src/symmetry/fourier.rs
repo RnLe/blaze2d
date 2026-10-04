@@ -63,38 +63,63 @@ impl AllocationLedger {
     /// A column of `len` values, reused when possible; zeroed unless the caller overwrites it.
     fn take(&self,len:usize,zeroed:bool)->Vec<C> {
         self.add(len*16);
-        let reused={let mut pool=self.pool.lock().unwrap();pool.iter().rposition(|v|v.len()==len).map(|i|pool.swap_remove(i))};
-        match reused {Some(mut v)=>{if zeroed {v.fill(C::ZERO);}v} None=>vec![C::ZERO;len]}
+        let reused={let mut pool=self.pool.lock().unwrap();pool.iter().rposition(|v|v.len()==len+ALIGN_PAD).map(|i|pool.swap_remove(i))};
+        match reused {Some(mut v)=>{if zeroed {v.fill(C::ZERO);}v} None=>vec![C::ZERO;len+ALIGN_PAD]}
     }
     fn release(&self,data:Vec<C>) {
-        self.live.fetch_sub(data.len()*16,Ordering::Relaxed);
+        self.live.fetch_sub(data.len().saturating_sub(ALIGN_PAD)*16,Ordering::Relaxed);
         let mut pool=self.pool.lock().unwrap();
         if !data.is_empty() && pool.len()<POOLED_COLUMNS {pool.push(data);}
     }
 }
-struct CoordinateBuffer {grid:Grid2D,data:Vec<C>,ledger:Arc<AllocationLedger>}
+/// Values of room in front of a pooled column so its data can start on a 64-byte boundary.
+const ALIGN_PAD:usize=3;
+/// A solver column: `grid.len()` values from the first 64-byte boundary of a pooled
+/// allocation, so SIMD row chunks of the dense kernels never straddle cache lines.
+struct CoordinateBuffer {grid:Grid2D,data:Vec<C>,start:usize,ledger:Arc<AllocationLedger>}
 impl CoordinateBuffer {
-    fn to_field(&self)->Field2D {Field2D::from_vec(self.grid,self.data.clone())}
+    fn new(ledger:&Arc<AllocationLedger>,grid:Grid2D,zeroed:bool)->Self {
+        let data=ledger.take(grid.len(),zeroed);
+        let start=(0..=ALIGN_PAD).find(|&s|(data[s..].as_ptr() as usize)%64==0).unwrap_or(0);
+        Self{grid,data,start,ledger:ledger.clone()}
+    }
+    fn to_field(&self)->Field2D {Field2D::from_vec(self.grid,self.as_slice().to_vec())}
 }
 impl Clone for CoordinateBuffer {
-    fn clone(&self)->Self {let mut data=self.ledger.take(self.data.len(),false);data.copy_from_slice(&self.data);Self{grid:self.grid,data,ledger:self.ledger.clone()}}
+    fn clone(&self)->Self {let mut copy=Self::new(&self.ledger,self.grid,false);copy.as_mut_slice().copy_from_slice(self.as_slice());copy}
 }
 impl Drop for CoordinateBuffer {fn drop(&mut self) {self.ledger.release(std::mem::take(&mut self.data));}}
 impl SpectralBuffer for CoordinateBuffer {
     type Real=f64;
-    fn len(&self)->usize {self.data.len()}
+    fn len(&self)->usize {self.grid.len()}
     fn grid(&self)->Grid2D {self.grid}
-    fn as_slice(&self)->&[C] {&self.data}
-    fn as_mut_slice(&mut self)->&mut[C] {&mut self.data}
+    fn as_slice(&self)->&[C] {&self.data[self.start..self.start+self.grid.len()]}
+    fn as_mut_slice(&mut self)->&mut[C] {let n=self.grid.len();&mut self.data[self.start..self.start+n]}
 }
 #[derive(Clone)]
 struct CoordinateBackend {ledger:Arc<AllocationLedger>,nreal:usize,real_space:bool,packed:bool,real_vectors:bool,real_gram:bool,real_dense:bool}
 impl CoordinateBackend {
+    /// The real coordinates of a packed column as one f64 slice.
+    fn coordinates<'a>(&self,b:&'a CoordinateBuffer)->&'a [f64] {&reals(b.as_slice())[..self.nreal]}
+    fn columns<'a>(&self,v:&'a [CoordinateBuffer])->Vec<&'a [f64]> {v.iter().map(|b|self.coordinates(b)).collect()}
+
     /// Real Gram matrices of `x` with each block of `ys` over row panels (`None` when this
     /// backend has no real Gram); with `hermitian`, square blocks get their lower triangle
     /// from faer's triangular product and mirror it.
     #[allow(unused_variables)]
     fn real_grams(&self,x:&[CoordinateBuffer],ys:&[&[CoordinateBuffer]],hermitian:bool)->Option<Vec<Vec<C>>> {
+        #[cfg(feature="native-linalg")]
+        if self.real_space && self.real_gram && self.packed && crate::kernels::vectorized() && !x.is_empty() {
+            // Packed columns are contiguous f64 coordinates: the pack-free kernel reads them in place.
+            crate::profile_scope!("real_gram");
+            let p=x.len();
+            for y in ys {crate::profiler::count("real_gram.multiply_terms",self.nreal*p*y.len());}
+            let left=self.columns(x);
+            return Some(ys.iter().map(|y| {
+                let right=if std::ptr::eq(y.as_ptr(),x.as_ptr()) && y.len()==p {left.clone()} else {self.columns(y)};
+                crate::kernels::gram(&left,&right,hermitian && y.len()==p).into_iter().map(|v|C::new(v,0.0)).collect()
+            }).collect());
+        }
         #[cfg(feature="native-linalg")]
         if self.real_space && self.real_gram && !x.is_empty() {
             use faer::linalg::matmul::triangular::{matmul as triangular,BlockStructure};
@@ -134,7 +159,7 @@ impl CoordinateBackend {
 }
 impl SpectralBackend for CoordinateBackend {
     type Real=f64;type Buffer=CoordinateBuffer;
-    fn alloc_field(&self,grid:Grid2D)->CoordinateBuffer {CoordinateBuffer{grid,data:self.ledger.take(grid.len(),true),ledger:self.ledger.clone()}}
+    fn alloc_field(&self,grid:Grid2D)->CoordinateBuffer {CoordinateBuffer::new(&self.ledger,grid,true)}
     fn forward_fft_2d(&self,_:&mut CoordinateBuffer) {unreachable!("Fourier coordinates use the physical FFT backend")}
     fn inverse_fft_2d(&self,_:&mut CoordinateBuffer) {unreachable!("Fourier coordinates use the physical FFT backend")}
     fn real_coefficients(&self)->bool {self.real_space}
@@ -160,13 +185,37 @@ impl SpectralBackend for CoordinateBackend {
         }
         // One pass over the f64 views: r = a − λ·b as `axpy` computes it (every lane), the
         // norms summed sequentially over the real coordinates as `dot` does.
-        let mut r=CoordinateBuffer{grid:a.grid,data:self.ledger.take(a.data.len(),false),ledger:self.ledger.clone()};
+        let mut r=CoordinateBuffer::new(&self.ledger,a.grid,false);
         let mut norms=[0.0f64;3];
-        for (i,((d,&x),&y)) in reals_mut(&mut r.data).iter_mut().zip(reals(&a.data)).zip(reals(&b.data)).enumerate() {
+        for (i,((d,&x),&y)) in reals_mut(r.as_mut_slice()).iter_mut().zip(reals(a.as_slice())).zip(reals(b.as_slice())).enumerate() {
             *d=x+(-lambda)*y;
             if i<self.nreal {norms[0]+=*d**d;norms[1]+=x*x;norms[2]+=y*y;}
         }
         (r,norms)
+    }
+    fn project_out_block(&self,l:&[&CoordinateBuffer],m:&[&CoordinateBuffer],r:&mut [CoordinateBuffer]) {
+        if l.is_empty() || r.is_empty() {return;}
+        #[cfg(feature="native-linalg")]
+        if self.real_space && self.packed && crate::kernels::vectorized() {
+            // Overlaps as one pack-free Gram product, then R −= L·C accumulated in place.
+            let (s,n)=(l.len(),r.len());
+            let overlaps=crate::kernels::gram(&m.iter().map(|b|self.coordinates(b)).collect::<Vec<_>>(),&r.iter().map(|b|self.coordinates(b)).collect::<Vec<_>>(),false);
+            let coefficients:Vec<f64>=(0..s*n).map(|k|-overlaps[(k%s)*n+k/s]).collect();
+            let mut views:Vec<&mut [f64]>=r.iter_mut().map(|b|&mut reals_mut(b.as_mut_slice())[..self.nreal]).collect();
+            crate::kernels::combine(&l.iter().map(|b|self.coordinates(b)).collect::<Vec<_>>(),&coefficients,&mut views,true);
+            return;
+        }
+        if self.real_vectors {
+            // Blocked through the backend's Gram and combinations on copies of L and M.
+            let (vectors,masses):(Vec<CoordinateBuffer>,Vec<CoordinateBuffer>)=(l.iter().map(|b|(*b).clone()).collect(),m.iter().map(|b|(*b).clone()).collect());
+            let (s,n)=(vectors.len(),r.len());
+            let overlaps=self.gram_matrix(&masses,r);
+            let coefficients:Vec<C>=(0..s*n).map(|k|-overlaps[(k%s)*n+k/s]).collect();
+            for (res,d) in r.iter_mut().zip(&self.linear_combinations(&vectors,&coefficients,n)) {self.axpy(C::new(1.0,0.0),d,res);}
+            return;
+        }
+        let overlaps:Vec<Vec<C>>=r.iter().map(|res|m.iter().map(|mi|self.dot(mi,res)).collect()).collect();
+        for (res,overlap) in r.iter_mut().zip(overlaps) {for (li,o) in l.iter().zip(overlap) {self.axpy(-o,li,res);}}
     }
     fn linear_combinations(&self,q:&[CoordinateBuffer],coefficients:&[C],m:usize)->Vec<CoordinateBuffer> {
         let r=q.len();if r==0 || m==0 {return vec![];}
@@ -178,11 +227,25 @@ impl SpectralBackend for CoordinateBackend {
         crate::profile_scope!("real_vector.linear_combinations");
         crate::profiler::count("real_vector.multiply_terms",self.nreal*r*m);
         #[cfg(feature="native-linalg")]
+        if self.packed && crate::kernels::vectorized() {
+            // Packed columns are contiguous f64 coordinates: the pack-free kernel reads them in
+            // place and writes every output coordinate; the unused lanes are zeroed here.
+            let grid=q[0].grid();
+            let columns:Vec<&[f64]>=q.iter().map(|v|self.coordinates(v)).collect();
+            let real:Vec<f64>=coefficients.iter().map(|z|z.re).collect();
+            let mut outputs:Vec<CoordinateBuffer>=(0..m).map(|_|CoordinateBuffer::new(&self.ledger,grid,false)).collect();
+            let mut views:Vec<&mut [f64]>=outputs.iter_mut().map(|out| {
+                let (head,tail)=reals_mut(out.as_mut_slice()).split_at_mut(self.nreal);tail.fill(0.0);head
+            }).collect();
+            crate::kernels::combine(&columns,&real,&mut views,false);
+            return outputs;
+        }
+        #[cfg(feature="native-linalg")]
         {
             let b=faer::Mat::<f64>::from_fn(r,m,|i,j|coefficients[i+r*j].re);
             // Every output value is written below, so recycled columns need no zeroing.
             let grid=q[0].grid();
-            let mut outputs:Vec<CoordinateBuffer>=(0..m).map(|_|CoordinateBuffer{grid,data:self.ledger.take(grid.len(),false),ledger:self.ledger.clone()}).collect();
+            let mut outputs:Vec<CoordinateBuffer>=(0..m).map(|_|CoordinateBuffer::new(&self.ledger,grid,false)).collect();
             PANELS.with_borrow_mut(|[a,result]|{
                 resize(a,PANEL*r);resize(result,PANEL*m);
                 let mut start=0;
@@ -454,7 +517,7 @@ impl<B:SpectralBackend+Clone> LinearOperator<CoordinateBackend> for FourierOpera
         for (x,y) in inputs[start..].iter().zip(&mut outputs[start..]) {self.apply_mass(x,y);}
     }
     fn alloc_field(&self)->CoordinateBuffer {self.backend.alloc_field(self.conversion.coordinate_grid())}
-    fn alloc_output(&self)->CoordinateBuffer {let grid=self.conversion.coordinate_grid();CoordinateBuffer{grid,data:self.backend.ledger.take(grid.len(),false),ledger:self.backend.ledger.clone()}}
+    fn alloc_output(&self)->CoordinateBuffer {let grid=self.conversion.coordinate_grid();CoordinateBuffer::new(&self.backend.ledger,grid,false)}
     fn backend(&self)->&CoordinateBackend {&self.backend}
     fn backend_mut(&mut self)->&mut CoordinateBackend {&mut self.backend}
     fn grid(&self)->Grid2D {self.conversion.coordinate_grid()}

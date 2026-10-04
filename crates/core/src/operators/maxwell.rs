@@ -104,12 +104,28 @@ pub struct ThetaOperator<B: SpectralBackend> {
     /// first use.
     transposed_inverse: std::sync::OnceLock<TransposedInverse>,
     transposed_eps: std::sync::OnceLock<Vec<f64>>,
+    /// Raw k+G tables in the transposed mode order of `forward_fft_2d_to_transposed`.
+    transposed_k: std::sync::OnceLock<TransposedWavevectors>,
+}
+
+/// (k+G)_x, (k+G)_y and |k+G|² in transposed mode order.
+struct TransposedWavevectors {
+    x: Vec<f64>,
+    y: Vec<f64>,
+    sq: Vec<f64>,
 }
 
 /// Inverse permittivity (smoothed tensors or scalars) in transposed node order.
 enum TransposedInverse {
     Tensors(Vec<[f64; 4]>),
     Scalars(Vec<f64>),
+}
+
+impl TransposedWavevectors {
+    fn new(grid: Grid2D, (x, y, sq): (&[f64], &[f64], &[f64])) -> Self {
+        let order = |values: &[f64]| crate::backend::transposed_layout(values, grid.nx, grid.ny);
+        Self { x: order(x), y: order(y), sq: order(sq) }
+    }
 }
 
 impl TransposedInverse {
@@ -202,6 +218,7 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             k_plus_g_was_clamped: tables.clamp_mask,
             transposed_inverse: std::sync::OnceLock::new(),
             transposed_eps: std::sync::OnceLock::new(),
+            transposed_k: std::sync::OnceLock::new(),
         }
     }
 
@@ -917,19 +934,23 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         crate::profiler::count("operator_A.columns", 1);
         crate::profiler::count("operator_A.elements", self.grid.len());
 
+        // Fourier coefficients stay in transposed mode order between the transforms (spatial
+        // fields keep the standard layout), so every transform skips one transpose.
+        let (grid, k_plus_g) = (self.grid, (self.k_plus_g_x.as_slice(), self.k_plus_g_y.as_slice(), self.k_plus_g_sq.as_slice()));
+        let k = self.transposed_k.get_or_init(|| TransposedWavevectors::new(grid, k_plus_g));
         copy_buffer(&mut self.scratch, input);
-        self.backend.forward_fft_2d(&mut self.scratch);
+        self.backend.forward_fft_2d_to_transposed(&mut self.scratch);
 
         compute_gradients_from_potential(
             self.scratch.as_slice(),
             self.grad_x.as_mut_slice(),
             self.grad_y.as_mut_slice(),
-            &self.k_plus_g_x,
-            &self.k_plus_g_y,
+            &k.x,
+            &k.y,
         );
 
-        self.backend.inverse_fft_2d(&mut self.grad_x);
-        self.backend.inverse_fft_2d(&mut self.grad_y);
+        self.backend.inverse_fft_2d_from_transposed(&mut self.grad_x);
+        self.backend.inverse_fft_2d_from_transposed(&mut self.grad_y);
 
         apply_inv_eps(
             self.grad_x.as_mut_slice(),
@@ -937,18 +958,18 @@ impl<B: SpectralBackend> ThetaOperator<B> {
             &self.dielectric,
         );
 
-        self.backend.forward_fft_2d(&mut self.grad_x);
-        self.backend.forward_fft_2d(&mut self.grad_y);
+        self.backend.forward_fft_2d_to_transposed(&mut self.grad_x);
+        self.backend.forward_fft_2d_to_transposed(&mut self.grad_y);
 
         assemble_divergence(
             self.grad_x.as_slice(),
             self.grad_y.as_slice(),
             output.as_mut_slice(),
-            &self.k_plus_g_x,
-            &self.k_plus_g_y,
+            &k.x,
+            &k.y,
         );
 
-        self.backend.inverse_fft_2d(output);
+        self.backend.inverse_fft_2d_from_transposed(output);
 
         crate::profiler::stop_timer("apply_te");
     }
@@ -958,9 +979,12 @@ impl<B: SpectralBackend> ThetaOperator<B> {
         crate::profiler::count("operator_A.columns", 1);
         crate::profiler::count("operator_A.elements", self.grid.len());
 
-        // Optimization: Work directly on output buffer to save a copy
+        // Optimization: Work directly on output buffer to save a copy. The Fourier
+        // coefficients stay in transposed mode order, so each transform skips one transpose.
+        let (grid, k_plus_g) = (self.grid, (self.k_plus_g_x.as_slice(), self.k_plus_g_y.as_slice(), self.k_plus_g_sq.as_slice()));
+        let k = self.transposed_k.get_or_init(|| TransposedWavevectors::new(grid, k_plus_g));
         copy_buffer(output, input);
-        self.backend.forward_fft_2d(output);
+        self.backend.forward_fft_2d_to_transposed(output);
         let data = output.as_mut_slice();
         #[cfg(debug_assertions)]
         {
@@ -976,10 +1000,10 @@ impl<B: SpectralBackend> ThetaOperator<B> {
                 log::debug!("[operator] TM k_plus_g_sq max={:.4}", max_k_sq);
             });
         }
-        for (value, &k_sq) in data.iter_mut().zip(self.k_plus_g_sq.iter()) {
+        for (value, &k_sq) in data.iter_mut().zip(k.sq.iter()) {
             *value *= B::Real::from_accum(k_sq);
         }
-        self.backend.inverse_fft_2d(output);
+        self.backend.inverse_fft_2d_from_transposed(output);
 
         crate::profiler::stop_timer("apply_tm");
     }

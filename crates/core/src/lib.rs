@@ -83,6 +83,8 @@ pub mod eigensolver;
 pub mod field;
 pub mod geometry;
 pub mod grid;
+#[cfg(feature = "native-linalg")]
+pub mod kernels;
 pub mod lattice;
 pub mod metrics;
 pub mod polarization;

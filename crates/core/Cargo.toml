@@ -13,7 +13,7 @@ profiling = []
 # Use faer for dense linear algebra (GEMM, eigensolvers).
 # This is the high-performance native path using optimized BLAS.
 # NOT compatible with WASM due to faer's thread pool and atomic dependencies.
-native-linalg = ["dep:faer"]
+native-linalg = ["dep:faer", "dep:pulp"]
 
 # Use nalgebra for dense linear algebra (GEMM, eigensolvers).
 # This is the portable WASM-compatible path with no threading dependencies.
@@ -46,6 +46,7 @@ num_cpus = { workspace = true, optional = true }
 
 # Dense linear algebra backends (mutually exclusive for WASM vs native)
 faer = { workspace = true, optional = true }
+pulp = { workspace = true, optional = true }
 # Includes the cancellation repair for nearly diagonal Hermitian blocks.
 nalgebra = { version = "0.34.2", features = ["serde-serialize"], optional = true }
 toml.workspace = true

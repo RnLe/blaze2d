@@ -22,6 +22,7 @@ authors = ["RnLe <dev@rnle.dev>"]
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"], default-features = true }
 faer = "0.23"
+pulp = "0.21"
 log = "0.4"
 num-complex = { version = "0.4", features = ["serde", "bytemuck"] }
 rayon = "1.10"

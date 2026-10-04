@@ -187,11 +187,12 @@ impl<R: Real + FftNum> CpuBackend<R> {
         });
     }
 
-    /// Serial 2D FFT without the transpose that restores the spatial layout: an inverse
-    /// leaves the field in `ix * ny + iy` order and unnormalized, a forward starts from that
-    /// order. The second 1D pass writes out of place into the buffer. `false` when the
-    /// parallel path applies instead.
-    fn fft_2d_transposed(&self, buffer: &mut Field2D<R>, direction: FftDirection) -> bool {
+    /// Serial 2D FFT with one transpose instead of two. From the standard layout it runs the
+    /// x pass, transposes and runs the y pass, leaving the result in `ix * ny + iy` order;
+    /// from the transposed layout it runs the y pass, transposes and runs the x pass,
+    /// leaving the standard layout. The second 1D pass writes out of place into the buffer;
+    /// `scale` is applied in the transpose. `false` when the parallel path applies instead.
+    fn fft_2d_transposed(&self, buffer: &mut Field2D<R>, direction: FftDirection, from_standard: bool, scale: Option<R>) -> bool {
         let grid = buffer.grid();
         let (nx, ny) = (grid.nx, grid.ny);
         #[cfg(feature = "parallel")]
@@ -214,18 +215,21 @@ impl<R: Real + FftNum> CpuBackend<R> {
         let (transposed, fft_scratch) = scratch_guard.split_at_mut(grid.len());
         let fft_scratch = &mut fft_scratch[..fft_scratch_len];
         let data = buffer.as_mut_slice();
-        match direction {
-            FftDirection::Inverse => {
-                row_fft.process_with_scratch(data, fft_scratch);
-                transpose_tiled(data, transposed, nx, ny, None);
-                col_fft.process_outofplace_with_scratch(transposed, data, fft_scratch);
-            }
-            FftDirection::Forward => {
-                col_fft.process_with_scratch(data, fft_scratch);
-                transpose_tiled(data, transposed, ny, nx, None);
-                row_fft.process_outofplace_with_scratch(transposed, data, fft_scratch);
-            }
+        let timer = match direction {
+            FftDirection::Forward => "fft_2d::forward",
+            FftDirection::Inverse => "fft_2d::inverse",
+        };
+        blaze2d_core::profiler::start_timer(timer);
+        if from_standard {
+            row_fft.process_with_scratch(data, fft_scratch);
+            transpose_tiled(data, transposed, nx, ny, scale);
+            col_fft.process_outofplace_with_scratch(transposed, data, fft_scratch);
+        } else {
+            col_fft.process_with_scratch(data, fft_scratch);
+            transpose_tiled(data, transposed, ny, nx, scale);
+            row_fft.process_outofplace_with_scratch(transposed, data, fft_scratch);
         }
+        blaze2d_core::profiler::stop_timer(timer);
         true
     }
 
@@ -344,10 +348,56 @@ fn pack_rows<R: Real>(src: &[Complex<R>], dst: &mut [Complex64]) {
     R::copy_to_accum(src, &mut dst[..src.len()]);
 }
 
+#[cfg(feature = "native-linalg")]
+fn columns<R: Real>(buffers: &[Field2D<R>]) -> Vec<&[Complex<R>]> {
+    buffers.iter().map(|b| b.as_slice()).collect()
+}
+
+/// out_j += Σ_i q_i·c[i + r·j] over row panels (column-major r × m coefficients).
+#[cfg(feature = "native-linalg")]
+fn panel_combine_add<R: Real>(q: &[&[Complex<R>]], coeffs: &[Complex64], out: &mut [&mut [Complex<R>]]) {
+    let (r, m, n) = (q.len(), out.len(), q[0].len());
+    let c = faer::MatRef::from_column_major_slice(coeffs, r, m);
+    PANELS.with_borrow_mut(|[a, result]| {
+        resize(a, PANEL * r);
+        resize(result, PANEL * m);
+        let mut start = 0;
+        while start < n {
+            let rows = PANEL.min(n - start);
+            for (j, column) in q.iter().enumerate() {
+                pack_rows(&column[start..start + rows], &mut a[j * rows..(j + 1) * rows]);
+            }
+            for (j, column) in out.iter().enumerate() {
+                pack_rows(&column[start..start + rows], &mut result[j * rows..(j + 1) * rows]);
+            }
+            faer::linalg::matmul::matmul(
+                faer::MatMut::from_column_major_slice_mut(&mut result[..rows * m], rows, m),
+                faer::Accum::Add,
+                faer::MatRef::from_column_major_slice(&a[..rows * r], rows, r),
+                c,
+                Complex64::new(1.0, 0.0),
+                faer::get_global_parallelism(),
+            );
+            for (j, column) in out.iter_mut().enumerate() {
+                for (dst, z) in column[start..start + rows].iter_mut().zip(&result[j * rows..(j + 1) * rows]) {
+                    *dst = cscalar::<R>(z.re, z.im);
+                }
+            }
+            start += rows;
+        }
+    });
+}
+
 #[derive(Clone, Copy)]
 enum FftDirection {
     Forward,
     Inverse,
+}
+
+/// `data` (row length `nx`) transposed in place through a copy (parallel-FFT fallbacks).
+fn transpose_buffer<R: Real>(data: &mut [Complex<R>], nx: usize, ny: usize) {
+    let copy = data.to_vec();
+    transpose_tiled(&copy, data, nx, ny, None);
 }
 
 /// `dst[ix * ny + iy] = src[iy * nx + ix]` (times `scale`), in 16×16 blocks.
@@ -482,26 +532,47 @@ impl<R: Real + FftNum> SpectralBackend for CpuBackend<R> {
     fn inverse_fft_2d_transposed(&self, buffer: &mut Self::Buffer) -> f64 {
         blaze2d_core::profiler::count("fft.inverse.vectors", 1);
         blaze2d_core::profiler::count("fft.inverse.elements", buffer.len());
-        if self.fft_2d_transposed(buffer, FftDirection::Inverse) {
+        if self.fft_2d_transposed(buffer, FftDirection::Inverse, true, None) {
             return 1.0 / buffer.len() as f64;
         }
         self.fft_2d(buffer, FftDirection::Inverse);
         let grid = buffer.grid();
-        let transposed = blaze2d_core::backend::transposed_layout(buffer.as_slice(), grid.nx, grid.ny);
-        buffer.as_mut_slice().copy_from_slice(&transposed);
+        transpose_buffer(buffer.as_mut_slice(), grid.nx, grid.ny);
         1.0
     }
 
     fn forward_fft_2d_transposed(&self, buffer: &mut Self::Buffer) {
         blaze2d_core::profiler::count("fft.forward.vectors", 1);
         blaze2d_core::profiler::count("fft.forward.elements", buffer.len());
-        if self.fft_2d_transposed(buffer, FftDirection::Forward) {
+        if self.fft_2d_transposed(buffer, FftDirection::Forward, false, None) {
             return;
         }
         let grid = buffer.grid();
-        let standard = blaze2d_core::backend::transposed_layout(buffer.as_slice(), grid.ny, grid.nx);
-        buffer.as_mut_slice().copy_from_slice(&standard);
+        transpose_buffer(buffer.as_mut_slice(), grid.ny, grid.nx);
         self.fft_2d(buffer, FftDirection::Forward);
+    }
+
+    fn forward_fft_2d_to_transposed(&self, buffer: &mut Self::Buffer) {
+        blaze2d_core::profiler::count("fft.forward.vectors", 1);
+        blaze2d_core::profiler::count("fft.forward.elements", buffer.len());
+        if self.fft_2d_transposed(buffer, FftDirection::Forward, true, None) {
+            return;
+        }
+        self.fft_2d(buffer, FftDirection::Forward);
+        let grid = buffer.grid();
+        transpose_buffer(buffer.as_mut_slice(), grid.nx, grid.ny);
+    }
+
+    fn inverse_fft_2d_from_transposed(&self, buffer: &mut Self::Buffer) {
+        blaze2d_core::profiler::count("fft.inverse.vectors", 1);
+        blaze2d_core::profiler::count("fft.inverse.elements", buffer.len());
+        let scale = R::from_accum(1.0 / buffer.len() as f64);
+        if self.fft_2d_transposed(buffer, FftDirection::Inverse, false, Some(scale)) {
+            return;
+        }
+        let grid = buffer.grid();
+        transpose_buffer(buffer.as_mut_slice(), grid.ny, grid.nx);
+        self.fft_2d(buffer, FftDirection::Inverse);
     }
 
     fn scale(&self, alpha: Complex64, buffer: &mut Self::Buffer) {
@@ -603,12 +674,28 @@ impl<R: Real + FftNum> SpectralBackend for CpuBackend<R> {
 
     #[cfg(feature = "native-linalg")]
     fn gram_matrices(&self, x: &[Self::Buffer], ys: &[&[Self::Buffer]]) -> Vec<Vec<Complex64>> {
-        self.panel_grams(x, ys, false)
+        self.panel_grams(&columns(x), &ys.iter().map(|y| columns(y)).collect::<Vec<_>>(), false)
     }
 
     #[cfg(feature = "native-linalg")]
     fn hermitian_gram_matrices(&self, x: &[Self::Buffer], ys: &[&[Self::Buffer]]) -> Vec<Vec<Complex64>> {
-        self.panel_grams(x, ys, true)
+        self.panel_grams(&columns(x), &ys.iter().map(|y| columns(y)).collect::<Vec<_>>(), true)
+    }
+
+    /// Overlaps as one panel Gram product, then R += L·(−overlaps) accumulated over row
+    /// panels, reading the borrowed L and M in place.
+    #[cfg(feature = "native-linalg")]
+    fn project_out_block(&self, l: &[&Self::Buffer], m: &[&Self::Buffer], r: &mut [Self::Buffer]) {
+        if l.is_empty() || r.is_empty() {
+            return;
+        }
+        let (s, n) = (l.len(), r.len());
+        let masses: Vec<&[Complex<R>]> = m.iter().map(|b| b.as_slice()).collect();
+        let overlaps = self.panel_grams(&masses, &[columns(r)], false).pop().unwrap_or_default();
+        let coefficients: Vec<Complex64> = (0..s * n).map(|k| -overlaps[(k % s) * n + k / s]).collect();
+        let vectors: Vec<&[Complex<R>]> = l.iter().map(|b| b.as_slice()).collect();
+        let mut out: Vec<&mut [Complex<R>]> = r.iter_mut().map(|b| b.as_mut_slice()).collect();
+        panel_combine_add(&vectors, &coefficients, &mut out);
     }
 
     fn batch_forward_fft_2d(&self, buffers: &mut [Self::Buffer]) {
@@ -629,7 +716,7 @@ impl<R: Real + FftNum> CpuBackend<R> {
     /// a block that is `x` itself reuses its packed panel. With `hermitian`, square blocks
     /// get their lower triangle from faer's triangular product and mirror it.
     #[cfg(feature = "native-linalg")]
-    fn panel_grams(&self, x: &[Field2D<R>], ys: &[&[Field2D<R>]], hermitian: bool) -> Vec<Vec<Complex64>> {
+    fn panel_grams(&self, x: &[&[Complex<R>]], ys: &[Vec<&[Complex<R>]>], hermitian: bool) -> Vec<Vec<Complex64>> {
         use faer::linalg::matmul::triangular::{matmul as triangular, BlockStructure};
         let p = x.len();
         let mut products: Vec<faer::Mat<Complex64>> = ys.iter().map(|y| faer::Mat::zeros(p, y.len())).collect();
@@ -642,18 +729,19 @@ impl<R: Real + FftNum> CpuBackend<R> {
                 while start < n {
                     let rows = PANEL.min(n - start);
                     for (j, column) in x.iter().enumerate() {
-                        pack_rows(&column.as_slice()[start..start + rows], &mut a[j * rows..(j + 1) * rows]);
+                        pack_rows(&column[start..start + rows], &mut a[j * rows..(j + 1) * rows]);
                     }
                     let left = faer::MatRef::from_column_major_slice(&a[..rows * p], rows, p);
                     for (y, product) in ys.iter().zip(&mut products) {
                         if y.is_empty() {
                             continue;
                         }
-                        let right = if std::ptr::eq(y.as_ptr(), x.as_ptr()) && y.len() == p {
+                        let same = y.len() == p && y.iter().zip(x).all(|(a, b)| std::ptr::eq(a.as_ptr(), b.as_ptr()));
+                        let right = if same {
                             left
                         } else {
                             for (j, column) in y.iter().enumerate() {
-                                pack_rows(&column.as_slice()[start..start + rows], &mut b[j * rows..(j + 1) * rows]);
+                                pack_rows(&column[start..start + rows], &mut b[j * rows..(j + 1) * rows]);
                             }
                             faer::MatRef::from_column_major_slice(&b[..rows * y.len()], rows, y.len())
                         };
