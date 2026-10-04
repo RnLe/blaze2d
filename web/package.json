@@ -16,6 +16,7 @@
     "generate:content": "node scripts/generate-content.mjs",
     "generate:contract": "node scripts/generate-contract.mjs",
     "generate:examples": "node scripts/generate-examples.mjs",
+    "generate:preconditioner": "node --experimental-strip-types scripts/generate-preconditioner-data.mjs",
     "go": "pnpm run build:local && pnpm run serve:out",
     "lint": "eslint .",
     "prepare:site": "pnpm generate:contract && pnpm build:wasm && pnpm generate:examples && pnpm generate:content",

@@ -1,0 +1,409 @@
+---
+nav:
+  group: Theory
+  order: 3
+layout: wide
+title: Preconditioner
+description: "What a preconditioner is, why LOBPCG builds its trial subspace from preconditioned residuals, and how Blaze applies a cheap approximate inverse of the Maxwell operator."
+---
+
+import { Citation, References, Reference } from '@/components/article/Citation'
+import PreconditionerHero from '@/components/preconditioner-page/PreconditionerHero'
+import PreconditionerQuestions from '@/components/preconditioner-page/PreconditionerQuestions'
+import LobpcgCycle from '@/components/preconditioner-page/LobpcgCycle'
+import VectorPlayground from '@/components/preconditioner-page/VectorPlayground'
+import ResidualWeights from '@/components/preconditioner-page/ResidualWeights'
+import ConvergenceRace from '@/components/preconditioner-page/ConvergenceRace'
+import BlazePipelines from '@/components/preconditioner-page/BlazePipelines'
+import '@/components/preconditioner-page/preconditioner.css'
+
+<div className="preconditioner-page">
+
+<PreconditionerHero />
+
+<div className="narrow">
+
+<span className="pc-kicker">Theory · Eigensolver</span>
+
+# Preconditioner
+
+<p className="pc-lead">Why Blaze never iterates with the raw residual, and how a cheap, deliberately inexact inverse of the Maxwell operator makes every eigensolver step count.</p>
+
+Every band diagram Blaze computes is a sequence of eigenvalue problems: for each
+wavevector $\mathbf{k}$, the lowest few eigenpairs of a discretized Maxwell operator.
+The operator is far too large to diagonalize directly, so Blaze improves approximate
+eigenvectors step by step with an iterative eigensolver. How many steps that takes
+depends on one ingredient applied in every iteration: the **preconditioner**.
+
+<PreconditionerQuestions />
+
+## Why does Blaze need a preconditioner?
+
+Blaze solves the eigenproblems with LOBPCG, the locally optimal block preconditioned
+conjugate gradient method.<Citation id={1} /> It keeps a block $X$ of approximate
+eigenvectors, one column per band, and improves the whole block at once:
+
+</div>
+
+<LobpcgCycle />
+
+<div className="narrow">
+
+The residuals measure what is still wrong, and Rayleigh–Ritz picks the best
+combination of the directions on offer. **LOBPCG builds its trial subspace from the
+preconditioned residual**: the only new information in an iteration is
+$W = TR$, the residuals multiplied by the preconditioner $T$. If $T$ proposes good
+corrections, a handful of iterations suffice. If it does not, Rayleigh–Ritz can only
+choose among poor directions, and the iteration count grows with the resolution of
+the grid.
+
+The rest of this page builds up what $T$ is, starting from two equations.
+
+## Which two equations matter?
+
+</div>
+
+<div className="pc-equations">
+<div className="pc-equation">
+<span className="pc-kicker">Linear system</span>
+
+$$
+A\mathbf{x} = \mathbf{b}
+$$
+
+Given $A$ and $\mathbf{b}$, find the vector $\mathbf{x}$ that $A$ maps onto $\mathbf{b}$.
+
+</div>
+<div className="pc-equation" data-tone="eigen">
+<span className="pc-kicker">Eigenvalue problem</span>
+
+$$
+A\mathbf{x} = \lambda\mathbf{x}
+$$
+
+Find the directions $\mathbf{x}$ that $A$ does not turn, only stretches by a factor $\lambda$.
+
+</div>
+</div>
+
+<div className="narrow">
+
+For a linear system, a preconditioner is a matrix $T \approx A^{-1}$ that is cheap to
+apply. Iterative solvers then work with $TA\mathbf{x} = T\mathbf{b}$ instead of
+$A\mathbf{x} = \mathbf{b}$: the solution is the same, but $TA$ is close to the
+identity, and for the identity there is nothing left to solve.<Citation id={3} /> With
+$T = A^{-1}$ exactly, $\mathbf{x} = T\mathbf{b}$ in a single step. An eigenproblem has
+no right-hand side, so $T$ enters through the residual, the eigenproblem's counterpart
+of $\mathbf{b} - A\mathbf{x}$, as the next sections show.
+
+Band calculations are eigenvalue problems. For Maxwell's equations they take the
+generalized form $A\mathbf{x} = \lambda B\mathbf{x}$, where $\lambda$ is the squared
+frequency and $B$ is the identity for TE and the permittivity for TM. This page uses
+$B = I$, which keeps the geometry visible; nothing essential changes otherwise.
+
+## What does a matrix do to a vector?
+
+A matrix turns and stretches vectors. The playground uses a symmetric $2 \times 2$
+matrix (Blaze's Maxwell operator is Hermitian, the complex counterpart), so its
+eigenvalues are real and its eigenvectors perpendicular. Drag the tip of $\mathbf{x}$: the blue arrow is
+<span className="pc-mark-image">$A\mathbf{x}$</span>. The faint blue ellipse is where
+$A$ sends every vector of the same length as $\mathbf{x}$.
+
+</div>
+
+<VectorPlayground stage="operator" />
+
+<div className="narrow">
+
+Almost every direction is turned. Only along the two dashed lines does $A\mathbf{x}$
+stay parallel to $\mathbf{x}$. Those are the eigenvectors $\mathbf{v}_1$ and
+$\mathbf{v}_2$, and the stretch factors are the eigenvalues:
+
+$$
+A\mathbf{v}_i = \lambda_i \mathbf{v}_i, \qquad \lambda_1 \le \lambda_2 .
+$$
+
+Their ratio $\kappa = \lambda_2/\lambda_1$ is the **condition number**; the stretch
+slider sets it. Blaze writes fields as sums of plane waves with wavevectors
+$\mathbf{k}+\mathbf{G}$, where $\mathbf{G}$ runs over the reciprocal lattice
+([Introduction](/introduction#how-does-blaze-solve-the-equation)). The eigenvalues of
+the discretized Maxwell operator run from the lowest band up to the largest
+$|\mathbf{k}+\mathbf{G}|^2$ the grid can represent, so $\kappa$ grows with the square
+of the grid resolution. That growth is what a preconditioner has to undo.
+
+## When is a vector almost an eigenvector?
+
+For an exact eigenpair,
+
+$$
+A\mathbf{x} - \lambda\mathbf{x} = \mathbf{0} .
+$$
+
+An iterative solver never holds an exact eigenvector, only an approximation. For a
+given $\mathbf{x}$, the best eigenvalue estimate is the **Rayleigh quotient**
+
+$$
+\rho(\mathbf{x}) = \frac{\mathbf{x}^{\mathsf T} A\mathbf{x}}{\mathbf{x}^{\mathsf T}\mathbf{x}},
+$$
+
+the number $\mu$ that makes $\lVert A\mathbf{x} - \mu\mathbf{x}\rVert$ smallest. What
+remains is the **residual**
+
+$$
+\mathbf{r} = A\mathbf{x} - \rho(\mathbf{x})\,\mathbf{x},
+$$
+
+which vanishes exactly when $\mathbf{x}$ is an eigenvector. Geometrically,
+$A\mathbf{x}$ splits into a part along $\mathbf{x}$, namely $\rho\mathbf{x}$, and an
+<span className="pc-mark-residual">orange remainder $\mathbf{r}$</span> perpendicular
+to it: $\mathbf{x}^{\mathsf T}\mathbf{r} = 0$.
+
+</div>
+
+<VectorPlayground stage="residual" />
+
+<div className="narrow">
+
+Drag $\mathbf{x}$ onto a dashed line and the residual drops to zero. Its length
+$\lVert\mathbf{r}\rVert$ is the natural measure of quality: a band is accurate once its
+residual is small compared with $\lVert A\mathbf{x}\rVert$.
+
+The residual also says how wrong $\mathbf{x}$ is, direction by direction. Expand
+$\mathbf{x} = \sum_i c_i \mathbf{v}_i$ in the eigenvectors; then
+
+$$
+\mathbf{r} = \sum_i c_i\,(\lambda_i - \rho)\,\mathbf{v}_i .
+$$
+
+To find the lowest band, a correction must remove the components $c_i$ with $i > 1$.
+The residual contains all of them, but each arrives multiplied by $\lambda_i - \rho$.
+
+## What does the preconditioner change?
+
+For a large operator, those factors are wildly uneven. Components with large
+$\lambda_i$, the fine-scale ripples a grid resolves, dominate $\mathbf{r}$ even when
+they are a negligible part of the error, while the components that matter for the
+lowest bands barely register. A step along $\mathbf{r}$ spends almost all of its
+effort on the stiffest directions.
+
+Multiplying by an approximate inverse rebalances the factors. With $T = A^{-1}$,
+
+$$
+T\mathbf{r} = A^{-1}\mathbf{r} = \sum_i c_i\left(1 - \frac{\rho}{\lambda_i}\right)\mathbf{v}_i .
+$$
+
+Every factor is now at most $1$. Near convergence, $\rho \approx \lambda_1$: the wanted
+component gets $1 - \rho/\lambda_1$, close to zero and slightly negative because
+$\rho \ge \lambda_1$, while every unwanted component keeps a weight close to $1$. The <span className="pc-mark-preconditioned">preconditioned residual</span>
+is essentially the error itself, and subtracting it moves $\mathbf{x}$ towards
+$\mathbf{v}_1$. The bars show both sets of factors for the distinct eigenvalues
+$\lambda_i \propto (2i-1)^2$ of a uniform one-dimensional crystal at the edge of the
+Brillouin zone, with $\rho$ 8% above $\lambda_1$:
+
+</div>
+
+<ResidualWeights />
+
+<div className="narrow">
+
+The third playground adds the preconditioned residual. The teal arrow $-T\mathbf{r}$
+starts at the tip of $\mathbf{x}$ and ends at the next iterate, marked by a dashed
+ring: **Step** applies the plain preconditioned update
+$\mathbf{x} \leftarrow \mathbf{x} - T\mathbf{r}$, also called preconditioned inverse
+iteration.<Citation id={4} /> The faint teal ellipse is $TA$ applied to the circle: the
+rounder it is, the closer $TA$ is to a multiple of the identity, and $\kappa(TA)$ is the
+ratio of its eigenvalues.
+
+Two cautions. LOBPCG does not take this plain step: Rayleigh–Ritz picks the step length
+and mixes in the previous direction, so the scale of $T$ never matters there. And in
+two dimensions there is only one unwanted direction, which a well-scaled step can remove
+on its own. The playground shows what $T\mathbf{r}$ looks like; the comparison further
+down shows which $T$ wins when there are thousands of eigenvalues.
+
+</div>
+
+<VectorPlayground stage="preconditioned" />
+
+<div className="narrow">
+
+- **None, $T = I$.** The step $\mathbf{x} - \mathbf{r}$ multiplies the component along
+  $\mathbf{v}_i$ by $1 + \rho - \lambda_i$, so it depends on the absolute size of the
+  eigenvalues. For this matrix the $\mathbf{v}_2$ part flips sign and grows, so the
+  plain step moves away from $\mathbf{v}_1$ and then stalls.
+- **Diagonal, $T = \operatorname{diag}(A)^{-1}$.** Inverts only the diagonal entries.
+  At an eigenvector angle of $0^\circ$ the matrix is diagonal and this is the exact
+  inverse; at $45^\circ$ both diagonal entries are equal and $T$ is just a scaled
+  identity. In two dimensions a well-scaled identity can still remove the single
+  unwanted direction and even beat $A^{-1}$ in a plain step. With eigenvalues spread over
+  $\kappa \propto N^2$, no single scale fits them all: $T$ must be cheap *in the basis
+  where $A$ is nearly diagonal*.
+- **Exact inverse, $T = A^{-1}$.** The step becomes
+  $\mathbf{x} - A^{-1}(A\mathbf{x} - \rho\mathbf{x}) = \rho A^{-1}\mathbf{x}$, one step
+  of inverse iteration: the tangent of the angle to $\mathbf{v}_1$ shrinks by the
+  factor $\lambda_1/\lambda_2$.
+- **Shifted inverse, $T = (A - \rho I)^{-1}$.** Inverting the shifted operator exactly is
+  useless: $T\mathbf{r} = (A - \rho I)^{-1}(A - \rho I)\,\mathbf{x} = \mathbf{x}$. The
+  proposed correction is $\mathbf{x}$ itself, it adds no new direction, and the step
+  removes $\mathbf{x}$ entirely. $TA$ is also indefinite here, so its shape says nothing.
+
+## Why must it be cheap?
+
+$T$ is applied in every iteration, to every band, at every wavevector. A diagram with
+12 bands, 61 wavevectors and about 20 iterations per wavevector applies it some
+15,000 times, and a parameter study repeats that for every crystal.
+
+How expensive an exact inverse is depends on where the material sits. In TM, Blaze's
+operator is $A = |\mathbf{k}+\mathbf{G}|^2$, diagonal in Fourier space, and the
+permittivity enters only through the mass operator $B$. Its exact inverse costs two
+fast Fourier transforms, and Blaze applies essentially that.
+
+In TE, the permittivity sits between the two derivatives, $A = -\nabla\cdot\varepsilon^{-1}\nabla$.
+$\varepsilon^{-1}$ couples every plane wave to every other, so $A$ is a dense matrix in
+both bases, even though Blaze applies it with FFTs. On a $128 \times 128$ grid,
+$N = 16{,}384$ unknowns: forming $A^{-1}$ takes a dense factorization of about
+$N^3/3 \approx 1.5\times10^{12}$ operations, and its $N^2 \approx 2.7\times10^{8}$
+complex entries need about 4 GB, at every wavevector, because $A$ changes with
+$\mathbf{k}$. Each application then costs another $2N^2 \approx 5\times10^{8}$
+operations. A fast Fourier transform of the same field takes on the order of
+$5N\log_2 N \approx 10^{6}$. Solving $A\mathbf{y} = \mathbf{r}$ exactly would cost far
+more than the eigenproblem the preconditioner is meant to speed up.
+
+Construction has to be cheap as well. Because $A$ depends on $\mathbf{k}$, $T$ is
+rebuilt at every wavevector; Blaze's preconditioners need only the values
+$|\mathbf{k}+\mathbf{G}|^2$ and the permittivity grid, which cost $O(N)$ to set up.
+
+## Why is an approximation good enough?
+
+Three reasons:
+
+1. **Inside LOBPCG, Rayleigh–Ritz takes care of scale.** $T$ only has to supply useful
+   directions. Multiplying $T$ by a constant changes nothing at all: the trial subspace
+   stays the same. (The plain step in the playground has no such help, which is why its
+   *None* option depends on the size of $A$.)
+2. **What matters is how evenly $T$ rebalances the spectrum,** roughly the condition
+   number of $TA$, not how closely $T$ matches $A^{-1}$ entry by entry. A $T$ that
+   captures how the eigenvalues grow with $|\mathbf{k}+\mathbf{G}|^2$ removes the
+   dependence on grid resolution, even if it treats the material only approximately.
+3. **Exactness can even hurt.** The exact inverse of the shifted operator returns
+   $\mathbf{x}$ itself. A dense exact inverse of $A$ needs fewer iterations, but each one
+   costs so much more that it loses on total work, as the comparison below shows.
+
+The comparison below runs single-vector LOBPCG on a one-dimensional photonic crystal
+with the structure of Blaze's TE problem, $A = -\tfrac{d}{dx}\,\varepsilon^{-1}\tfrac{d}{dx}$,
+discretized on $N$ grid points. A layer of permittivity $\varepsilon$ fills 5/16 of the
+cell, and the wavevector sits at the edge of the Brillouin zone. The Fourier diagonal
+inverts the same operator for a uniform medium with the average
+$\langle\varepsilon^{-1}\rangle$: one division per plane wave, the form of Blaze's TM
+preconditioner. (MPB's transverse projection, Blaze's TE choice, would even be exact on
+this model, because in one dimension every field is a gradient; in two dimensions it is
+an approximation.) The exact inverse is priced as a dense factorization, as it would be
+for Blaze's plane-wave TE operator. All four start from the same field and stop at a
+relative residual of $10^{-7}$.
+
+</div>
+
+<ConvergenceRace />
+
+<div className="narrow">
+
+Without a preconditioner, the iteration count doubles each time the grid doubles:
+LOBPCG needs roughly $\sqrt{\kappa}$ iterations, and $\sqrt{\kappa}$ grows like $N$. The
+diagonal of $A$ does not help. It rescales each grid point by its local stiffness, the
+same for smooth and oscillating fields, so it cannot see how the eigenvalues grow; at
+$\varepsilon = 13$ it is even slower than no preconditioner. The Fourier diagonal needs
+14 to 17 iterations at every resolution. The exact inverse needs only 6 or 7, but its
+factorization makes it 40 to 50 times more expensive than the Fourier diagonal at
+$N = 512$, and since the factorization grows like $N^3$, the gap widens about fourfold
+with each doubling of the grid. For $\varepsilon = 1$ the medium is uniform: the
+Fourier diagonal *is* the exact inverse, both take 5 iterations, and the diagonal of
+$A$ coincides with no preconditioner.
+
+## How does Blaze precondition Maxwell’s equations?
+
+Blaze stores fields on a real-space grid and switches to plane waves with fast
+Fourier transforms. Derivatives become multiplications by $i(\mathbf{k}+\mathbf{G})$,
+so the derivative part of the operator is diagonal in Fourier space: it multiplies
+each plane wave by $|\mathbf{k}+\mathbf{G}|^2$. The permittivity is diagonal in real
+space. The stiff part, the one that grows with resolution, lives in Fourier space; the
+material, which varies on the scale of the crystal, lives in real space. Blaze's
+preconditioners invert the first exactly and approximate the second.
+
+</div>
+
+<BlazePipelines />
+
+<div className="narrow">
+
+- **TM.** The operator is $A = |\mathbf{k}+\mathbf{G}|^2$ in Fourier space, and the
+  material sits in the mass operator $B = \varepsilon$. Blaze applies
+  $T = 1\,/\,\bigl(|\mathbf{k}+\mathbf{G}|^2/\langle\varepsilon\rangle + \sigma\bigr)$,
+  plus a small constant floor: one FFT, one division per plane wave, one inverse FFT.
+  The mean permittivity $\langle\varepsilon\rangle$ places the shift relative to the
+  eigenvalues $\lambda \approx |\mathbf{k}+\mathbf{G}|^2/\langle\varepsilon\rangle$
+  of the generalized problem.
+- **At $\Gamma$,** the plane wave with $\mathbf{k}+\mathbf{G} = \mathbf{0}$ is the
+  constant zero-frequency field, which the solver deflates; Blaze sets $T$ to zero on
+  it. The shift $\sigma$ is half the smallest nonzero $|\mathbf{k}+\mathbf{G}|^2$ at
+  each wavevector, which keeps $T$ balanced for the longest waves near $\Gamma$.
+- **TE.** The permittivity sits inside the operator, $A = -\nabla\cdot\varepsilon^{-1}\nabla$.
+  In band-structure runs Blaze uses MPB's transverse-projection
+  preconditioner:<Citation id={2} /> it undoes each derivative in Fourier space and
+  multiplies by $\varepsilon$ on the grid, inverting the $\varepsilon^{-1}$ in the
+  middle. That takes six FFTs per application and never forms a matrix. For a uniform
+  medium it inverts $A$ apart from the shift; where $\varepsilon$ varies it is an
+  approximation.
+
+Both cost $O(N\log N)$ per application and $O(N)$ to set up at each wavevector. The
+roadmap continues from here: a [learned preconditioner](/roadmap#learned-preconditioner)
+keeps these FFT kernels and learns positive spectral weights per wavevector, and
+[self-tuning solves](/roadmap#self-tuning-solves) choose the shift from the cost of
+recent wavevectors.
+
+## Summary
+
+</div>
+
+<div className="pc-summary">
+<div>
+
+**The residual says what is wrong.** $\mathbf{r} = A\mathbf{x} - \rho\mathbf{x}$
+vanishes only for eigenvectors, but weights each error component by $\lambda_i - \rho$.
+
+</div>
+<div>
+
+**The preconditioner says what to do about it.** $T \approx A^{-1}$ turns those
+weights into $1 - \rho/\lambda_i$, and the residual becomes a correction.
+
+</div>
+<div>
+
+**It must be cheap.** Applied thousands of times per band diagram and rebuilt at every
+wavevector, it is made of FFTs and divisions, never dense matrices.
+
+</div>
+<div>
+
+**Approximate is enough; exact can be worse.** Rayleigh–Ritz fixes the scale,
+capturing the growth of $|\mathbf{k}+\mathbf{G}|^2$ removes the grid dependence, and
+the exact shifted inverse adds nothing.
+
+</div>
+</div>
+
+<References>
+  <Reference id={1}>
+    A. V. Knyazev, "Toward the Optimal Preconditioned Eigensolver: Locally Optimal Block Preconditioned Conjugate Gradient Method," <em>SIAM Journal on Scientific Computing</em> 23, 517–541 (2001). [<a href="https://doi.org/10.1137/S1064827500366124" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={2}>
+    S. G. Johnson and J. D. Joannopoulos, "Block-iterative frequency-domain methods for Maxwell's equations in a planewave basis," <em>Optics Express</em> 8, 173–190 (2001). [<a href="https://doi.org/10.1364/OE.8.000173" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={3}>
+    Y. Saad, <em>Iterative Methods for Sparse Linear Systems</em>, 2nd ed. (SIAM, 2003). [<a href="https://doi.org/10.1137/1.9780898718003" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+  <Reference id={4}>
+    K. Neymeyr, "A geometric theory for preconditioned inverse iteration I: Extrema of the Rayleigh quotient," <em>Linear Algebra and its Applications</em> 322, 61–85 (2001). [<a href="https://doi.org/10.1016/S0024-3795(00)00239-1" target="_blank" rel="noopener noreferrer">DOI</a>]
+  </Reference>
+</References>
+
+</div>

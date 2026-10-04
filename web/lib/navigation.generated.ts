@@ -69,5 +69,11 @@ export const navigation: NavigationItem[] = [
     "title": "API & TOML",
     "group": "Use Blaze",
     "order": 3
+  },
+  {
+    "route": "/preconditioner",
+    "title": "Preconditioner",
+    "group": "Theory",
+    "order": 3
   }
 ];
