@@ -227,7 +227,7 @@ fn test_block_entry_rayleigh_quotient() {
 
     let entry = BlockEntry {
         vector,
-        mass,
+        mass: Some(mass),
         applied,
     };
     let rq = entry.rayleigh_quotient(&backend);
@@ -257,7 +257,7 @@ fn test_block_entry_b_norm() {
 
     let entry = BlockEntry {
         vector,
-        mass,
+        mass: Some(mass),
         applied,
     };
     let norm = entry.b_norm(&backend);
@@ -322,7 +322,7 @@ fn test_initialize_block_orthogonality() {
     let backend = operator.backend();
     for i in 0..entries.len() {
         for j in 0..entries.len() {
-            let inner = backend.dot(&entries[i].vector, &entries[j].mass);
+            let inner = backend.dot(&entries[i].vector, entries[j].mass());
             if i == j {
                 assert!(
                     (inner.re - 1.0).abs() < 1e-6,

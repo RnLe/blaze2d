@@ -57,11 +57,20 @@ impl CoordinateSetup {
 /// fresh column for every product dominated the dense work at large grids.
 const POOLED_COLUMNS:usize=256;
 thread_local! {
-    /// Released columns of this thread, kept across solves: every wavevector builds a new
-    /// backend, and handing its columns back to the allocator made each one fault in
-    /// fresh pages (12% of a TM band diagram in kernel time). Holds one column length at a
-    /// time and never more columns than this thread had live at once.
+    /// Released columns of this thread, kept across the wavevectors of a job: every
+    /// wavevector builds a new backend, and handing its columns back to the allocator made
+    /// each one fault in fresh pages (12% of a TM band diagram in kernel time). Holds one
+    /// column length at a time, never more columns than this thread had live at once, and
+    /// is emptied when the job ends (`ColumnPoolScope`).
     static COLUMN_POOL:std::cell::RefCell<Vec<Vec<C>>>=const{std::cell::RefCell::new(Vec::new())};
+}
+/// Releases the thread's pooled columns when dropped: a band-structure job shares them
+/// across its wavevectors, and its memory goes back when the job ends.
+pub(crate) struct ColumnPoolScope;
+impl Drop for ColumnPoolScope {fn drop(&mut self) {release_column_pool();}}
+/// Frees the pooled columns of this thread (end of a job, or a switch away from PT columns).
+pub(crate) fn release_column_pool() {
+    let _=COLUMN_POOL.try_with(|pool| {let mut pool=pool.borrow_mut();pool.clear();pool.shrink_to_fit();});
 }
 #[derive(Default)]
 struct AllocationLedger {live:AtomicUsize,peak:AtomicUsize}

@@ -39,26 +39,32 @@ use super::normalization::{b_norm, normalize_to_unit_b_norm_with_tol, project_ou
 ///
 /// This represents one column of the block matrices in LOBPCG:
 /// - `vector`: The eigenvector approximation x_i
-/// - `mass`: B * x_i (precomputed for efficiency in B-inner products)
+/// - `mass`: B * x_i (precomputed for efficiency in B-inner products); `None` when B is
+///   the identity, so the vector is its own image and is not copied
 /// - `applied`: A * x_i (precomputed for Rayleigh quotient and residual computation)
 #[derive(Clone)]
 pub struct BlockEntry<B: SpectralBackend> {
     pub vector: B::Buffer,
-    pub mass: B::Buffer,
+    pub mass: Option<B::Buffer>,
     pub applied: B::Buffer,
 }
 
 impl<B: SpectralBackend> BlockEntry<B> {
+    /// B·x (the vector itself when B is the identity).
+    pub fn mass(&self) -> &B::Buffer {
+        self.mass.as_ref().unwrap_or(&self.vector)
+    }
+
     /// Compute the Rayleigh quotient λ = <x, Ax> / <x, Bx> for this entry.
     pub fn rayleigh_quotient(&self, backend: &B) -> f64 {
         let x_ax = backend.dot(&self.vector, &self.applied).re;
-        let x_bx = backend.dot(&self.vector, &self.mass).re;
+        let x_bx = backend.dot(&self.vector, self.mass()).re;
         if x_bx.abs() > 1e-15 { x_ax / x_bx } else { 0.0 }
     }
 
     /// Compute the B-norm ||x||_B = sqrt(<x, Bx>).
     pub fn b_norm(&self, backend: &B) -> f64 {
-        backend.dot(&self.vector, &self.mass).re.max(0.0).sqrt()
+        backend.dot(&self.vector, self.mass()).re.max(0.0).sqrt()
     }
 }
 
@@ -310,10 +316,11 @@ where O:LinearOperator<B>, B:SpectralBackend {
     }
 
     let (vectors, masses): (Vec<B::Buffer>, Vec<B::Buffer>) = accepted.into_iter().unzip();
+    let identity = operator.mass_is_identity();
     let mut applied: Vec<B::Buffer> = (0..vectors.len()).map(|_| operator.alloc_output()).collect();
     operator.batch_apply(&vectors, &mut applied);
     let entries: Vec<BlockEntry<B>> = vectors.into_iter().zip(masses).zip(applied)
-        .map(|((vector, mass), applied)| BlockEntry { vector, mass, applied })
+        .map(|((vector, mass), applied)| BlockEntry { vector, mass: (!identity).then_some(mass), applied })
         .collect();
 
     let result = InitializationResult {

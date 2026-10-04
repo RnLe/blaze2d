@@ -4,6 +4,7 @@
 //! row block the segments of all operands stay in cache across the tiles, so each column is
 //! read from memory once per product and each output written once.
 
+use num_complex::Complex64;
 use pulp::{Arch, Simd, WithSimd};
 
 /// Rows per block: the block's segments of all columns stay in L2 across the tiles.
@@ -66,6 +67,119 @@ pub fn combine(q: &[&[f64]], c: &[f64], out: &mut [&mut [f64]], accumulate: bool
         return;
     }
     Arch::new().dispatch(Combine { q, c, out, accumulate });
+}
+
+/// Row-major p × q matrix G[i][j] = Σ_k conj(x_i[k])·y_j[k] for complex columns given as
+/// interleaved (re, im) f64 slices. On the f64 view the real part is Σ x·y and the
+/// imaginary part Σ (x_re·y_im − x_im·y_re) = Σ x·swap(y) with even minus odd lanes, so
+/// the loop needs one in-register pair swap per loaded y vector and no sign flips. With
+/// `lower` only i ≥ j is formed and mirrored as conj(G[j][i]) (Hermitian products, p = q).
+pub fn gram_complex(x: &[&[f64]], y: &[&[f64]], lower: bool) -> Vec<Complex64> {
+    let (p, q) = (x.len(), y.len());
+    let mut g = vec![Complex64::new(0.0, 0.0); p * q];
+    if p == 0 || q == 0 || x[0].is_empty() {
+        return g;
+    }
+    let lower = lower && p == q;
+    // The pair swap reinterprets f64 vectors as complex ones, which only the AVX2 level
+    // provides with equal sizes; without it the plain sums are used.
+    #[cfg(target_arch = "x86_64")]
+    let done = match pulp::x86::V3::try_new() {
+        Some(simd) => {
+            Simd::vectorize(simd, GramComplex { x, y, g: &mut g, lower });
+            true
+        }
+        None => false,
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let done = false;
+    if !done {
+        for i in 0..p {
+            for j in 0..q {
+                if !(lower && j > i) {
+                    g[i * q + j] = conj_dot(x[i], y[j]);
+                }
+            }
+        }
+    }
+    if lower {
+        for i in 0..p {
+            for j in i + 1..q {
+                g[i * q + j] = g[j * q + i].conj();
+            }
+        }
+    }
+    g
+}
+
+struct GramComplex<'a> {
+    x: &'a [&'a [f64]],
+    y: &'a [&'a [f64]],
+    g: &'a mut [Complex64],
+    lower: bool,
+}
+
+impl WithSimd for GramComplex<'_> {
+    type Output = ();
+    #[inline(always)]
+    fn with_simd<S: Simd>(self, simd: S) {
+        let GramComplex { x, y, g, lower } = self;
+        let (p, q, n) = (x.len(), y.len(), x[0].len());
+        let block = 2 * ROW_BLOCK;
+        let mut start = 0;
+        while start < n {
+            let rows = block.min(n - start);
+            for i0 in (0..p).step_by(2) {
+                let mr = 2.min(p - i0);
+                for j0 in (0..q).step_by(2) {
+                    if lower && j0 >= i0 + mr {
+                        break;
+                    }
+                    complex_tile(simd, x, y, g, q, (i0, mr), (j0, 2.min(q - j0)), start, rows);
+                }
+            }
+            start += rows;
+        }
+    }
+}
+
+/// Σ conj(x)·y over interleaved (re, im) values.
+fn conj_dot(x: &[f64], y: &[f64]) -> Complex64 {
+    let (mut re, mut im) = (0.0, 0.0);
+    for (a, b) in x.chunks_exact(2).zip(y.chunks_exact(2)) {
+        re += a[0] * b[0] + a[1] * b[1];
+        im += a[0] * b[1] - a[1] * b[0];
+    }
+    Complex64::new(re, im)
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn complex_tile<S: Simd>(simd: S, x: &[&[f64]], y: &[&[f64]], g: &mut [Complex64], q: usize, (i0, mr): (usize, usize), (j0, nr): (usize, usize), start: usize, rows: usize) {
+    let zero = simd.splat_f64s(0.0);
+    let (mut re, mut im) = ([[zero; 2]; 2], [[zero; 2]; 2]);
+    let xs: [&[S::f64s]; 2] = core::array::from_fn(|a| S::as_simd_f64s(&x[i0 + a.min(mr - 1)][start..start + rows]).0);
+    let ys: [&[S::f64s]; 2] = core::array::from_fn(|b| S::as_simd_f64s(&y[j0 + b.min(nr - 1)][start..start + rows]).0);
+    for k in 0..xs[0].len() {
+        let yv = [ys[0][k], ys[1][k]];
+        let swapped: [S::f64s; 2] = core::array::from_fn(|b| pulp::cast(simd.swap_re_im_c64s(pulp::cast(yv[b]))));
+        for a in 0..2 {
+            let xv = xs[a][k];
+            for b in 0..2 {
+                re[a][b] = simd.mul_add_e_f64s(xv, yv[b], re[a][b]);
+                im[a][b] = simd.mul_add_e_f64s(xv, swapped[b], im[a][b]);
+            }
+        }
+    }
+    let done = start + rows - S::as_simd_f64s(&x[i0][start..start + rows]).1.len();
+    for a in 0..mr {
+        for b in 0..nr {
+            let (r, i): (&[f64], &[f64]) = (bytemuck::cast_slice(core::slice::from_ref(&re[a][b])), bytemuck::cast_slice(core::slice::from_ref(&im[a][b])));
+            let mut sum = Complex64::new(r.iter().sum(), i.chunks_exact(2).map(|pair| pair[0] - pair[1]).sum());
+            sum += conj_dot(&x[i0 + a][done..start + rows], &y[j0 + b][done..start + rows]);
+            g[(i0 + a) * q + j0 + b] += sum;
+        }
+    }
 }
 
 struct Gram<'a> {
@@ -222,6 +336,33 @@ mod tests {
                     for j in 0..p {
                         let exact: f64 = (0..n).map(|k| x[i][k] * x[j][k]).sum();
                         assert!((s[i * p + j] - exact).abs() <= 1e-12 * (1.0 + exact.abs()));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn complex_gram_matches_conjugate_dots() {
+        for &(p, q, n) in &[(1, 1, 1), (3, 5, 7), (12, 12, 515), (5, 2, 300)] {
+            let (xs, ys) = (columns(p, 2 * n, 5), columns(q, 2 * n, 6));
+            let (x, y): (Vec<&[f64]>, Vec<&[f64]>) = (xs.iter().map(|v| v.as_slice()).collect(), ys.iter().map(|v| v.as_slice()).collect());
+            let exact = |a: &[f64], b: &[f64]| -> Complex64 {
+                (0..n).map(|k| Complex64::new(a[2 * k], a[2 * k + 1]).conj() * Complex64::new(b[2 * k], b[2 * k + 1])).sum()
+            };
+            let g = gram_complex(&x, &y, false);
+            for i in 0..p {
+                for j in 0..q {
+                    let e = exact(x[i], y[j]);
+                    assert!((g[i * q + j] - e).norm() <= 1e-12 * (1.0 + e.norm()), "{p}x{q}x{n} ({i},{j})");
+                }
+            }
+            if p == q {
+                let h = gram_complex(&x, &x, true);
+                for i in 0..p {
+                    for j in 0..p {
+                        let e = exact(x[i], x[j]);
+                        assert!((h[i * p + j] - e).norm() <= 1e-12 * (1.0 + e.norm()));
                     }
                 }
             }

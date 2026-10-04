@@ -79,17 +79,20 @@ fn execute(cli: Cli) -> Result<bool, Box<dyn std::error::Error>> {
 /// tens of megabytes of fields; with glibc's default thresholds they go back to the kernel
 /// and the next wavevector faults in fresh pages (about a tenth of a TM band diagram).
 /// Blocks below 32 MiB come from the heap, which is trimmed only above 512 MiB free.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[cfg(all(target_os = "linux", target_env = "gnu", target_pointer_width = "64"))]
 fn retain_freed_memory() {
     // SAFETY: mallopt only adjusts allocator parameters; it runs once, before any threads.
     unsafe {
-        libc::mallopt(libc::M_MMAP_THRESHOLD, 32 << 20);
-        libc::mallopt(libc::M_TRIM_THRESHOLD, 512 << 20);
+        // Setting the trim threshold also freezes the mmap threshold, so it is only set
+        // when glibc accepted the larger mmap threshold (at most half its heap size).
+        if libc::mallopt(libc::M_MMAP_THRESHOLD, 32 << 20) == 1 {
+            libc::mallopt(libc::M_TRIM_THRESHOLD, 512 << 20);
+        }
     }
 }
 
 fn main() -> ExitCode {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_pointer_width = "64"))]
     retain_freed_memory();
     match execute(Cli::parse()) {
         Ok(true) => ExitCode::SUCCESS,

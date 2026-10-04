@@ -368,6 +368,7 @@ fn run_core<B: SpectralBackend + Clone>(
     mut on_k_point: Option<&mut dyn FnMut(KPointResult)>,
     mut continuation: Option<&mut crate::symmetry::continuation::BandContinuation>,
 ) -> BandStructureResult {
+    let _columns = crate::symmetry::fourier::ColumnPoolScope;
     if study.is_some() || job.eigensolver.record_diagnostics || std::mem::size_of::<B::Real>() != 8 {
         continuation = None;
     }
@@ -797,6 +798,7 @@ fn run_core<B: SpectralBackend + Clone>(
                     if options.symmetry.automatic_policy {
                         arithmetic_rejection = Some(reason.clone());
                         options.symmetry.arithmetic = crate::symmetry::fourier::Arithmetic::SpatialComplex;
+                        crate::symmetry::fourier::release_column_pool();
                     }
                     reuse_report.rejected.push(reason);None
                 },

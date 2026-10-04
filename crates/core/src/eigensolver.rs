@@ -721,23 +721,38 @@ where
             {
                 let backend = self.operator.backend();
                 for entry in &mut x_block {
-                    self.deflation
-                        .project_single(backend, &mut entry.vector, &mut entry.mass);
+                    // With B = I the image follows the vector (a temporary keeps the pair).
+                    let mut image = match entry.mass.take() {
+                        Some(mass) => mass,
+                        None => entry.vector.clone(),
+                    };
+                    self.deflation.project_single(backend, &mut entry.vector, &mut image);
 
                     // Re-normalize after projection
-                    let norm = normalization::b_norm(backend, &entry.vector, &entry.mass);
+                    let norm = normalization::b_norm(backend, &entry.vector, &image);
                     if norm > 1e-12 {
                         let scale = num_complex::Complex64::new(1.0 / norm, 0.0);
                         backend.scale(scale, &mut entry.vector);
-                        backend.scale(scale, &mut entry.mass);
+                        backend.scale(scale, &mut image);
+                    }
+                    if !self.operator.mass_is_identity() {
+                        entry.mass = Some(image);
                     }
                 }
             }
             // Second pass: re-apply both operators (requires mutable borrow)
-            let (vectors, (mut masses, mut applied)): (Vec<B::Buffer>, (Vec<B::Buffer>, Vec<B::Buffer>)) =
-                x_block.into_iter().map(|entry| (entry.vector, (entry.mass, entry.applied))).unzip();
+            let identity = self.operator.mass_is_identity();
+            let (vectors, applied): (Vec<B::Buffer>, Vec<B::Buffer>) =
+                x_block.into_iter().map(|entry| (entry.vector, entry.applied)).unzip();
+            let mut applied = applied;
             self.operator.batch_apply(&vectors, &mut applied);
-            self.operator.batch_apply_mass(&vectors, &mut masses);
+            let masses: Vec<Option<B::Buffer>> = if identity {
+                vectors.iter().map(|_| None).collect()
+            } else {
+                let mut masses: Vec<B::Buffer> = (0..vectors.len()).map(|_| self.operator.alloc_output()).collect();
+                self.operator.batch_apply_mass(&vectors, &mut masses);
+                masses.into_iter().map(Some).collect()
+            };
             x_block = vectors.into_iter().zip(masses).zip(applied)
                 .map(|((vector, mass), applied)| BlockEntry { vector, mass, applied })
                 .collect();
@@ -864,7 +879,7 @@ where
         let residual_mode = self.config.stopping == StoppingRule::Residual;
         // r_i = A·x_i − λ_i·B·x_i with ‖r_i‖², ‖A·x_i‖², ‖B·x_i‖² from one pass.
         self.x_block.iter().zip(&self.eigenvalues).enumerate().map(|(i, (entry, &lambda))| {
-            let (r, norms) = backend.residual(&entry.applied, &entry.mass, lambda);
+            let (r, norms) = backend.residual(&entry.applied, entry.mass(), lambda);
             // Soft-locked bands keep a zero residual outside residual stopping (unused).
             if !residual_mode && self.soft_locked.get(i).copied().unwrap_or(false) {
                 (self.operator.alloc_field(), norms)
@@ -1011,14 +1026,16 @@ where
         let Self { operator, x_block, .. } = self;
         for entry in x_block.iter_mut() {
             operator.apply(&entry.vector, &mut entry.applied);
-            operator.apply_mass(&entry.vector, &mut entry.mass);
+            if let Some(mass) = &mut entry.mass {
+                operator.apply_mass(&entry.vector, mass);
+            }
         }
         // Eigenvalues become the Rayleigh quotients of the fresh products, accurate to
         // O(η²) whatever rounding the projection carried (composed Ritz values can be off by
         // ~1e-11 relative when the raw subspace is ill-conditioned).
         let backend = self.operator.backend();
         for (entry, lambda) in self.x_block.iter().zip(self.eigenvalues.iter_mut()) {
-            let mass = backend.dot(&entry.vector, &entry.mass).re;
+            let mass = backend.dot(&entry.vector, entry.mass()).re;
             if mass > 0.0 {
                 *lambda = backend.dot(&entry.vector, &entry.applied).re / mass;
             }
@@ -1226,7 +1243,7 @@ where
         if backend.prefer_backend_linear_combinations() && !residuals.is_empty() {
             let locked: Vec<&BlockEntry<B>> = self.x_block.iter().zip(&self.soft_locked).filter(|(_, locked)| **locked).map(|(e, _)| e).collect();
             let vectors: Vec<&B::Buffer> = locked.iter().map(|e| &e.vector).collect();
-            let masses: Vec<&B::Buffer> = if self.operator.mass_is_identity() { vectors.clone() } else { locked.iter().map(|e| &e.mass).collect() };
+            let masses: Vec<&B::Buffer> = locked.iter().map(|e| e.mass()).collect();
             backend.project_out_block(&vectors, &masses, residuals);
             return;
         }
@@ -1241,7 +1258,7 @@ where
                 if *is_locked && j < self.x_block.len() {
                     let locked_entry = &self.x_block[j];
                     let locked_vec = &locked_entry.vector;
-                    let locked_bx = &locked_entry.mass; // B * x_soft
+                    let locked_bx = locked_entry.mass(); // B * x_soft
 
                     // Calculate overlap: <x_soft, r>_B = x_soft^T B r = (B x_soft)^T r
                     // dot(a, b) computes a^H b. So we use dot(locked_bx, r).
@@ -1311,19 +1328,19 @@ where
             let entries = std::mem::take(&mut self.x_block);
             self.moved_x = entries.len();
             let mut applied = Vec::with_capacity(entries.len());
-            for entry in entries {
-                subspace.push(entry.vector);
+            for BlockEntry { vector, mass, applied: product } in entries {
                 if !skip_mass {
-                    bx_precomputed.push(entry.mass);
+                    bx_precomputed.push(mass.unwrap_or_else(|| vector.clone()));
                 }
-                applied.push(entry.applied);
+                subspace.push(vector);
+                applied.push(product);
             }
             self.moved_applied = Some(applied);
         } else {
             for entry in &self.x_block {
                 subspace.push(entry.vector.clone());
                 if !skip_mass {
-                    bx_precomputed.push(entry.mass.clone());
+                    bx_precomputed.push(entry.mass().clone());
                 }
             }
         }
@@ -1725,7 +1742,7 @@ where
             if self.x_block.is_empty() && self.moved_x > 0 && q_block.len() >= self.moved_x {
                 let x = self.moved_x;
                 let vectors = q_block[..x].to_vec();
-                let masses = if bq_block.len() >= x { bq_block[..x].to_vec() } else { vectors.clone() };
+                let masses: Vec<Option<B::Buffer>> = if bq_block.len() >= x { bq_block[..x].iter().cloned().map(Some).collect() } else { (0..x).map(|_| None).collect() };
                 self.x_block = vectors.into_iter().zip(masses).zip(aq_block[..x].to_vec())
                     .map(|((vector, mass), applied)| BlockEntry { vector, mass, applied }).collect();
             }
@@ -1759,7 +1776,8 @@ where
             let coefficients = |k: usize| &all[..rows * k];
             let backend = self.operator.backend();
             let mut x = backend.linear_combinations(q_block, coefficients(m + n_w), m + n_w);
-            let bx = if self.operator.mass_is_identity() { x[..m].to_vec() } else { backend.linear_combinations(bq_block, coefficients(m), m) };
+            // With B = I the Ritz vectors are their own images: nothing is copied.
+            let bx: Vec<Option<B::Buffer>> = if self.operator.mass_is_identity() { (0..m).map(|_| None).collect() } else { backend.linear_combinations(bq_block, coefficients(m), m).into_iter().map(Some).collect() };
             let mut ax = backend.linear_combinations(aq_block, coefficients(if carry { m + n_w } else { m }), if carry { m + n_w } else { m });
             let w = x.split_off(m);
             let aw = carry.then(|| ax.split_off(m));
@@ -1843,7 +1861,7 @@ where
 
                 new_x_block.push(BlockEntry {
                     vector: x_j,
-                    mass: bx_j,
+                    mass: Some(bx_j),
                     applied: ax_j,
                 });
             }
@@ -1922,7 +1940,7 @@ where
 
                 new_x_block.push(BlockEntry {
                     vector: x_j,
-                    mass: bx_j,
+                    mass: Some(bx_j),
                     applied: ax_j,
                 });
             }
@@ -2634,7 +2652,7 @@ where
                     // λ_RQ = (x^* A x) / (x^* B x)
                     // We have entry.applied = A*x and entry.mass = B*x
                     let x_ax = backend.dot(&entry.vector, &entry.applied).re;
-                    let x_bx = backend.dot(&entry.vector, &entry.mass).re;
+                    let x_bx = backend.dot(&entry.vector, entry.mass()).re;
                     let lambda_rq = if x_bx.abs() > 1e-15 { x_ax / x_bx } else { 0.0 };
 
                     // λ_RR from stored eigenvalue (from Ritz projection)

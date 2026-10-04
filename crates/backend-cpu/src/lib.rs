@@ -348,6 +348,12 @@ fn pack_rows<R: Real>(src: &[Complex<R>], dst: &mut [Complex64]) {
     R::copy_to_accum(src, &mut dst[..src.len()]);
 }
 
+/// f64 columns as interleaved (re, im) lanes (`None` at f32 storage).
+#[cfg(feature = "native-linalg")]
+fn interleaved<'a, R: Real>(columns: &[&'a [Complex<R>]]) -> Option<Vec<&'a [f64]>> {
+    columns.iter().map(|c| R::interleaved(c)).collect()
+}
+
 #[cfg(feature = "native-linalg")]
 fn columns<R: Real>(buffers: &[Field2D<R>]) -> Vec<&[Complex<R>]> {
     buffers.iter().map(|b| b.as_slice()).collect()
@@ -718,6 +724,14 @@ impl<R: Real + FftNum> CpuBackend<R> {
     #[cfg(feature = "native-linalg")]
     fn panel_grams(&self, x: &[&[Complex<R>]], ys: &[Vec<&[Complex<R>]>], hermitian: bool) -> Vec<Vec<Complex64>> {
         use faer::linalg::matmul::triangular::{matmul as triangular, BlockStructure};
+        // f64 columns are read in place by the pack-free kernel (interleaved f64 view).
+        if blaze2d_core::kernels::vectorized() {
+            if let Some(left) = interleaved(x) {
+                if let Some(rights) = ys.iter().map(|y| interleaved(y)).collect::<Option<Vec<_>>>() {
+                    return rights.iter().map(|right| blaze2d_core::kernels::gram_complex(&left, right, hermitian && right.len() == x.len())).collect();
+                }
+            }
+        }
         let p = x.len();
         let mut products: Vec<faer::Mat<Complex64>> = ys.iter().map(|y| faer::Mat::zeros(p, y.len())).collect();
         if p > 0 && ys.iter().any(|y| !y.is_empty()) {

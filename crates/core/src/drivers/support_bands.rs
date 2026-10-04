@@ -196,6 +196,7 @@ pub fn run_with_continuation<B: SpectralBackend + Clone>(
     mut on_k_point: impl FnMut(KPointResult),
 ) -> Result<BandStructureResult, SupportBandFailure> {
     crate::profile_scope!("run.support_bands");
+    let _columns = crate::symmetry::fourier::ColumnPoolScope;
     let mut result = BandStructureResult {
         k_path: Vec::new(),
         distances: Vec::new(),

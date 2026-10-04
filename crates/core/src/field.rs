@@ -58,6 +58,12 @@ pub trait Real:
     fn extend_from_accum(dst: &mut Vec<Complex<Self>>, src: &[Complex64]) {
         dst.extend(src.iter().map(|z| Complex::new(Self::from_accum(z.re), Self::from_accum(z.im))));
     }
+
+    /// The values as interleaved (re, im) f64 lanes when storage is f64 (`None` at f32).
+    fn interleaved(values: &[Complex<Self>]) -> Option<&[f64]> {
+        let _ = values;
+        None
+    }
 }
 
 impl Real for f32 {
@@ -87,6 +93,10 @@ impl Real for f64 {
     #[inline]
     fn extend_from_accum(dst: &mut Vec<Complex64>, src: &[Complex64]) {
         dst.extend_from_slice(src);
+    }
+    #[inline]
+    fn interleaved(values: &[Complex64]) -> Option<&[f64]> {
+        Some(bytemuck::cast_slice(values))
     }
 }
 
